@@ -1,23 +1,13 @@
-# -*- coding: utf-8 -*-
 """The realtime voice agent."""
 import asyncio
 import base64
+import hashlib
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
-from ...realtime import _events as me
-from ._aggregator import TurnAggregator
-from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
-from ._metrics import TurnMetrics
-from ...realtime._transport._base import (
-    AudioFrame,
-    ControlFrame,
-    ControlFrameType,
-    TransportBase,
-)
-from ...realtime._vad import SpeechTransition, VADBase
 from ..._logging import logger
 from ..._utils._common import _json_loads_with_repair
 from ...event import (
@@ -45,6 +35,7 @@ from ...event import (
 )
 from ...message import (
     Msg,
+    SystemMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
@@ -53,12 +44,28 @@ from ...message import (
     UserMsg,
 )
 from ...permission import PermissionBehavior, PermissionEngine
+from ...realtime import _events as me
+from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
+from ...realtime._transport._base import (
+    AudioFrame,
+    ControlFrame,
+    ControlFrameType,
+    TransportBase,
+)
+from ...realtime._vad import SpeechTransition, VADBase
 from ...state import AgentState
-from ...tool import ToolChunk, ToolResponse, Toolkit
+from ...tool import ToolChunk, Toolkit, ToolResponse
 from ...types import ReplyFinishedReason
+from ...workspace import Offloader
+from .._config import RealtimeContextConfig
+from ._aggregator import TurnAggregator
+from ._context_usage import ContextUsageTracker, estimate_context_tokens
+from ._metrics import TurnMetrics
 
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
+_HISTORY_MAX_MESSAGES = 100
+_HISTORY_MAX_TEXT_CHARS = 32_000
 
 
 @dataclass
@@ -97,6 +104,8 @@ class _Reply:
         Transcript deltas usually run slightly ahead of the audio they
         describe, so this errs towards keeping one word too many.
         """
+        if played_ms <= 0:
+            return ""
         length = 0
         for at_ms, text_len in self.marks:
             if at_ms > played_ms:
@@ -145,6 +154,8 @@ class RealtimeAgent:
         state: AgentState | None = None,
         vad: VADBase | None = None,
         aggregator: TurnAggregator | None = None,
+        context_config: RealtimeContextConfig | None = None,
+        workspace: Offloader | None = None,
     ) -> None:
         """Initialize the realtime agent.
 
@@ -179,6 +190,13 @@ class RealtimeAgent:
                 acknowledgements. Subclass it to change what counts as a
                 turn. A default with no backchannel list is used if
                 omitted.
+            context_config (`RealtimeContextConfig | None`, optional):
+                Context-management settings for the voice mode: the
+                provider-side context budget, per-tool-result limits and
+                the compression knobs. A default is used when omitted.
+            workspace (`Offloader | None`, optional):
+                Where compressed context segments are offloaded. Reserved
+                for the compression layer; a default is used if omitted.
         """
         self.name = name
         self.system_prompt = system_prompt
@@ -187,11 +205,20 @@ class RealtimeAgent:
         self.state = state or AgentState()
         self.vad = vad
         self.aggregator = aggregator or TurnAggregator()
+        self.context_config = context_config or RealtimeContextConfig()
+        self.workspace = workspace
+        self._ctx_usage = ContextUsageTracker()
+        self._compress_in_flight = False
+        self._pending_checkpoint: dict | None = None
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
         self._out: asyncio.Queue = asyncio.Queue()
         self._reply: _Reply | None = None
+        # A response can finish generating before its queued audio reaches
+        # the speaker. Keep its alignment until the next barge-in can decide
+        # whether the user heard it all.
+        self._playout_reply: _Reply | None = None
         self._finished_item = ""
         # The agent's open reply, and whether the next response continues
         # it (after tool results) rather than starting a new one.
@@ -210,6 +237,7 @@ class RealtimeAgent:
         # any transport, and reconnect bookkeeping.
         self._connected = False
         self._connected_event = asyncio.Event()
+        self._connection_generation = 0
         self._downlink: asyncio.Task | None = None
         self._backlog: list[bytes] = []
         self._retry_at = 0.0
@@ -224,7 +252,7 @@ class RealtimeAgent:
         await self.connect()
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         """Disconnect on exit."""
         await self.close()
 
@@ -233,6 +261,8 @@ class RealtimeAgent:
         closed it; a no-op while connected."""
         if self._connected:
             return
+
+        self._connection_generation += 1
 
         instructions = self.system_prompt
         tools = None
@@ -257,23 +287,29 @@ class RealtimeAgent:
         # context. No provider documents whether the update applies
         # retroactively, so treat it as affecting future turns only. Do
         # not let it change `voice`: OpenAI locks it after first audio.
-        # Providers differ in whether prior turns can be seeded, so the
-        # transcript so far rides along in the instructions, which every
-        # provider takes. Only matters on reconnect; first connect is empty.
-        history = "\n".join(
-            f"{m.name}: {text}"
-            for m in self.state.context
-            if (text := m.get_text_content())
-        )
+        history = self._replayable_history()
         if history:
-            instructions = (
-                f"{instructions}\n\n## Conversation so far\n{history}"
+            # The provider has not yet reported usage for the injected
+            # context, so the pre-reconnect observation cannot serve as
+            # the new session's baseline.
+            self._ctx_usage.mark_baseline_untrusted(len(history))
+        if history and not self.model.supports_history_replay:
+            fallback = self._format_history_fallback(history)
+            if fallback:
+                instructions = (
+                    f"{instructions}\n\n## Conversation so far\n{fallback}"
+                )
+        try:
+            await self.model.connect(
+                instructions=instructions,
+                tools=tools,
+                turn_detection_disabled=self.vad is not None,
             )
-        await self.model.connect(
-            instructions=instructions,
-            tools=tools,
-            turn_detection_disabled=self.vad is not None,
-        )
+            if history and self.model.supports_history_replay:
+                await self.model.replay_history(history)
+        except Exception:
+            await self.model.close()
+            raise
         if self.vad is not None:
             self.vad.reset()
         self.aggregator.reset()
@@ -286,6 +322,223 @@ class RealtimeAgent:
                 name="rt-downlink",
             )
             self._downlink.add_done_callback(self._on_downlink_done)
+
+    async def _compression_pass(self) -> None:
+        """One compression attempt at a completed-turn boundary.
+
+        Snapshots the settled transcript, generates a summary in the
+        background, and re-verifies the prefix before committing. Any
+        drift (barge-in truncation, late tool result) discards the
+        attempt; the next completed turn retries.
+        """
+        if self._compress_in_flight or self._pending_checkpoint is not None:
+            return
+        if self._reply is not None or self._pending_tools or self._continuing:
+            return
+        est = self._ctx_usage.estimate_tokens
+        cfg = self.context_config
+        if est is None or est < cfg.context_length * cfg.trigger_ratio:
+            return
+        if len(self.state.context) < 4:
+            return
+
+        snapshot = list(self.state.context)
+        ids = [msg.id for msg in snapshot]
+        digest = self._prefix_digest(snapshot)
+        self._compress_in_flight = True
+        self._tasks.add(
+            asyncio.create_task(
+                self._compress_prefix(ids, digest, snapshot),
+                name="rt-compress-prefix",
+            ),
+        )
+
+    def _prefix_digest(self, msgs: list[Msg]) -> str:
+        """Stable digest of a prefix, so a committed compression can
+        verify the messages it summarized were not modified since."""
+        hasher = hashlib.sha256()
+        for msg in msgs:
+            hasher.update(msg.id.encode())
+            hasher.update(repr(msg.model_dump(mode="json")).encode())
+        return hasher.hexdigest()
+
+    async def _compress_prefix(
+        self,
+        ids: list[str],
+        digest: str,
+        snapshot: list[Msg],
+    ) -> None:
+        """Generate a summary for the snapshot prefix, offload the
+        covered messages, and stash the result for a turn-boundary
+        commit."""
+        cfg = self.context_config
+        try:
+            transcript = "\n".join(
+                f"- {(msg.name or msg.role)}: "
+                f"{msg.get_text_content() or '(non-text content)'}"
+                for msg in snapshot
+            )
+            previous = self.state.summary
+            if not isinstance(previous, str):
+                previous = None
+            prompt = cfg.compression_prompt
+            if previous:
+                prompt += f"\n\nPrevious summary:\n{previous}"
+            messages = [
+                UserMsg(
+                    name="user",
+                    content=(f"{prompt}\n\nTranscript:\n{transcript}"),
+                ),
+            ]
+            summary_text = None
+            if cfg.compression_model is not None:
+                res = await cfg.compression_model.generate_structured_output(
+                    messages=messages,
+                    structured_model=cfg.compression_schema or None,
+                )
+                content = getattr(res, "content", None)
+                if isinstance(content, dict):
+                    summary_text = cfg.summary_template.format(**content)
+            if summary_text is None:
+                logger.warning(
+                    "RealtimeAgent: compression produced no summary; "
+                    "keeping the transcript intact",
+                )
+                return
+
+            offload_path = None
+            if self.workspace is not None:
+                offload_path = await self.workspace.offload_context(
+                    self.state.session_id,
+                    msgs=snapshot,
+                )
+            if offload_path:
+                summary_text += (
+                    f"\n<system-reminder>The compressed context is "
+                    f"offloaded to '{offload_path}', you can refer to it "
+                    f"when needed.</system-reminder>"
+                )
+
+            self._pending_checkpoint = {
+                "ids": ids,
+                "digest": digest,
+                "summary": summary_text,
+            }
+            self._maybe_apply_checkpoint()
+        except Exception:
+            logger.warning(
+                "RealtimeAgent: context compression failed; will retry "
+                "on the next trigger",
+                exc_info=True,
+            )
+            return
+        finally:
+            self._compress_in_flight = False
+
+    def _maybe_apply_checkpoint(self) -> None:
+        """Commit a stashed compression at a quiet boundary: the prefix
+        must be byte-identical to the snapshot and no reply may be in
+        flight."""
+        pending = self._pending_checkpoint
+        if pending is None:
+            return
+        if self._reply is not None or self._pending_tools:
+            return
+        context = self.state.context
+        ids: list[str] = pending["ids"]
+        if len(context) < len(ids):
+            return
+        if [msg.id for msg in context[: len(ids)]] != ids:
+            return
+        digest = self._prefix_digest(context[: len(ids)])
+        if digest != pending["digest"]:
+            return
+
+        self.state.summary = pending["summary"]
+        del context[: len(ids)]
+        self._pending_checkpoint = None
+        self._compress_in_flight = False
+        logger.info(
+            "RealtimeAgent: compressed %d context messages into the "
+            "session summary",
+            len(ids),
+        )
+
+    def _replayable_history(self) -> list[Msg]:
+        """Return bounded, settled messages for a fresh model session."""
+        messages = [
+            message
+            for message in self.state.context
+            if message.id != self._reply_id
+            and self._is_replayable_message(message)
+        ][-_HISTORY_MAX_MESSAGES:]
+
+        summary = self.state.summary
+        if isinstance(summary, str):
+            summary_text = summary
+        else:
+            summary_text = "\n".join(
+                block.text for block in summary if isinstance(block, TextBlock)
+            )
+        if summary_text.strip():
+            messages.insert(
+                0,
+                SystemMsg(name="summary", content=summary_text),
+            )
+        return messages
+
+    @staticmethod
+    def _is_replayable_message(message: Msg) -> bool:
+        """Return whether a persisted message is safe to replay."""
+        if message.role != "assistant":
+            return True
+        if message.finished_reason in (
+            ReplyFinishedReason.ERROR,
+            ReplyFinishedReason.INTERRUPTED,
+        ):
+            return False
+        return (
+            message.finished_reason
+            in (
+                ReplyFinishedReason.COMPLETED,
+                ReplyFinishedReason.EXCEED_MAX_ITERS,
+            )
+            or message.finished_at is not None
+        )
+
+    @staticmethod
+    def _format_history_fallback(messages: list[Msg]) -> str:
+        """Render a bounded text fallback for providers without replay.
+
+        A leading summary message — the output of compression — is kept
+        whole no matter the budget: it is the distillation the char
+        budget exists to protect. Verbatim turns beyond the budget are
+        dropped oldest-first.
+        """
+        summary_lines: list[str] = []
+        transcript: list[str] = []
+        for message in messages:
+            text = message.get_text_content()
+            if not text:
+                continue
+            line = f"{message.name}: {text}"
+            if message.role == "system" and message.name == "summary":
+                summary_lines.append(line)
+            else:
+                transcript.append(line)
+
+        kept: list[str] = []
+        kept_chars = 0
+        for line in reversed(transcript):
+            separator_chars = 1 if kept else 0
+            if (
+                kept_chars + separator_chars + len(line)
+                > _HISTORY_MAX_TEXT_CHARS
+            ):
+                break
+            kept.append(line)
+            kept_chars += separator_chars + len(line)
+        return "\n".join([*summary_lines, *reversed(kept)])
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""
@@ -477,6 +730,7 @@ class RealtimeAgent:
                     self._mark_disconnected()
                     raise
                 self.state.context.append(msg)
+                self._ctx_usage.note_local_append()
 
     async def interrupt(self) -> None:
         """Stop the active reply, as when the user presses stop."""
@@ -583,7 +837,11 @@ class RealtimeAgent:
 
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
-        reply = self._reply
+        self._ctx_usage.mark_stale(
+            "barge-in interrupted the in-flight response",
+        )
+        active_reply = self._reply is not None
+        reply = self._reply or self._playout_reply
         if reply is None:
             # Nothing playing, but a reply may be waiting on its tools.
             self._finish_reply(ReplyFinishedReason.INTERRUPTED)
@@ -598,44 +856,68 @@ class RealtimeAgent:
             if position.item_id and position.item_id != reply.item_id:
                 logger.warning(
                     "RealtimeAgent: playout reports %s but %s is open; "
-                    "not truncating.",
+                    "treating the current item as unheard.",
                     position.item_id,
                     reply.item_id,
                 )
-                return
-            played_ms = position.played_ms
-            spoken = reply.spoken_prefix(played_ms)
+                if not active_reply:
+                    self._playout_reply = None
+                    return
+            else:
+                played_ms = position.played_ms
+                spoken = reply.spoken_prefix(played_ms)
 
-        self._truncate_reply(spoken)
+        if not active_reply and played_ms >= round(reply.audio_ms):
+            self._playout_reply = None
+            return
+
+        self._truncate_reply(reply.reply_id, spoken)
         reply.final_text = spoken
         if self._connected:
             await self.model.truncate(reply.item_id, played_ms, spoken)
-            await self.model.cancel_response()
-        self._finish_reply(ReplyFinishedReason.INTERRUPTED)
+        if active_reply:
+            if self._connected:
+                await self.model.cancel_response()
+            self._finish_reply(ReplyFinishedReason.INTERRUPTED)
+        else:
+            if reply.text_started:
+                self._emit(
+                    TextBlockEndEvent(
+                        reply_id=reply.reply_id,
+                        block_id=reply.text_block_id,
+                        text=spoken,
+                    ),
+                )
+            self._playout_reply = None
 
-    def _truncate_reply(self, spoken: str) -> None:
+    def _truncate_reply(self, reply_id: str, spoken: str) -> None:
         """Rewrite the current reply in context to the part heard.
 
         Non-text blocks stay: a tool call that already ran belongs in the
         record even though the sentence around it was never heard.
         """
-        if not self.state.context:
-            return
-        tail = self.state.context[-1]
-        if tail.role != "assistant" or tail.name != self.name:
+        reply = next(
+            (
+                message
+                for message in reversed(self.state.context)
+                if message.id == reply_id
+            ),
+            None,
+        )
+        if reply is None or reply.role != "assistant":
             return
 
         others = (
             []
-            if isinstance(tail.content, str)
-            else [_ for _ in tail.content if not isinstance(_, TextBlock)]
+            if isinstance(reply.content, str)
+            else [_ for _ in reply.content if not isinstance(_, TextBlock)]
         )
         if spoken.strip():
-            tail.content = [TextBlock(text=spoken), *others]
+            reply.content = [TextBlock(text=spoken), *others]
         elif others:
-            tail.content = others
+            reply.content = others
         else:
-            self.state.context.pop()
+            self.state.context.remove(reply)
 
     # ------------------------------------------------------------------
     # Downlink: model -> transport + events (lives with the agent)
@@ -650,8 +932,11 @@ class RealtimeAgent:
         """
         while True:
             await self._connected_event.wait()
+            generation = self._connection_generation
             async for event in self.model.events():
                 await self._on_model_event(event)
+            if generation != self._connection_generation:
+                continue
             self._mark_disconnected()
             self._finish_reply(ReplyFinishedReason.ERROR)
             logger.info(
@@ -708,14 +993,29 @@ class RealtimeAgent:
                     self.state.append_context(self.name, [event.tool_call])
 
             case me.ResponseDoneEvent():
-                self._metrics.input_tokens = event.input_tokens
-                self._metrics.output_tokens = event.output_tokens
+                if event.input_tokens is None:
+                    self._ctx_usage.observe_estimate(
+                        estimate_context_tokens(self.state.context),
+                    )
+                else:
+                    self._ctx_usage.observe_provider_report(
+                        event.input_tokens,
+                        event.output_tokens,
+                    )
+                if event.input_tokens is not None:
+                    self._metrics.input_tokens = event.input_tokens
+                if event.output_tokens is not None:
+                    self._metrics.output_tokens = event.output_tokens
                 tail = self.state.context[-1] if self.state.context else None
-                if tail is not None and tail.id == self._reply_id:
+                if (
+                    tail is not None
+                    and tail.id == self._reply_id
+                    and event.input_tokens is not None
+                ):
                     tail.append_usage(
                         Usage(
                             input_tokens=event.input_tokens,
-                            output_tokens=event.output_tokens,
+                            output_tokens=event.output_tokens or 0,
                         ),
                     )
                 if self._pending_tools and self.toolkit is not None:
@@ -802,6 +1102,7 @@ class RealtimeAgent:
             self.state.context.append(
                 UserMsg(name="user", content=turn, id=reply_id),
             )
+        self._ctx_usage.note_local_append()
 
     def _merge_user(self, text: str) -> bool:
         """Append *text* to the previous user turn that endpointing split.
@@ -899,18 +1200,37 @@ class RealtimeAgent:
 
     def _finish_reply(self, reason: ReplyFinishedReason) -> None:
         """Close the open reply, if any, response included."""
+        finished_response = self._reply
         self._finish_response()
+        if (
+            reason == ReplyFinishedReason.COMPLETED
+            and finished_response is not None
+            and finished_response.audio_started
+        ):
+            self._playout_reply = finished_response
+        elif finished_response is not None:
+            self._playout_reply = None
         if not self._reply_id:
             return
-        self._emit(
-            ReplyEndEvent(
-                session_id=self.state.session_id,
-                reply_id=self._reply_id,
-                finished_reason=reason,
-            ),
+        event = ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self._reply_id,
+            finished_reason=reason,
         )
+        for message in reversed(self.state.context):
+            if message.id == self._reply_id:
+                message.append_event(event)
+                break
+        self._emit(event)
         self._reply_id = ""
         self._continuing = False
+        if reason == ReplyFinishedReason.COMPLETED and not self._pending_tools:
+            self._tasks.add(
+                asyncio.create_task(
+                    self._compression_pass(),
+                    name="rt-compress",
+                ),
+            )
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
         """Emit a transcript delta, opening the block on first use."""
@@ -1122,7 +1442,7 @@ class RealtimeAgent:
         self._confirmations[call.id] = future
         try:
             result = await asyncio.wait_for(future, timeout=300)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             return False
         finally:
             self._confirmations.pop(call.id, None)
@@ -1168,6 +1488,7 @@ class RealtimeAgent:
             output=output,
             state=state,
         )
+        block = await self._truncate_tool_result(block)
         # The result belongs to the reply that made the call, which may no
         # longer be the current one if the user interrupted a slow tool.
         for msg in reversed(self.state.context):
@@ -1176,4 +1497,54 @@ class RealtimeAgent:
                 break
         else:
             self.state.append_context(self.name, [block])
+        self._ctx_usage.note_local_append()
         await self.model.push_tool_result(block)
+
+    async def _truncate_tool_result(
+        self,
+        block: ToolResultBlock,
+    ) -> ToolResultBlock:
+        """Enforce ``tool_result_limit`` on a tool result before it
+        enters the session context — both the local transcript mirror
+        and the provider-side one via ``push_tool_result``.
+
+        The realtime model offers no token-counting endpoint, so the
+        budget is enforced with a chars ≈ tokens/4 estimate, the same
+        conservative basis as the usage fallback. The full result is
+        offloaded to the workspace when one is attached, mirroring the
+        text-mode agent's truncation reminder.
+        """
+        output = block.output
+        if not isinstance(output, str):
+            return block
+        if len(output) < self.context_config.tool_result_limit * 4:
+            return block
+
+        offload_reminder = ""
+        if self.workspace is not None:
+            try:
+                path = await self.workspace.offload_tool_result(
+                    self.state.session_id,
+                    ToolResultBlock(
+                        id=block.id,
+                        name=block.name,
+                        output=output,
+                        state=block.state,
+                    ),
+                )
+                offload_reminder = (
+                    f" You can refer to the file in '{path}' "
+                    f"for the truncated content if needed."
+                )
+            except Exception:
+                logger.warning(
+                    "RealtimeAgent: failed to offload an oversized tool "
+                    "result; the excess is dropped",
+                    exc_info=True,
+                )
+        block.output = output[: self.context_config.tool_result_limit * 4] + (
+            "\n<<<TRUNCATED>>>\n<system-reminder>The remaining content "
+            "has been omitted for limited context."
+            f"{offload_reminder}</system-reminder>"
+        )
+        return block

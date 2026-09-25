@@ -444,6 +444,16 @@
 		"clear": "Clear selection",
 		"noFallback": "No fallback"
 	},
+	"realtime": {
+		"selectModel": "Voice model",
+		"parameters": "Realtime voice parameters",
+		"noModels": "No realtime voice models are available.",
+		"disable": "Disable voice model",
+		"selectFirst": "Select a voice model first",
+		"start": "Start voice conversation",
+		"stop": "End voice conversation",
+		"connecting": "Connecting voice conversation"
+	},
 	"embedding-select": {
 		"placeholder": "Select an embedding model",
 		"loading": "Loading…",

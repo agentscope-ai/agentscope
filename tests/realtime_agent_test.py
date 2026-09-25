@@ -1,20 +1,28 @@
-# -*- coding: utf-8 -*-
 """Unit tests for RealtimeAgent, driven by a scripted model and a fake
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
 import asyncio
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
-from utils import AnyString
+from utils import AnyString, MockModel
 
-from agentscope.agent import RealtimeAgent, TurnAggregator
+from agentscope.agent import (
+    Agent,
+    InjectionConfig,
+    RealtimeAgent,
+    RealtimeContextConfig,
+    TurnAggregator,
+)
+from agentscope.agent._realtime._context_usage import UsageProvenance
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
+    TextBlockEndEvent,
 )
-from agentscope.message import Msg
+from agentscope.message import AssistantMsg, Msg, SystemMsg, UserMsg
+from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.realtime import (
     AudioFrame,
     ControlFrame,
@@ -44,8 +52,10 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
+from agentscope.state import AgentState
 from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
 from agentscope.realtime import _events as me
+from agentscope.types import ReplyFinishedReason
 
 PCM_100MS = b"\x01\x00" * 2400
 
@@ -91,6 +101,7 @@ class ScriptedModel(RealtimeModelBase):
         self.calls: list[str] = []
         self.sessions = 0
         self.instructions = ""
+        self.supports_text_input = False
         self.connect_error: Exception | None = None
         self.push_text_error: Exception | None = None
         self._open = asyncio.Event()
@@ -169,14 +180,73 @@ class ScriptedModel(RealtimeModelBase):
         self.calls.append(f"truncate({item_id},{played_ms}ms,{played_text!r})")
 
 
+class HistoryScriptedModel(ScriptedModel):
+    """Records structured history supplied for each new model session."""
+
+    supports_history_replay = True
+
+    def __init__(self, scripts: list[list[Any]]) -> None:
+        super().__init__(scripts)
+        self.replayed: list[list[Msg]] = []
+
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Keep a deep copy so later context changes cannot affect it."""
+        replay = [message.model_copy(deep=True) for message in messages]
+        self.replayed.append(replay)
+        self.calls.append("replay_history")
+
+
+class QueueSessionModel(ScriptedModel):
+    """Keeps each session's event iterator alive on its own queue."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.event_queues: list[asyncio.Queue[me.ModelEvent | None]] = []
+        self.iterator_started: list[asyncio.Event] = []
+        self.iterator_finished: list[asyncio.Event] = []
+
+    async def connect(
+        self,
+        instructions: str,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Open a session with a distinct event queue."""
+        await super().connect(instructions, tools, **kwargs)
+        self.event_queues.append(asyncio.Queue())
+        self.iterator_started.append(asyncio.Event())
+        self.iterator_finished.append(asyncio.Event())
+
+    async def events(self) -> AsyncIterator[me.ModelEvent]:
+        """Yield only events belonging to the current session."""
+        index = self.sessions - 1
+        queue = self.event_queues[index]
+        self.iterator_started[index].set()
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    return
+                yield event
+        finally:
+            self.iterator_finished[index].set()
+
+
 class FakeTransport(TransportBase):
     """Emits ``frames`` chunks of silence, reports 320 ms played."""
 
     input_sample_rate = 16000
     output_sample_rate = 24000
 
-    def __init__(self, frames: int) -> None:
+    def __init__(
+        self,
+        frames: int,
+        played_ms: int = 320,
+        reported_item: str | None = None,
+    ) -> None:
         self.frames = frames
+        self.played_ms = played_ms
+        self.reported_item = reported_item
         self.item = ""
         self.cleared = 0
         self.started = 0
@@ -206,10 +276,14 @@ class FakeTransport(TransportBase):
         return self.playout()
 
     def playout(self) -> PlayoutPosition:
-        """Always 320 ms into the current item."""
+        """Report the configured position in the current item."""
         return PlayoutPosition(
-            item_id=self.item,
-            played_ms=320,
+            item_id=(
+                self.reported_item
+                if self.reported_item is not None
+                else self.item
+            ),
+            played_ms=self.played_ms,
             first_played_at=1.0,
         )
 
@@ -251,8 +325,28 @@ class EndOnSecondFrameVAD(VADBase):
         self.seen = 0
 
 
+# pylint: disable-next=too-many-public-methods
 class RealtimeAgentTest(IsolatedAsyncioTestCase):
     """Behaviour of the turn-taking state machine."""
+
+    async def test_user_transcription_stales_context_usage(self) -> None:
+        """A local transcript append makes an older usage count stale."""
+        agent = RealtimeAgent("Friday", "be brief", ScriptedModel([]))
+        agent._ctx_usage.observe_provider_report(500, 20)
+
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u1", text="hello"),
+        )
+        self.assertTrue(agent._ctx_usage.is_stale)
+        self.assertEqual(agent._ctx_usage.local_appends_since_observation, 1)
+
+        agent._ctx_usage.observe_provider_report(600, 20)
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u2", text="again"),
+        )
+        self.assertEqual(len(agent.state.context), 1)
+        self.assertTrue(agent._ctx_usage.is_stale)
+        self.assertEqual(agent._ctx_usage.local_appends_since_observation, 1)
 
     async def _collect(
         self,
@@ -338,6 +432,225 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [("user", "讲个故事"), ("assistant", "从前有座山山里有座庙")],
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
+
+    async def test_barge_in_after_response_done_clears_playout(self) -> None:
+        """A completed response remains interruptible while its queued
+        audio is still playing."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3)
+        rebuilt = Msg(
+            id="r1",
+            role="assistant",
+            name="Friday",
+            content=[],
+        )
+        correction_events = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if getattr(event, "reply_id", None) == "r1":
+                    rebuilt.append_event(event)
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    correction_events.append(
+                        event.model_dump(exclude={"id", "created_at"}),
+                    )
+
+        self.assertEqual(
+            correction_events,
+            [
+                {
+                    "type": "TEXT_BLOCK_END",
+                    "metadata": {},
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "text": "从前有座山山里有座庙",
+                },
+            ],
+        )
+        self.assertEqual(rebuilt.get_text_content(), "从前有座山山里有座庙")
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,320ms,'从前有座山山里有座庙')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (
+                    message.role,
+                    message.get_text_content(),
+                    message.finished_reason,
+                )
+                for message in agent.state.context
+            ],
+            [
+                ("user", "讲个故事", None),
+                (
+                    "assistant",
+                    "从前有座山山里有座庙",
+                    ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    async def test_barge_in_after_completed_playout_keeps_reply(self) -> None:
+        """Speaking after all queued audio played does not truncate it."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3, played_ms=700)
+        correction_events = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    correction_events.append(event)
+
+        self.assertListEqual(correction_events, [])
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (
+                    message.role,
+                    message.get_text_content(),
+                    message.finished_reason,
+                )
+                for message in agent.state.context
+            ],
+            [
+                ("user", "讲个故事", None),
+                (
+                    "assistant",
+                    "从前有座山山里有座庙庙里有个老和尚",
+                    ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
+    async def test_zero_playout_keeps_no_transcript_prefix(self) -> None:
+        """A response interrupted before playback retains no first word."""
+        script = REPLY_R1 + [
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=10,
+                output_tokens=20,
+            ),
+            me.SpeechStartedEvent(item_id="u2"),
+        ]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(frames=3, played_ms=0)
+        corrections = []
+
+        async with agent, transport:
+            async for event in agent.reply_stream(transport):
+                if (
+                    isinstance(event, TextBlockEndEvent)
+                    and event.text is not None
+                ):
+                    corrections.append(
+                        event.model_dump(exclude={"id", "created_at"}),
+                    )
+
+        self.assertEqual(
+            corrections,
+            [
+                {
+                    "type": "TEXT_BLOCK_END",
+                    "metadata": {},
+                    "reply_id": "r1",
+                    "block_id": AnyString(),
+                    "text": "",
+                },
+            ],
+        )
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,0ms,'')",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("user", "讲个故事")],
+        )
+
+    async def test_mismatched_playout_still_cancels_active_reply(self) -> None:
+        """A stale previous item cannot make the current reply
+        uninterruptible."""
+        script = REPLY_R1 + [me.SpeechStartedEvent(item_id="u2")]
+        model = ScriptedModel([script])
+        agent = RealtimeAgent("Friday", "be brief", model)
+        transport = FakeTransport(
+            frames=3,
+            played_ms=700,
+            reported_item="previous-item",
+        )
+
+        async with agent:
+            summary = await self._collect(agent, transport)
+
+        self.assertListEqual(
+            summary,
+            [
+                ("user", "讲个故事"),
+                ("reply_end", "interrupted"),
+            ],
+        )
+        self.assertEqual(transport.cleared, 1)
+        self.assertListEqual(
+            [call for call in model.calls if call != "push_audio"],
+            [
+                "connect(session=1,td_off=False)",
+                "truncate(r1,0ms,'')",
+                "cancel",
+                "close",
+            ],
+        )
+        self.assertListEqual(
+            [
+                (message.role, message.get_text_content())
+                for message in agent.state.context
+            ],
+            [("user", "讲个故事")],
+        )
 
     async def test_interrupt_stops_active_reply(self) -> None:
         """``interrupt()`` cuts the reply in flight to what was heard."""
@@ -443,6 +756,378 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
             [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
+        )
+
+    async def test_reconnect_fallback_injects_summary_before_turns(
+        self,
+    ) -> None:
+        """A provider without replay gets the compressed summary at the
+        top of the reconnect instructions, followed by the verbatim
+        post-checkpoint turns."""
+        state = AgentState(
+            summary="The user greets Friday in Chinese.",
+            context=[
+                UserMsg(name="user", content="讲个故事"),
+                AssistantMsg(
+                    name="Friday",
+                    content="从前有座山",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+        model = ScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        agent = RealtimeAgent("Friday", "be brief", model, state=state)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            await self._collect(agent, FakeTransport(frames=2))
+
+        self.assertEqual(model.sessions, 2)
+        self.assertEqual(
+            model.instructions,
+            "be brief\n\n## Conversation so far\n"
+            "summary: The user greets Friday in Chinese.\n"
+            "user: 讲个故事\n"
+            "Friday: 从前有座山",
+        )
+
+    async def test_structured_history_is_replayed_on_reconnect(self) -> None:
+        """A replay-capable provider gets roles, summary, and no fallback."""
+        state = AgentState(
+            summary="Earlier summary",
+            context=[
+                UserMsg(name="user", content="hello"),
+                AssistantMsg(
+                    name="Friday",
+                    content="hi",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="partial",
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="legacy complete",
+                    finished_at="2026-01-01T00:00:00",
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content="unfinished",
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+        model = HistoryScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        agent = RealtimeAgent("Friday", "be brief", model, state=state)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            disconnected_before_reconnect = not agent._connected
+            await self._collect(agent, FakeTransport(frames=1))
+
+        expected_replay = [
+            {
+                "name": "summary",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Earlier summary",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "system",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "user",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hi",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": None,
+                "finished_reason": "completed",
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "name": "Friday",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "legacy complete",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "role": "assistant",
+                "id": AnyString(),
+                "metadata": {},
+                "created_at": AnyString(),
+                "usage": None,
+                "finished_at": "2026-01-01T00:00:00",
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+        ]
+        self.assertDictEqual(
+            {
+                "disconnected_before_reconnect": (
+                    disconnected_before_reconnect
+                ),
+                "instructions": model.instructions,
+                "sessions": model.sessions,
+                "calls": model.calls,
+                "replayed": [
+                    [message.model_dump(mode="json") for message in replay]
+                    for replay in model.replayed
+                ],
+            },
+            {
+                "disconnected_before_reconnect": True,
+                "instructions": "be brief",
+                "sessions": 2,
+                "calls": [
+                    "connect(session=1,td_off=False)",
+                    "replay_history",
+                    "connect(session=2,td_off=False)",
+                    "replay_history",
+                    "push_audio",
+                    "close",
+                ],
+                "replayed": [expected_replay, expected_replay],
+            },
+        )
+
+    async def test_completed_chat_reply_is_replayed_in_realtime(self) -> None:
+        """Switching modes preserves the complete preceding chat turn."""
+        story = "从前有一只小猫，它每天都在窗边等待朋友回来。"
+        chat_model = MockModel()
+        chat_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text=story)],
+                    is_last=True,
+                ),
+            ],
+        )
+        chat_agent = Agent(
+            name="Friday",
+            system_prompt="be brief",
+            model=chat_model,
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        await chat_agent.reply(
+            UserMsg(name="user", content="讲一个一百字的故事"),
+        )
+
+        realtime_model = HistoryScriptedModel([[]])
+        realtime_agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            realtime_model,
+            state=chat_agent.state,
+        )
+        async with realtime_agent:
+            replayed = [
+                message.model_dump(mode="json")
+                for message in realtime_model.replayed[0]
+            ]
+
+        fallback_model = ScriptedModel([[]])
+        fallback_agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            fallback_model,
+            state=chat_agent.state,
+        )
+        async with fallback_agent:
+            instructions = fallback_model.instructions
+
+        self.assertDictEqual(
+            {
+                "replayed": replayed,
+                "fallback_instructions": instructions,
+            },
+            {
+                "replayed": [
+                    message.model_dump(mode="json")
+                    for message in chat_agent.state.context
+                ],
+                "fallback_instructions": (
+                    "be brief\n\n## Conversation so far\n"
+                    "user: 讲一个一百字的故事\n"
+                    f"Friday: {story}"
+                ),
+            },
+        )
+
+    def test_history_fallback_keeps_only_complete_recent_messages(
+        self,
+    ) -> None:
+        """Text fallback drops old messages instead of slicing one in half."""
+        old_text = "旧" * 20_000
+        recent_text = "新" * 20_000
+        fallback = RealtimeAgent._format_history_fallback(
+            [
+                UserMsg(name="old", content=old_text),
+                UserMsg(name="recent", content=recent_text),
+            ],
+        )
+
+        self.assertDictEqual(
+            {
+                "fallback": fallback,
+                "contains_old_message": old_text in fallback,
+                "length": len(fallback),
+            },
+            {
+                "fallback": f"recent: {recent_text}",
+                "contains_old_message": False,
+                "length": len("recent: ") + len(recent_text),
+            },
+        )
+
+    def test_history_fallback_keeps_summary_beyond_budget(self) -> None:
+        """The compression summary survives the char budget no matter
+        what — only verbatim turns are dropped, oldest first."""
+        oldest = UserMsg(name="u0", content="旧" * 20_000)
+        newer = UserMsg(name="u1", content="中" * 20_000)
+        fallback = RealtimeAgent._format_history_fallback(
+            [
+                SystemMsg(name="summary", content="the distilled past"),
+                oldest,
+                newer,
+                UserMsg(name="recent", content="newest"),
+            ],
+        )
+
+        self.assertDictEqual(
+            {
+                "summary_kept": "summary: the distilled past" in fallback,
+                "summary_first": fallback.startswith(
+                    "summary: the distilled past",
+                ),
+                "oldest_dropped": oldest.get_text_content() not in fallback,
+                "newer_kept": newer.get_text_content() in fallback,
+                "newest_kept": fallback.endswith("recent: newest"),
+            },
+            {
+                "summary_kept": True,
+                "summary_first": True,
+                "oldest_dropped": True,
+                "newer_kept": True,
+                "newest_kept": True,
+            },
+        )
+
+    async def test_old_downlink_cannot_disconnect_new_session(self) -> None:
+        """Late completion of an old iterator leaves reconnection active."""
+        model = QueueSessionModel()
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            await model.iterator_started[0].wait()
+            old_queue = model.event_queues[0]
+            agent._mark_disconnected()  # pylint: disable=protected-access
+            await agent.connect()
+            old_queue.put_nowait(None)
+            await model.iterator_finished[0].wait()
+            await model.iterator_started[1].wait()
+
+            active_state = {
+                "connected": agent._connected,  # pylint: disable=W0212
+                "connection_generation": agent._connection_generation,
+                "sessions": model.sessions,
+                "iterator_started": [
+                    event.is_set() for event in model.iterator_started
+                ],
+                "iterator_finished": [
+                    event.is_set() for event in model.iterator_finished
+                ],
+            }
+
+        self.assertDictEqual(
+            {
+                "active": active_state,
+                "closed": {
+                    "connected": agent._connected,
+                    "iterator_finished": [
+                        event.is_set() for event in model.iterator_finished
+                    ],
+                    "calls": model.calls,
+                },
+            },
+            {
+                "active": {
+                    "connected": True,
+                    "connection_generation": 2,
+                    "sessions": 2,
+                    "iterator_started": [True, True],
+                    "iterator_finished": [True, False],
+                },
+                "closed": {
+                    "connected": False,
+                    "iterator_finished": [True, True],
+                    "calls": [
+                        "connect(session=1,td_off=False)",
+                        "connect(session=2,td_off=False)",
+                        "close",
+                    ],
+                },
+            },
         )
 
     async def test_provider_timeout_reconnects_on_text(self) -> None:
@@ -1289,8 +1974,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },
-                    "finished_at": None,
-                    "finished_reason": None,
+                    "finished_at": AnyString(),
+                    "finished_reason": "completed",
                     "structured_output": None,
                     "error": None,
                 },
@@ -1380,3 +2065,305 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
                 "close",
             ],
         )
+
+
+class FakeOffloader:
+    """Records offload calls; hands back fake workspace paths."""
+
+    def __init__(self) -> None:
+        self.contexts: list[list[Msg]] = []
+        self.tool_results: list[ToolResultBlock] = []
+
+    async def offload_context(
+        self,
+        session_id: str,
+        msgs: list[Msg],
+    ) -> str:
+        """Record and 'store' the compressed context."""
+        self.contexts.append([m.model_copy(deep=True) for m in msgs])
+        return (
+            f"workspace://sessions/{session_id}/"
+            f"context-{len(self.contexts)}.json"
+        )
+
+    async def offload_tool_result(
+        self,
+        session_id: str,
+        tool_result: ToolResultBlock,
+    ) -> str:
+        """Record and 'store' the truncated tool result."""
+        self.tool_results.append(tool_result.model_copy(deep=True))
+        return (
+            f"workspace://sessions/{session_id}/"
+            f"tool-{len(self.tool_results)}.json"
+        )
+
+
+def _compression_summary_response() -> StructuredResponse:
+    """A structured summary matching the default template's fields."""
+    return StructuredResponse(
+        content={
+            "task_overview": "voice chat",
+            "current_state": "talking",
+            "important_discoveries": "none",
+            "next_steps": "keep going",
+            "context_to_preserve": "greeting",
+        },
+    )
+
+
+class RealtimeAgentCompressionTest(IsolatedAsyncioTestCase):
+    """Context compression: triggering, committing, drift rejection."""
+
+    def _agent(
+        self,
+        context_length: int = 100,
+        tool_result_limit: int = 50_000,
+        workspace: FakeOffloader | None = None,
+    ) -> RealtimeAgent:
+        """An agent whose compression model returns a canned summary."""
+        compression_model = MockModel()
+        compression_model.set_structured_response(
+            _compression_summary_response(),
+        )
+        return RealtimeAgent(
+            "Friday",
+            "be brief",
+            ScriptedModel([[]]),
+            context_config=RealtimeContextConfig(
+                context_length=context_length,
+                tool_result_limit=tool_result_limit,
+                compression_model=compression_model,
+            ),
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _turns(count: int) -> list[Msg]:
+        """An alternating user/assistant transcript."""
+        return [
+            UserMsg(name="user", content=f"turn {i}")
+            if i % 2 == 0
+            else AssistantMsg(name="Friday", content=f"reply {i}")
+            for i in range(count)
+        ]
+
+    async def _run_compression_pass(self, agent: RealtimeAgent) -> None:
+        """Start the pass and drive its task to completion."""
+        await agent._compression_pass()
+        while agent._compress_in_flight:
+            await asyncio.sleep(0)
+
+    async def test_compression_skips_below_trigger(self) -> None:
+        """Below trigger_ratio the compression pass does not start."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(6))
+        agent._ctx_usage.observe_provider_report(79, 10)
+
+        await self._run_compression_pass(agent)
+
+        self.assertDictEqual(
+            {
+                "started": agent._compress_in_flight,
+                "pending": agent._pending_checkpoint,
+                "summary": agent.state.summary,
+                "context": len(agent.state.context),
+            },
+            {
+                "started": False,
+                "pending": None,
+                "summary": "",
+                "context": 6,
+            },
+        )
+
+    async def test_compression_skips_without_estimate(self) -> None:
+        """No provider usage report, no compression — even with a full
+        transcript, because the occupancy is unknown."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(6))
+
+        await self._run_compression_pass(agent)
+
+        self.assertFalse(agent._compress_in_flight)
+        self.assertListEqual(
+            [m.get_text_content() for m in agent.state.context],
+            [f"turn {i}" if i % 2 == 0 else f"reply {i}" for i in range(6)],
+        )
+
+    async def test_missing_provider_usage_uses_transcript_estimate(
+        self,
+    ) -> None:
+        """Providers that omit usage still produce an estimate that can
+        trigger compression."""
+        agent = self._agent(context_length=10)
+        agent.state.context.extend(self._turns(6))
+
+        await agent._on_model_event(me.ResponseDoneEvent(item_id="r1"))
+
+        self.assertEqual(
+            agent._ctx_usage.provenance,
+            UsageProvenance.ESTIMATED,
+        )
+        self.assertGreater(agent._ctx_usage.estimate_tokens or 0, 8)
+
+        await self._run_compression_pass(agent)
+
+        self.assertTrue(agent.state.summary)
+        self.assertEqual(agent.state.context, [])
+
+    async def test_compression_commits_summary_at_boundary(self) -> None:
+        """At a quiet boundary with a stable prefix, the transcript is
+        replaced by the summary and the covered messages are offloaded."""
+        workspace = FakeOffloader()
+        agent = self._agent(context_length=100, workspace=workspace)
+        agent.state.context.extend(self._turns(6))
+        agent._ctx_usage.observe_provider_report(200, 10)
+
+        await self._run_compression_pass(agent)
+
+        self.assertDictEqual(
+            {
+                "summary": agent.state.summary,
+                "context_left": len(agent.state.context),
+                "offloaded_turns": len(workspace.contexts[0]),
+                "offload_path_cited": (
+                    "workspace://sessions/" in (agent.state.summary or "")
+                ),
+            },
+            {
+                "summary": AnyString(),
+                "context_left": 0,
+                "offloaded_turns": 6,
+                "offload_path_cited": True,
+            },
+        )
+        self.assertIn("# Task Overview\nvoice chat", agent.state.summary)
+
+    async def test_compression_rejects_modified_prefix(self) -> None:
+        """A snapshot whose prefix was edited after snapshotting cannot
+        be committed — the summary would describe text nobody sent."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "stale summary",
+        }
+        # The user talked over the summarized span, as in a barge-in.
+        agent.state.context[0].content = [TextBlock(text="tampered")]
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual(len(agent.state.context), 4)
+        self.assertIsNotNone(agent._pending_checkpoint)
+
+    async def test_compression_rejects_shrunk_prefix(self) -> None:
+        """A prefix that lost a message cannot be committed against ids
+        that expect it."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "stale summary",
+        }
+        agent.state.context.pop()
+        agent.state.context.append(UserMsg(name="user", content="new"))
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertIsNotNone(agent._pending_checkpoint)
+
+    async def test_compression_defers_while_tools_pending(self) -> None:
+        """The commit waits until no tool results are outstanding, so a
+        late result cannot land after its context was summarized away."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "pending summary",
+        }
+        agent._pending_tools["c1"] = ToolCallBlock(
+            id="c1",
+            name="stream_tool",
+            input="{}",
+        )
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual(len(agent.state.context), 4)
+
+    async def test_compression_commit_succeeds_when_quiet(self) -> None:
+        """The same checkpoint commits once nothing is in flight and the
+        prefix is byte-identical."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "committed summary",
+        }
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "committed summary")
+        self.assertListEqual(agent.state.context, [])
+        self.assertIsNone(agent._pending_checkpoint)
+
+    async def test_oversized_tool_result_is_truncated_and_offloaded(
+        self,
+    ) -> None:
+        """A tool result over ``tool_result_limit`` enters the context
+        truncated, citing the workspace path that holds the full text."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        block = ToolResultBlock(id="c1", name="t", output="x" * 500)
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertDictEqual(
+            {
+                "starts_with_budget": result.output.startswith("x" * 40),
+                "over_budget_dropped": ("x" * 41) not in result.output,
+                "truncated_marker": "<<<TRUNCATED>>>" in result.output,
+                "offload_path_cited": (
+                    "workspace://sessions/" in result.output
+                ),
+                "offloaded_intact": [r.output for r in workspace.tool_results],
+            },
+            {
+                "starts_with_budget": True,
+                "over_budget_dropped": True,
+                "truncated_marker": True,
+                "offload_path_cited": True,
+                "offloaded_intact": ["x" * 500],
+            },
+        )
+
+    async def test_small_tool_result_passes_through(self) -> None:
+        """A tool result within the limit is untouched and not offloaded."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        block = ToolResultBlock(id="c1", name="t", output="short")
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertEqual(result.output, "short")
+        self.assertListEqual(workspace.tool_results, [])
+
+    async def test_oversized_tool_result_without_workspace(self) -> None:
+        """Without a workspace the excess is dropped; the reminder notes
+        the omission but cites no path."""
+        agent = self._agent(tool_result_limit=10, workspace=None)
+        block = ToolResultBlock(id="c1", name="t", output="y" * 500)
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertTrue(result.output.startswith("y" * 40))
+        self.assertIn("<<<TRUNCATED>>>", result.output)
+        self.assertNotIn("workspace://", result.output)

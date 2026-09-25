@@ -30,6 +30,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
 /** How long a load may run before it is worth showing a spinner. */
@@ -69,7 +70,7 @@ interface ChatContentProps {
 	loading?: boolean;
 	/**
 	 * Reply lifecycle phase from ``useMessages`` — forwarded to
-	 * ``TextInput`` so the single send / stop button can pick its
+	 * ``TextInput`` so the shared voice / send / stop button can pick its
 	 * icon, tooltip, disabled state and click handler from one source.
 	 */
 	phase: ReplyPhase;
@@ -85,6 +86,9 @@ interface ChatContentProps {
 	className?: string;
 	/** Called when the user clicks the stop button. */
 	onInterrupt?: () => void;
+	voiceState?: RealtimeConnectionState;
+	onVoiceToggle?: () => void;
+	voiceDisabled?: boolean;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -121,6 +125,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	autoComplete,
 	className,
 	onInterrupt,
+	voiceState,
+	onVoiceToggle,
+	voiceDisabled,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -295,6 +302,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						fileProcessor={fileProcessor}
 						phase={phase}
 						onInterrupt={onInterrupt}
+						voiceState={voiceState}
+						onVoiceToggle={onVoiceToggle}
+						voiceDisabled={voiceDisabled}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
 								<WorkingDirectoryDialog

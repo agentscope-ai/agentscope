@@ -19,11 +19,12 @@ from ._index_task_consumer import IndexTaskConsumer
 from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._mcp_render import MCPRenderError, render_mcp
-from ._model import get_model
+from ._model import get_model, get_realtime_model
 from ._tts_model import get_tts_model
 from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
+from ._realtime import RealtimeService
 from ._toolkit import get_toolkit
 from ._download_token import sign_download_token, verify_download_token
 from ._workspace import GitStatus, WorkspaceService, WorkspaceStatus
@@ -44,6 +45,7 @@ __all__ = [
     "KnowledgeBaseView",
     "MCPRenderError",
     "ResourceAccessService",
+    "RealtimeService",
     "SessionService",
     "SessionStatus",
     "SessionProjection",
@@ -54,6 +56,7 @@ __all__ = [
     "WorkspaceStatus",
     "get_embedding_model",
     "get_model",
+    "get_realtime_model",
     "get_tts_model",
     "get_toolkit",
     "render_mcp",
