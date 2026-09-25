@@ -16,7 +16,6 @@ from agentscope.classifier import (
 from agentscope.credential import CredentialBase
 from agentscope.event import (
     ModelCallStartEvent,
-    ReplyStartEvent,
     UserConfirmResultEvent,
 )
 from agentscope.formatter import OpenAIChatFormatter
