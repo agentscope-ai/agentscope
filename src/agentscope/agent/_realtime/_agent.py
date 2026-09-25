@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """The realtime voice agent."""
 import asyncio
 import base64

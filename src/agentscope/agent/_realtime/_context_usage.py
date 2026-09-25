@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Session-scoped estimate of the provider-side context occupancy.
 
 Realtime sessions keep the working context on the provider's side; the

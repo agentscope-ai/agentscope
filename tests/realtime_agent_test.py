@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for RealtimeAgent, driven by a scripted model and a fake
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
@@ -326,9 +325,8 @@ class EndOnSecondFrameVAD(VADBase):
         self.seen = 0
 
 
-class RealtimeAgentTest(
-    IsolatedAsyncioTestCase,
-):  # pylint: disable=too-many-public-methods
+# pylint: disable-next=too-many-public-methods
+class RealtimeAgentTest(IsolatedAsyncioTestCase):
     """Behaviour of the turn-taking state machine."""
 
     async def test_user_transcription_stales_context_usage(self) -> None:

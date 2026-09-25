@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for the realtime context-usage tracker.
 
 Pure state-machine tests: no model, no transport, no event harness.
