@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Iterator, Literal, TYPE_CHECKING
 
 from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
@@ -173,6 +173,35 @@ def _extract_image_blocks(
     return blocks
 
 
+def _body_elements(body: Any) -> Iterator[Any]:
+    """Yield the top-level content elements of a document body.
+
+    Block-level content controls (``w:sdt`` — how Word writes its
+    automatic table of contents and every developer-mode block control)
+    are containers, not content: their ``w:sdtContent`` children are
+    yielded in their place, recursively, so a control cannot hide a
+    paragraph or a table.  Inline ``w:sdt`` needs no handling here, as
+    its runs are already descendants of the paragraph holding it.
+
+    Args:
+        body (`Any`):
+            The ``w:body`` element of a python-docx document.
+
+    Yields:
+        `Any`:
+            Each body child, with content controls replaced by theirs.
+    """
+    from docx.oxml.ns import qn
+
+    for element in body:
+        if element.tag == qn("w:sdt"):
+            content = element.find(qn("w:sdtContent"))
+            if content is not None:
+                yield from _body_elements(content)
+        else:
+            yield element
+
+
 class WordParser(ParserBase):
     """Parser for Word ``.docx`` files.
 
@@ -294,7 +323,7 @@ class WordParser(ParserBase):
             )
             text_buffer.clear()
 
-        for element in doc.element.body:
+        for element in _body_elements(doc.element.body):
             if isinstance(element, CT_P):
                 para = Paragraph(element, doc)
 
