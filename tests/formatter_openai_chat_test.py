@@ -420,6 +420,68 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_chat_formatter_unsupported_audio_skipped(
+        self,
+    ) -> None:
+        """Audio OpenAI cannot encode is skipped, not raised out of format."""
+        fmt = OpenAIChatFormatter()
+
+        with self.assertLogs("as", level="WARNING") as logs:
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="listen to this"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="b2dnIGRhdGE=",
+                                    media_type="audio/ogg",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+
+        # The audio block is dropped; the text beside it survives.
+        self.assertEqual(
+            res[0]["content"],
+            [{"type": "text", "text": "listen to this"}],
+        )
+        self.assertIn("audio/ogg", logs.output[0])
+
+    @patch("agentscope.formatter._openai_formatter.requests.get")
+    async def test_chat_formatter_unsupported_audio_not_fetched(
+        self,
+        mock_get: Mock,
+    ) -> None:
+        """An un-encodable remote audio block is skipped before download."""
+        fmt = OpenAIChatFormatter()
+
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="listen to this"),
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/voice.ogg",
+                                media_type="audio/ogg",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertEqual(
+            res[0]["content"],
+            [{"type": "text", "text": "listen to this"}],
+        )
+        mock_get.assert_not_called()
+
     @patch("agentscope.formatter._openai_formatter.requests.get")
     async def test_chat_formatter_extensionless_url_audio(
         self,
