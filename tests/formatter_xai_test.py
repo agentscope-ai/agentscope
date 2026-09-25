@@ -187,6 +187,7 @@ def _build_xai_sdk_stub() -> None:
 _build_xai_sdk_stub()
 
 
+# pylint: disable=too-many-public-methods
 class TestXAIFormatter(IsolatedAsyncioTestCase):
     """Comprehensive tests for XAI Chat and MultiAgent formatters.
 
