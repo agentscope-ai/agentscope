@@ -14,6 +14,7 @@ from agentscope.agent import (
     RealtimeContextConfig,
     TurnAggregator,
 )
+from agentscope.agent._realtime._context_usage import UsageProvenance
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     ReplyEndEvent,
@@ -325,10 +326,13 @@ class EndOnSecondFrameVAD(VADBase):
         self.seen = 0
 
 
-class RealtimeAgentTest(IsolatedAsyncioTestCase):
+class RealtimeAgentTest(
+    IsolatedAsyncioTestCase,
+):  # pylint: disable=too-many-public-methods
     """Behaviour of the turn-taking state machine."""
 
     async def test_user_transcription_stales_context_usage(self) -> None:
+        """A local transcript append makes an older usage count stale."""
         agent = RealtimeAgent("Friday", "be brief", ScriptedModel([]))
         agent._ctx_usage.observe_provider_report(500, 20)
 
@@ -2189,6 +2193,27 @@ class RealtimeAgentCompressionTest(IsolatedAsyncioTestCase):
             [f"turn {i}" if i % 2 == 0 else f"reply {i}" for i in range(6)],
         )
 
+    async def test_missing_provider_usage_uses_transcript_estimate(
+        self,
+    ) -> None:
+        """Providers that omit usage still produce an estimate that can
+        trigger compression."""
+        agent = self._agent(context_length=10)
+        agent.state.context.extend(self._turns(6))
+
+        await agent._on_model_event(me.ResponseDoneEvent(item_id="r1"))
+
+        self.assertEqual(
+            agent._ctx_usage.provenance,
+            UsageProvenance.ESTIMATED,
+        )
+        self.assertGreater(agent._ctx_usage.estimate_tokens or 0, 8)
+
+        await self._run_compression_pass(agent)
+
+        self.assertTrue(agent.state.summary)
+        self.assertEqual(agent.state.context, [])
+
     async def test_compression_commits_summary_at_boundary(self) -> None:
         """At a quiet boundary with a stable prefix, the transcript is
         replaced by the summary and the covered messages are offloaded."""
@@ -2311,9 +2336,7 @@ class RealtimeAgentCompressionTest(IsolatedAsyncioTestCase):
                 "offload_path_cited": (
                     "workspace://sessions/" in result.output
                 ),
-                "offloaded_intact": [
-                    r.output for r in workspace.tool_results
-                ],
+                "offloaded_intact": [r.output for r in workspace.tool_results],
             },
             {
                 "starts_with_budget": True,
