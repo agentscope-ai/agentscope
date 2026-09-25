@@ -32,6 +32,7 @@ buggy parser cannot rebind a record into another scope.
 """
 
 import asyncio
+from abc import ABC, abstractmethod
 
 from ._document import Chunk
 from ._vdb import VectorRecord, VectorSearchResult, VectorStoreBase
@@ -41,7 +42,49 @@ from ..message import DataBlock, TextBlock
 from ._vdb import DocumentSummary
 
 
-class KnowledgeBase:
+class KnowledgeBaseBase(ABC):
+    """Shared agent-facing contract for knowledge backends."""
+
+    name: str
+    """Agent-oriented knowledge base name."""
+
+    description: str
+    """Description used by agents to decide when to retrieve."""
+
+    def __init__(self, name: str, description: str) -> None:
+        """Initialize the shared descriptive fields."""
+        self.name = name
+        self.description = description
+
+    @abstractmethod
+    async def search(
+        self,
+        queries: list[str | TextBlock | DataBlock],
+        top_k: int = 5,
+        score_threshold: float | None = None,
+    ) -> list[VectorSearchResult]:
+        """Search the backend and return ranked chunks."""
+
+    @abstractmethod
+    async def delete_document(self, document_id: str) -> None:
+        """Delete one document from the backend."""
+
+    @abstractmethod
+    async def list_documents(self) -> list[DocumentSummary]:
+        """List documents stored in the backend."""
+
+    @abstractmethod
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list[Chunk]:
+        """List a page of chunks for one document."""
+
+
+class KnowledgeBase(KnowledgeBaseBase):
     """Runtime handle for one knowledge base.
 
     Binds an embedding model and a vector-store collection together so
@@ -118,8 +161,7 @@ class KnowledgeBase:
                 deployments where every knowledge base owns its
                 collection outright.
         """
-        self.name = name
-        self.description = description
+        super().__init__(name, description)
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._collection = collection
