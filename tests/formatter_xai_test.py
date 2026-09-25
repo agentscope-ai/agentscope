@@ -10,10 +10,13 @@ full assertListEqual comparisons work.
 import os
 import re
 import sys
+import tempfile
+import threading
+from pathlib import Path
 from typing import Any
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from agentscope.formatter import XAIChatFormatter, XAIMultiAgentFormatter
 from agentscope.message import (
@@ -184,6 +187,7 @@ def _build_xai_sdk_stub() -> None:
 _build_xai_sdk_stub()
 
 
+# pylint: disable=too-many-public-methods
 class TestXAIFormatter(IsolatedAsyncioTestCase):
     """Comprehensive tests for XAI Chat and MultiAgent formatters.
 
@@ -416,6 +420,43 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         fmt = XAIChatFormatter()
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_chat_formatter_reads_local_images_off_event_loop(
+        self,
+    ) -> None:
+        """Local image reads do not block the formatter event loop."""
+        fmt = XAIChatFormatter()
+        loop_thread = threading.current_thread()
+        read_threads: list[threading.Thread] = []
+        original_open = open
+
+        def _tracking_open(*args: Any, **kwargs: Any) -> Any:
+            read_threads.append(threading.current_thread())
+            return original_open(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            image_path = Path(tmp_dir) / "image.png"
+            image_path.write_bytes(b"image-data")
+            msg = UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url=image_path.as_uri(),
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            )
+
+            with patch("builtins.open", _tracking_open):
+                res = await fmt.format([msg])
+
+        self.assertEqual(len(res), 1)
+        self.assertTrue(read_threads)
+        self.assertTrue(
+            all(thread is not loop_thread for thread in read_threads),
+        )
 
     # -------------------------------------------------------------------
     # XAIMultiAgentFormatter tests

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Formatters for the OpenAI Responses API."""
+import asyncio
 from abc import ABC
 from copy import deepcopy
 from fnmatch import fnmatch
@@ -210,7 +211,10 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     )
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(block)
+                    formatted = await asyncio.to_thread(
+                        self._format_response_data_block,
+                        block,
+                    )
                     if formatted is not None:
                         content_parts.append(formatted)
 
@@ -258,10 +262,9 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                     },
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = (
-                                    self._format_response_data_block(
-                                        sub,
-                                    )
+                                formatted_sub = await asyncio.to_thread(
+                                    self._format_response_data_block,
+                                    sub,
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -362,7 +365,8 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         {
                             "type": "function_call_output",
                             "call_id": block.id,
-                            "output": self._format_tool_result_output(
+                            "output": await asyncio.to_thread(
+                                self._format_tool_result_output,
                                 block.output,
                             ),
                         },
@@ -506,7 +510,10 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(block)
+                    formatted = await asyncio.to_thread(
+                        self._format_response_data_block,
+                        block,
+                    )
                     if formatted is not None:
                         media_blocks.append(formatted)
 

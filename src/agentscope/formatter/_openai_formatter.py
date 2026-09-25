@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OpenAI formatter for agentscope."""
+import asyncio
 import base64
 from abc import ABC
 from fnmatch import fnmatch
@@ -281,7 +282,8 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
+                    formatted = await asyncio.to_thread(
+                        self._format_openai_data_block,
                         block,
                     )
                     if formatted is not None:
@@ -317,7 +319,8 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": sub.text},
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_openai_data_block(
+                                formatted_sub = await asyncio.to_thread(
+                                    self._format_openai_data_block,
                                     sub,
                                 )
                                 if formatted_sub is not None:
@@ -374,7 +377,8 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_openai_data_block(
+                                fmt_item = await asyncio.to_thread(
+                                    self._format_openai_data_block,
                                     item,
                                 )
                                 if fmt_item is not None:
@@ -516,7 +520,8 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
                     accumulated_text.append(f"{msg.name}: {block.text}")
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
+                    formatted = await asyncio.to_thread(
+                        self._format_openai_data_block,
                         block,
                     )
                     if formatted is not None:

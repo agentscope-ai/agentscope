@@ -7,8 +7,11 @@ other formatter, the ``format()`` method returns a list of
 ``chat_pb2.Message`` proto objects rather than plain dicts, because the
 ``xai_sdk`` chat API accepts proto messages directly.
 """
+import asyncio
 import base64
 from typing import Any, List
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -66,7 +69,7 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url_str.removeprefix("file://")
+                    local_path = url2pathname(urlsplit(url_str).path)
                     with open(local_path, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode(
                             "utf-8",
@@ -162,7 +165,8 @@ class XAIChatFormatter(FormatterBase):
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
-                            hint_args = _xai_user_args_from_blocks(
+                            hint_args = await asyncio.to_thread(
+                                _xai_user_args_from_blocks,
                                 block.hint,
                                 image,
                             )
@@ -171,40 +175,13 @@ class XAIChatFormatter(FormatterBase):
                     elif isinstance(block, TextBlock):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
-                        if block.source.media_type.startswith("image/"):
-                            if isinstance(block.source, URLSource):
-                                url_str = str(block.source.url)
-                                if url_str.startswith("file://"):
-                                    # Local file — read and encode as data URI
-                                    local_path = url_str.removeprefix(
-                                        "file://",
-                                    )
-                                    with open(local_path, "rb") as f:
-                                        encoded = base64.b64encode(
-                                            f.read(),
-                                        ).decode("utf-8")
-                                    content_args.append(
-                                        image(
-                                            f"data:{block.source.media_type};"
-                                            f"base64,{encoded}",
-                                        ),
-                                    )
-                                else:
-                                    content_args.append(image(url_str))
-                            elif isinstance(block.source, Base64Source):
-                                content_args.append(
-                                    image(
-                                        f"data:{block.source.media_type};"
-                                        f"base64,{block.source.data}",
-                                    ),
-                                )
-                        else:
-                            logger.warning(
-                                "Unsupported media type %s for xAI API. "
-                                "Only image/jpeg and image/png are supported. "
-                                "This block will be skipped.",
-                                block.source.media_type,
-                            )
+                        content_args.extend(
+                            await asyncio.to_thread(
+                                _xai_user_args_from_blocks,
+                                [block],
+                                image,
+                            ),
+                        )
                     else:
                         logger.warning(
                             "Unsupported block type %s in user message, "
@@ -302,7 +279,8 @@ class XAIChatFormatter(FormatterBase):
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
-                            hint_args = _xai_user_args_from_blocks(
+                            hint_args = await asyncio.to_thread(
+                                _xai_user_args_from_blocks,
                                 block.hint,
                                 image,
                             )
