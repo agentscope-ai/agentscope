@@ -186,6 +186,29 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 )
             self._sandbox = None
 
+    async def is_healthy(self) -> bool:
+        """Report whether the sandbox is still alive on the server.
+
+        OpenSandbox sandboxes carry a server-enforced ``timeout_seconds``
+        lifetime; once it elapses the server destroys the sandbox without
+        notifying this process. :class:`OpenSandboxWorkspaceManager` calls
+        this before returning a cached workspace so a server-killed
+        sandbox is evicted and rebuilt instead of handed back as an
+        unusable zombie.
+
+        Returns:
+            `bool`:
+                ``False`` before :meth:`initialize` (or after
+                :meth:`close`), and whenever the sandbox no longer
+                responds. ``True`` otherwise.
+        """
+        if self._sandbox is None:
+            return False
+        try:
+            return bool(await self._sandbox.is_healthy())
+        except Exception:
+            return False
+
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace.
 

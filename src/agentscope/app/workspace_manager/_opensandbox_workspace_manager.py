@@ -211,6 +211,13 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         resume it depending on state, or create a fresh sandbox
         otherwise.
 
+        A cache hit is verified against the server before being
+        returned: OpenSandbox sandboxes carry a server-enforced
+        ``timeout_seconds`` lifetime, and the server destroys them
+        silently on expiry. A cached workspace whose sandbox is no
+        longer alive is evicted and rebuilt rather than handed back as
+        a permanently-broken zombie.
+
         Idle eviction is not performed here; the background sweeper
         started by :meth:`__aenter__` handles that.
 
@@ -243,14 +250,12 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 session_id="",
             )
 
-        async with self._lock:
-            cached = self._cache.get(workspace_id)
-            if cached is not None:
-                ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
+        ws = await self._get_alive_cached(workspace_id)
+        if ws is not None:
+            return ws
 
-        # Cache miss: build under the lock to prevent two concurrent
+        # Cache miss (or a dead sandbox was just evicted above): build
+        # under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
         # workspaces (and thus two sandboxes) for the same id.
         async with self._lock:
@@ -267,6 +272,50 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
+
+    async def _get_alive_cached(
+        self,
+        workspace_id: str,
+    ) -> OpenSandboxWorkspace | None:
+        """Return the cached workspace for ``workspace_id`` if alive.
+
+        ``is_healthy`` is a remote round-trip, so it runs outside
+        :attr:`_lock` to avoid blocking unrelated ``get_workspace``
+        calls. A dead workspace is evicted under the lock (re-checking
+        identity first, since a concurrent caller may have already
+        evicted and rebuilt it) and its sandbox is paused best-effort
+        via :meth:`_safe_close`.
+
+        Returns:
+            `OpenSandboxWorkspace | None`:
+                The live cached workspace, or ``None`` on a cache miss
+                or a dead sandbox (now evicted).
+        """
+        async with self._lock:
+            cached = self._cache.get(workspace_id)
+        if cached is None:
+            return None
+        ws, _ = cached
+
+        if await ws.is_healthy():
+            async with self._lock:
+                current = self._cache.get(workspace_id)
+                if current is not None and current[0] is ws:
+                    self._cache[workspace_id] = (ws, time.monotonic())
+            return ws
+
+        logger.warning(
+            "OpenSandboxWorkspaceManager: sandbox for workspace_id=%r "
+            "is no longer alive (likely killed by the server-side "
+            "timeout); evicting and rebuilding",
+            workspace_id,
+        )
+        async with self._lock:
+            current = self._cache.get(workspace_id)
+            if current is not None and current[0] is ws:
+                del self._cache[workspace_id]
+        await self._safe_close(ws)
+        return None
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace."""
