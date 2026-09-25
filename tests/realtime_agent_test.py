@@ -327,6 +327,24 @@ class EndOnSecondFrameVAD(VADBase):
 class RealtimeAgentTest(IsolatedAsyncioTestCase):
     """Behaviour of the turn-taking state machine."""
 
+    async def test_user_transcription_stales_context_usage(self) -> None:
+        agent = RealtimeAgent("Friday", "be brief", ScriptedModel([]))
+        agent._ctx_usage.observe_provider_report(500, 20)
+
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u1", text="hello"),
+        )
+        self.assertTrue(agent._ctx_usage.is_stale)
+        self.assertEqual(agent._ctx_usage.local_appends_since_observation, 1)
+
+        agent._ctx_usage.observe_provider_report(600, 20)
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u2", text="again"),
+        )
+        self.assertEqual(len(agent.state.context), 1)
+        self.assertTrue(agent._ctx_usage.is_stale)
+        self.assertEqual(agent._ctx_usage.local_appends_since_observation, 1)
+
     async def _collect(
         self,
         agent: RealtimeAgent,

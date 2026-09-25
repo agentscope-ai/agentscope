@@ -52,9 +52,8 @@ class ContextUsageTracker:
       cumulative) or only the delta. The tracker therefore NEVER
       accumulates per-response input tokens; it keeps the latest
       observation and marks it stale as local content grows past it.
-    - A missing report must stay distinguishable from a report of zero.
-      ``observe_provider_report(None, None)`` never fabricates an
-      estimate; it only invalidates the previous one.
+    - A missing input-token report must stay distinguishable from a report
+      of zero. Output tokens alone cannot establish context occupancy.
     - The estimate is independent from :class:`TurnMetrics`: those are
       per-turn latency counters, this is session-level context state.
     """
@@ -99,20 +98,18 @@ class ContextUsageTracker:
     ) -> None:
         """Fold one provider usage report into the estimate.
 
-        ``None`` on both sides means the provider omitted usage for this
-        response: the previous observation is kept but marked stale —
-        "no report" must not read as "no growth".
+        Without input tokens, the previous observation is kept but marked
+        stale — output usage alone cannot establish context occupancy.
         """
-        if input_tokens is None and output_tokens is None:
-            self.mark_stale("provider omitted usage on response completion")
+        if input_tokens is None:
+            self.mark_stale("provider omitted input usage on response completion")
             return
 
         # Input is the context-bearing side; output text may be retained by
         # some providers but billed-only audio (e.g. Qwen-Audio speech out)
         # must not be added — so output never grows the estimate here.
-        estimate = input_tokens if input_tokens is not None else 0
         self._observation = ContextUsageObservation(
-            estimate_tokens=estimate,
+            estimate_tokens=input_tokens,
             provenance=UsageProvenance.PROVIDER,
             observed_at=monotonic(),
         )

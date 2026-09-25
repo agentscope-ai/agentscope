@@ -62,6 +62,35 @@ def test_first_ever_report_being_missing_leaves_no_estimate():
     assert tracker.is_stale
 
 
+def test_output_only_report_does_not_fabricate_zero_estimate():
+    tracker = ContextUsageTracker()
+    tracker.observe_provider_report(500, 20)
+
+    tracker.observe_provider_report(None, 7)
+
+    assert tracker.estimate_tokens == 500
+    assert tracker.is_stale
+    assert tracker.provenance == UsageProvenance.PROVIDER
+
+
+def test_first_output_only_report_leaves_no_estimate():
+    tracker = ContextUsageTracker()
+
+    tracker.observe_provider_report(None, 7)
+
+    assert tracker.estimate_tokens is None
+    assert tracker.is_stale
+
+
+def test_reported_zero_input_is_a_fresh_estimate():
+    tracker = ContextUsageTracker()
+
+    tracker.observe_provider_report(0, 7)
+
+    assert tracker.estimate_tokens == 0
+    assert not tracker.is_stale
+
+
 def test_local_append_marks_stale():
     tracker = ContextUsageTracker()
     tracker.observe_provider_report(500, 20)

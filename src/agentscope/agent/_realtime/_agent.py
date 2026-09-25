@@ -938,6 +938,7 @@ class RealtimeAgent:
             self.state.context.append(
                 UserMsg(name="user", content=turn, id=reply_id),
             )
+        self._ctx_usage.note_local_append()
 
     def _merge_user(self, text: str) -> bool:
         """Append *text* to the previous user turn that endpointing split.
