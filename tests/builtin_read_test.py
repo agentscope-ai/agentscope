@@ -324,6 +324,18 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             },
         )
 
+        # An explicit empty list means the model accepts no native media.
+        tool = Read(model_input_types=[])
+        self.assertListEqual(tool.model_input_types, [])
+        self.assertNotIn("read images", tool.description)
+        chunk = await tool(file_path=f.name)
+        self.assertEqual(chunk.state, "error")
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: Unsupported image type image/bmp, only none are "
+            "supported.",
+        )
+
         # Model card style input types (non-image entries ignored) and glob
         # patterns are accepted.
         for model_input_types in [["text/plain", "image/bmp"], ["image/*"]]:
