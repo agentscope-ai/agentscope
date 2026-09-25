@@ -108,3 +108,175 @@ DANGEROUS_NODE_TYPES = {
 #
 # Note: simple_expansion ($VAR) is handled separately with allowlist
 # for known-safe environment variables ($HOME, $PWD, etc.)
+
+
+# Alias map from PowerShell 7.4 `Get-Alias` (built-in aliases). Includes
+# every built-in alias for names in POWERSHELL_DANGEROUS_COMMANDS so
+# incomplete coverage cannot skip a dangerous check. Unknown names are
+# never auto-allowed as read-only.
+POWERSHELL_ALIASES: dict[str, str] = {
+    # Read-oriented
+    "ls": "Get-ChildItem",
+    "dir": "Get-ChildItem",
+    "gci": "Get-ChildItem",
+    "cat": "Get-Content",
+    "gc": "Get-Content",
+    "type": "Get-Content",
+    "sls": "Select-String",
+    "select": "Select-Object",
+    "where": "Where-Object",
+    "?": "Where-Object",
+    "sort": "Sort-Object",
+    "measure": "Measure-Object",
+    "echo": "Write-Output",
+    "write": "Write-Output",
+    "pwd": "Get-Location",
+    "gl": "Get-Location",
+    "gps": "Get-Process",
+    "ps": "Get-Process",
+    "gsv": "Get-Service",
+    "ft": "Format-Table",
+    "fl": "Format-List",
+    "fw": "Format-Wide",
+    "foreach": "ForEach-Object",
+    "%": "ForEach-Object",
+    # Location / item mutation
+    "cd": "Set-Location",
+    "chdir": "Set-Location",
+    "sl": "Set-Location",
+    "ni": "New-Item",
+    "mi": "Move-Item",
+    "move": "Move-Item",
+    "cpi": "Copy-Item",
+    "copy": "Copy-Item",
+    "cp": "Copy-Item",
+    "ii": "Invoke-Item",
+    "rm": "Remove-Item",
+    "del": "Remove-Item",
+    "erase": "Remove-Item",
+    "ri": "Remove-Item",
+    "rmdir": "Remove-Item",
+    "rd": "Remove-Item",
+    # Dangerous cmdlets (complete built-in alias coverage)
+    "clc": "Clear-Content",
+    "cli": "Clear-Item",
+    "clp": "Clear-ItemProperty",
+    "iex": "Invoke-Expression",
+    "icm": "Invoke-Command",
+    "irm": "Invoke-RestMethod",
+    "iwr": "Invoke-WebRequest",
+    "curl": "Invoke-WebRequest",
+    "wget": "Invoke-WebRequest",
+    "saps": "Start-Process",
+    "start": "Start-Process",
+    "sasv": "Start-Service",
+    "spps": "Stop-Process",
+    "kill": "Stop-Process",
+    "spsv": "Stop-Service",
+    "sc": "Set-Content",
+    "si": "Set-Item",
+    "sp": "Set-ItemProperty",
+    "sv": "Set-Variable",
+    "set": "Set-Variable",
+}
+
+
+POWERSHELL_READ_ONLY_COMMANDS: set[str] = {
+    "Get-Location",
+    "Get-Date",
+    "Get-Host",
+    "Get-Help",
+    "Get-Member",
+    "Get-Unique",
+    "Get-Variable",
+    "Get-Alias",
+    "Get-Command",
+    "Get-Module",
+    "Get-Process",
+    "Get-Service",
+    "Get-ChildItem",
+    "Get-Content",
+    "Get-Item",
+    "Get-ItemProperty",
+    "Get-Acl",
+    "Get-FileHash",
+    "Test-Path",
+    "Resolve-Path",
+    "Select-Object",
+    "Select-String",
+    "Where-Object",
+    "Sort-Object",
+    "Measure-Object",
+    "Format-Table",
+    "Format-List",
+    "Format-Wide",
+    "Format-Custom",
+    "ConvertTo-Json",
+    "ConvertFrom-Json",
+    "ConvertTo-Csv",
+    "ConvertFrom-Csv",
+    "ConvertTo-Xml",
+    "ConvertFrom-StringData",
+    "Out-String",
+    "Out-Null",
+    "Write-Output",
+    "Write-Host",
+    "Write-Verbose",
+    "Write-Debug",
+    "Write-Information",
+}
+# Exact cmdlet names treated as read-only for auto-ALLOW / EXPLORE.
+# Unknown names are never assumed safe (no verb-prefix matching).
+
+
+POWERSHELL_DANGEROUS_COMMANDS: list[str] = [
+    "Clear-Content",
+    "Clear-Item",
+    "Clear-ItemProperty",
+    "Format-Volume",
+    "Invoke-Expression",
+    "Invoke-Command",
+    "Start-Process",
+    "Start-Service",
+    "Add-Type",
+    "Set-ExecutionPolicy",
+    "Set-MpPreference",
+    "Set-Service",
+    "New-Service",
+    "Stop-Computer",
+    "Restart-Computer",
+    "Stop-Service",
+    "Register-ScheduledTask",
+]
+# Dangerous PowerShell cmdlets that always require a bypass-immune ASK.
+# Parameter-sensitive patterns (Remove-Item -Recurse/-Force,
+# Stop-Process -Force, HKLM registry writes, download-to-iex) are
+# handled in the parser.
+
+
+# Parameter sets used for unique-prefix resolution (PowerShell abbrevs).
+POWERSHELL_REMOVE_ITEM_DANGEROUS_PARAMS: frozenset[str] = frozenset(
+    {"-Recurse", "-Force"},
+)
+POWERSHELL_STOP_PROCESS_DANGEROUS_PARAMS: frozenset[str] = frozenset(
+    {"-Force"},
+)
+POWERSHELL_SET_ITEM_PROPERTY_PATH_PARAMS: frozenset[str] = frozenset(
+    {"-Path", "-LiteralPath"},
+)
+
+
+POWERSHELL_INJECTION_NODE_TYPES: set[str] = {
+    "sub_expression",
+    "if_statement",
+    "while_statement",
+    "for_statement",
+    "foreach_statement",
+    "switch_statement",
+    "function_definition",
+    "filter_definition",
+    "trap_statement",
+}
+# AST node types that prevent static analysis of PowerShell commands.
+# Detecting these forces a non-read-only classification and a
+# bypass-immune safety ASK.
