@@ -77,7 +77,14 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, HintBlock, Msg, ToolCallState, UserMsg
+from ...message import (
+    AssistantMsg,
+    HintBlock,
+    Msg,
+    ToolCallBlock,
+    ToolCallState,
+    UserMsg,
+)
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
@@ -734,18 +741,10 @@ class ChatService:
             `bool`:
                 ``True`` when the run should be skipped.
         """
-        if input_msg is not None or not agent.state.context:
+        if input_msg is not None:
             return False
 
-        last_msg = agent.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != agent.name:
-            return False
-
-        awaiting = [
-            tc
-            for tc in last_msg.get_content_blocks("tool_call")
-            if tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-        ]
+        awaiting = ChatService._parked_tool_calls(agent)
         if not awaiting:
             return False
 
@@ -757,6 +756,28 @@ class ChatService:
             len(awaiting),
         )
         return True
+
+    @staticmethod
+    def _parked_tool_calls(agent: Agent) -> list[ToolCallBlock]:
+        """Return tool calls that keep an agent parked for an external event.
+
+        The dispatcher and the in-run inbox hand-off both need to recognize
+        the same parked state. Keeping the context inspection in one place
+        prevents one entry point from re-entering ``reply_stream(None)`` while
+        the other correctly skips the wake-up.
+        """
+        if not agent.state.context:
+            return []
+
+        last_msg = agent.state.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != agent.name:
+            return []
+
+        return [
+            tc
+            for tc in last_msg.get_content_blocks("tool_call")
+            if tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+        ]
 
     async def _run_impl(
         # pylint: disable=too-many-statements,too-many-branches
@@ -1379,6 +1400,21 @@ class ChatService:
                     ):
                         released = True
                         break
+
+                    if self._parked_tool_calls(agent):
+                        # The inbox payload must remain queued until the
+                        # confirmation or external result resumes the agent.
+                        # Abandoning the consumer also prevents this run from
+                        # being re-entered with ``input_msg=None``.
+                        await abandon_inbox_consumer(
+                            self._message_bus,
+                            user_id=user_id,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                        )
+                        released = True
+                        break
+
                     input_msg = None
 
             finally:
