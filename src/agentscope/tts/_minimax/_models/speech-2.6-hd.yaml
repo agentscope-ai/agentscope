@@ -1,0 +1,11 @@
+name: speech-2.6-hd
+label: MiniMax Speech 2.6 HD
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+
+parameter_overrides: {}
