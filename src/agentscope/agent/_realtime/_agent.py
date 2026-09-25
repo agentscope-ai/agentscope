@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """The realtime voice agent."""
 import asyncio
 import base64
@@ -59,7 +60,7 @@ from ...types import ReplyFinishedReason
 from ...workspace import Offloader
 from .._config import RealtimeContextConfig
 from ._aggregator import TurnAggregator
-from ._context_usage import ContextUsageTracker
+from ._context_usage import ContextUsageTracker, estimate_context_tokens
 from ._metrics import TurnMetrics
 
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
@@ -385,9 +386,10 @@ class RealtimeAgent:
             if previous:
                 prompt += f"\n\nPrevious summary:\n{previous}"
             messages = [
-                UserMsg(name="user", content=(
-                    f"{prompt}\n\nTranscript:\n{transcript}"
-                )),
+                UserMsg(
+                    name="user",
+                    content=(f"{prompt}\n\nTranscript:\n{transcript}"),
+                ),
             ]
             summary_text = None
             if cfg.compression_model is not None:
@@ -836,7 +838,9 @@ class RealtimeAgent:
 
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
-        self._ctx_usage.mark_stale("barge-in interrupted the in-flight response")
+        self._ctx_usage.mark_stale(
+            "barge-in interrupted the in-flight response",
+        )
         active_reply = self._reply is not None
         reply = self._reply or self._playout_reply
         if reply is None:
@@ -990,10 +994,15 @@ class RealtimeAgent:
                     self.state.append_context(self.name, [event.tool_call])
 
             case me.ResponseDoneEvent():
-                self._ctx_usage.observe_provider_report(
-                    event.input_tokens,
-                    event.output_tokens,
-                )
+                if event.input_tokens is None:
+                    self._ctx_usage.observe_estimate(
+                        estimate_context_tokens(self.state.context),
+                    )
+                else:
+                    self._ctx_usage.observe_provider_report(
+                        event.input_tokens,
+                        event.output_tokens,
+                    )
                 if event.input_tokens is not None:
                     self._metrics.input_tokens = event.input_tokens
                 if event.output_tokens is not None:
@@ -1218,7 +1227,10 @@ class RealtimeAgent:
         self._continuing = False
         if reason == ReplyFinishedReason.COMPLETED and not self._pending_tools:
             self._tasks.add(
-                asyncio.create_task(self._compression_pass(), name="rt-compress"),
+                asyncio.create_task(
+                    self._compression_pass(),
+                    name="rt-compress",
+                ),
             )
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
