@@ -56,6 +56,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { tasksContextEqual } from '@/utils/tasksContextEqual';
 
 interface ChatViewportProps {
 	/**
@@ -234,7 +235,11 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		(value: Record<string, unknown>) => {
 			if (value.tasks_context) {
 				const incoming = value.tasks_context as TaskContext;
-				setTasksContext(incoming);
+				// Keep the previous reference when task rows are unchanged so
+				// streaming ChatViewport re-renders do not flash the plan panel.
+				setTasksContext((prev) =>
+					tasksContextEqual(prev, incoming) ? prev : incoming,
+				);
 				if (incoming.tasks.length > 0 && taskPanelOpenedForRef.current !== sessionId) {
 					taskPanelOpenedForRef.current = sessionId;
 					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
@@ -565,6 +570,11 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const seededSessionRef = useRef<string | null>(null);
 	useEffect(() => {
 		if (!view) {
+			// Soft refetch can briefly drop `view` while the URL still points at
+			// the same session. Clearing live tasks here flashes the plan panel.
+			if (sessionId && seededSessionRef.current === sessionId) {
+				return;
+			}
 			seededSessionRef.current = null;
 			setTasksContext(null);
 			setPermissionContext(null);
@@ -575,7 +585,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		const state = view.session.state as Record<string, unknown> | undefined;
 		setTasksContext((state?.tasks_context as TaskContext) ?? null);
 		setPermissionContext((state?.permission_context as PermissionContext) ?? null);
-	}, [view]);
+	}, [view, sessionId]);
 
 	// Sync selectedModel + selectedFallbackModel from the session
 	// record. If the session has no model configured yet, auto-pick
