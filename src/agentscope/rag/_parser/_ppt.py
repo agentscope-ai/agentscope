@@ -90,17 +90,11 @@ def _extract_image_bytes(shape: Any) -> bytes | None:
             The raw image bytes, or ``None`` when ``shape`` is not a
             picture / the bytes are unreadable.
     """
-    try:
-        from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from pptx.shapes.picture import Picture
 
-        picture_type = MSO_SHAPE_TYPE.PICTURE
-    except ImportError:
-        # MSO_SHAPE_TYPE.PICTURE numeric value used as the fallback
-        # so the parser still works against pptx builds where the
-        # enum import path has moved.
-        picture_type = 13
-
-    if shape.shape_type != picture_type:
+    # PlaceholderPicture inherits Picture but reports PLACEHOLDER, not
+    # PICTURE. Empty placeholders do not inherit Picture.
+    if not isinstance(shape, Picture):
         return None
     try:
         return shape.image.blob
