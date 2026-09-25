@@ -41,6 +41,8 @@ scripts/model_examples/
 ├── gemini_multimodal.py
 ├── gemini_multiagent_multimodal.py
 │
+├── aimlapi_call.py                  # aimlapi.com aggregator (no multimodal example)
+│
 ├── moonshot_call.py                 # Moonshot AI (Kimi)
 ├── moonshot_multiagent.py
 ├── moonshot_multimodal.py
@@ -85,6 +87,7 @@ scripts/model_examples/
 | `gemini` | `GEMINI_API_KEY` | Gemini models, supports `thinking_budget` |
 | `moonshot` | `MOONSHOT_API_KEY` | Moonshot AI kimi-k2.6, etc. |
 | `volcengine` | `VOLCENGINE_API_KEY` | Volcengine Ark / Doubao models |
+| `aimlapi` | `AIMLAPI_API_KEY` | aimlapi.com aggregator, supports only `call` |
 | `xai` | `XAI_API_KEY` | Grok models, supports `reasoning_effort` |
 | `ollama` | *(none – auto-detect)* | Local server, default `http://localhost:11434` |
 
@@ -104,6 +107,7 @@ export DEEPSEEK_API_KEY="sk-..."
 export GEMINI_API_KEY="AIza..."
 export MOONSHOT_API_KEY="sk-..."
 export VOLCENGINE_API_KEY="..."
+export AIMLAPI_API_KEY="..."
 export XAI_API_KEY="xai-..."
 ```
 
