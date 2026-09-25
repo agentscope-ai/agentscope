@@ -327,6 +327,9 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
 
+    CHANNEL_APPROVAL_TTL_SECS = 86400
+    """Lifetime of a pending approval and its one-shot decision claim."""
+
     @classmethod
     def channel_lifecycle(cls) -> str:
         """Pub/sub channel that nudges every node to reconcile its
@@ -356,3 +359,27 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def channel_seen_chats(cls, channel_id: str) -> str:
         """Registry namespace of chat_ids the bot has been messaged in."""
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
+
+    @classmethod
+    def channel_reply_requester(cls, session_id: str, reply_id: str) -> str:
+        """Registry namespace holding one reply's originating user."""
+        return f"agentscope:channel:reply:{session_id}:{reply_id}"
+
+    @classmethod
+    def channel_approval(cls, approval_id: str) -> str:
+        """Registry namespace holding one pending channel approval."""
+        return f"agentscope:channel:approval:{approval_id}"
+
+    @classmethod
+    def channel_approval_claim(
+        cls,
+        session_id: str,
+        reply_id: str,
+        tool_call_id: str,
+        approval_id: str,
+    ) -> str:
+        """Atomic decision claim for one tool call in one reply."""
+        return (
+            f"agentscope:channel:approval-claim:{session_id}:{reply_id}:"
+            f"{tool_call_id}:{approval_id}"
+        )

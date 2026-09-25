@@ -25,6 +25,10 @@ from agentscope.app.channel import (
     ChannelTypeRegistry,
 )
 from agentscope.app.channel._base import LIVENESS_TTL_SECS
+from agentscope.app.channel._approval import (
+    load_approval,
+    remember_reply_requester,
+)
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
     ChannelBinding,
@@ -32,6 +36,12 @@ from agentscope.app.storage import (
     RoutingConfig,
     SessionSettings,
 )
+from agentscope.event import (
+    ReplyStartEvent,
+    RequireUserConfirmEvent,
+    UserInterruptEvent,
+)
+from agentscope.message import TextBlock, ToolCallBlock, UserMsg
 
 
 class _FakeChannel(ChannelBase):
@@ -273,6 +283,100 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         ) as clients:
             await self._deliver(clients)
+
+    async def test_approval_state_is_server_backed_and_keeps_requester(
+        self,
+    ) -> None:
+        """Cards carry only opaque ids, while requester and routing stay
+        in the bus and survive a continuation of the same reply."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+
+        async def events() -> AsyncIterator[dict]:
+            for event in (
+                ReplyStartEvent(
+                    session_id="s-1",
+                    reply_id="reply-1",
+                    name="assistant",
+                ),
+                RequireUserConfirmEvent(
+                    reply_id="reply-1",
+                    tool_calls=[
+                        ToolCallBlock(
+                            id="tool-1",
+                            name="Bash",
+                            input="{}",
+                        ),
+                    ],
+                ),
+            ):
+                yield event.model_dump(mode="json")
+
+        first = [
+            raw
+            async for raw in clients._approval_events(  # pylint: disable=W0212
+                events(),
+                requester_id="requester-1",
+                channel_id="chan-1",
+                chat_id="chat-1",
+                agent_id="agent-x",
+                session_id="s-1",
+            )
+        ]
+        approval_id = first[1]["metadata"]["channel_approval_ids"]["tool-1"]
+        self.assertRegex(approval_id, r"^[0-9a-f]{32}$")
+        approval = await load_approval(bus, approval_id)
+        self.assertIsNotNone(approval)
+        self.assertEqual(approval.requester_id, "requester-1")
+        self.assertEqual(approval.session_id, "s-1")
+        self.assertEqual(approval.reply_id, "reply-1")
+        self.assertEqual(approval.tool_call_id, "tool-1")
+
+        continued = [
+            raw
+            async for raw in clients._approval_events(  # pylint: disable=W0212
+                events(),
+                requester_id="",
+                channel_id="chan-1",
+                chat_id="chat-1",
+                agent_id="agent-x",
+                session_id="s-1",
+            )
+        ]
+        continued_id = continued[1]["metadata"]["channel_approval_ids"][
+            "tool-1"
+        ]
+        continued_approval = await load_approval(bus, continued_id)
+        self.assertEqual(continued_approval.requester_id, "requester-1")
+
+    async def test_requester_is_resolved_from_run_input(self) -> None:
+        """Fresh messages name the requester; resume events recover it."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+        message = UserMsg(
+            name="requester-1",
+            content=[TextBlock(text="hello")],
+        )
+        self.assertEqual(
+            await clients._requester_for_input(  # pylint: disable=W0212
+                "s-1",
+                message,
+            ),
+            "requester-1",
+        )
+        await remember_reply_requester(
+            bus,
+            session_id="s-1",
+            reply_id="reply-1",
+            requester_id="requester-1",
+        )
+        self.assertEqual(
+            await clients._requester_for_input(  # pylint: disable=W0212
+                "s-1",
+                UserInterruptEvent(reply_id="reply-1"),
+            ),
+            "requester-1",
+        )
 
 
 class ChannelStatusTest(IsolatedAsyncioTestCase):
