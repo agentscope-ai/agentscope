@@ -1,6 +1,7 @@
 """The realtime voice agent."""
 import asyncio
 import base64
+import hashlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -207,6 +208,8 @@ class RealtimeAgent:
         self.context_config = context_config or RealtimeContextConfig()
         self.workspace = workspace
         self._ctx_usage = ContextUsageTracker()
+        self._compress_in_flight = False
+        self._pending_checkpoint: dict | None = None
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
@@ -319,6 +322,146 @@ class RealtimeAgent:
                 name="rt-downlink",
             )
             self._downlink.add_done_callback(self._on_downlink_done)
+
+    async def _compression_pass(self) -> None:
+        """One compression attempt at a completed-turn boundary.
+
+        Snapshots the settled transcript, generates a summary in the
+        background, and re-verifies the prefix before committing. Any
+        drift (barge-in truncation, late tool result) discards the
+        attempt; the next completed turn retries.
+        """
+        if self._compress_in_flight or self._pending_checkpoint is not None:
+            return
+        if self._reply is not None or self._pending_tools or self._continuing:
+            return
+        est = self._ctx_usage.estimate_tokens
+        cfg = self.context_config
+        if est is None or est < cfg.context_length * cfg.trigger_ratio:
+            return
+        if len(self.state.context) < 4:
+            return
+
+        snapshot = list(self.state.context)
+        ids = [msg.id for msg in snapshot]
+        digest = self._prefix_digest(snapshot)
+        self._compress_in_flight = True
+        self._tasks.add(
+            asyncio.create_task(
+                self._compress_prefix(ids, digest, snapshot),
+                name="rt-compress-prefix",
+            ),
+        )
+
+    def _prefix_digest(self, msgs: list[Msg]) -> str:
+        """Stable digest of a prefix, so a committed compression can
+        verify the messages it summarized were not modified since."""
+        hasher = hashlib.sha256()
+        for msg in msgs:
+            hasher.update(msg.id.encode())
+            hasher.update(repr(msg.model_dump(mode="json")).encode())
+        return hasher.hexdigest()
+
+    async def _compress_prefix(
+        self,
+        ids: list[str],
+        digest: str,
+        snapshot: list[Msg],
+    ) -> None:
+        """Generate a summary for the snapshot prefix, offload the
+        covered messages, and stash the result for a turn-boundary
+        commit."""
+        cfg = self.context_config
+        try:
+            transcript = "\n".join(
+                f"- {(msg.name or msg.role)}: "
+                f"{msg.get_text_content() or '(non-text content)'}"
+                for msg in snapshot
+            )
+            previous = self.state.summary
+            if not isinstance(previous, str):
+                previous = None
+            prompt = cfg.compression_prompt
+            if previous:
+                prompt += f"\n\nPrevious summary:\n{previous}"
+            messages = [
+                UserMsg(name="user", content=(
+                    f"{prompt}\n\nTranscript:\n{transcript}"
+                )),
+            ]
+            summary_text = None
+            if cfg.compression_model is not None:
+                res = await cfg.compression_model.generate_structured_output(
+                    messages=messages,
+                    structured_model=cfg.compression_schema or None,
+                )
+                content = getattr(res, "content", None)
+                if isinstance(content, dict):
+                    summary_text = cfg.summary_template.format(**content)
+            if summary_text is None:
+                logger.warning(
+                    "RealtimeAgent: compression produced no summary; "
+                    "keeping the transcript intact",
+                )
+                return
+
+            offload_path = None
+            if self.workspace is not None:
+                offload_path = await self.workspace.offload_context(
+                    self.state.session_id,
+                    msgs=snapshot,
+                )
+            if offload_path:
+                summary_text += (
+                    f"\n<system-reminder>The compressed context is "
+                    f"offloaded to '{offload_path}', you can refer to it "
+                    f"when needed.</system-reminder>"
+                )
+
+            self._pending_checkpoint = {
+                "ids": ids,
+                "digest": digest,
+                "summary": summary_text,
+            }
+            self._maybe_apply_checkpoint()
+        except Exception:
+            logger.warning(
+                "RealtimeAgent: context compression failed; will retry "
+                "on the next trigger",
+                exc_info=True,
+            )
+            return
+        finally:
+            self._compress_in_flight = False
+
+    def _maybe_apply_checkpoint(self) -> None:
+        """Commit a stashed compression at a quiet boundary: the prefix
+        must be byte-identical to the snapshot and no reply may be in
+        flight."""
+        pending = self._pending_checkpoint
+        if pending is None:
+            return
+        if self._reply is not None or self._pending_tools:
+            return
+        context = self.state.context
+        ids: list[str] = pending["ids"]
+        if len(context) < len(ids):
+            return
+        if [msg.id for msg in context[: len(ids)]] != ids:
+            return
+        digest = self._prefix_digest(context[: len(ids)])
+        if digest != pending["digest"]:
+            return
+
+        self.state.summary = pending["summary"]
+        del context[: len(ids)]
+        self._pending_checkpoint = None
+        self._compress_in_flight = False
+        logger.info(
+            "RealtimeAgent: compressed %d context messages into the "
+            "session summary",
+            len(ids),
+        )
 
     def _replayable_history(self) -> list[Msg]:
         """Return bounded, settled messages for a fresh model session."""
@@ -1060,6 +1203,10 @@ class RealtimeAgent:
         self._emit(event)
         self._reply_id = ""
         self._continuing = False
+        if reason == ReplyFinishedReason.COMPLETED and not self._pending_tools:
+            self._tasks.add(
+                asyncio.create_task(self._compression_pass(), name="rt-compress"),
+            )
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
         """Emit a transcript delta, opening the block on first use."""
@@ -1317,6 +1464,7 @@ class RealtimeAgent:
             output=output,
             state=state,
         )
+        block = await self._truncate_tool_result(block)
         # The result belongs to the reply that made the call, which may no
         # longer be the current one if the user interrupted a slow tool.
         for msg in reversed(self.state.context):
@@ -1327,3 +1475,52 @@ class RealtimeAgent:
             self.state.append_context(self.name, [block])
         self._ctx_usage.note_local_append()
         await self.model.push_tool_result(block)
+
+    async def _truncate_tool_result(
+        self,
+        block: ToolResultBlock,
+    ) -> ToolResultBlock:
+        """Enforce ``tool_result_limit`` on a tool result before it
+        enters the session context — both the local transcript mirror
+        and the provider-side one via ``push_tool_result``.
+
+        The realtime model offers no token-counting endpoint, so the
+        budget is enforced with a chars ≈ tokens/4 estimate, the same
+        conservative basis as the usage fallback. The full result is
+        offloaded to the workspace when one is attached, mirroring the
+        text-mode agent's truncation reminder.
+        """
+        output = block.output
+        if not isinstance(output, str):
+            return block
+        if len(output) < self.context_config.tool_result_limit * 4:
+            return block
+
+        offload_reminder = ""
+        if self.workspace is not None:
+            try:
+                path = await self.workspace.offload_tool_result(
+                    self.state.session_id,
+                    ToolResultBlock(
+                        id=block.id,
+                        name=block.name,
+                        output=output,
+                        state=block.state,
+                    ),
+                )
+                offload_reminder = (
+                    f" You can refer to the file in '{path}' "
+                    f"for the truncated content if needed."
+                )
+            except Exception:
+                logger.warning(
+                    "RealtimeAgent: failed to offload an oversized tool "
+                    "result; the excess is dropped",
+                    exc_info=True,
+                )
+        block.output = output[: self.context_config.tool_result_limit * 4] + (
+            "\n<<<TRUNCATED>>>\n<system-reminder>The remaining content "
+            "has been omitted for limited context."
+            f"{offload_reminder}</system-reminder>"
+        )
+        return block

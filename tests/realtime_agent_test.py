@@ -11,6 +11,7 @@ from agentscope.agent import (
     Agent,
     InjectionConfig,
     RealtimeAgent,
+    RealtimeContextConfig,
     TurnAggregator,
 )
 from agentscope.credential import DashScopeCredential
@@ -21,7 +22,7 @@ from agentscope.event import (
     TextBlockEndEvent,
 )
 from agentscope.message import AssistantMsg, Msg, UserMsg
-from agentscope.model import ChatResponse
+from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.realtime import (
     AudioFrame,
     ControlFrame,
@@ -1991,3 +1992,286 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
                 "close",
             ],
         )
+
+
+class FakeOffloader:
+    """Records offload calls; hands back fake workspace paths."""
+
+    def __init__(self) -> None:
+        self.contexts: list[list[Msg]] = []
+        self.tool_results: list[ToolResultBlock] = []
+
+    async def offload_context(
+        self,
+        session_id: str,
+        msgs: list[Msg],
+    ) -> str:
+        """Record and 'store' the compressed context."""
+        self.contexts.append([m.model_copy(deep=True) for m in msgs])
+        return (
+            f"workspace://sessions/{session_id}/"
+            f"context-{len(self.contexts)}.json"
+        )
+
+    async def offload_tool_result(
+        self,
+        session_id: str,
+        tool_result: ToolResultBlock,
+    ) -> str:
+        """Record and 'store' the truncated tool result."""
+        self.tool_results.append(tool_result.model_copy(deep=True))
+        return (
+            f"workspace://sessions/{session_id}/"
+            f"tool-{len(self.tool_results)}.json"
+        )
+
+
+def _compression_summary_response() -> StructuredResponse:
+    """A structured summary matching the default template's fields."""
+    return StructuredResponse(
+        content={
+            "task_overview": "voice chat",
+            "current_state": "talking",
+            "important_discoveries": "none",
+            "next_steps": "keep going",
+            "context_to_preserve": "greeting",
+        },
+    )
+
+
+class RealtimeAgentCompressionTest(IsolatedAsyncioTestCase):
+    """Context compression: triggering, committing, drift rejection."""
+
+    def _agent(
+        self,
+        context_length: int = 100,
+        tool_result_limit: int = 50_000,
+        workspace: FakeOffloader | None = None,
+    ) -> RealtimeAgent:
+        """An agent whose compression model returns a canned summary."""
+        compression_model = MockModel()
+        compression_model.set_structured_response(
+            _compression_summary_response(),
+        )
+        return RealtimeAgent(
+            "Friday",
+            "be brief",
+            ScriptedModel([[]]),
+            context_config=RealtimeContextConfig(
+                context_length=context_length,
+                tool_result_limit=tool_result_limit,
+                compression_model=compression_model,
+            ),
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _turns(count: int) -> list[Msg]:
+        """An alternating user/assistant transcript."""
+        return [
+            UserMsg(name="user", content=f"turn {i}")
+            if i % 2 == 0
+            else AssistantMsg(name="Friday", content=f"reply {i}")
+            for i in range(count)
+        ]
+
+    async def _run_compression_pass(self, agent: RealtimeAgent) -> None:
+        """Start the pass and drive its task to completion."""
+        await agent._compression_pass()
+        while agent._compress_in_flight:
+            await asyncio.sleep(0)
+
+    async def test_compression_skips_below_trigger(self) -> None:
+        """Below trigger_ratio the compression pass does not start."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(6))
+        agent._ctx_usage.observe_provider_report(79, 10)
+
+        await self._run_compression_pass(agent)
+
+        self.assertDictEqual(
+            {
+                "started": agent._compress_in_flight,
+                "pending": agent._pending_checkpoint,
+                "summary": agent.state.summary,
+                "context": len(agent.state.context),
+            },
+            {
+                "started": False,
+                "pending": None,
+                "summary": "",
+                "context": 6,
+            },
+        )
+
+    async def test_compression_skips_without_estimate(self) -> None:
+        """No provider usage report, no compression — even with a full
+        transcript, because the occupancy is unknown."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(6))
+
+        await self._run_compression_pass(agent)
+
+        self.assertFalse(agent._compress_in_flight)
+        self.assertListEqual(
+            [m.get_text_content() for m in agent.state.context],
+            [f"turn {i}" if i % 2 == 0 else f"reply {i}" for i in range(6)],
+        )
+
+    async def test_compression_commits_summary_at_boundary(self) -> None:
+        """At a quiet boundary with a stable prefix, the transcript is
+        replaced by the summary and the covered messages are offloaded."""
+        workspace = FakeOffloader()
+        agent = self._agent(context_length=100, workspace=workspace)
+        agent.state.context.extend(self._turns(6))
+        agent._ctx_usage.observe_provider_report(200, 10)
+
+        await self._run_compression_pass(agent)
+
+        self.assertDictEqual(
+            {
+                "summary": agent.state.summary,
+                "context_left": len(agent.state.context),
+                "offloaded_turns": len(workspace.contexts[0]),
+                "offload_path_cited": (
+                    "workspace://sessions/" in (agent.state.summary or "")
+                ),
+            },
+            {
+                "summary": AnyString(),
+                "context_left": 0,
+                "offloaded_turns": 6,
+                "offload_path_cited": True,
+            },
+        )
+        self.assertIn("# Task Overview\nvoice chat", agent.state.summary)
+
+    async def test_compression_rejects_modified_prefix(self) -> None:
+        """A snapshot whose prefix was edited after snapshotting cannot
+        be committed — the summary would describe text nobody sent."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "stale summary",
+        }
+        # The user talked over the summarized span, as in a barge-in.
+        agent.state.context[0].content = [TextBlock(text="tampered")]
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual(len(agent.state.context), 4)
+        self.assertIsNotNone(agent._pending_checkpoint)
+
+    async def test_compression_rejects_shrunk_prefix(self) -> None:
+        """A prefix that lost a message cannot be committed against ids
+        that expect it."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "stale summary",
+        }
+        agent.state.context.pop()
+        agent.state.context.append(UserMsg(name="user", content="new"))
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertIsNotNone(agent._pending_checkpoint)
+
+    async def test_compression_defers_while_tools_pending(self) -> None:
+        """The commit waits until no tool results are outstanding, so a
+        late result cannot land after its context was summarized away."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "pending summary",
+        }
+        agent._pending_tools["c1"] = ToolCallBlock(
+            id="c1",
+            name="stream_tool",
+            input="{}",
+        )
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual(len(agent.state.context), 4)
+
+    async def test_compression_commit_succeeds_when_quiet(self) -> None:
+        """The same checkpoint commits once nothing is in flight and the
+        prefix is byte-identical."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "committed summary",
+        }
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "committed summary")
+        self.assertListEqual(agent.state.context, [])
+        self.assertIsNone(agent._pending_checkpoint)
+
+    async def test_oversized_tool_result_is_truncated_and_offloaded(
+        self,
+    ) -> None:
+        """A tool result over ``tool_result_limit`` enters the context
+        truncated, citing the workspace path that holds the full text."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        block = ToolResultBlock(id="c1", name="t", output="x" * 500)
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertDictEqual(
+            {
+                "starts_with_budget": result.output.startswith("x" * 40),
+                "over_budget_dropped": ("x" * 41) not in result.output,
+                "truncated_marker": "<<<TRUNCATED>>>" in result.output,
+                "offload_path_cited": (
+                    "workspace://sessions/" in result.output
+                ),
+                "offloaded_intact": [
+                    r.output for r in workspace.tool_results
+                ],
+            },
+            {
+                "starts_with_budget": True,
+                "over_budget_dropped": True,
+                "truncated_marker": True,
+                "offload_path_cited": True,
+                "offloaded_intact": ["x" * 500],
+            },
+        )
+
+    async def test_small_tool_result_passes_through(self) -> None:
+        """A tool result within the limit is untouched and not offloaded."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        block = ToolResultBlock(id="c1", name="t", output="short")
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertEqual(result.output, "short")
+        self.assertListEqual(workspace.tool_results, [])
+
+    async def test_oversized_tool_result_without_workspace(self) -> None:
+        """Without a workspace the excess is dropped; the reminder notes
+        the omission but cites no path."""
+        agent = self._agent(tool_result_limit=10, workspace=None)
+        block = ToolResultBlock(id="c1", name="t", output="y" * 500)
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertTrue(result.output.startswith("y" * 40))
+        self.assertIn("<<<TRUNCATED>>>", result.output)
+        self.assertNotIn("workspace://", result.output)
