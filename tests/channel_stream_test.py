@@ -12,9 +12,12 @@ import asyncio
 from contextlib import aclosing
 from unittest import IsolatedAsyncioTestCase
 
+import fakeredis.aioredis
+from redis import exceptions as redis_exceptions
+
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app.channel._stream import open_reply_stream
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, RedisMessageBus
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -80,6 +83,83 @@ def _external() -> RequireExternalExecutionEvent:
         name="a",
         tool_calls=[],
     )
+
+
+class _ResettingPubSub:
+    """Raise one connection error from an otherwise real fakeredis pubsub."""
+
+    def __init__(
+        self,
+        inner: object,
+        connection_reset: asyncio.Event,
+    ) -> None:
+        self._inner = inner
+        self._connection_reset = connection_reset
+        self._raised = False
+
+    async def get_message(self, *args: object, **kwargs: object) -> object:
+        """Simulate the socket error raised when Redis resets a connection."""
+        if not self._raised:
+            self._raised = True
+            self._connection_reset.set()
+            raise redis_exceptions.ConnectionError(
+                "simulated Redis connection reset",
+            )
+        return await self._inner.get_message(*args, **kwargs)  # type: ignore
+
+    def __getattr__(self, name: str) -> object:
+        """Delegate subscribe cleanup and other pubsub methods."""
+        return getattr(self._inner, name)
+
+
+class _ResettingRedisClient:
+    """Return one failing pubsub, then normal pubsubs."""
+
+    def __init__(
+        self,
+        inner: fakeredis.aioredis.FakeRedis,
+        connection_reset: asyncio.Event,
+    ) -> None:
+        self._inner = inner
+        self._connection_reset = connection_reset
+        self.pubsub_calls = 0
+
+    def pubsub(self, *args: object, **kwargs: object) -> object:
+        """Inject the reset into the first subscription only."""
+        self.pubsub_calls += 1
+        pubsub = self._inner.pubsub(*args, **kwargs)
+        if self.pubsub_calls == 1:
+            return _ResettingPubSub(pubsub, self._connection_reset)
+        return pubsub
+
+    def __getattr__(self, name: str) -> object:
+        """Delegate stream and publish operations to fakeredis."""
+        return getattr(self._inner, name)
+
+
+class _ReplayBarrierRedisBus(RedisMessageBus):
+    """Hold the initial replay open while the pubsub connection fails."""
+
+    def __init__(self, client: _ResettingRedisClient) -> None:
+        super().__init__()
+        self._client = client
+        self.replay_started = asyncio.Event()
+        self.replay_release = asyncio.Event()
+        self.replay_completed = asyncio.Event()
+
+    async def log_read(
+        self,
+        key: str,
+        since: str | None = None,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Make the replay/live failure window deterministic."""
+        if not self.replay_started.is_set():
+            self.replay_started.set()
+            await self.replay_release.wait()
+        result = await super().log_read(key, since, max_count)
+        self.replay_completed.set()
+        return result
 
 
 class _SeamBus(InMemoryMessageBus):
@@ -189,3 +269,30 @@ class EventStreamTest(IsolatedAsyncioTestCase):
             await asyncio.wait_for(_drain(bus, "s-1"), timeout=2.0),
             ["REPLY_START", "REQUIRE_EXTERNAL_EXECUTION"],
         )
+
+    async def test_recovers_after_redis_pubsub_connection_reset(self) -> None:
+        """A reset subscription is recovered from the replay log."""
+        fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        connection_reset = asyncio.Event()
+        client = _ResettingRedisClient(fake_redis, connection_reset)
+        bus = _ReplayBarrierRedisBus(client)
+        session_id = "s-redis-reset"
+        stream = await open_reply_stream(bus, session_id)
+        read_task = asyncio.create_task(anext(stream))
+
+        try:
+            await asyncio.wait_for(bus.replay_started.wait(), timeout=2.0)
+            await asyncio.wait_for(connection_reset.wait(), timeout=2.0)
+            bus.replay_release.set()
+            await asyncio.wait_for(bus.replay_completed.wait(), timeout=2.0)
+            await _publish(bus, session_id, _end())
+
+            event = await asyncio.wait_for(read_task, timeout=2.0)
+            self.assertEqual(event["type"], "REPLY_END")
+            self.assertGreaterEqual(client.pubsub_calls, 2)
+        finally:
+            if not read_task.done():
+                read_task.cancel()
+            await asyncio.gather(read_task, return_exceptions=True)
+            await stream.aclose()
+            await fake_redis.aclose()
