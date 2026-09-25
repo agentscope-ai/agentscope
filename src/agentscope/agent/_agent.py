@@ -64,7 +64,8 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import AgentOrientedException, DeveloperOrientedException
+from ..types import ErrorInfo, ErrorType
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -1272,17 +1273,47 @@ class Agent:
             if self.react_config.interruption_raise_cancelled_error:
                 raise
 
+        except (DeveloperOrientedException, ExceptionGroup) as e:
+            # Framework-contract violation. Concurrent tool execution
+            # wraps it in an ExceptionGroup, so only treat this as fatal
+            # if a DeveloperOrientedException is actually in there.
+            is_fatal = isinstance(e, DeveloperOrientedException) or (
+                isinstance(e, ExceptionGroup)
+                and e.subgroup(DeveloperOrientedException) is not None
+            )
+            if not is_fatal:
+                raise
+
+            logger.error(
+                "Fatal DeveloperOrientedException during reply %s "
+                "in session %s",
+                self.state.reply_id,
+                self.state.session_id,
+                exc_info=e,
+            )
+            end_event = ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id=self.state.reply_id,
+                finished_reason=ReplyFinishedReason.ERROR,
+                error=ErrorInfo(
+                    type=ErrorType.INTERNAL,
+                    message="An unexpected internal error occurred.",
+                ),
+            )
+            raise
+
         finally:
             if end_event is not None:
                 interrupted_end = (
                     end_event.finished_reason
                     == ReplyFinishedReason.INTERRUPTED
                 )
-                if interrupted_end:
-                    # Handle the context when interruption
+                if interrupted_end or (
+                    end_event.finished_reason == ReplyFinishedReason.ERROR
+                ):
+                    # Handle the context on interruption or fatal error
                     async for _ in self._close_unfinished_tool_calls():
                         yield _
-
                 yield end_event
 
                 if interrupted_end:

@@ -124,7 +124,7 @@ def _classify_type(e: Exception) -> ErrorType:
 
     if _is_network_error(e):
         return ErrorType.CONNECTION
-    if isinstance(e, DeveloperOrientedException):
+    if any(isinstance(exc, DeveloperOrientedException) for exc in _causes(e)):
         return ErrorType.INTERNAL
     return ErrorType.UNKNOWN
 
