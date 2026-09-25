@@ -507,15 +507,28 @@ class RealtimeAgent:
 
     @staticmethod
     def _format_history_fallback(messages: list[Msg]) -> str:
-        """Render a bounded text fallback for providers without replay."""
-        lines = [
-            f"{message.name}: {text}"
-            for message in messages
-            if (text := message.get_text_content())
-        ]
+        """Render a bounded text fallback for providers without replay.
+
+        A leading summary message — the output of compression — is kept
+        whole no matter the budget: it is the distillation the char
+        budget exists to protect. Verbatim turns beyond the budget are
+        dropped oldest-first.
+        """
+        summary_lines: list[str] = []
+        transcript: list[str] = []
+        for message in messages:
+            text = message.get_text_content()
+            if not text:
+                continue
+            line = f"{message.name}: {text}"
+            if message.role == "system" and message.name == "summary":
+                summary_lines.append(line)
+            else:
+                transcript.append(line)
+
         kept: list[str] = []
         kept_chars = 0
-        for line in reversed(lines):
+        for line in reversed(transcript):
             separator_chars = 1 if kept else 0
             if (
                 kept_chars + separator_chars + len(line)
@@ -524,7 +537,7 @@ class RealtimeAgent:
                 break
             kept.append(line)
             kept_chars += separator_chars + len(line)
-        return "\n".join(reversed(kept))
+        return "\n".join([*summary_lines, *reversed(kept)])
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""

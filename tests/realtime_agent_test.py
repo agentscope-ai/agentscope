@@ -21,7 +21,7 @@ from agentscope.event import (
     TextBlockDeltaEvent,
     TextBlockEndEvent,
 )
-from agentscope.message import AssistantMsg, Msg, UserMsg
+from agentscope.message import AssistantMsg, Msg, SystemMsg, UserMsg
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.realtime import (
     AudioFrame,
@@ -756,6 +756,44 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
         )
 
+    async def test_reconnect_fallback_injects_summary_before_turns(
+        self,
+    ) -> None:
+        """A provider without replay gets the compressed summary at the
+        top of the reconnect instructions, followed by the verbatim
+        post-checkpoint turns."""
+        state = AgentState(
+            summary="The user greets Friday in Chinese.",
+            context=[
+                UserMsg(name="user", content="讲个故事"),
+                AssistantMsg(
+                    name="Friday",
+                    content="从前有座山",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+        model = ScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        agent = RealtimeAgent("Friday", "be brief", model, state=state)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            await self._collect(agent, FakeTransport(frames=2))
+
+        self.assertEqual(model.sessions, 2)
+        self.assertEqual(
+            model.instructions,
+            "be brief\n\n## Conversation so far\n"
+            "summary: The user greets Friday in Chinese.\n"
+            "user: 讲个故事\n"
+            "Friday: 从前有座山",
+        )
+
     async def test_structured_history_is_replayed_on_reconnect(self) -> None:
         """A replay-capable provider gets roles, summary, and no fallback."""
         state = AgentState(
@@ -997,6 +1035,39 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "fallback": f"recent: {recent_text}",
                 "contains_old_message": False,
                 "length": len("recent: ") + len(recent_text),
+            },
+        )
+
+    def test_history_fallback_keeps_summary_beyond_budget(self) -> None:
+        """The compression summary survives the char budget no matter
+        what — only verbatim turns are dropped, oldest first."""
+        oldest = UserMsg(name="u0", content="旧" * 20_000)
+        newer = UserMsg(name="u1", content="中" * 20_000)
+        fallback = RealtimeAgent._format_history_fallback(
+            [
+                SystemMsg(name="summary", content="the distilled past"),
+                oldest,
+                newer,
+                UserMsg(name="recent", content="newest"),
+            ],
+        )
+
+        self.assertDictEqual(
+            {
+                "summary_kept": "summary: the distilled past" in fallback,
+                "summary_first": fallback.startswith(
+                    "summary: the distilled past",
+                ),
+                "oldest_dropped": oldest.get_text_content() not in fallback,
+                "newer_kept": newer.get_text_content() in fallback,
+                "newest_kept": fallback.endswith("recent: newest"),
+            },
+            {
+                "summary_kept": True,
+                "summary_first": True,
+                "oldest_dropped": True,
+                "newer_kept": True,
+                "newest_kept": True,
             },
         )
 
