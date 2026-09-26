@@ -392,6 +392,23 @@ Usage:
                 is_last=True,
             )
 
+        # Keep the read cache in step with the file so the next edit
+        # passes the staleness gate without a fresh Read — the tool
+        # only asks for one Read per conversation. A cache refresh is
+        # best effort: a failed refresh must not fail the write.
+        if _agent_state is not None:
+            try:
+                new_mtime = await self._backend.stat_mtime(file_path)
+            except Exception:  # pylint: disable=broad-except
+                new_mtime = None
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(
+                    updated_content,
+                ).splitlines(keepends=True),
+                mtime=new_mtime,
+            )
+
         # Return success message
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"
