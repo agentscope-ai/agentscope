@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import Field
 
 from ._constants import HANDLE_LEN
 from ._team_tool_base import _TeamToolBase
-from .._bus_ops import deliver_to_inbox
+from .._bus_ops import deliver_to_inbox, publish_session_event
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
+from ..._logging import logger
+from ...event import CustomEvent
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -287,6 +290,37 @@ class TeamSay(_TeamToolBase):
                     agent_id=aid,
                     payload=payload,
                 )
+                try:
+                    created_at = datetime.now(timezone.utc).isoformat()
+                    event = CustomEvent(
+                        name="team_turn",
+                        created_at=created_at,
+                        value={
+                            "team_id": team.id,
+                            "sender_session_id": self._session_id,
+                            "sender_agent_id": self._agent_id,
+                            "sender_name": sender_name,
+                            "hint_block_id": hint.id,
+                            "content": content,
+                            "recipients": [
+                                {"session_id": sid, "agent_id": aid},
+                            ],
+                            "reply_id": None,
+                            "created_at": created_at,
+                        },
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        sid,
+                        event.model_dump(mode="json"),
+                    )
+                except Exception as e:  # pylint: disable=broad-except
+                    logger.warning(
+                        "TeamSay delivered to session %s but could not "
+                        "publish its team_turn event: %s",
+                        sid,
+                        e,
+                    )
 
             count = len(recipients)
             target = "broadcast" if to is None else f"member {to!r}"

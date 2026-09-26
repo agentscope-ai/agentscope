@@ -550,6 +550,9 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"team_turn"`` — a team message was delivered to this
+              session's inbox. The value carries the team and sender IDs,
+              sender name, recipient, content, and shared hint block ID.
 
         value (`dict`):
             Arbitrary JSON-serializable payload whose schema depends
