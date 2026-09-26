@@ -3,6 +3,7 @@
 import os
 import re
 import time
+import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -103,6 +104,10 @@ class IdFactoryTest(IsolatedAsyncioTestCase):
             },
         )
 
+    @unittest.skipIf(
+        not hasattr(time, "tzset"),
+        "time.tzset is not available on Windows",
+    )
     async def test_default_timestamp_factory_is_utc_aware(self) -> None:
         """The default timestamp factory must not emit naive, machine-local
         timestamps: they cause payload-vs-DB skew on non-UTC hosts, because
