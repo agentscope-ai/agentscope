@@ -1513,6 +1513,81 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             any(msg.get_content_blocks("hint") for msg in agent.state.context),
         )
 
+    async def test_context_compression_resolves_current_time_placeholder(
+        self,
+    ) -> None:
+        """The compression prompt reaches the model with a real timestamp."""
+        model = RecordingStructuredMockModel(
+            context_size=100,
+            fail_structured_output_times=1,
+            force_compression_overflow=True,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        # The first structured call fails and the overflow flag forces the
+        # retry loop, so both prompt-building paths are exercised
+        await agent.compress_context()
+
+        self.assertEqual(len(model.recorded_structured_messages), 2)
+        for recorded in model.recorded_structured_messages:
+            parts = []
+            for msg in recorded:
+                if isinstance(msg.content, str):
+                    parts.append(msg.content)
+                else:
+                    parts.extend(
+                        getattr(block, "text", "") for block in msg.content
+                    )
+            combined = "\n".join(parts)
+            self.assertIn("The current time is", combined)
+            self.assertNotIn("{current_time}", combined)
+            # The default timestamp factory emits an ISO-8601 string
+            self.assertRegex(
+                combined,
+                r"The current time is \d{4}-\d{2}-\d{2}",
+            )
+
     async def test_context_compression_overflow_retry_keeps_instructions(
         self,
     ) -> None:

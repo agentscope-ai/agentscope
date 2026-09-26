@@ -30,6 +30,7 @@ from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
     _generate_id,
+    _generate_timestamp,
     _json_loads_with_repair,
     _execute_async_or_sync_func,
 )
@@ -590,12 +591,21 @@ class Agent:
                 ),
             )
 
+        # Resolve the {current_time} placeholder at compression time, so
+        # the model can anchor relative expressions to a real timestamp
+        # (via the global timestamp factory). A user-supplied prompt is
+        # substituted the same way and passes other braces through.
+        compression_prompt = cfg.compression_prompt.replace(
+            "{current_time}",
+            _generate_timestamp(),
+        )
+
         messages = (
             msgs_system
             + msgs_to_compress
             + instruction_msgs
             + [
-                UserMsg(name="user", content=cfg.compression_prompt),
+                UserMsg(name="user", content=compression_prompt),
             ]
         )
 
@@ -650,7 +660,7 @@ class Agent:
                         + [
                             UserMsg(
                                 name="user",
-                                content=cfg.compression_prompt,
+                                content=compression_prompt,
                             ),
                         ]
                     )
