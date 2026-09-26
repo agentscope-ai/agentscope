@@ -635,7 +635,7 @@ class Agent:
                 structured_model=cfg.summary_schema,
             )
 
-        except Exception as error:
+        except Exception:
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
