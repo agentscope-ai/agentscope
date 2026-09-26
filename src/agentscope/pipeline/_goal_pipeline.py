@@ -275,20 +275,24 @@ class GoalPipeline:
                     continue
                 if final_msg.structured_output is None:
                     # Update the instruction for valid verification result
-                    # TODO: support multimodal verification instruction
                     final_msg = None
                     instruction = UserMsg(
                         name="system",
-                        content=(
-                            "<system-reminder>You have failed to "
-                            "generate valid verification result. "
-                            "You should call the "
-                            "'GenerateStructuredOutput' tool with "
-                            "a valid structured output that matches "
-                            "the schema. Recall the verification "
-                            "requirements as follows:\n"
-                            f"{self._goal}</system-reminder>"
-                        ),
+                        content=[
+                            TextBlock(
+                                text=(
+                                    "<system-reminder>You have failed to "
+                                    "generate valid verification result. "
+                                    "You should call the "
+                                    "'GenerateStructuredOutput' tool with "
+                                    "a valid structured output that matches "
+                                    "the schema. Recall the verification "
+                                    "requirements as follows:\n<goal>"
+                                ),
+                            ),
+                            *(self._goal or []),
+                            TextBlock(text="</goal></system-reminder>"),
+                        ],
                     )
                 elif final_msg.structured_output.get("result") in (
                     "pass",
