@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Tests for the configurable ID and timestamp factories."""
+import os
 import re
+import time
+import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope import set_id_factory, set_timestamp_factory
@@ -99,6 +103,51 @@ class IdFactoryTest(IsolatedAsyncioTestCase):
                 "structured_response": "custom-timestamp",
             },
         )
+
+    @unittest.skipIf(
+        not hasattr(time, "tzset"),
+        "time.tzset is not available on Windows",
+    )
+    async def test_default_timestamp_factory_is_utc_aware(self) -> None:
+        """The default timestamp factory must not emit naive, machine-local
+        timestamps: they cause payload-vs-DB skew on non-UTC hosts, because
+        code elsewhere anchors naive datetimes to UTC (see
+        ``agentscope.app.storage._sql._storage._to_naive_utc``), and a
+        different naive string built on a non-UTC host takes on the wrong
+        moment in time when compared or sorted against it.
+        """
+        original_tz = os.environ.get("TZ")
+        try:
+            # Pick a host timezone far from UTC so a naive-local bug shows
+            # up as a multi-hour skew rather than being masked by luck.
+            os.environ["TZ"] = "Asia/Shanghai"  # UTC+8
+            time.tzset()
+
+            before = datetime.now(timezone.utc)
+            msg = Msg(
+                name="test",
+                content=[TextBlock(text="hello")],
+                role="user",
+            )
+            after = datetime.now(timezone.utc)
+
+            parsed = datetime.fromisoformat(msg.created_at)
+
+            self.assertIsNotNone(
+                parsed.tzinfo,
+                "Msg.created_at must be timezone-aware, not a naive "
+                "machine-local timestamp",
+            )
+            # The timestamp should represent "now" in UTC, not the
+            # UTC+8 wall-clock reading reinterpreted as if it were UTC.
+            self.assertLessEqual(before - timedelta(seconds=1), parsed)
+            self.assertLessEqual(parsed, after + timedelta(seconds=1))
+        finally:
+            if original_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = original_tz
+            time.tzset()
 
     async def asyncTearDown(self) -> None:
         """Restore the original factories after each test."""
