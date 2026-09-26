@@ -366,11 +366,13 @@ class DashScopeChatModel(ChatModelBase):
                     delta_args = getattr(fn, "arguments", None) if fn else None
 
                     # Record the id and name in case following deltas
-                    # don't provide them
+                    # don't provide them. A name that has not arrived yet
+                    # stays empty, so that the accumulator can recover it
+                    # from a later delta.
                     if index not in tool_call_mapping:
                         tool_call_mapping[index] = (
                             tool_call.id,
-                            delta_name or "unknown",
+                            delta_name or "",
                         )
 
                     stored_id, stored_name = tool_call_mapping[index]

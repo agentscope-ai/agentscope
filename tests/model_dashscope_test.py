@@ -415,6 +415,71 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_tool_call_name_arrives_later(
+        self,
+    ) -> None:
+        """A tool call name in a later delta is kept for the block."""
+        chunks = [
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(0, "call-1", None, '{"q":'),
+                ],
+            ),
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(0, None, "search", '"hello"}'),
+                ],
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 10, "completion_tokens": 5},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        self.mock_client.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [
+                        ToolCallBlock.model_construct(
+                            created_at=A,
+                            id="call-1",
+                            name="",
+                            input='{"q":',
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        ToolCallBlock.model_construct(
+                            created_at=A,
+                            id="call-1",
+                            name="search",
+                            input='"hello"}',
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        ToolCallBlock.model_construct(
+                            created_at=A,
+                            id="call-1",
+                            name="search",
+                            input='{"q":"hello"}',
+                        ),
+                    ],
+                ),
+            ],
+        )
+
     async def test_stream_tool_calls(
         self,
     ) -> None:

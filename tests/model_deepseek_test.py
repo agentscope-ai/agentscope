@@ -417,6 +417,73 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_tool_call_name_arrives_later(
+        self,
+    ) -> None:
+        """A tool call name in a later delta is kept for the block."""
+        chunks = [
+            _make_stream_chunk(
+                delta_text=None,
+                tool_calls=[
+                    _make_tool_call_delta(0, "call-1", None, '{"ci'),
+                ],
+            ),
+            _make_stream_chunk(
+                delta_text=None,
+                tool_calls=[
+                    _make_tool_call_delta(0, None, "get_weather", 'ty":"BJ"}'),
+                ],
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 10, "completion_tokens": 5},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        self.mock_client.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [
+                        ToolCallBlock.model_construct(
+                            id="call-1",
+                            created_at=A,
+                            name="",
+                            input='{"ci',
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        ToolCallBlock.model_construct(
+                            id="call-1",
+                            created_at=A,
+                            name="get_weather",
+                            input='ty":"BJ"}',
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        ToolCallBlock.model_construct(
+                            id="call-1",
+                            created_at=A,
+                            name="get_weather",
+                            input='{"city":"BJ"}',
+                        ),
+                    ],
+                ),
+            ],
+        )
+
     async def test_stream_tool_calls(
         self,
     ) -> None:
