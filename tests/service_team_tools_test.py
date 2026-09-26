@@ -14,8 +14,11 @@ backed by ``fakeredis``. They assert:
   recipient missing / etc.) returns an ``ERROR`` ``ToolChunk`` instead
   of raising.
 """
+import asyncio
 from contextlib import AsyncExitStack
+from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 
@@ -38,7 +41,7 @@ from agentscope.app.access import (
     ResourceKind,
     ResourceRef,
 )
-from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 from agentscope.app.storage import (
     TeamOrigin,
     UserOrigin,
@@ -1039,6 +1042,83 @@ class TestTeamSay(_TeamToolsTestBase):
             ],
         )
 
+    async def test_targeted_message_publishes_replayable_team_turn(
+        self,
+    ) -> None:
+        """The recipient gets the same structured event live and on replay."""
+        target_aid = self.worker_ids[0]
+        target_sid = self.worker_sessions[target_aid]
+        target_agent = await self.storage.get_agent(self.user_id, target_aid)
+        key = MessageBusKeys.session_events(target_sid)
+        ready = asyncio.Event()
+
+        async def receive() -> dict:
+            subscription = self.bus.subscribe(key, on_ready=ready.set)
+            try:
+                return await anext(subscription)
+            finally:
+                await subscription.aclose()
+
+        listener = asyncio.create_task(receive())
+        try:
+            await asyncio.wait_for(ready.wait(), timeout=2.0)
+            tool = TeamSay(
+                storage=self.storage,
+                message_bus=self.bus,
+                workspace_manager=self.workspace_manager,
+                user_id=self.user_id,
+                session_id=self.leader_session.id,
+                agent_id=self.leader_agent.id,
+            )
+            result = await tool(content="hi w1", to=target_agent.data.name)
+            live = await asyncio.wait_for(listener, timeout=2.0)
+        finally:
+            if not listener.done():
+                listener.cancel()
+                await asyncio.gather(listener, return_exceptions=True)
+
+        self.assertEqual(result.state, ToolResultState.RUNNING)
+        inbox = await self.bus.inbox_drain(target_sid, max_count=10)
+        self.assertEqual(len(inbox), 1)
+        replay = await self.bus.log_read(key)
+        self.assertEqual(len(replay), 1)
+        entry_id, event = replay[0]
+        self.assertEqual(live.pop("_entry_id"), entry_id)
+        self.assertEqual(live, event)
+        self.assertEqual(event["type"], "CUSTOM")
+        self.assertEqual(event["name"], "team_turn")
+        self.assertEqual(event["created_at"], event["value"]["created_at"])
+        self.assertEqual(
+            datetime.fromisoformat(event["created_at"]).tzinfo,
+            timezone.utc,
+        )
+        session = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        self.assertEqual(
+            event["value"],
+            {
+                "team_id": session.team_id,
+                "sender_session_id": self.leader_session.id,
+                "sender_agent_id": self.leader_agent.id,
+                "sender_name": "leader",
+                "hint_block_id": inbox[0][1]["id"],
+                "content": "hi w1",
+                "recipients": [
+                    {"session_id": target_sid, "agent_id": target_aid},
+                ],
+                "reply_id": None,
+                "created_at": event["created_at"],
+            },
+        )
+        other_sid = self.worker_sessions[self.worker_ids[1]]
+        self.assertEqual(
+            await self.bus.log_read(MessageBusKeys.session_events(other_sid)),
+            [],
+        )
+
     async def test_broadcast_delivers_to_all_others(self) -> None:
         """``to=None`` broadcasts to everyone in the team except the
         sender."""
@@ -1072,6 +1152,7 @@ class TestTeamSay(_TeamToolsTestBase):
         )
 
         # Both workers receive; leader doesn't loopback to itself.
+        hint_ids = set()
         for aid, sid in self.worker_sessions.items():
             inbox = await self.bus.inbox_drain(sid, max_count=10)
             self.assertEqual(
@@ -1079,6 +1160,20 @@ class TestTeamSay(_TeamToolsTestBase):
                 1,
                 f"worker {aid} missed broadcast",
             )
+            hint_ids.add(inbox[0][1]["id"])
+            events = await self.bus.log_read(
+                MessageBusKeys.session_events(sid),
+            )
+            self.assertEqual(len(events), 1)
+            self.assertEqual(
+                events[0][1]["value"]["hint_block_id"],
+                inbox[0][1]["id"],
+            )
+            self.assertEqual(
+                events[0][1]["value"]["recipients"],
+                [{"session_id": sid, "agent_id": aid}],
+            )
+        self.assertEqual(len(hint_ids), 1)
         leader_inbox = await self.bus.inbox_drain(
             self.leader_session.id,
             max_count=10,
@@ -1087,6 +1182,30 @@ class TestTeamSay(_TeamToolsTestBase):
 
         wakeups = await self.bus.dequeue_wakeups(max_count=10)
         self.assertEqual(len(wakeups), 2)
+
+    async def test_event_failure_keeps_inbox_delivery(self) -> None:
+        """A failed UI notification does not abort team message delivery."""
+        tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        with patch(
+            "agentscope.app._tool._team_say.publish_session_event",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("event channel unavailable"),
+        ) as publish:
+            result = await tool(content="all hands")
+
+        self.assertEqual(result.state, ToolResultState.RUNNING)
+        self.assertEqual(publish.await_count, 2)
+        for sid in self.worker_sessions.values():
+            inbox = await self.bus.inbox_drain(sid, max_count=10)
+            self.assertEqual(len(inbox), 1)
+            self.assertIn("all hands", inbox[0][1]["hint"])
 
     async def test_rejects_when_session_not_in_team(self) -> None:
         """A session without a team can't TeamSay."""
