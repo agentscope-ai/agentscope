@@ -1,6 +1,5 @@
 # Contributing to AgentScope
 
-
 Thank you for your interest in contributing to AgentScope!
 
 As an open-source project, we warmly welcome and encourage
@@ -11,6 +10,8 @@ ideas, your contributions help make AgentScope better for everyone.
 
 To support the long-term, healthy growth of AgentScope and its open-source
 community, we keep our development plan transparent and openly tracked.
+
+
 
 **Our roadmap is public.** The AgentScope development plan is published and
 continuously updated on our [GitHub Projects page](https://github.com/orgs/agentscope-ai/projects/2).
@@ -58,16 +59,13 @@ A few expectations when AI is involved in your work:
   answer in code review, and is not the kind of behavior that builds a
   healthy open-source community. PRs whose authors cannot explain their own
   changes will be closed.
-
 - **Review your AI-generated code before opening a PR.** Reviewer time is
   the most precious resource in this project. Don't outsource your own
   review to the maintainers by dumping unreviewed AI output into a PR.
-
 - **Keep PRs atomic.** Do not submit a 10K+-line PR produced by an AI in a
   single shot. Such PRs are unreviewable and will be rejected. Break the
   work into focused, single-purpose PRs the same way a human contributor
   would.
-
 - **AI-assisted code follows the same rules.** All of AgentScope's
   development principles — modularity, lazy imports, conventional commits,
   test coverage, no surprise API breaks — apply identically to code written
@@ -112,6 +110,7 @@ Before writing code, find or open the issue that frames your work.
    git pull upstream main
    git checkout -b feat/<short-description>
    ```
+
    Use a branch name aligned with the change type, e.g., `feat/redis-memory`,
    `fix/react-agent-leak`, `docs/contributing-update`.
 
@@ -147,20 +146,20 @@ A few conventions to follow while writing code:
   from the optional groups (`gemini`, `ollama`, `xai`, `service`, `storage`,
   etc.) — **must be lazy-imported** at point of use rather than at module
   top level:
+
   ```python
   def some_function():
       import google.genai  # from the `gemini` extra — lazy-imported
       # ... use google.genai here
   ```
+
   This keeps `import agentscope` lightweight, and `ImportError` surfaces
   only when a feature actually relying on the extra is invoked. If your
   change requires a brand-new dependency, decide first whether it belongs
   in the base `[project.dependencies]` (always required, kept small) or in
   one of the optional extras — and discuss it in the issue before merging.
-
 - **Follow the project's code style.** Pre-commit handles formatting and
   most lint rules automatically. Don't fight the formatter.
-
 - **Write unit tests alongside features.** Tests live under `tests/` and
   follow the existing structure. Tests that rely on an optional extra
   (e.g., Redis, Ollama) should skip cleanly when that extra isn't
@@ -203,6 +202,7 @@ changelog generation.
 ```
 
 **Types:**
+
 - `feat:` A new feature
 - `fix:` A bug fix
 - `docs:` Documentation only changes
@@ -214,6 +214,7 @@ changelog generation.
 - `chore:` Changes to the build process or auxiliary tools and libraries
 
 **Examples:**
+
 ```bash
 feat(models): add support for Claude-3 model
 fix(agent): resolve memory leak in ReActAgent
@@ -231,6 +232,7 @@ against `main`. PRs with invalid titles will be blocked until corrected.
 ```
 
 **Requirements:**
+
 - Title must start with one of: `feat`, `fix`, `docs`, `ci`, `refactor`, `test`, `chore`, `perf`, `style`, `build`, `revert`
 - Scope is optional but recommended
 - **Scope must be lowercase** — only lowercase letters, numbers, hyphens (`-`), and underscores (`_`) are allowed
@@ -238,6 +240,7 @@ against `main`. PRs with invalid titles will be blocked until corrected.
 - Keep the title concise and descriptive
 
 **Examples:**
+
 ```
 ✅ Valid:
 feat(memory): add redis cache support
@@ -303,16 +306,15 @@ A complete chat-model contribution includes **all** of the following:
    `CredentialBase`. Carries the API key, endpoint, and other auth fields
    your SDK needs.
    _Reference: `agentscope/credential/_anthropic.py`_
-
 2. **Chat model class** — under `agentscope.model.<provider>/`, subclassing
    `ChatModelBase`. The implementation needs to cover:
+
    - Both streaming and non-streaming modes
    - Tools API integration (function/tool calling)
    - The `tool_choice` argument
    - Reasoning models, where applicable
 
    _Reference: `agentscope/model/_anthropic/`_
-
 3. **Model card YAML(s)** — under
    `agentscope.model.<provider>._models/`, one YAML per supported model.
    Required fields: `name`, `label`, `status`, `input_types`,
@@ -320,6 +322,7 @@ A complete chat-model contribution includes **all** of the following:
    `parameter_overrides`, `deprecated_at`.
 
    Example (`claude-sonnet-4-6.yaml`):
+
    ```yaml
    name: claude-sonnet-4-6
    label: Claude Sonnet 4.6
@@ -334,10 +337,10 @@ A complete chat-model contribution includes **all** of the following:
    parameter_overrides:
      max_tokens: {"maximum": 65536}
    ```
-
 4. **Formatter classes** — under `agentscope.formatter`, both subclassing
    `FormatterBase`. Two variants are required because some APIs treat
    multi-agent conversations differently from single-user chat:
+
    - `<Provider>ChatFormatter` for single-user chat scenarios
    - `<Provider>MultiAgentFormatter` for multi-agent scenarios
 
@@ -376,13 +379,11 @@ classes plus documentation:
    `WorkspaceBase`. Implements the storage and lifecycle semantics of
    your backend.
    _Reference: `agentscope/workspace/_local_workspace.py` (`LocalWorkspace`)_
-
 2. **Workspace manager class** — alongside
    `agentscope/app/_manager/_workspace_manager.py`, subclassing
    `WorkspaceManagerBase`. Wires your workspace into the application
    lifecycle.
    _Reference: `LocalWorkspaceManager` in the same file._
-
 3. **Documentation** — open a companion PR in
    [agentscope-ai/docs](https://github.com/agentscope-ai/docs) describing
    how to configure and use your workspace.
@@ -418,7 +419,6 @@ If you need assistance or have questions:
 - Open a [Discussion](https://github.com/agentscope-ai/agentscope/discussions)
 - Report bugs via [Issues](https://github.com/agentscope-ai/agentscope/issues)
 - Contact the maintainers at DingTalk or Discord (links in the README.md)
-
 
 ---
 
