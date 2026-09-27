@@ -961,12 +961,20 @@ class Agent:
 
     async def _close_unfinished_tool_calls(
         self,
+        on_error: bool = False,
     ) -> AsyncGenerator[
         ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
         None,
     ]:
-        """Close the unfinished tool calls on interruption, so the next
-        input will be handled normally."""
+        """Close the unfinished tool calls, so the next input will be
+        handled normally.
+
+        Args:
+            on_error (`bool`, defaults to `False`):
+                Whether the tool calls were left unfinished by an error
+                rather than by a user interruption. Determines the state
+                and closing message of the synthesized tool results.
+        """
         if not self.state.context:
             return
 
@@ -983,10 +991,18 @@ class Agent:
             elif isinstance(block, ToolResultBlock):
                 awaiting_tool_calls.pop(block.id, None)
 
-        interruption_message = (
-            "<system-reminder>The tool call has been interrupted by "
-            "the user.</system-reminder>"
-        )
+        if on_error:
+            closing_message = (
+                "<system-reminder>The tool call failed due to an "
+                "internal error.</system-reminder>"
+            )
+            closing_state = ToolResultState.ERROR
+        else:
+            closing_message = (
+                "<system-reminder>The tool call has been interrupted by "
+                "the user.</system-reminder>"
+            )
+            closing_state = ToolResultState.INTERRUPTED
 
         for index in awaiting_tool_calls.values():
             call_block = last_msg.content[index]
@@ -1008,19 +1024,19 @@ class Agent:
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
-                delta=interruption_message,
+                delta=closing_message,
             )
             yield ToolResultEndEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
-                state=ToolResultState.INTERRUPTED,
+                state=closing_state,
             )
             last_msg.content.append(
                 ToolResultBlock(
                     id=last_msg.content[index].id,
                     name=last_msg.content[index].name,
-                    output=interruption_message,
-                    state=ToolResultState.INTERRUPTED,
+                    output=closing_message,
+                    state=closing_state,
                 ),
             )
 
@@ -1271,6 +1287,18 @@ class Agent:
 
             if self.react_config.interruption_raise_cancelled_error:
                 raise
+
+        except Exception:
+            # A non-interrupt failure escapes the reply loop. Close the
+            # tool calls it leaves without a result, so the persisted
+            # context stays well-formed for the next reply, and let the
+            # exception propagate to the caller.
+            async for _ in self._close_unfinished_tool_calls(
+                on_error=True,
+            ):
+                yield _
+
+            raise
 
         finally:
             if end_event is not None:
