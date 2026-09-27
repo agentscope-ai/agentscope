@@ -8,6 +8,7 @@ run anywhere ``agentscope[rag]`` is installed.
 import base64
 import io
 import os
+import zipfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -1022,6 +1023,22 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
 
+    async def test_invalid_input_errors(self) -> None:
+        """Missing paths and invalid workbooks use documented errors."""
+        parser = ExcelParser()
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/report.xlsx", "report.xlsx")
+
+        workbook = _make_xlsx_simple({"Data": [["value"]]})
+        with self.assertRaises(ValueError):
+            await parser.parse(workbook[: len(workbook) // 2], "bad.xlsx")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a workbook")
+        with self.assertRaises(ValueError):
+            await parser.parse(buffer.getvalue(), "bad.xlsx")
+
     async def test_header_only_sheet(self) -> None:
         """A sheet with only a header row is kept as a table."""
         xlsx_bytes = _make_xlsx_simple({"Data": [["Revenue", "Year"]]})
@@ -1397,6 +1414,21 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
 
 class WordParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`WordParser`."""
+
+    async def test_invalid_input_errors(self) -> None:
+        """Missing paths and invalid documents use documented errors."""
+        parser = WordParser()
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/report.docx", "report.docx")
+
+        with self.assertRaises(ValueError):
+            await parser.parse(b"not a docx", "bad.docx")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a document")
+        with self.assertRaises(ValueError):
+            await parser.parse(buffer.getvalue(), "bad.docx")
 
     async def test_simple_paragraphs(self) -> None:
         """Plain paragraphs are merged into a single text Section."""
