@@ -298,6 +298,64 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd}' to be non-read-only",
                 )
 
+    async def test_git_listing_forms_stay_read_only(self) -> None:
+        """Read-only continuation forms of the listing-capable git
+        prefixes stay auto-allowed."""
+        read_only_commands = [
+            "git branch",
+            "git branch -a",
+            "git branch -vv",
+            "git branch --list feat*",
+            "git branch -a origin/x",
+            "git branch --show-current",
+            "git branch --contains HEAD",
+            "git tag",
+            "git tag -l v*",
+            "git tag -n5",
+            "git remote",
+            "git remote -v",
+            "git remote show origin",
+            "git remote get-url origin",
+            "git reflog",
+            "git reflog show",
+            "git reflog exists HEAD",
+            "git status",
+            "git log --oneline",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be read-only",
+                )
+
+    async def test_mutating_git_commands_are_not_read_only(self) -> None:
+        """Destructive continuations of the listing-capable git prefixes
+        must not pass the read-only fast path."""
+        mutating_git_commands = [
+            "git branch -D main",
+            "git branch -d tmp",
+            "git branch main",
+            "git branch -m old new",
+            "git branch --list -D x",
+            "git branch -a -D x",
+            "git tag -d v1",
+            "git tag v1.0",
+            "git tag -a v1 -m msg",
+            "git remote add origin https://example.test/x.git",
+            "git remote remove origin",
+            "git remote set-url origin https://example.test/y.git",
+            "git remote prune origin",
+            "git reflog expire --expire=now --all",
+            "git reflog delete HEAD@{1}",
+        ]
+        for cmd in mutating_git_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [
