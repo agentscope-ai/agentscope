@@ -990,7 +990,11 @@ class Agent:
 
         for index in awaiting_tool_calls.values():
             call_block = last_msg.content[index]
-            assert isinstance(call_block, ToolCallBlock)
+            # ``awaiting_tool_calls`` only stores ``ToolCallBlock``
+            # indices, but a runtime check (instead of ``assert``) keeps
+            # the path safe under ``python -O``.
+            if not isinstance(call_block, ToolCallBlock):
+                continue
 
             # ALLOWED calls are running and SUBMITTED external calls are
             # awaiting their result; both already emitted START.
@@ -1000,25 +1004,25 @@ class Agent:
             ):
                 yield ToolResultStartEvent(
                     reply_id=self.state.reply_id,
-                    tool_call_id=last_msg.content[index].id,
-                    tool_call_name=last_msg.content[index].name,
+                    tool_call_id=call_block.id,
+                    tool_call_name=call_block.name,
                 )
 
             call_block.state = ToolCallState.FINISHED
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
+                tool_call_id=call_block.id,
                 delta=interruption_message,
             )
             yield ToolResultEndEvent(
                 reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
+                tool_call_id=call_block.id,
                 state=ToolResultState.INTERRUPTED,
             )
             last_msg.content.append(
                 ToolResultBlock(
-                    id=last_msg.content[index].id,
-                    name=last_msg.content[index].name,
+                    id=call_block.id,
+                    name=call_block.name,
                     output=interruption_message,
                     state=ToolResultState.INTERRUPTED,
                 ),
