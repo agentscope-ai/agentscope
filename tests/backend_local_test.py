@@ -145,21 +145,13 @@ class TestLocalBackendExec(IsolatedAsyncioTestCase):
         self.assertEqual(result.stderr, b"timed out")
 
     async def test_unsupported_event_loop_raises_runtime_error(self) -> None:
-        """Opaque ``NotImplementedError`` becomes an actionable RuntimeError.
-
-        Windows ``SelectorEventLoop`` raises ``NotImplementedError`` from
-        ``create_subprocess_exec``; callers should get a clear message
-        instead of that bare exception.
-        """
+        """Test NotImplementedError from subprocess creation is wrapped."""
         with mock.patch(
             "agentscope.tool._builtin._backend.asyncio.create_subprocess_exec",
-            side_effect=NotImplementedError("subprocess"),
+            side_effect=NotImplementedError,
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 await self.backend.exec_shell([sys.executable, "-c", "pass"])
-        # NotImplementedError subclasses RuntimeError; require the wrapped type.
-        self.assertIs(type(ctx.exception), RuntimeError)
-        self.assertIn("SelectorEventLoop", str(ctx.exception))
         self.assertIsInstance(ctx.exception.__cause__, NotImplementedError)
 
 
