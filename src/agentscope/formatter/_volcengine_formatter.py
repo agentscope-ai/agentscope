@@ -181,11 +181,17 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                                     {"type": "text", "text": sub.text},
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = (
+                                hint_parts.append(
                                     self._format_volcengine_data_block(sub)
+                                    or {
+                                        "type": "text",
+                                        "text": (
+                                            f"[{sub.source.media_type} "
+                                            "attached, not supported "
+                                            "by this provider]"
+                                        ),
+                                    },
                                 )
-                                if formatted_sub is not None:
-                                    hint_parts.append(formatted_sub)
                         if hint_parts:
                             messages.append(
                                 {"role": "user", "content": hint_parts},
