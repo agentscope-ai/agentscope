@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The MCP configurations."""
+
 from pathlib import Path
 from typing import Literal
 

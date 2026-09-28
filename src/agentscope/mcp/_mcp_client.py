@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+
 import asyncio
 import re
 from contextlib import (
@@ -392,8 +393,7 @@ class MCPClient(BaseModel):
 
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
 
         try:
@@ -455,9 +455,7 @@ class MCPClient(BaseModel):
         available_tools: list = self._cached_tools
         if self.enable_tools is not None:
             available_tools = [
-                tool
-                for tool in available_tools
-                if tool.name in self.enable_tools
+                tool for tool in available_tools if tool.name in self.enable_tools
             ]
         if self.disable_tools is not None:
             available_tools = [
@@ -518,7 +516,7 @@ class MCPClient(BaseModel):
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{name}' not found in MCP server " f"'{self.name}'",
+                f"Tool '{name}' not found in MCP server '{self.name}'",
             )
 
         # Create MCPTool based on stateful/stateless
@@ -548,11 +546,9 @@ class MCPClient(BaseModel):
         """
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
         if not self._session:
             raise RuntimeError(
-                f"MCP '{self.name}' session is not initialized. "
-                "Call connect() first.",
+                f"MCP '{self.name}' session is not initialized. Call connect() first.",
             )
