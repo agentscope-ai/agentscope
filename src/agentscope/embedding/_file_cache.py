@@ -33,7 +33,9 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                 The directory to store the embedding files.
             max_file_number (`int | None`, defaults to `None`):
                 The maximum number of files to keep in the cache directory. If
-                exceeded, the oldest files will be removed.
+                exceeded, the oldest files will be removed. `None` leaves the
+                file count unlimited; `0` retains no embedding files after a
+                write.
             max_cache_size (`int | None`, defaults to `None`):
                 The maximum size of the cache directory in MB. If exceeded,
                 the oldest files will be removed until the size is within the
@@ -182,8 +184,12 @@ class FileEmbeddingCache(EmbeddingCacheBase):
         ]
         files.sort(key=lambda x: x[1])
 
-        if self.max_file_number and len(files) > self.max_file_number:
-            for file_name, _ in files[: 0 - self.max_file_number]:
+        if (
+            self.max_file_number is not None
+            and len(files) > self.max_file_number
+        ):
+            excess = len(files) - self.max_file_number
+            for file_name, _ in files[:excess]:
                 os.remove(os.path.join(self.cache_dir, file_name))
                 logger.info(
                     "Remove cached embedding file %s for limited number "
@@ -191,7 +197,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     file_name,
                     self.max_file_number,
                 )
-            files = files[0 - self.max_file_number :]
+            files = files[excess:]
 
         if (
             self.max_cache_size is not None
