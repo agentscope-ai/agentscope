@@ -108,6 +108,8 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
             timeout=5,
         )
 
+        for scope, knowledge in scopes.items():
+            documents = await knowledge.list_documents()
             self.assertEqual(
                 [document.model_dump() for document in documents],
                 [
