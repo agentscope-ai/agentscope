@@ -68,9 +68,6 @@ GIT_READ_ONLY_COMMANDS = {
     "git log",
     "git diff",
     "git show",
-    "git branch",
-    "git tag",
-    "git remote",
     "git ls-files",
     "git ls-tree",
     "git cat-file",
@@ -80,7 +77,6 @@ GIT_READ_ONLY_COMMANDS = {
     "git shortlog",
     "git blame",
     "git grep",
-    "git reflog",
     "git config --get",
     "git config --list",
 }
@@ -142,55 +138,6 @@ FIND_MUTATING_PREDICATES = {
     "-fprintf",
     "-ok",
     "-okdir",
-}
-
-# Git read-only prefixes whose continuation arguments can mutate state:
-# ``git branch main`` creates a branch, ``git branch -D main`` deletes
-# one, ``git tag -d v1`` deletes a tag, ``git remote add ...`` edits the
-# config, ``git reflog expire ...`` destroys history. A command under
-# one of these prefixes stays read-only only while its arguments match
-# the read-only forms below (mirroring the per-predicate analysis done
-# for ``find``); anything unknown or destructive fails closed into the
-# normal permission flow.
-GIT_MUTATING_CAPABLE_COMMANDS: dict[str, dict[str, set[str]]] = {
-    "git branch": {
-        # Flags that switch the command into listing mode, after which
-        # bare positionals are just name patterns.
-        "list_mode": {
-            "-l",
-            "--list",
-            "-a",
-            "--all",
-            "-r",
-            "--remotes",
-            "-v",
-            "-vv",
-            "--verbose",
-            "--show-current",
-            "--contains",
-            "--no-contains",
-            "--merged",
-            "--no-merged",
-            "--points-at",
-        },
-        # Subcommands that only read, consuming their remaining
-        # arguments (e.g. ``git remote show origin``).
-        "read_subcommands": set(),
-    },
-    "git tag": {
-        "list_mode": {"-l", "--list", "-n"},
-        "read_subcommands": set(),
-    },
-    "git remote": {
-        "list_mode": {"-v", "--verbose"},
-        "read_subcommands": {"show", "get-url"},
-    },
-    "git reflog": {
-        "list_mode": set(),
-        # ``expire`` and ``delete`` mutate history; ``show`` and
-        # ``exists`` only read it.
-        "read_subcommands": {"show", "exists"},
-    },
 }
 
 
@@ -263,9 +210,6 @@ class BashCommandParser:
         if self._is_mutating_find_command(cmd):
             return False
 
-        if self._is_mutating_git_command(cmd):
-            return False
-
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
@@ -309,59 +253,6 @@ class BashCommandParser:
                 text = child.text.decode("utf8")
                 if text in FIND_MUTATING_PREDICATES:
                     return True
-
-        return False
-
-    def _is_mutating_git_command(self, cmd: str) -> bool:
-        """Check if a git read-only prefix carries mutating arguments.
-
-        ``git branch``, ``git tag``, ``git remote`` and ``git reflog``
-        are listing commands only while their continuation stays within
-        the read-only forms; ``git branch -D main`` or
-        ``git remote add ...`` mutate and must not pass the read-only
-        check.
-
-        Args:
-            cmd (`str`):
-                A single command string starting with one of the
-                prefixes in ``GIT_MUTATING_CAPABLE_COMMANDS``.
-
-        Returns:
-            `bool`:
-                True if the command mutates state, False if it stays
-                within the read-only forms.
-        """
-        for prefix, table in GIT_MUTATING_CAPABLE_COMMANDS.items():
-            if cmd != prefix and not cmd.startswith(prefix + " "):
-                continue
-
-            tokens = cmd[len(prefix) :].split()
-            list_mode = False
-            for token in tokens:
-                if token in table["read_subcommands"]:
-                    # A read-only subcommand; the rest are its
-                    # arguments.
-                    return False
-
-                if token.startswith("-"):
-                    probe = (
-                        token.split("=", 1)[0]
-                        if token.startswith("--")
-                        else token[:2]
-                    )
-                    if probe in table["list_mode"]:
-                        list_mode = True
-                        continue
-                    # Unknown or destructive flag: fail closed.
-                    return True
-
-                if not list_mode:
-                    # A bare positional without a listing flag can be a
-                    # branch/tag creation target.
-                    return True
-                # A name pattern after a listing flag is read-only.
-
-            return False
 
         return False
 
