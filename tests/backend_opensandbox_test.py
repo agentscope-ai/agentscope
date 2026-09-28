@@ -6,11 +6,14 @@ Validates that the three backend primitives (``exec_shell``,
 ``read_file``, ``write_file``) and the inherited shell-based filesystem
 helpers behave correctly inside a real OpenSandbox sandbox.
 
-The whole module is skipped unless the ``OPENSANDBOX_DOMAIN`` environment
-variable is set, because every test requires a live OpenSandbox service.
+Most of the module is skipped unless the ``OPENSANDBOX_DOMAIN`` environment
+variable is set, because those tests require a live OpenSandbox service.
 CI runs without OpenSandbox access are therefore unaffected; when a
 domain *is* present the tests exercise the real ``commands.run`` /
 ``files.*`` APIs.
+
+``TestOpenSandboxWriteEntry`` runs everywhere: it only inspects the write
+entry the backend builds, so it needs no live service.
 
 A live sandbox is obtained by initializing an :class:`OpenSandboxWorkspace`
 and reusing its already-wired :class:`OpenSandboxBackend` (``ws._backend``),
@@ -19,13 +22,13 @@ which avoids duplicating the sandbox bring-up logic here.
 
 import os
 import unittest
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import OpenSandboxWorkspace
 from agentscope.workspace import OpenSandboxBackend
 from agentscope.workspace._opensandbox._constants import SANDBOX_WORKDIR
-
 
 # ── OpenSandbox availability check ─────────────────────────────────
 
@@ -153,3 +156,85 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{SANDBOX_WORKDIR}/missing")
+
+
+# ── write entry (no live sandbox required) ─────────────────────────
+
+
+class _FakeExecResult:
+    """Minimal ``commands.run`` result shape."""
+
+    exit_code = 0
+    stdout = b""
+    stderr = b""
+
+
+class _FakeCommands:
+    """Records the command lines the backend dispatches."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def run(
+        self, command_line: str, opts: Any = None
+    ) -> _FakeExecResult:
+        """Record *command_line* and report a successful execution."""
+        self.calls.append(command_line)
+        return _FakeExecResult()
+
+
+class _FakeFiles:
+    """Records the write entries handed to ``files.write_files``."""
+
+    def __init__(self) -> None:
+        self.entries: list[Any] = []
+
+    async def write_files(self, entries: list[Any]) -> None:
+        """Record *entries* instead of writing them anywhere."""
+        self.entries.extend(entries)
+
+
+class _FakeSandbox:
+    """Stand-in for ``opensandbox.sandbox.Sandbox``."""
+
+    def __init__(self) -> None:
+        self.commands = _FakeCommands()
+        self.files = _FakeFiles()
+
+
+class TestOpenSandboxWriteEntry(IsolatedAsyncioTestCase):
+    """Test cases for the write entry ``write_file`` builds.
+
+    OpenSandbox's ``WriteEntry.mode`` carries the permission bits as an
+    integer whose *decimal digits* are the octal mode (the SDK default is
+    ``755``, and execd parses the value as octal). Sending ``0o644``
+    instead puts ``420`` on the wire, which execd reads as ``0o420`` —
+    owner read-only, so the second write to the same file fails with
+    ``permission denied``. These tests pin the decimal encoding without
+    needing a live sandbox.
+    """
+
+    def test_write_entry_mode_is_decimal_encoded(self) -> None:
+        """``_make_write_entry`` asks for ``0o644`` as the integer 644."""
+        entry = OpenSandboxBackend._make_write_entry("/workspace/a.txt", b"x")
+        self.assertEqual(entry.mode, 644)
+        self.assertEqual(oct(int(str(entry.mode), 8)), "0o644")
+
+    async def test_write_file_sends_that_mode(self) -> None:
+        """``write_file`` passes the mode through to ``files.write_files``."""
+        sandbox = _FakeSandbox()
+        # The fake only implements the two calls this path makes.
+        backend = OpenSandboxBackend(
+            sandbox,  # type: ignore[arg-type]
+            SANDBOX_WORKDIR,
+        )
+
+        path = f"{SANDBOX_WORKDIR}/a/b.txt"
+        await backend.write_file(path, b"payload")
+
+        self.assertEqual(sandbox.commands.calls[0], "mkdir -p /workspace/a")
+        self.assertEqual(len(sandbox.files.entries), 1)
+        entry = sandbox.files.entries[0]
+        self.assertEqual(entry.path, path)
+        self.assertEqual(entry.data, b"payload")
+        self.assertEqual(entry.mode, 644)
