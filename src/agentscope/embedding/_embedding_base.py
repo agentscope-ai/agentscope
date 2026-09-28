@@ -287,7 +287,7 @@ class EmbeddingModelBase(Generic[InputT]):
         for resp in responses:
             all_embeddings.extend(resp.embeddings)
             if resp.usage:
-                total_time += resp.usage.time
+                total_time = max(total_time, resp.usage.time)
                 if resp.usage.tokens:
                     total_tokens += resp.usage.tokens
 

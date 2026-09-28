@@ -9,6 +9,49 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyValue
 
 from agentscope.credential import OpenAICredential
+from agentscope.embedding import (
+    EmbeddingResponse,
+    EmbeddingUsage,
+    OpenAIEmbeddingModel,
+)
+
+
+class EmbeddingMergeUsageTest(IsolatedAsyncioTestCase):
+    """Merged usage must not sum concurrently dispatched batch times."""
+
+    async def test_time_is_the_slowest_batch_not_the_sum(self) -> None:
+        """Batches overlap, so their durations must not be added up."""
+        slow = EmbeddingResponse(
+            embeddings=[[0.1]],
+            usage=EmbeddingUsage(tokens=1, time=0.05),
+        )
+        fast = EmbeddingResponse(
+            embeddings=[[0.2]],
+            usage=EmbeddingUsage(tokens=1, time=0.03),
+        )
+
+        merged = OpenAIEmbeddingModel._merge_responses([slow, fast])
+
+        self.assertEqual(merged.usage.tokens, 2)
+        self.assertEqual(merged.usage.time, 0.05)
+
+    async def test_embeddings_are_still_concatenated_in_order(self) -> None:
+        """The token change must not affect the merged vector order."""
+        first = EmbeddingResponse(
+            embeddings=[[0.1]],
+            usage=EmbeddingUsage(tokens=1, time=0.05),
+        )
+        second = EmbeddingResponse(
+            embeddings=[[0.2]],
+            usage=EmbeddingUsage(tokens=1, time=0.03),
+        )
+
+        merged = OpenAIEmbeddingModel._merge_responses([first, second])
+
+        self.assertEqual(merged.embeddings, [[0.1], [0.2]])
+        self.assertEqual(merged.usage.tokens, 2)
+
+
 from agentscope.embedding import OpenAIEmbeddingModel
 
 A = AnyValue()
