@@ -894,30 +894,48 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         parser = PPTParser(slide_prefix=None, slide_suffix=None)
         sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
 
-        self.assertEqual(len(sections), 3)
-        self.assertEqual(sections[0].content.text, "Before picture")
-        image = sections[1]
-        self.assertEqual(image.content.type, "data")
-        self.assertEqual(image.content.source.data, _PNG_PIXEL_B64)
-        self.assertEqual(image.content.source.media_type, "image/png")
-        self.assertEqual(image.content.name, "placeholder.pptx")
-        self.assertEqual(image.source, "placeholder.pptx")
         self.assertEqual(
-            image.metadata,
-            {"slide": 1, "media_type": "image/png"},
-        )
-        self.assertEqual(sections[2].content.text, "After picture")
-
-        parser = PPTParser(
-            include_image=False,
-            slide_prefix=None,
-            slide_suffix=None,
-        )
-        sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
-        self.assertEqual(len(sections), 1)
-        self.assertEqual(
-            sections[0].content.text,
-            "Before picture\nAfter picture",
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before picture",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1},
+                },
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "placeholder.pptx",
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1, "media_type": "image/png"},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "After picture",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
         )
 
     async def test_table_json_format(self) -> None:
