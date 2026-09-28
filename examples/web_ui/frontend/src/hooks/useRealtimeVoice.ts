@@ -59,15 +59,11 @@ export function useRealtimeVoice(agentId: string | null, sessionId: string | nul
 		else await start();
 	}, [start, state, stop]);
 
-	const interrupt = useCallback(() => {
-		transportRef.current?.interrupt();
-	}, []);
-
 	const userConfirm = useCallback(async (event: UserConfirmResultEvent) => {
 		const transport = transportRef.current;
 		if (!transport) throw new Error('Realtime voice mode is not active.');
 		transport.userConfirm(event);
 	}, []);
 
-	return { state, start, stop, toggle, interrupt, userConfirm };
+	return { state, toggle, userConfirm };
 }

@@ -172,10 +172,6 @@ export class BrowserWebRTCTransport {
 		this.options.onStateChange('idle');
 	}
 
-	interrupt(): void {
-		this.sendJson({ type: 'control', control: 'interrupt', data: {} });
-	}
-
 	userConfirm(event: UserConfirmResultEvent): void {
 		if (this.controlChannel?.readyState !== 'open') {
 			throw new Error('The realtime control channel is not open.');

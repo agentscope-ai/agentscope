@@ -795,7 +795,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										value={selectedRealtimeModel}
 										onChange={handleRealtimeModelChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										refetchTrigger={credentialRefetchTrigger}
 										disabled={configPending || realtimeVoice.state !== 'idle'}
 										className="text-muted-foreground hover:text-foreground"
 									/>
@@ -918,11 +917,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
-									onInterrupt={
-										realtimeVoice.state === 'active'
-											? realtimeVoice.interrupt
-											: interrupt
-									}
+									onInterrupt={interrupt}
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}
 									voiceDisabled={

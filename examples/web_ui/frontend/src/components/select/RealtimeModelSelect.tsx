@@ -1,5 +1,4 @@
 import { AudioLines, Ban, ChevronDown, PlusCircle } from 'lucide-react';
-import { useEffect } from 'react';
 
 import type { RealtimeModelCard, RealtimeModelConfig } from '@/api';
 import { Button } from '@/components/ui/button';
@@ -25,7 +24,6 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 	value?: RealtimeModelConfig | null;
 	onChange?: (value: RealtimeModelConfig | null) => void;
 	onAddCredential?: () => void;
-	refetchTrigger?: number;
 }
 
 function parameterDefaults(model: RealtimeModelCard): Record<string, unknown> {
@@ -43,17 +41,12 @@ export function RealtimeModelSelect({
 	value,
 	onChange,
 	onAddCredential,
-	refetchTrigger,
 	className,
 	...props
 }: Props) {
-	const { groups, loading, refetch } = useAvailableRealtimeModels();
+	const { groups, loading } = useAvailableRealtimeModels();
 	const { t } = useTranslation();
-	const entries = Object.entries(groups).filter(([, items]) => items.length > 0);
-
-	useEffect(() => {
-		if (refetchTrigger !== undefined && refetchTrigger > 0) refetch();
-	}, [refetchTrigger, refetch]);
+	const entries = Object.entries(groups);
 
 	const handleSelect = (credentialId: string, model: RealtimeModelCard) => {
 		onChange?.({
