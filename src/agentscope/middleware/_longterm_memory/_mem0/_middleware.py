@@ -357,7 +357,17 @@ class Mem0Middleware(MiddlewareBase):
                         self._build_memory_message(memories),
                     )
                     injected = True
-                if isinstance(item, Msg) and item.role == "assistant":
+                # A parked reply (waiting on a permission prompt or an
+                # external execution) ends the stream with a placeholder
+                # assistant message that carries no ``finished_reason``.
+                # Persisting it would store "I'm waiting for your
+                # permission ..." as if it were the assistant's answer, so
+                # only a reply that actually finished is written back.
+                if (
+                    isinstance(item, Msg)
+                    and item.role == "assistant"
+                    and item.finished_reason is not None
+                ):
                     final_msg = item
                 yield item
         finally:
