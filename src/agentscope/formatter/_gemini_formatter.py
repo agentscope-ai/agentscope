@@ -442,7 +442,7 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
             "role": "user",
             "parts": [
                 {
-                    "text": msg.get_text_content(),
+                    "text": msg.get_text_content() or "",
                 },
             ],
         }
