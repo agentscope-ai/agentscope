@@ -35,12 +35,15 @@ from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._agent_invite import AgentInvite
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
+from ._sop_submit import SubmitHandover, SubmitVerdict
 from ._team_say import TeamSay
 
 __all__ = [
     "AgentCreate",
     "AgentInvite",
     "DEFAULT_SUB_AGENT_TEMPLATE",
+    "SubmitHandover",
+    "SubmitVerdict",
     "TeamCreate",
     "TeamDelete",
     "TeamSay",

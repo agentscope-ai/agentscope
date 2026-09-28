@@ -90,7 +90,8 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
         row_data: list[str] = []
         for tc in tr.findall(qn("w:tc")):
             paragraphs: list[str] = []
-            for p_elem in tc.findall(qn("w:p")):
+            # Include paragraphs of tables nested in this cell.
+            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
                     if element.tag == text_tag and element.text:
@@ -272,9 +273,15 @@ class WordParser(ParserBase):
             ) from e
 
         if isinstance(file, str):
-            doc = DocxDocument(file)
-        else:
+            with open(file, "rb") as fp:
+                file = fp.read()
+
+        try:
             doc = DocxDocument(io.BytesIO(file))
+        except Exception as e:  # pylint: disable=broad-except
+            raise ValueError(
+                f"Failed to parse {filename!r} as DOCX: {e}",
+            ) from e
 
         sections: list[Section] = []
         text_buffer: list[str] = []

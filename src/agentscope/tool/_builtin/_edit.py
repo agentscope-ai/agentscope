@@ -392,6 +392,16 @@ Usage:
                 is_last=True,
             )
 
+        # Refresh the read cache so consecutive edits don't require a re-read
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(updated_content).splitlines(
+                    keepends=True,
+                ),
+                mtime=await self._backend.stat_mtime(file_path),
+            )
+
         # Return success message
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"

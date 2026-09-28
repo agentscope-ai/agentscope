@@ -209,7 +209,8 @@ changelog generation.
 - `style:` Changes that do not affect the meaning of the code (whitespace, formatting, etc.)
 - `refactor:` A code change that neither fixes a bug nor adds a feature
 - `perf:` A code change that improves performance
-- `ci:` Adding missing tests or correcting existing tests
+- `test:` Adding missing tests or correcting existing tests
+- `ci:` Changes to CI configuration files and scripts
 - `chore:` Changes to the build process or auxiliary tools and libraries
 
 **Examples:**
@@ -218,7 +219,7 @@ feat(models): add support for Claude-3 model
 fix(agent): resolve memory leak in ReActAgent
 docs(readme): update installation instructions
 refactor(formatter): simplify message formatting logic
-ci(models): add unit tests for OpenAI integration
+test(models): add unit tests for OpenAI integration
 ```
 
 **Pull request title format.** PR titles follow the same Conventional
