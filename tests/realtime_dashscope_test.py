@@ -156,6 +156,7 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
                 max_history_turns=30,
             ),
         )
+        self.assertEqual(model.effective_max_audio_turns, 30)
         self.assertDictEqual(
             model._session_update("be nice", None),
             {

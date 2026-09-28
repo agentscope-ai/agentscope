@@ -17,6 +17,7 @@ from agentscope.credential import (
 from agentscope.realtime import (
     DashScopeRealtimeModel,
     GeminiRealtimeModel,
+    ModelDisconnectedError,
     OpenAIRealtimeModel,
     RealtimeModelBase,
     XAIRealtimeModel,
@@ -146,3 +147,33 @@ class ReconnectTest(IsolatedAsyncioTestCase):
                     [event async for event in model.events()],
                     [me.SessionEndedEvent(reason="closed")],
                 )
+
+    async def test_session_update_readiness(self) -> None:
+        """OpenAI-shaped adapters wait for the accepted session config."""
+        for model, _ in self.models[:3]:
+            with self.subTest(model=type(model).__name__):
+                await self._connect(model, [{"type": "session.updated"}])
+                await asyncio.wait_for(model.wait_ready(), timeout=1)
+                await model.close()
+
+    async def test_session_update_disconnect_before_ready(self) -> None:
+        """A closed socket cannot be reported as a ready session."""
+        for model, frames in self.models[:3]:
+            with self.subTest(model=type(model).__name__):
+                await self._connect(model, frames)
+                waiting = asyncio.create_task(model.wait_ready())
+                await model.close()
+                with self.assertRaises(ModelDisconnectedError):
+                    await asyncio.wait_for(waiting, timeout=1)
+
+    async def test_session_update_error_rejects_ready(self) -> None:
+        """An invalid session update fails without waiting for a timeout."""
+        for model, _ in self.models[:3]:
+            with self.subTest(model=type(model).__name__):
+                await self._connect(
+                    model,
+                    [{"type": "error", "error": {"message": "bad config"}}],
+                )
+                with self.assertRaises(ModelDisconnectedError):
+                    await asyncio.wait_for(model.wait_ready(), timeout=1)
+                await model.close()
