@@ -254,12 +254,8 @@ class ChatService:
         self._extra_agent_tools = extra_agent_tools
         self._channel_clients = channel_clients
         self.sop_service: SOPService | None = None
-        """The service that carries procedures on after a step's reply.
-
-        Set by the lifespan once both exist — a SOP service needs a chat
-        service, so one of the two has to be built second. Left unset,
-        one is built on first use, which is right for a chat service
-        standing on its own but leaves nobody to stop its advances."""
+        """Carries a procedure on after a turn resumes one of its steps.
+        Set by the lifespan, since a SOP service is built on this one."""
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -806,9 +802,9 @@ class ChatService:
         otherwise a waiter can assemble an agent from a snapshot that the
         preceding holder replaces before releasing the lock."""
 
-        # Bound out here because the procedure a session belongs to is
-        # carried on after the lock is let go, not under it.
-        sop_run_id: str | None = None
+        # Set when this turn answers a step's parked tool call; that run
+        # is carried on after the lock is let go, not under it.
+        resumed_sop_run_id: str | None = None
         interrupted = False
 
         async with self._message_bus.acquire_lock(
@@ -859,17 +855,22 @@ class ChatService:
                         ),
                     )
                 worker_name = agent_record.data.name
-                if isinstance(session_record.origin, SOPOrigin):
-                    sop_run_id = session_record.origin.sop_run_id
-                    if sop_dispatch is None:
-                        # A parked turn is answered through the chat
-                        # endpoint rather than by the run, so what it
-                        # left behind is the only thing still saying
-                        # this session owes the step a deliverable.
-                        sop_dispatch = await self._parked_dispatch(
-                            user_id,
-                            session_id,
-                        )
+                if (
+                    isinstance(session_record.origin, SOPOrigin)
+                    and sop_dispatch is None
+                    and isinstance(
+                        input_msg,
+                        (UserConfirmResultEvent, ExternalExecutionResultEvent),
+                    )
+                ):
+                    # Only the answer to a step's parked tool call resumes
+                    # that step; anything else typed here is a chat.
+                    sop_dispatch = await self._parked_dispatch(
+                        user_id,
+                        session_id,
+                    )
+                    if sop_dispatch is not None:
+                        resumed_sop_run_id = session_record.origin.sop_run_id
 
                 # -------------------------------------------------------------
                 # 1b. Resolve the team identity ONCE, before anything that
@@ -1528,12 +1529,15 @@ class ChatService:
                     trigger_text,
                 )
 
-        # An interrupted turn is a person saying stop. Carrying the
-        # procedure on from it would start the step again, which is the
-        # opposite of what they asked for — the run waits where it is
-        # until something else moves it.
-        if sop_run_id is not None and not interrupted:
-            await self._advance_sop(user_id, sop_run_id)
+        # Handed off rather than awaited, since the rest of the procedure
+        # can be many turns more. An interrupted turn is a person saying
+        # stop, so the run waits where it is.
+        if (
+            resumed_sop_run_id is not None
+            and not interrupted
+            and self.sop_service is not None
+        ):
+            self.sop_service.advance_later(user_id, resumed_sop_run_id)
 
     async def _parked_dispatch(
         self,
@@ -1543,10 +1547,8 @@ class ChatService:
         """What a step still expects of this session, if anything.
 
         A claim carries no lease, so it is checked rather than timed
-        out: the step it names has to still be under way. Anything else
-        is a claim left behind by a node that died holding it, and
-        acting on one would hold a person's reply to a submission with
-        no tool to make it.
+        out: the step it names has to be parked, and on this session's
+        half of it. Anything else is a claim left behind.
 
         Args:
             user_id (`str`):
@@ -1571,48 +1573,18 @@ class ChatService:
         if (
             run is None
             or index >= len(run.state.steps)
-            or run.state.steps[index].phase
-            not in (SOPPhase.RUNNING, SOPPhase.AWAITING)
+            or run.state.steps[index].phase is not SOPPhase.AWAITING
         ):
             return None
+        step = run.definition.steps[index]
+        ref = (
+            step.executor
+            if run.state.steps[index].submission is None
+            else getattr(step.verifier, "agent", None)
+        )
+        if ref is None or run.sessions.get(ref.session_key) != session_id:
+            return None
         return claim
-
-    async def _advance_sop(self, user_id: str, sop_run_id: str) -> None:
-        """Set the procedure this session belongs to going again.
-
-        A person answering a tool call in a step's session answers it
-        through the ordinary chat endpoint, so the procedure has no
-        other way to learn that the step got moving again.
-
-        Handed off rather than awaited: this reply is finished, and the
-        rest of the procedure can be many turns more. Waiting for it
-        would keep this run's task — and so this session's slot in
-        :class:`~agentscope.app._manager.ChatRunRegistry` — occupied the
-        whole time, which is how long the next message to this session
-        would be refused for.
-
-        Skipped while the run's lock is held, which means the run is
-        already driving: this reply was one it dispatched, and it reads
-        the result back itself the moment this returns.
-
-        Args:
-            user_id (`str`):
-                The owner user id.
-            sop_run_id (`str`):
-                The run this session belongs to.
-        """
-        if await self._message_bus.is_locked(
-            MessageBusKeys.sop_run_lock(sop_run_id),
-        ):
-            return
-        if self.sop_service is None:
-            self.sop_service = SOPService(
-                self._storage,
-                self._workspace_manager,
-                self._message_bus,
-                self,
-            )
-        self.sop_service.advance_later(user_id, sop_run_id)
 
     async def _project_event(
         self,

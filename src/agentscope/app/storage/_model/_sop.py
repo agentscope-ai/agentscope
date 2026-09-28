@@ -120,6 +120,30 @@ class SOPStepDataV1(BaseModel):
     )
 
 
+def _session_agents(steps: list[SOPStepDataV1]) -> dict[str, str]:
+    """Map each session key the steps name to the one agent it belongs to.
+
+    Raises:
+        `ValueError`:
+            If one key is used by two different agents.
+    """
+    agents: dict[str, str] = {}
+    for step in steps:
+        refs = [step.executor]
+        if isinstance(step.verifier, AgentVerifier):
+            refs.append(step.verifier.agent)
+        for ref in refs:
+            if (
+                agents.setdefault(ref.session_key, ref.agent_id)
+                != ref.agent_id
+            ):
+                raise ValueError(
+                    f"Conversation {ref.session_key!r} is used by more "
+                    f"than one agent.",
+                )
+    return agents
+
+
 class SOPData(BaseModel):
     """A procedure: its milestones, in order."""
 

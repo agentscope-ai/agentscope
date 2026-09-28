@@ -71,11 +71,17 @@ def upgrade() -> None:
             ["user_id", "sop_id"],
             unique=False,
         )
+        batch_op.create_index(
+            "ix_sop_runs_user_phase",
+            ["user_id", "phase"],
+            unique=False,
+        )
 
 
 def downgrade() -> None:
     """Drop the ``sop_runs`` and ``sops`` tables."""
     with op.batch_alter_table("sop_runs", schema=None) as batch_op:
+        batch_op.drop_index("ix_sop_runs_user_phase")
         batch_op.drop_index("ix_sop_runs_user_sop")
         for column in (
             "phase",

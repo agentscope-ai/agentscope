@@ -193,12 +193,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 workspace_manager=workspace_manager,
                 message_bus=message_bus,
                 chat=chat_service,
+                session_service=app.state.session_service,
             ),
         )
         app.state.sop_service = sop_service
-        # Handed back so a reply that finishes on a procedure's session
-        # carries that run on through the same service — one per app, so
-        # its advances are the ones this stack stops on the way out.
+        # So a turn that resumes a step carries its run on through the
+        # service whose advances this stack stops on the way out.
         chat_service.sop_service = sop_service
 
         app.state.workspace_service = WorkspaceService(

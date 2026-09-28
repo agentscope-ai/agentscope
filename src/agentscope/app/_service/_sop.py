@@ -22,6 +22,7 @@ from ..storage import (
     SOPWorkspaceGrain,
     StorageBase,
 )
+from ..storage._model._sop import _session_agents
 from .._tool import SubmitVerdict
 from ..message_bus import MessageBus, MessageBusKeys
 from ..workspace_manager import WorkspaceManagerBase
@@ -130,7 +131,8 @@ class SessionSOPStep(SOPStepBase):
             yield event
 
         verifier = self._data.verifier
-        if state.submission is None:
+        reviewing = state.submission is not None
+        if not reviewing:
             ref, opening = self._data.executor, self._brief(state)
         elif verifier is None:
             # A step that only had to happen.
@@ -145,27 +147,32 @@ class SessionSOPStep(SOPStepBase):
             ref, opening = verifier.agent, self._question(state, verifier)
 
         session_id = self._sessions[ref.session_key]
+        if state.phase is SOPPhase.AWAITING:
+            # Still parked on a tool call: a fresh brief would be refused
+            # by an agent waiting for that answer.
+            session = await self._storage.get_session(
+                self._user_id,
+                ref.agent_id,
+                session_id,
+            )
+            if session is not None and (
+                SessionService.derive_parked_status(session.state.context)
+                in _PARKED
+            ):
+                return
+
         state.phase = SOPPhase.RUNNING
         # The submit tool locates its step by reading which one the
         # stored run says is running, so this has to land first.
         await self._persist()
 
-        # A fresh attempt is briefed; a resumption is the answer its
-        # session is already waiting for, and goes through untouched.
-        # The engine hands over ``given`` for the former, which the
-        # briefing already carries.
-        resuming = inputs is not None and not isinstance(inputs, (Msg, list))
         dispatch = f"{self._sop_run_id}:{self._index}"
         try:
-            # Handed to the turn rather than left where the session can
-            # see it: a claim lying about would be picked up by whoever
-            # takes the session lock first, and that may be a person who
-            # happened to be typing into the same conversation.
             await self._chat.run(
                 self._user_id,
                 session_id,
                 ref.agent_id,
-                inputs if resuming else opening,
+                opening,
                 sop_dispatch=dispatch,
             )
 
@@ -190,7 +197,7 @@ class SessionSOPStep(SOPStepBase):
                     state.phase = SOPPhase.PENDING
                 return
 
-            if state.submission is not None:
+            if not reviewing and state.submission is not None:
                 # Handed over; the same step is judged on the next pass.
                 state.phase = SOPPhase.RUNNING
                 return
@@ -210,7 +217,9 @@ class SessionSOPStep(SOPStepBase):
             self.record(
                 state,
                 False,
-                "Your turn ended without submitting anything, so the "
+                "The reviewer ended its turn without a verdict."
+                if reviewing
+                else "Your turn ended without submitting anything, so the "
                 "step has nothing to show for it.",
                 "sop",
             )
@@ -286,6 +295,7 @@ class SOPService:
         workspace_manager: WorkspaceManagerBase,
         message_bus: MessageBus,
         chat: Any,
+        session_service: SessionService,
     ) -> None:
         """Initialize the service.
 
@@ -293,16 +303,20 @@ class SOPService:
             storage (`StorageBase`):
                 Application storage.
             workspace_manager (`WorkspaceManagerBase`):
-                Assigns the workspace a run's conversations share.
+                Closes the workspaces a deleted run minted.
             message_bus (`MessageBus`):
                 Serialises advances of one run against each other.
             chat (`ChatService`):
                 Where each step's turn is taken.
+            session_service (`SessionService`):
+                Deletes a run's sessions along with their bus and
+                workspace state.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
         self._message_bus = message_bus
         self._chat = chat
+        self._session_service = session_service
         # asyncio keeps only a weak reference to a running task, so a
         # detached advance has to live somewhere. Keyed by run so that
         # deleting one can stop what is carrying it on first.
@@ -335,8 +349,7 @@ class SOPService:
 
         Raises:
             `KeyError`:
-                If the user has no such procedure, or a step of it names
-                a conversation it never configured.
+                If the user has no such procedure.
         """
         async with self._message_bus.acquire_lock(
             MessageBusKeys.sop_lock(sop_id),
@@ -365,16 +378,7 @@ class SOPService:
             ),
         )
 
-        # Which agent each conversation belongs to. A key named twice
-        # is one conversation, which is how a step says "the same one
-        # again" — and why the settings hang off the key, not the step.
-        agents: dict[str, str] = {}
-        for step in data.steps:
-            agents[step.executor.session_key] = step.executor.agent_id
-            if isinstance(step.verifier, AgentVerifier):
-                agents[
-                    step.verifier.agent.session_key
-                ] = step.verifier.agent.agent_id
+        agents = _session_agents(data.steps)
 
         # Minted here rather than asked of the workspace manager. Its
         # ``assign_workspace_id`` answers under the deployment's
@@ -384,37 +388,47 @@ class SOPService:
         # saying how their procedure passes work along, and a field that
         # says that has to mean it.
         shared = _generate_id()
-        for key, agent_id in agents.items():
-            settings = data.session_settings[key]
-            fallback = settings.fallback_chat_model_config
-            workspace_id = (
-                shared
-                if data.workspace_grain is SOPWorkspaceGrain.RUN
-                else _generate_id()
-            )
-            session = await self._storage.upsert_session(
-                user_id=user_id,
-                agent_id=agent_id,
-                config=SessionConfig(
-                    workspace_id=workspace_id,
-                    name=f"{data.name} / {key}",
-                    chat_model_config=ChatModelConfig(
-                        **settings.chat_model_config,
+        try:
+            for key, agent_id in agents.items():
+                settings = data.session_settings[key]
+                fallback = settings.fallback_chat_model_config
+                workspace_id = (
+                    shared
+                    if data.workspace_grain is SOPWorkspaceGrain.RUN
+                    else _generate_id()
+                )
+                session = await self._storage.upsert_session(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    config=SessionConfig(
+                        workspace_id=workspace_id,
+                        name=f"{data.name} / {key}",
+                        chat_model_config=ChatModelConfig(
+                            **settings.chat_model_config,
+                        ),
+                        fallback_chat_model_config=(
+                            ChatModelConfig(**fallback) if fallback else None
+                        ),
                     ),
-                    fallback_chat_model_config=(
-                        ChatModelConfig(**fallback) if fallback else None
+                    state=AgentState(
+                        permission_context=PermissionContext(
+                            mode=PermissionMode(settings.permission_mode),
+                        ),
                     ),
-                ),
-                state=AgentState(
-                    permission_context=PermissionContext(
-                        mode=PermissionMode(settings.permission_mode),
-                    ),
-                ),
-                origin=SOPOrigin(sop_run_id=run.id, session_key=key),
-            )
-            run.sessions[key] = session.id
+                    origin=SOPOrigin(sop_run_id=run.id, session_key=key),
+                )
+                run.sessions[key] = session.id
 
-        return await self._storage.upsert_sop_run(user_id, run)
+            return await self._storage.upsert_sop_run(user_id, run)
+        except Exception:
+            # Nothing reaches these sessions without the run record.
+            for key, session_id in run.sessions.items():
+                await self._storage.delete_session(
+                    user_id,
+                    agents[key],
+                    session_id,
+                )
+            raise
 
     async def __aenter__(self) -> Self:
         """Enter the service's lifetime."""
@@ -513,7 +527,34 @@ class SOPService:
             MessageBusKeys.sop_run_lock(sop_run_id),
             ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
         ):
-            return await self._storage.delete_sop_run(user_id, sop_run_id)
+            record = await self._storage.get_sop_run(user_id, sop_run_id)
+            if record is None:
+                return False
+            agents = _session_agents(record.definition.steps)
+            workspace_ids = set()
+            for key, session_id in record.sessions.items():
+                session = await self._storage.get_session(
+                    user_id,
+                    agents[key],
+                    session_id,
+                )
+                if session is not None:
+                    workspace_ids.add(session.config.workspace_id)
+                # Through the session service so its in-flight turn,
+                # bus state and workspace state go with it.
+                await self._session_service.delete_session(
+                    user_id,
+                    agents[key],
+                    session_id,
+                )
+                await self._message_bus.registry_drop(
+                    MessageBusKeys.sop_dispatch(session_id),
+                )
+            deleted = await self._storage.delete_sop_run(user_id, sop_run_id)
+        # Minted for this run alone, so nothing else will close them.
+        for workspace_id in workspace_ids:
+            await self._workspace_manager.close(workspace_id)
+        return deleted
 
     async def record_verdict(
         self,
@@ -591,40 +632,19 @@ class SOPService:
             raise KeyError(f"SOP run {sop_run_id!r} not found.")
         return updated
 
-    async def run(
-        self,
-        user_id: str,
-        sop_run_id: str,
-        inputs: UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None = None,
-    ) -> SOPRunState:
+    async def run(self, user_id: str, sop_run_id: str) -> SOPRunState:
         """Carry a run as far as it goes this time.
 
         Returns when the run finishes, gives up, or stops for someone —
-        a person to answer a step's question, or a tool call to be
-        approved in one of its sessions.
-
-        .. note::
-            ``inputs`` accepts a :class:`UserInterruptEvent` because the
-            engine does, but :class:`SessionSOPStep` does not yet act on
-            one — the SDK's own step abandons the attempt and leaves it
-            at ``PENDING``, and this has no equivalent. Nothing passes
-            one today. Stopping a run is its own piece of work: it has
-            to reach a turn already in flight, which means going through
-            :class:`~agentscope.app._manager.ChatRunRegistry` rather
-            than calling :meth:`ChatService.run` directly, and the stop
-            cannot take the run lock it would be interrupting.
+        a person to judge a step, or a tool call to be approved in one
+        of its sessions. The latter is answered through ``POST /chat``,
+        whose turn carries the run on afterwards.
 
         Args:
             user_id (`str`):
                 The owner user id.
             sop_run_id (`str`):
                 The run to drive.
-            inputs (optional):
-                The answer a parked session was waiting for, passed
-                through to whichever step is holding it.
 
         Returns:
             `SOPRunState`:
@@ -638,17 +658,9 @@ class SOPService:
             MessageBusKeys.sop_run_lock(sop_run_id),
             ttl_secs=MessageBusKeys.SOP_RUN_TTL_SECS,
         ):
-            return await self._advance(user_id, sop_run_id, inputs)
+            return await self._advance(user_id, sop_run_id)
 
-    async def _advance(
-        self,
-        user_id: str,
-        sop_run_id: str,
-        inputs: UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None,
-    ) -> SOPRunState:
+    async def _advance(self, user_id: str, sop_run_id: str) -> SOPRunState:
         """Drive the run, with its lock already held."""
         record = await self._storage.get_sop_run(user_id, sop_run_id)
         if record is None:
@@ -680,7 +692,7 @@ class SOPService:
             ),
             state,
         )
-        async for _ in engine.reply_stream(inputs):
+        async for _ in engine.reply_stream():
             pass
         await _persist()
         return engine.state

@@ -27,11 +27,13 @@ from ._schema import (
 )
 from .._service import SOPService
 from ..storage import (
+    ChatModelConfig,
     SOPData,
     SOPRecord,
     SOPRunRecord,
     StorageBase,
 )
+from ..storage._model._sop import _session_agents
 from ...sop import SOPPhase
 
 sop_router = APIRouter(
@@ -145,8 +147,7 @@ async def create_sop(
 
     Raises:
         `HTTPException`:
-            422 if a step names a conversation the procedure never
-            configured — a run of it could not open that session.
+            422 if a run of it could not open its sessions.
     """
     _reject_unconfigured_sessions(body.data)
     record = SOPRecord(user_id=user_id, data=body.data)
@@ -371,8 +372,7 @@ async def update_sop(
 
     Raises:
         `HTTPException`:
-            422 if a step names a conversation the procedure never
-            configured.
+            422 if a run of it could not open its sessions.
     """
     record = await _require_sop(storage, user_id, sop_id)
     _reject_unconfigured_sessions(body.data)
@@ -455,23 +455,27 @@ async def start_sop_run(
 
 
 def _reject_unconfigured_sessions(data: SOPData) -> None:
-    """Refuse a procedure whose steps name conversations it never set up.
+    """Refuse a procedure a run could not open its sessions from.
 
-    Checked here rather than on the model because it is the one thing a
-    stored procedure can say that makes a run of it impossible, and the
-    editor should hear about it while it is still an edit.
+    Checked here rather than on the model, so a stored run still loads
+    after what counts as a valid model config changes.
     """
-    named = {step.executor.session_key for step in data.steps}
-    for step in data.steps:
-        verifier = getattr(step.verifier, "agent", None)
-        if verifier is not None:
-            named.add(verifier.session_key)
-    missing = sorted(named - set(data.session_settings))
-    if missing:
+    try:
+        agents = _session_agents(data.steps)
+        missing = sorted(set(agents) - set(data.session_settings))
+        if missing:
+            raise ValueError(
+                f"These conversations are used but never configured: "
+                f"{', '.join(missing)}.",
+            )
+        for settings in data.session_settings.values():
+            ChatModelConfig.model_validate(settings.chat_model_config)
+            if settings.fallback_chat_model_config:
+                ChatModelConfig.model_validate(
+                    settings.fallback_chat_model_config,
+                )
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"These conversations are used but never configured: "
-                f"{', '.join(missing)}."
-            ),
-        )
+            detail=str(exc),
+        ) from exc

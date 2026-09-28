@@ -223,7 +223,10 @@ class SOPRunRow(_JsonRecordMixin):
         index=True,
     )
 
-    __table_args__ = (Index("ix_sop_runs_user_sop", "user_id", "sop_id"),)
+    __table_args__ = (
+        Index("ix_sop_runs_user_sop", "user_id", "sop_id"),
+        Index("ix_sop_runs_user_phase", "user_id", "phase"),
+    )
 
     _indexed_fields = ("user_id", "sop_id")
 

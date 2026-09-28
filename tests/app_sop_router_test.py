@@ -148,6 +148,39 @@ class SOPRouterTest(IsolatedAsyncioTestCase):
         self.assertEqual(refused.status_code, 422)
         self.assertIn("modeller", refused.json()["detail"])
 
+    def test_a_conversation_shared_by_two_agents_is_refused(self) -> None:
+        """One session belongs to one agent, so a key cannot name two."""
+        data = self._data()
+        data["steps"][0]["verifier"] = {
+            "type": "agent",
+            "agent": {"agent_id": "someone-else", "session_key": "modeller"},
+        }
+
+        refused = self._client.post(
+            "/sop/",
+            json={"data": data},
+            headers=HEADERS,
+        )
+
+        self.assertEqual(refused.status_code, 422)
+        self.assertIn(
+            "more than one agent",
+            refused.json()["detail"],
+        )
+
+    def test_an_invalid_model_config_is_refused(self) -> None:
+        """Caught while it is an edit, not when a run opens its sessions."""
+        data = self._data()
+        data["session_settings"]["modeller"]["chat_model_config"] = {}
+
+        refused = self._client.post(
+            "/sop/",
+            json={"data": data},
+            headers=HEADERS,
+        )
+
+        self.assertEqual(refused.status_code, 422)
+
     def test_a_procedure_with_no_steps_is_refused(self) -> None:
         """A run of one could never reach any phase but pending."""
         data = self._data()
