@@ -210,6 +210,19 @@ class BashCommandParser:
         if self._is_mutating_find_command(cmd):
             return False
 
+        # ``git grep -O<cmd>`` runs a command, ``--output=<file>`` writes one
+        if cmd.startswith("git "):
+            try:
+                tokens = shlex.split(cmd)
+            except ValueError:
+                return False
+            if any(
+                _.startswith(("--output", "--op"))
+                or (_.startswith("-") and not _.startswith("--") and "O" in _)
+                for _ in tokens[2:]
+            ):
+                return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):

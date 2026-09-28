@@ -304,8 +304,16 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "git tag -d v1": False,
             "git remote add o u": False,
             "git reflog expire --all": False,
+            "git grep -Otouch foo": False,
+            "git grep -iO touch foo": False,
+            "git grep '-Otouch' foo": False,
+            "git grep --open-files-in-pager=touch foo": False,
+            "git diff --output=/tmp/x": False,
+            "git log --output ~/.bashrc": False,
             "git status": True,
             "git log": True,
+            "git log --oneline -n 5": True,
+            "git grep -n foo": True,
         }
         for cmd, read_only in expected.items():
             with self.subTest(cmd=cmd):
