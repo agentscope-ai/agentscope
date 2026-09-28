@@ -188,6 +188,31 @@ class TeamPipeline:
             await self.leader.toolkit.add_tool(self._assign_tool)
             self._tool_registered = True
 
+        try:
+            async for evt in self._reply(inputs):
+                yield evt
+        except asyncio.CancelledError:
+            # A leader parked on assignments misses the cancellation, so
+            # interrupt it and the parked members as a user interrupt does
+            if self.leader.state.has_awaiting_tool_calls(self.leader.name):
+                async for evt in self.reply_stream(
+                    UserInterruptEvent(reply_id=self.leader.state.reply_id),
+                ):
+                    yield evt
+            if self.leader.react_config.interruption_raise_cancelled_error:
+                raise
+
+    async def _reply(
+        self,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+        | None,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Route the inputs and drive the leader and the members, see
+        :meth:`reply_stream`."""
         if isinstance(inputs, UserInterruptEvent):
             for member in self._parked_members():
                 async for evt in member.agent.reply_stream(
@@ -208,17 +233,12 @@ class TeamPipeline:
             # first awaiting call is the parked one, the rest are queued
             results: list[ToolResultBlock] = []
             member = self._parked_member(inputs.reply_id)
-            calls = self._assigning_calls(member)
-            async for evt in self._run_member(
-                member,
-                inputs,
+            async for evt in self._run_assignments(
+                self._assigning_calls(member),
                 results,
-                calls[0].id,
+                inputs,
             ):
                 yield evt
-            if not self._is_parked(member):
-                async for evt in self._run_assignments(calls[1:], results):
-                    yield evt
             if not results:
                 return
             inputs = ExternalExecutionResultEvent(
@@ -265,10 +285,14 @@ class TeamPipeline:
         self,
         tool_calls: list[ToolCallBlock],
         results: list[ToolResultBlock],
+        resumed: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Run one round of assignments, concurrently across members and
         sequentially within one, appending the tool results of those that
-        finish in call order."""
+        finish in call order. With ``resumed``, the first call is the parked
+        one and continues with it."""
         groups: dict[str, list[ToolCallBlock]] = {}
         for tool_call in tool_calls:
             member = self._parse(tool_call)["member"]
@@ -279,22 +303,38 @@ class TeamPipeline:
         round_results: list[ToolResultBlock] = []
 
         async def run_group(name: str, calls: list[ToolCallBlock]) -> None:
-            """Run the assignments to one member one after another; once it
-            parks, the rest stay queued until it resumes."""
+            """Run the assignments to one member one after another, turning
+            each final reply into the tool result; once the member parks,
+            the rest stay queued until it resumes."""
             member = self.members[name]
             for tool_call in calls:
-                if self._is_parked(member):
-                    break
-                async for evt in self._run_member(
-                    member,
-                    UserMsg(
+                async for evt in member.agent.reply_stream(
+                    resumed
+                    if tool_call is tool_calls[0] and resumed
+                    else UserMsg(
                         name="user",
                         content=self._parse(tool_call)["prompt"],
                     ),
-                    round_results,
-                    tool_call.id,
+                    yield_final_msg=True,
                 ):
-                    await queue.put(evt)
+                    if not isinstance(evt, Msg):
+                        await queue.put(evt)
+                    elif evt.finished_reason is not None:
+                        round_results.append(
+                            ToolResultBlock(
+                                id=tool_call.id,
+                                name=_TeamAssign.name,
+                                output=[
+                                    _
+                                    for _ in evt.content
+                                    if isinstance(_, (TextBlock, DataBlock))
+                                ]
+                                or "The member finished without a reply.",
+                                state=_RESULT_STATES[evt.finished_reason],
+                            ),
+                        )
+                if self._is_parked(member):
+                    break
 
         async def run_all() -> None:
             """Run every group and mark the end of the stream."""
@@ -308,55 +348,21 @@ class TeamPipeline:
             while (evt := await queue.get()) is not sentinel:
                 yield evt
             await gather_task
+        except asyncio.CancelledError:
+            # The members close themselves as interrupted in their own tasks,
+            # stream what they produced before passing the cancellation on
+            gather_task.cancel()
+            await asyncio.gather(gather_task, return_exceptions=True)
+            while not queue.empty():
+                if (evt := queue.get_nowait()) is not sentinel:
+                    yield evt
+            raise
         finally:
             gather_task.cancel()
             await asyncio.gather(gather_task, return_exceptions=True)
         # Results land in the leader's context in the order it called
         order = {_.id: i for i, _ in enumerate(tool_calls)}
         results.extend(sorted(round_results, key=lambda _: order[_.id]))
-
-    async def _run_member(
-        self,
-        member: TeamMember,
-        inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent,
-        results: list[ToolResultBlock],
-        tool_call_id: str,
-    ) -> AsyncGenerator[AgentEvent, None]:
-        """Run one member reply, streaming its events and turning its final
-        message into the tool result of the assigning call. Nothing is
-        appended when the member parks on a HITL request."""
-        async for evt in member.agent.reply_stream(
-            inputs,
-            yield_final_msg=True,
-        ):
-            if not isinstance(evt, Msg):
-                yield evt
-            elif evt.finished_reason is not None:
-                results.append(
-                    self._to_tool_result(
-                        tool_call_id,
-                        [
-                            _
-                            for _ in evt.content
-                            if isinstance(_, (TextBlock, DataBlock))
-                        ],
-                        _RESULT_STATES[evt.finished_reason],
-                    ),
-                )
-
-    @staticmethod
-    def _to_tool_result(
-        tool_call_id: str,
-        output: str | list[TextBlock | DataBlock],
-        state: ToolResultState,
-    ) -> ToolResultBlock:
-        """Build the tool result the leader receives for an assignment."""
-        return ToolResultBlock(
-            id=tool_call_id,
-            name=_TeamAssign.name,
-            output=output or "The member finished without a reply.",
-            state=state,
-        )
 
     @staticmethod
     def _is_parked(member: TeamMember) -> bool:

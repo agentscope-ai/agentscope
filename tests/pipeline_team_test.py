@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-builtin
 """Test the team pipeline."""
+import asyncio
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -50,6 +51,38 @@ class AskTool(ToolBase):
     async def call(self, input: str) -> ToolChunk:
         """Echo the input."""
         return ToolChunk(content=[TextBlock(text=f"ask result: {input}")])
+
+
+class SlowTool(ToolBase):
+    """A tool that runs until cancelled, flagging when it starts."""
+
+    name: str = "slow_tool"
+    description: str = "A tool that never finishes"
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+
+    def __init__(self) -> None:
+        """Create the start flag per tool."""
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="Allowed",
+        )
+
+    async def call(self) -> ToolChunk:
+        """Flag the start and wait forever."""
+        self.started.set()
+        await asyncio.Event().wait()
+        return ToolChunk(content=[TextBlock(text="never")])
 
 
 def _tool_call(
@@ -880,3 +913,185 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                 ],
             },
         )
+
+    async def _cancel(self, inputs: Any, tool: SlowTool) -> list[str]:
+        """Cancel the run once the slow tool starts, returning the types of
+        the events streamed before and after the cancellation."""
+        events = []
+
+        async def consume() -> None:
+            async for evt in self.pipeline.reply_stream(inputs):
+                events.append(evt.type.value)
+
+        task = asyncio.create_task(consume())
+        await tool.started.wait()
+        task.cancel()
+        await task
+        return events
+
+    async def test_cancel_running_member(self) -> None:
+        """Cancelling while the researcher runs interrupts it and the leader
+        parked on the assignment, so the team takes the next query."""
+        slow = SlowTool()
+        self.researcher = _agent("researcher", [slow])
+        self.pipeline = TeamPipeline(
+            leader=self.leader,
+            members=[
+                TeamMember(agent=self.researcher, description="Researches"),
+            ],
+        )
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+                _text("Hi again."),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [_tool_call("call-r1", "{}", name="slow_tool")],
+        )
+
+        events = await self._cancel(self.query, slow)
+
+        self.assertListEqual(
+            events[-7:],
+            [
+                "TOOL_RESULT_START",
+                "TOOL_RESULT_TEXT_DELTA",
+                "TOOL_RESULT_END",
+                "REPLY_END",
+                "TOOL_RESULT_TEXT_DELTA",
+                "TOOL_RESULT_END",
+                "REPLY_END",
+            ],
+        )
+        self.assertDictEqual(
+            self.leader.state.context[-1].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "leader",
+                "role": "assistant",
+                "usage": None,
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "input": '{"member": "researcher", '
+                        '"prompt": "Find A"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "output": "<system-reminder>The tool call has been "
+                        "interrupted by the user.</system-reminder>",
+                        "state": "interrupted",
+                        "metadata": {},
+                    },
+                ],
+            },
+        )
+        self.assertListEqual(self.researcher.state.context, [])
+
+        await self._run(UserMsg(name="user", content="Hi"))
+
+        self.assertEqual(
+            self.leader.state.context[-1].get_text_content(),
+            "Hi again.",
+        )
+
+    async def test_cancel_resumed_member(self) -> None:
+        """Cancelling a researcher resumed from HITL ends the leader as
+        interrupted instead of letting it reason on."""
+        slow = SlowTool()
+        self.researcher = _agent("researcher", [AskTool(), slow])
+        self.pipeline = TeamPipeline(
+            leader=self.leader,
+            members=[
+                TeamMember(agent=self.researcher, description="Researches"),
+            ],
+        )
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call("call-r1", '{"input": "A"}', name="ask_tool"),
+                _tool_call("call-r2", "{}", name="slow_tool"),
+            ],
+        )
+        await self._run(self.query)
+
+        await self._cancel(
+            UserConfirmResultEvent(
+                reply_id=self.researcher.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=self.researcher.state.context[-1].content[0],
+                    ),
+                ],
+            ),
+            slow,
+        )
+
+        self.assertDictEqual(
+            self.leader.state.context[-1].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "leader",
+                "role": "assistant",
+                "usage": None,
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "input": '{"member": "researcher", '
+                        '"prompt": "Find A"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "output": "<system-reminder>The tool call has been "
+                        "interrupted by the user.</system-reminder>",
+                        "state": "interrupted",
+                        "metadata": {},
+                    },
+                ],
+            },
+        )
+        self.assertListEqual(self.researcher.state.context, [])
