@@ -52,8 +52,6 @@ class EmbeddingMergeUsageTest(IsolatedAsyncioTestCase):
         self.assertEqual(merged.usage.tokens, 2)
 
 
-from agentscope.embedding import OpenAIEmbeddingModel
-
 A = AnyValue()
 
 
