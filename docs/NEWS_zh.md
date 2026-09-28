@@ -2,6 +2,9 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-09] `功能` `实验性`:** 支持 SOP（标准作业流程）—— 将多步骤任务按标准流程执行，框架与智能体服务均已支持。[文档](https://docs.agentscope.io/latest/zh/building-blocks/sop) | [服务](https://docs.agentscope.io/latest/zh/deploy/sop)
+- **[2026-09] `功能`:** 支持 `TeamPipeline` —— 由 leader 智能体向成员智能体分派任务。[文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/team)
+- **[2026-09] `集成`:** 通过 `MiniMaxChatModel` 支持 MiniMax 聊天模型（默认 MiniMax-M3）。
 - **[2026-09] `功能`:** 支持模型路由 —— 使用 `ModelRouterMiddleware` 为每次回复选择合适的聊天模型。
 - **[2026-09] `集成`:** 通过 TypeSafe SDK 集成 Jev 分类模型 `JevClassifierModel`。
 - **[2026-09] `功能`:** [agentscope-skill](https://github.com/agentscope-ai/skills/tree/main/skills/agentscope-skill) 已适配 AgentScope v2。
