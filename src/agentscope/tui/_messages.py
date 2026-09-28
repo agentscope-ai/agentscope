@@ -306,10 +306,7 @@ def _diff_stats(diff: str) -> tuple[int, int]:
         `tuple[int, int]`: The added and removed line counts.
     """
     lines = diff.splitlines()
-    # Only the leading ``--- a/...`` / ``+++ b/...`` pair are file headers.
-    # A changed line whose own text starts with the marker — an added
-    # ``++counter;`` or a removed ``---`` rule — collides with them, so
-    # prefix-testing every line drops those changes.
+    # Only the leading ``---``/``+++`` pair is a header, not every such line
     body = lines[2:] if lines[:1] and lines[0].startswith("--- ") else lines
     return (
         sum(_.startswith("+") for _ in body),
