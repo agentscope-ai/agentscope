@@ -44,7 +44,7 @@ class MCPClient(BaseModel):
     - _session: The MCP ClientSession (for stateful connections only)
     - _stack: AsyncExitStack for managing connection lifecycle
     - _is_connected: Connection state flag
-    - _cached_tools: Cached list of tools
+    - _cached_tools: Cached list of tools, reset on every successful connect
     - _http_client: The live HTTP client, while one is open
     - _static_headers: Its headers before any runtime override
     - _runtime_headers: See :meth:`set_runtime_headers`
@@ -354,6 +354,9 @@ class MCPClient(BaseModel):
             await stack.enter_async_context(self._session)
             await self._session.initialize()
 
+            # Tool definitions belong to the connection they were listed from;
+            # a reconnect may reach an upgraded server, so rediscover lazily.
+            self._cached_tools = None
             self._is_connected = True
             logger.info("MCP connected: %s", self.name)
         except BaseException:
