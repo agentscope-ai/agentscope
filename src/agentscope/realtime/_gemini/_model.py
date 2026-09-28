@@ -1,13 +1,18 @@
-# -*- coding: utf-8 -*-
 """The Gemini Live API realtime model."""
 import asyncio
 import base64
 import json
 import uuid
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator
+from typing import Any, Literal
 
 from pydantic import Field
 
+from ..._logging import logger
+from ..._utils._common import _flatten_json_schema
+from ...credential import GeminiCredential
+from ...message import TextBlock, ToolCallBlock, ToolResultBlock
+from ...model._gemini._model import _sanitize_schema_for_gemini
 from .. import _events as me
 from .._base import (
     ModelDisconnectedError,
@@ -15,11 +20,6 @@ from .._base import (
     TruncationSupport,
 )
 from .._model_card import RealtimeModelCard
-from ..._logging import logger
-from ..._utils._common import _flatten_json_schema
-from ...credential import GeminiCredential
-from ...message import TextBlock, ToolCallBlock, ToolResultBlock
-from ...model._gemini._model import _sanitize_schema_for_gemini
 
 _LIVE_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
@@ -481,8 +481,8 @@ class GeminiRealtimeModel(RealtimeModelBase):
             return []
         event = me.ResponseDoneEvent(
             item_id=self._response_id,
-            input_tokens=self._usage.get("promptTokenCount", 0),
-            output_tokens=self._usage.get("responseTokenCount", 0),
+            input_tokens=self._usage.get("promptTokenCount"),
+            output_tokens=self._usage.get("responseTokenCount"),
         )
         self._response_id, self._usage = "", {}
         return [event]

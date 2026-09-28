@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Storage models for persisted resources."""
 
-from ._agent import AgentRecord, AgentData, InviteConfig
+from ._agent import AgentRecord, AgentData, ChatConfig, InviteConfig
 from ._channel import (
     ChannelBinding,
     ChannelRecord,
@@ -28,6 +28,7 @@ from ._session import (
     SessionNaming,
     SessionKnowledgeConfig,
     ChatModelConfig,
+    RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
     SessionOrigin,
@@ -72,11 +73,13 @@ __all__ = [
     "TeamOrigin",
     "SkillRecord",
     "ChatModelConfig",
+    "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
     "TeamData",
     "TeamRecord",
     "TeamMember",
     "UserRecord",
+    "ChatConfig",
     "InviteConfig",
 ]

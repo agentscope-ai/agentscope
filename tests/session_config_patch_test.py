@@ -21,7 +21,12 @@ from fastapi.testclient import TestClient
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app import create_app
 from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
-from agentscope.app.storage import AgentData, AgentRecord, RedisStorage
+from agentscope.app.storage import (
+    AgentData,
+    AgentRecord,
+    RealtimeModelConfig,
+    RedisStorage,
+)
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
 from agentscope.message import UserMsg
@@ -155,6 +160,53 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         # unchanged" (it would, since upsert re-reads) but "the handler
         # never offered a state to write".
         self.assertEqual(self.recorded_states, [None])
+
+    async def test_realtime_config_omission_and_explicit_null(self) -> None:
+        """Omission keeps realtime config while null clears it."""
+        record = await self.storage.get_session(
+            "alice",
+            self.agent_id,
+            self.session_id,
+        )
+        realtime_config = RealtimeModelConfig(
+            type="dashscope_omni_realtime",
+            credential_id="credential-1",
+            model="qwen3.5-omni-plus-realtime",
+            parameters={"voice": "Tina"},
+        )
+        await self.storage.upsert_session(
+            user_id="alice",
+            agent_id=self.agent_id,
+            config=record.config.model_copy(
+                update={"realtime_model_config": realtime_config},
+            ),
+            session_id=self.session_id,
+        )
+        self.recorded_states.clear()
+
+        omitted = self._patch({"name": "after"})
+        cleared = self._patch({"realtime_model_config": None})
+
+        self.assertDictEqual(
+            {
+                "omitted_status": omitted.status_code,
+                "omitted_config": omitted.json()["config"][
+                    "realtime_model_config"
+                ],
+                "cleared_status": cleared.status_code,
+                "cleared_config": cleared.json()["config"][
+                    "realtime_model_config"
+                ],
+                "written_states": self.recorded_states,
+            },
+            {
+                "omitted_status": 200,
+                "omitted_config": realtime_config.model_dump(mode="json"),
+                "cleared_status": 200,
+                "cleared_config": None,
+                "written_states": [None, None],
+            },
+        )
 
     def test_permission_mode_patch_writes_only_that_field(self) -> None:
         """``permission_mode`` is the one field that must carry state."""

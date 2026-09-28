@@ -906,12 +906,12 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
             team.data.member_ids[1],
         )
         self.assertIsNot(
-            a1.data.context_config,
-            a2.data.context_config,
+            a1.data.chat_config.context_config,
+            a2.data.chat_config.context_config,
         )
         self.assertIsNot(
-            a1.data.react_config,
-            a2.data.react_config,
+            a1.data.chat_config.react_config,
+            a2.data.chat_config.react_config,
         )
 
 
@@ -1374,8 +1374,11 @@ class TestAgentDataInvitableValidator(IsolatedAsyncioTestCase):
                 invite_description="draft",
             ),
         )
-        self.assertEqual(data.invite_config.invite_description, "draft")
-        self.assertFalse(data.invite_config.invitable)
+        self.assertEqual(
+            data.chat_config.invite_config.invite_description,
+            "draft",
+        )
+        self.assertFalse(data.chat_config.invite_config.invitable)
 
 
 class _AgentInviteTestBase(_TeamToolsTestBase):
@@ -1731,8 +1734,8 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
         """Snapshot said invitable but fresh read shows the toggle off."""
         # Flip the toggle off in storage while pool snapshot still has it.
         stale = self.monday_agent
-        stale.data.invite_config.invitable = False
-        stale.data.invite_config.invite_description = None
+        stale.data.chat_config.invite_config.invitable = False
+        stale.data.chat_config.invite_config.invite_description = None
         await self.storage.upsert_agent(self.user_id, stale)
 
         chunk = await self._tool(pool=[stale])(

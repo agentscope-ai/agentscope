@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The DashScope credential."""
 from typing import Literal, Type, TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from pydantic import ConfigDict, Field, SecretStr
 
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from ..tts import TTSModelBase
 
 _DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+_DASHSCOPE_REALTIME_PATH = "/api-ws/v1/realtime"
 
 
 class DashScopeCredential(CredentialBase):
@@ -37,6 +39,16 @@ class DashScopeCredential(CredentialBase):
             "The base URL for the DashScope OpenAI-compatible API endpoint."
         ),
     )
+
+    def get_realtime_base_url(self) -> str:
+        """Derive the Realtime WebSocket URL from the HTTP base URL."""
+        parsed = urlsplit(self.base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(
+                f"Invalid DashScope base_url: {self.base_url!r}.",
+            )
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        return f"{scheme}://{parsed.netloc}{_DASHSCOPE_REALTIME_PATH}"
 
     @classmethod
     def get_chat_model_class(cls) -> Type["ChatModelBase"]:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """The agent config classes."""
 
 from pydantic import BaseModel, Field, field_validator
@@ -357,6 +356,71 @@ later reminder, if any, supersedes this one:
             "If emit the HintBlockEvent when runtime state injection happens."
         ),
     )
+
+
+class RealtimeContextConfig(BaseModel):
+    """Context-management settings for the realtime voice mode.
+
+    Field semantics deliberately differ from the text-mode
+    ``ContextConfig``: a realtime session keeps its working context
+    on the provider's side, so the knobs are absolute token budgets
+    rather than ratios of a locally known context size.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    context_length: int = Field(default=128_000, gt=0)
+    """Maximum provider-side context tokens for the realtime session."""
+
+    tool_result_limit: int = Field(
+        title="Tool Result Limit",
+        default=50_000,
+        description=(
+            "The maximum length of a single tool result in tokens. "
+            "If exceeded, the tool result will be truncated before it "
+            "enters the session context."
+        ),
+    )
+    """Cap on individual tool result size, matching the text-mode knob."""
+
+    trigger_ratio: float = Field(default=0.8, gt=0, le=0.95)
+    """When the estimated context occupancy exceeds this ratio of
+    ``context_length``, context compression may run. The estimate itself
+    is maintained by the realtime agent's usage tracker."""
+
+    compression_model: ChatModelBase | None = Field(default=None)
+    """Chat model used to produce compression summaries. Falls back to
+    the session's own model when unset."""
+
+    compression_prompt: str = Field(
+        default=(
+            "<system-hint>Write a continuation summary that allows the "
+            "conversation to resume efficiently in a future context "
+            "window. Resolve relative times to absolute dates, keep file "
+            "paths and identifiers verbatim, and list in-flight work with "
+            "its owner and status.</system-hint>"
+        ),
+        json_schema_extra={"format": "textarea"},
+    )
+    """Prompt template for generating the compression summary."""
+
+    compression_schema: dict = Field(default_factory=dict)
+    """Structured-output schema guiding the compression summary."""
+
+    summary_template: str = Field(
+        default=(
+            "<system-info>Here is a summary of the conversation so far\n"
+            "# Task Overview\n{task_overview}\n\n"
+            "# Current State\n{current_state}\n\n"
+            "# Important Discoveries\n{important_discoveries}\n\n"
+            "# Next Steps\n{next_steps}\n\n"
+            "# Context to Preserve\n{context_to_preserve}"
+            "</system-info>"
+        ),
+        json_schema_extra={"format": "textarea"},
+    )
+    """Template used to present the compressed summary to the agent."""
+
 
 
 class ReActConfig(BaseModel):

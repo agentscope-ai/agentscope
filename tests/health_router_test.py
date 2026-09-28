@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Health router test case — readiness reporting, without any I/O."""
+import asyncio
+import gc
 import tempfile
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
@@ -84,6 +86,31 @@ class HealthRouterTest(IsolatedAsyncioTestCase):
         self.assertEqual(body["components"]["knowledge_base"], "disabled")
         self.assertEqual(body["components"]["mcp_hubs"], "disabled")
         self.assertEqual(body["status"], "ok")
+
+    def test_realtime_offer_locks_release_unused_sessions(self) -> None:
+        """The process-wide offer lock registry retains no idle key."""
+        registry = self._app.state.realtime_offer_locks
+        key = ("alice", "session-1")
+        first = registry.setdefault(key, asyncio.Lock())
+        second = registry.setdefault(key, asyncio.Lock())
+        before_collection = list(registry)
+        same_lock = first is second
+
+        del first, second
+        gc.collect()
+
+        self.assertDictEqual(
+            {
+                "same_lock": same_lock,
+                "before_collection": before_collection,
+                "after_collection": list(registry),
+            },
+            {
+                "same_lock": True,
+                "before_collection": [key],
+                "after_collection": [],
+            },
+        )
 
     def test_missing_lifespan_reports_not_ready(self) -> None:
         """Mounting without running the lifespan reports 503 with detail.

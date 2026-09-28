@@ -17,6 +17,7 @@ from ._service import (
     CredentialBindingService,
     ChatService,
     KnowledgeBaseService,
+    RealtimeService,
     ResourceAccessService,
     SessionService,
     WorkspaceService,
@@ -89,6 +90,11 @@ async def get_chat_service(request: Request) -> ChatService:
         `ChatService`: The chat service instance stored in ``app.state``.
     """
     return request.app.state.chat_service
+
+
+async def get_realtime_service(request: Request) -> RealtimeService:
+    """Return the application-wide realtime agent assembly service."""
+    return request.app.state.realtime_service
 
 
 async def get_resource_access_service(

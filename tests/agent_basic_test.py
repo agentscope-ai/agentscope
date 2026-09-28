@@ -131,7 +131,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "finished_at": None,
-            "finished_reason": None,
+            "finished_reason": ReplyFinishedReason.COMPLETED,
             "structured_output": None,
             "error": None,
             "metadata": {},
@@ -976,6 +976,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
             },
             {
                 **msg_base,
