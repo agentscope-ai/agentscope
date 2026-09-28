@@ -19,6 +19,42 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         """Set up test fixtures."""
         self.parser = BashCommandParser()
 
+    async def test_file_paths_after_a_non_ascii_argument(self) -> None:
+        """Node text is read with byte offsets, not character offsets.
+
+        A character like ``\u2713`` is three UTF-8 bytes but a single
+        character, so slicing the ``str`` with tree-sitter's byte offsets
+        shifted every later token and the path was never recognised.
+        """
+        for command in (
+            "cp \u2713 .bashrc",
+            "cp \u00e9 .bashrc",
+            "cp \U0001f600 .bashrc",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(
+                    ("cp", ".bashrc"),
+                    self.parser.extract_file_paths(command),
+                )
+
+    async def test_file_paths_in_a_compound_after_non_ascii(self) -> None:
+        """A subcommand after a non-ASCII token is still parsed correctly."""
+        self.assertIn(
+            ("cp", ".bashrc"),
+            self.parser.extract_file_paths("echo \u2713; cp \u2713 .bashrc"),
+        )
+
+    async def test_ascii_commands_are_unchanged(self) -> None:
+        """Pure-ASCII parsing is untouched by the offset handling."""
+        self.assertIn(
+            ("cp", "notes.txt"),
+            self.parser.extract_file_paths("cp notes.txt backup.txt"),
+        )
+        self.assertEqual(
+            self.parser.extract_command_prefixes("git commit -m 'fix'"),
+            ["git commit"],
+        )
+
     async def test_single_command_with_prefix(self) -> None:
         """Test single commands that can extract prefixes."""
         test_cases = [
