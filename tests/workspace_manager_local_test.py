@@ -104,12 +104,37 @@ class TestLocalWorkspaceManagerTtl(IsolatedAsyncioTestCase):
         self.assertListEqual(_CloseTrackingWorkspace.closed, [])
 
     async def test_other_idle_workspaces_are_still_evicted(self) -> None:
-        """Refreshing one entry does not disable eviction for the rest."""
-        manager = LocalWorkspaceManager("/tmp/local-manager-ttl2", ttl=0.0)
+        """Refreshing one entry does not disable eviction for the rest.
 
-        await manager.get_workspace("u", "a", "s", "w1")
-        await manager.get_workspace("u", "a", "s", "w2")
-        await manager.get_workspace("u", "a", "s", "w1")
+        The clock is pinned so both entries can be past their TTL at the
+        same time: the requested one must be refreshed and survive, and the
+        other must still be swept.
+        """
+        clock = {"now": 1000.0}
 
-        # w1 was refreshed by the last call, so only w2 is swept.
+        with patch(
+            "agentscope.app.workspace_manager"
+            "._local_workspace_manager.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ):
+            manager = LocalWorkspaceManager(
+                "/tmp/local-manager-ttl2",
+                ttl=10.0,
+            )
+
+            # t=1000: w1 is created and cached at 1000.
+            first = await manager.get_workspace("u", "a", "s", "w1")
+
+            # t=1001: w2 is created; w1 is only 1s idle, so it survives.
+            clock["now"] = 1001.0
+            second = await manager.get_workspace("u", "a", "s", "w2")
+
+            # t=1020: w1 has been idle for 20s and w2 for 19s, so both are
+            # past the 10s TTL. Asking for w1 must refresh w1 and only w2 is
+            # swept.
+            clock["now"] = 1020.0
+            again = await manager.get_workspace("u", "a", "s", "w1")
+
+        self.assertIs(again, first)
+        self.assertIsNot(second, first)
         self.assertListEqual(_CloseTrackingWorkspace.closed, ["w2"])
