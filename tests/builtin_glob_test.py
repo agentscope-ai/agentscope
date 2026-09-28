@@ -245,6 +245,25 @@ class GlobToolTest(IsolatedAsyncioTestCase):
             "No files found matching pattern: *.nonexistent",
         )
 
+    async def test_suggested_rule_matches_its_own_call(self) -> None:
+        """A rule from ``generate_suggestions`` must match the call it came
+        from.
+
+        The suggestion is ``<dir>/**`` while ``match_rule`` receives the bare
+        directory, and fnmatch needs the trailing separator, so accepting the
+        suggestion did not actually allow the call it was generated for.
+        """
+        suggestions = await self.glob_tool.generate_suggestions(
+            {"path": self.temp_dir, "pattern": "*.py"},
+        )
+        self.assertTrue(suggestions)
+        self.assertTrue(
+            await self.glob_tool.match_rule(
+                suggestions[0].rule_content,
+                {"path": self.temp_dir, "pattern": "*.py"},
+            ),
+        )
+
     async def test_match_rule_path(self) -> None:
         """Test match_rule with path patterns."""
         # Test matching explicit path

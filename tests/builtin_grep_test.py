@@ -199,6 +199,25 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Should not find .txt files
         self.assertNotIn("test.txt", content)
 
+    async def test_suggested_rule_matches_its_own_call(self) -> None:
+        """A rule from ``generate_suggestions`` must match the call it came
+        from.
+
+        The suggestion is ``<dir>/**`` while ``match_rule`` receives the bare
+        directory, and fnmatch needs the trailing separator, so accepting the
+        suggestion did not actually allow the call it was generated for.
+        """
+        suggestions = await self.grep_tool.generate_suggestions(
+            {"path": self.temp_dir, "pattern": "hello"},
+        )
+        self.assertTrue(suggestions)
+        self.assertTrue(
+            await self.grep_tool.match_rule(
+                suggestions[0].rule_content,
+                {"path": self.temp_dir, "pattern": "hello"},
+            ),
+        )
+
     async def test_match_rule_path(self) -> None:
         """Test match_rule with search path patterns."""
         # Test matching explicit path
