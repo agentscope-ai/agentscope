@@ -802,6 +802,13 @@ class LocalBackend(BackendBase):
                 stderr=asyncio.subprocess.PIPE,
                 **kwargs,
             )
+        except NotImplementedError as exc:
+            # Windows SelectorEventLoop doesn't support subprocesses.
+            raise RuntimeError(
+                "The current event loop doesn't support subprocesses "
+                "(e.g. SelectorEventLoop on Windows), use a "
+                "ProactorEventLoop instead.",
+            ) from exc
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             # The executable could not be found or spawned. A shell would
             # have returned 127 ("command not found"); mirror that so

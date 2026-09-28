@@ -36,8 +36,20 @@ from ._session import (
     ScheduleOrigin,
     ChannelOrigin,
     TeamOrigin,
+    SOPOrigin,
 )
 from ._skill import SkillRecord
+from ._sop import (
+    AgentVerifier,
+    HumanVerifier,
+    SOPAgentRef,
+    SOPData,
+    SOPRecord,
+    SOPRunRecord,
+    SOPStepDataV1,
+    SOPVerifier,
+    SOPWorkspaceGrain,
+)
 from ._team import TeamRecord, TeamData, TeamMember
 from ._user import UserRecord
 
@@ -71,6 +83,16 @@ __all__ = [
     "ChannelOrigin",
     "TeamOrigin",
     "SkillRecord",
+    "AgentVerifier",
+    "HumanVerifier",
+    "SOPAgentRef",
+    "SOPData",
+    "SOPOrigin",
+    "SOPRecord",
+    "SOPRunRecord",
+    "SOPStepDataV1",
+    "SOPVerifier",
+    "SOPWorkspaceGrain",
     "ChatModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",

@@ -19,10 +19,13 @@ from ._model import (
     SessionConfig,
     SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
+from ...sop import SOPPhase, SOPRunState
 from ...state import AgentState
 
 
@@ -797,6 +800,168 @@ class StorageBase(ABC):
             chronological order, has_more). ``has_more`` is ``True``
             when older messages exist before the returned page.
         """
+
+    # ------------------------------------------------------------------
+    # SOP persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Create or overwrite a procedure.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`SOPRecord`):
+                The procedure to store.
+
+        Returns:
+            `SOPRecord`:
+                The stored record, with its timestamps refreshed.
+        """
+        raise NotImplementedError
+
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure; owner-scoped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure id.
+
+        Returns:
+            `SOPRecord | None`:
+                The record, or ``None`` if the user has no such one.
+        """
+        raise NotImplementedError
+
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """List the user's procedures.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[SOPRecord]`:
+                Every procedure the user owns.
+        """
+        raise NotImplementedError
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure, every run of it, and their conversations.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure id.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+        raise NotImplementedError
+
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Create or overwrite a run.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`SOPRunRecord`):
+                The run to store.
+
+        Returns:
+            `SOPRunRecord`:
+                The stored record, with its timestamps refreshed.
+        """
+        raise NotImplementedError
+
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run; owner-scoped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+
+        Returns:
+            `SOPRunRecord | None`:
+                The record, or ``None`` if the user has no such one.
+        """
+        raise NotImplementedError
+
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """List the user's runs, newest first.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str | None`, optional):
+                Only runs of this procedure. ``None`` means all of them.
+            phase (`SOPPhase | None`, optional):
+                Only runs in this phase. ``None`` means all of them.
+
+        Returns:
+            `list[SOPRunRecord]`:
+                The matching runs.
+        """
+        raise NotImplementedError
+
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Update a run's state (and sessions), leaving its definition.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+            state (`SOPRunState`):
+                How the run is going now.
+            sessions (`dict[str, str] | None`, optional):
+                The run's conversations. ``None`` leaves them as is.
+
+        Raises:
+            `KeyError`:
+                If the user has no such run.
+        """
+        raise NotImplementedError
+
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run and the conversations it opened.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+        raise NotImplementedError
 
     # ------------------------------------------------------------------
     # Team persistence

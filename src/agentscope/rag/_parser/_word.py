@@ -273,9 +273,15 @@ class WordParser(ParserBase):
             ) from e
 
         if isinstance(file, str):
-            doc = DocxDocument(file)
-        else:
+            with open(file, "rb") as fp:
+                file = fp.read()
+
+        try:
             doc = DocxDocument(io.BytesIO(file))
+        except Exception as e:  # pylint: disable=broad-except
+            raise ValueError(
+                f"Failed to parse {filename!r} as DOCX: {e}",
+            ) from e
 
         sections: list[Section] = []
         text_buffer: list[str] = []

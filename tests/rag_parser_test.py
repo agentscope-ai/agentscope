@@ -8,6 +8,7 @@ run anywhere ``agentscope[rag]`` is installed.
 import base64
 import io
 import os
+import zipfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -877,6 +878,67 @@ class PPTParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_picture_placeholder_emits_data_block(self) -> None:
+        """Pictures inserted into layout placeholders keep their content."""
+        from pptx import Presentation
+
+        presentation = Presentation()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[8])
+        slide.shapes.title.text = "Before picture"
+        slide.placeholders[1].insert_picture(io.BytesIO(_PNG_PIXEL))
+        slide.placeholders[2].text = "After picture"
+        # An unfilled picture placeholder must not be treated as an image.
+        presentation.slides.add_slide(presentation.slide_layouts[8])
+        buffer = io.BytesIO()
+        presentation.save(buffer)
+
+        parser = PPTParser(slide_prefix=None, slide_suffix=None)
+        sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
+
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before picture",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1},
+                },
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "placeholder.pptx",
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1, "media_type": "image/png"},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "After picture",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
     async def test_table_json_format(self) -> None:
         """``table_format="json"`` emits the JSON marker payload."""
         pptx_bytes = _make_pptx_rich()
@@ -1047,6 +1109,22 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
 
+    async def test_invalid_input_errors(self) -> None:
+        """Missing paths and invalid workbooks use documented errors."""
+        parser = ExcelParser()
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/report.xlsx", "report.xlsx")
+
+        workbook = _make_xlsx_simple({"Data": [["value"]]})
+        with self.assertRaises(ValueError):
+            await parser.parse(workbook[: len(workbook) // 2], "bad.xlsx")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a workbook")
+        with self.assertRaises(ValueError):
+            await parser.parse(buffer.getvalue(), "bad.xlsx")
+
     async def test_header_only_sheet(self) -> None:
         """A sheet with only a header row is kept as a table."""
         xlsx_bytes = _make_xlsx_simple({"Data": [["Revenue", "Year"]]})
@@ -1208,6 +1286,35 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                             "array:</system-info>\n"
                             '["X", "Y"]\n'
                             '["1", "2"]'
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_text_and_na_like_values_kept(self) -> None:
+        """Text like ``"00123"`` and ``"NA"`` is not coerced by pandas."""
+        xlsx_bytes = _make_xlsx_simple(
+            {"Data": [["Code", "Status"], ["00123", "NA"]]},
+        )
+        sections = await ExcelParser().parse(xlsx_bytes, "demo.xlsx")
+
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Sheet: Data\n"
+                            "| Code | Status |\n"
+                            "| --- | --- |\n"
+                            "| 00123 | NA |\n"
                         ),
                         "id": AnyString(),
                         "created_at": AnyString(),
@@ -1422,6 +1529,21 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
 
 class WordParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`WordParser`."""
+
+    async def test_invalid_input_errors(self) -> None:
+        """Missing paths and invalid documents use documented errors."""
+        parser = WordParser()
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/report.docx", "report.docx")
+
+        with self.assertRaises(ValueError):
+            await parser.parse(b"not a docx", "bad.docx")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a document")
+        with self.assertRaises(ValueError):
+            await parser.parse(buffer.getvalue(), "bad.docx")
 
     async def test_simple_paragraphs(self) -> None:
         """Plain paragraphs are merged into a single text Section."""

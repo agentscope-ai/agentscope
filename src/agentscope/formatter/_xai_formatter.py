@@ -9,6 +9,7 @@ other formatter, the ``format()`` method returns a list of
 """
 import asyncio
 import base64
+from fnmatch import fnmatch
 from typing import Any, List
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
@@ -33,6 +34,7 @@ from ..message import (
 def _xai_user_args_from_blocks(
     blocks: list,
     image: Any,
+    supported_media_types: list[str],
 ) -> list:
     """Convert a list of ``TextBlock | DataBlock`` into the positional
     args expected by ``xai_sdk.chat.user(*args)``.
@@ -47,6 +49,8 @@ def _xai_user_args_from_blocks(
         image (`Any`):
             The ``xai_sdk.chat.image`` constructor, passed in to keep
             the local import contract identical to ``format``.
+        supported_media_types (`list[str]`):
+            Glob-style media-type patterns accepted by the formatter.
 
     Returns:
         `list`:
@@ -58,12 +62,16 @@ def _xai_user_args_from_blocks(
         if isinstance(sub, TextBlock):
             args.append(sub.text)
         elif isinstance(sub, DataBlock):
-            if not sub.source.media_type.startswith("image/"):
+            if not sub.source.media_type.startswith("image/") or not any(
+                fnmatch(sub.source.media_type, pattern)
+                for pattern in supported_media_types
+            ):
                 logger.warning(
                     "Unsupported media type %s for xAI API. "
-                    "Only image/jpeg and image/png are supported. "
+                    "Supported media types are: %s. "
                     "This block will be skipped.",
                     sub.source.media_type,
+                    ", ".join(supported_media_types),
                 )
                 continue
             if isinstance(sub.source, URLSource):
@@ -169,6 +177,7 @@ class XAIChatFormatter(FormatterBase):
                                 _xai_user_args_from_blocks,
                                 block.hint,
                                 image,
+                                self.supported_input_media_types,
                             )
                             if hint_args:
                                 xai_messages.append(user(*hint_args))
@@ -180,6 +189,7 @@ class XAIChatFormatter(FormatterBase):
                                 _xai_user_args_from_blocks,
                                 [block],
                                 image,
+                                self.supported_input_media_types,
                             ),
                         )
                     else:
@@ -283,6 +293,7 @@ class XAIChatFormatter(FormatterBase):
                                 _xai_user_args_from_blocks,
                                 block.hint,
                                 image,
+                                self.supported_input_media_types,
                             )
                             if hint_args:
                                 xai_messages.append(user(*hint_args))
@@ -439,6 +450,7 @@ class XAIMultiAgentFormatter(FormatterBase):
                         if isinstance(block, DataBlock)
                     ],
                     image,
+                    self.supported_input_media_types,
                 )
                 if history_text:
                     user_args.insert(0, history_text)
