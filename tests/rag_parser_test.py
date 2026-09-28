@@ -1297,6 +1297,35 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_text_and_na_like_values_kept(self) -> None:
+        """Text like ``"00123"`` and ``"NA"`` is not coerced by pandas."""
+        xlsx_bytes = _make_xlsx_simple(
+            {"Data": [["Code", "Status"], ["00123", "NA"]]},
+        )
+        sections = await ExcelParser().parse(xlsx_bytes, "demo.xlsx")
+
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Sheet: Data\n"
+                            "| Code | Status |\n"
+                            "| --- | --- |\n"
+                            "| 00123 | NA |\n"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
     async def test_multi_sheet_merged_by_default(self) -> None:
         """``separate_sheet=False`` (default) merges sheets into one
         Section."""
