@@ -15,6 +15,11 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.routing import APIRoute
+
+from agentscope.app._router._workspace import (
+    list_skills as _framework_list_skills,
+)
 
 from agentscope._logging import logger
 from agentscope.app._service import ResourceAccessService
@@ -31,6 +36,15 @@ from agentscope.app.storage import StorageBase
 from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.skill import Skill
 
+from ..agents_extend_store import (
+    SKILL_TYPE_SKILLHUB,
+    append_extend_entry,
+    entry_display_name,
+    entry_names,
+    list_agent_skills,
+    set_agent_skills,
+    sync_extend_from_names,
+)
 from ..skills._oa_context import OA_HEADER, get_current_oa
 from ..skills._schema import (
     AgentSkillsListResponse,
@@ -261,6 +275,9 @@ async def _ensure_skills(
     hubs: dict[str, SkillHubBase],
     oa: str,
     guwp_token: str | None,
+    *,
+    storage: Any = None,
+    agent_id: str = "",
 ) -> list[Skill]:
     """查缺补装：返回**补装后**的完整技能清单（与查询接口同形）。
 
@@ -272,6 +289,9 @@ async def _ensure_skills(
     - 单个失败**不中断**其余项，只打 warning —— 本函数只保证"把能装的
       装上"，返回值就是当前实际情况，因此失败信息走日志而非响应体
       （响应体必须与 ``GET /workspace/skill`` 完全同形）；
+    - 每装成一个就**写穿 ``agents_extend``**（``storage`` + ``agent_id``
+      都给了才写，见 :func:`_record_installed_skill`），使 ``/skills/*``
+      的 ``used`` 标记之后不必再进沙箱；
     - 一个都没装成时直接返回上面那份列表，省一次沙箱列举往返。
 
     **已知取舍**：已装备判定按 **name**（frontmatter 名 ∪ 目录名）匹配，
@@ -291,6 +311,10 @@ async def _ensure_skills(
             逐请求透传给 hub 的 guwp-token；**当前对 external hub 无效**
             （它没有 ``set_token``，鉴权走 oa + session cookie），保留只为
             与 Bocom hub 共用同一套 helper。
+        storage (`Any`):
+            框架 storage（写穿 ``agents_extend`` 用）；``None`` = 不记录。
+        agent_id (`str`):
+            智能体 id（同上）；空串 = 不记录。
 
     Returns:
         `list[Skill]`:
@@ -325,6 +349,14 @@ async def _ensure_skills(
             continue
         equipped.add(name)
         installed += 1
+        if storage is not None and agent_id:
+            await _record_installed_skill(
+                storage,
+                agent_id,
+                namespace,
+                name,
+                source="skill-ensure",
+            )
 
     failed = len(todo) - installed
 
@@ -406,6 +438,146 @@ async def _session_used_names(
         return set()
 
 
+async def _used_names_from_table(
+    storage: Any,
+    agent_id: str,
+) -> set[str] | None:
+    """该 agent 的"已装技能名"——**只查 ``agents_extend`` 表，不申请 Pod**。
+
+    - 表里有该 agent 的记录（含 ``{"skills": []}``）→ 返回名字集合
+      （空集表示"确实一个都没装"，不是"不知道"）；
+    - **无记录**（历史智能体、或未经表写入的路径）→ 返回 ``None``，
+      调用方据此回源沙箱；
+    - 读表失败 → 打 warning 并按无记录处理（降级，不拖垮查询）。
+    """
+    try:
+        entries = await list_agent_skills(storage, agent_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "used skills: reading agents_extend failed for agent %s: %s",
+            agent_id,
+            e,
+        )
+        return None
+    if entries is None:
+        return None
+    names: set[str] = set()
+    for entry in entries:
+        names |= entry_names(entry)
+    return names
+
+
+async def _used_names_for_agent(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    storage: StorageBase,
+    workspace_manager: WorkspaceManagerBase,
+) -> set[str]:
+    """该会话的"已装技能名"集合：**先查 ``agents_extend`` 表**，无记录才回源 workspace。
+
+    表里有该 agent 的记录 → 直接用（**不解析会话、不申请 Pod**），这正是
+    ``/skills/external`` / ``/skills/uploaded`` 的 ``used`` 标记不再依赖沙箱的
+    原因；没有记录 → 回落 :func:`_session_used_names`，行为与改造前一致
+    （session 无效 → 404；其他失败 → 空集）。
+    """
+    cached = await _used_names_from_table(storage, agent_id)
+    if cached is not None:
+        logger.info(
+            "used skills: agent %s served from agents_extend (%d names)",
+            agent_id,
+            len(cached),
+        )
+        return cached
+    return await _session_used_names(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+    )
+
+
+async def _record_installed_skill(
+    storage: Any,
+    agent_id: str,
+    namespace: str,
+    name: str,
+    *,
+    source: str,
+    listed_names: list[str] | None = None,
+) -> None:
+    """把"刚装上的技能"记进 ``agents_extend``（尽力而为，type 固定 ``skillhub``）。
+
+    ``/skills/external`` / ``/skills/uploaded`` 的 ``used`` 标记以该表为准，
+    因此安装成功后必须写穿，否则会出现"装了却显示未安装"。写成
+    ``{"type": "skillhub", "name": "namespace:name"}``（与 ``/skill/ensure``
+    入参同口径，可原样拼回）。
+
+    分三种情况：
+
+    - 表里**已有可用记录** → 单条追加（已存在不重复写）；
+    - 表里**没有可用记录**且给了 ``listed_names``（该 agent 当前**完整技能
+      清单**，调用方需排除本次装的这一个）→ **建行**：清单里其余名字按
+      ``uploaded`` / ``unknown`` 落库，本次技能再标成 ``skillhub`` —— 既补上
+      记录，又不会把该 agent 其它已装技能漏掉；
+    - 没有可用记录又没给清单（如 ``/skill/ensure`` 的逐项安装）→ 不写，
+      保持"无记录 → 读侧回源沙箱"的旧行为（单条信息不足以重建整份清单）。
+
+    Args:
+        storage (`Any`): 框架 storage。
+        agent_id (`str`): 智能体 id。
+        namespace (`str`): 本次安装的技能 namespace（= 远端 namespace/slug 前缀）。
+        name (`str`): 本次安装的技能名（= hub slug / 解压目录名）。
+        source (`str`): 仅用于日志的来源标记。
+        listed_names (`list[str] | None`):
+            该 agent 当前的**完整技能清单**（frontmatter 名），需已排除本次
+            安装的这个技能；``None`` = 调用方没有清单，不建行。
+
+    Note:
+        失败只打 warning —— 记录失败不该影响安装结果（技能已经落盘）。
+    """
+    ref = {"type": SKILL_TYPE_SKILLHUB, "name": f"{namespace}:{name}"}
+    try:
+        if await list_agent_skills(storage, agent_id) is not None:
+            await append_extend_entry(storage, agent_id, ref, source=source)
+            return
+        if listed_names is None:
+            logger.info(
+                "skill install: agent %s has no agents_extend record and no "
+                "listing was supplied; skip recording %s:%s (queries fall "
+                "back to the sandbox)",
+                agent_id,
+                namespace,
+                name,
+            )
+            return
+        # 没有可用记录 → 用完整清单建行（其余技能按 uploaded/unknown），
+        # 再把本次技能标成 skillhub（create_if_missing=True 保证一定有行）。
+        await sync_extend_from_names(
+            storage,
+            agent_id,
+            listed_names,
+            source=source,
+        )
+        await append_extend_entry(
+            storage,
+            agent_id,
+            ref,
+            source=source,
+            create_if_missing=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "skill install: failed to record %s:%s into agents_extend for "
+            "agent %s",
+            namespace,
+            name,
+            agent_id,
+            exc_info=True,
+        )
+
+
 @skill_router.get(
     "/skillhub/aes-token",
     summary="Get SkillHub AES credential",
@@ -484,7 +656,10 @@ async def get_skillhub_aes_token(
         "total}`` — ``category`` is the remote ``namespace``, "
         "``version`` is the catalog item's **published** version (empty "
         "string when the remote reports ``publishedVersion: null``), ``used`` "
-        "marks skills already equipped in the session's workspace.\n"
+        "marks skills already installed for this agent, **read from the "
+        "``agents_extend`` table (no sandbox / Pod required)**; only when the "
+        "agent has no such record does it fall back to the session's "
+        "workspace.\n"
         "- Otherwise: the remote response verbatim "
         "(``{code, msg, data:{items, total, page, size}, timestamp, "
         "requestId}``)."
@@ -515,7 +690,9 @@ async def get_agent_skills(
       ``{skills: [{name, category, description, version, used}], total}``：
       ``category`` 取远端 ``namespace``，``version`` 取目录项的
       ``publishedVersion.version``（远端为 ``null`` 时给空串），
-      ``used`` 标记会话 workspace 已装备的技能（session 无效 → 404）。
+      ``used`` 标记该智能体**已装过**的技能 —— 先查 ``agents_extend`` 表
+      （**不申请 Pod**，也不解析会话），表内无该 agent 记录时才回源会话
+      workspace（那时 session 无效 → 404）。
     - 任一缺失 → 远端响应**原样透传**（``{code, msg, data, ...}``）。
 
     ``agent_id`` 传了才做归属校验（不属于调用者则 404）。
@@ -530,7 +707,8 @@ async def get_agent_skills(
 
     if agent_id and session_id:
         # ── 旧格式：加工 + used 标记（category 取远端 namespace）──
-        used_names = await _session_used_names(
+        # used 判定先查 agents_extend（不申请 Pod），无记录才回源 workspace。
+        used_names = await _used_names_for_agent(
             user_id,
             agent_id,
             session_id,
@@ -693,7 +871,8 @@ async def get_bocom_skills(
         "- With BOTH ``agent_id`` and ``session_id``: legacy processed "
         "shape ``{skills: [{name, category, description, version, used}], "
         "total}`` (``category`` is the remote ``namespace``, ``version`` "
-        "the published version, empty when ``publishedVersion`` is null).\n"
+        "the published version, empty when ``publishedVersion`` is null; "
+        "``used`` comes from ``agents_extend`` — no sandbox / Pod needed).\n"
         "- Otherwise: the remote response verbatim. ``guwpToken`` is "
         "required in both modes (user-scoped endpoint)."
     ),
@@ -714,7 +893,9 @@ async def get_uploaded_skills(
     """返回调用者上传到外部 skillhub 的 skill，两种返回模式。
 
     - ``agent_id`` 与 ``session_id`` **同时提供** → 旧格式
-      ``{skills: [{name, category, description, version, used}], total}``。
+      ``{skills: [{name, category, description, version, used}], total}``；
+      ``used`` 与 ``/skills/external`` 同源：先查 ``agents_extend`` 表
+      （**不申请 Pod**），表内无记录才回源会话 workspace。
     - 任一缺失 → 远端响应**原样透传**。
 
     ``guwpToken`` 两种模式都**必填**（用户级端点）。
@@ -735,7 +916,8 @@ async def get_uploaded_skills(
 
     if agent_id and session_id:
         # ── 旧格式：加工 + used 标记（category 取远端 namespace）──
-        used_names = await _session_used_names(
+        # used 判定先查 agents_extend（不申请 Pod），无记录才回源 workspace。
+        used_names = await _used_names_for_agent(
             user_id,
             agent_id,
             session_id,
@@ -1104,6 +1286,12 @@ async def enable_agent_skill(
     ``namespace`` 字段），远端下载 URL 为
     ``/api/web/skills/{namespace}/{name}/download``。已装备时幂等返回。
     目标 workspace 从持久化会话记录解析，任意隔离策略下都精确。
+
+    装成功后**写穿 ``agents_extend``**（``{"type": "skillhub", "name":
+    "namespace:name"}``）：``/skills/external``、``/skills/uploaded`` 的
+    ``used`` 标记以该表为准；表里原本没有该 agent 的记录时，用本次拿到的工作
+    区清单建行（其余技能按 ``uploaded``/``unknown``），本次技能标
+    ``skillhub``。写表失败只打 warning，不影响安装结果。
     """
     await access.resolve_agent(user_id, agent_id)
 
@@ -1181,6 +1369,25 @@ async def enable_agent_skill(
                 "(requires 'name' and 'description' fields)."
             ),
         )
+
+    # 该 agent 当前的完整清单（frontmatter 名），**排除本次装的这一个**：
+    # `new_names` 就是本次下载新出现的技能（frontmatter 名）——无论沙箱把
+    # 解压目录命名成 hub slug 还是 frontmatter 名，都能准确排除，免得建行时
+    # 同一个技能既记成 uploaded/unknown 又记成 skillhub（读侧会当成两个）。
+    skip = {skill_name} | new_names
+    listed_others = [s.name for s in refreshed if s.name and s.name not in skip]
+
+    # 写穿 agents_extend：/skills/external、/skills/uploaded 的 used 标记
+    # 以该表为准（不申请 Pod）；表里没有记录时用上面这份清单建行，本次技能
+    # 标 type=skillhub，见 helper 说明。
+    await _record_installed_skill(
+        storage,
+        agent_id,
+        category,
+        skill_name,
+        source="skill-download",
+        listed_names=listed_others,
+    )
 
     logger.info("Enabled skill '%s' for agent '%s'", skill_full_name, agent_id)
     return SkillActionResponse(
@@ -1293,6 +1500,16 @@ async def enable_bocom_skill(
                 "(requires 'name' and 'description' fields)."
             ),
         )
+
+    # 写穿 agents_extend（同 /skill/download/{namespace}:{name}）：used 判定
+    # 从表读，装完必须记上。
+    await _record_installed_skill(
+        storage,
+        agent_id,
+        namespaceSlug,
+        skill_name,
+        source="skill-download-bocom",
+    )
 
     logger.info("Enabled Bocom skill '%s' for agent '%s'", skill_name, agent_id)
     return SkillActionResponse(
@@ -1411,7 +1628,162 @@ async def ensure_agent_skills(
             hubs,
             oa,
             guwp_token,
+            storage=storage,
+            agent_id=agent_id,
         )
 
 
-__all__ = ["skill_router"]
+# ---------------------------------------------------------------------------
+# GET /workspace/skill 覆盖：先查 agents_extend，无记录才回源沙箱并写回
+# ---------------------------------------------------------------------------
+
+#: ``app.state`` 上的安装标记（幂等用）。
+_SKILL_LIST_INSTALLED_FLAG = "_bocomadp_skill_list_cached_installed"
+
+
+def _extend_entry_to_skill(entry: dict) -> Skill:
+    """``agents_extend`` 的条目 → 框架 ``Skill``。
+
+    ``skillhub`` 的 ``name`` 存的是完整引用 ``namespace:name``，而框架
+    ``Skill.name`` 是 agent-facing 名（无命名空间），这里取冒号后半段对齐；
+    其余类型（``uploaded`` / ``unknown``）原样使用。
+
+    表里只有 ``type`` / ``name``，所以 ``description`` / ``dir`` /
+    ``markdown`` 一律空串、``updated_at`` 为 ``0.0``（与调用方约定一致）。
+    """
+    name = entry_display_name(entry)
+    return Skill(
+        name=name,
+        description="",
+        dir="",
+        markdown="",
+        updated_at=0.0,
+    )
+
+
+async def list_skills_cached(
+    agent_id: str = Query(...),
+    session_id: str | None = Query(
+        default=None,
+        description=(
+            "会话 id。表内已有该智能体记录时**不需要**（查询不碰沙箱）；"
+            "缺记录需要回源沙箱列举时必传，否则 422。"
+        ),
+    ),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+) -> list[Skill]:
+    """列出工作区的技能：**先查表，无记录才回源沙箱**（与框架同契约）。
+
+    1. ``agents_extend`` 里**有该 agent_id 的记录** → 直接返回表内容
+       （不申请 Pod；``description`` / ``dir`` / ``markdown`` 为空串，
+       ``updated_at`` 为 ``0.0``）；
+    2. **没有记录**（含仅有其它扩展键、或 ``skills`` 键非法）→ 走原逻辑
+       （解析会话 → 路由 Pod → ``workspace.list_skills()``），把结果以
+       ``type="unknown"`` 写回表后**原样返回**（沙箱真值，含真实的
+       description/dir/markdown）；下次查询即命中表；
+    3. 写回失败只打 warning，不影响本次返回。
+
+    Args:
+        agent_id (`str`): 智能体 id（query，必传）。
+        session_id (`str | None`): 会话 id（query）；仅回源路径需要。
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
+        workspace_manager (`WorkspaceManagerBase`): Injected manager.
+
+    Raises:
+        `HTTPException`: 422 if ``session_id`` is missing while the agent has
+            no ``agents_extend`` record yet; 404 if the session does not
+            exist (from the framework handler).
+    """
+    cached = await list_agent_skills(storage, agent_id)
+    if cached is not None:
+        logger.info(
+            "list skills: agent %s served from agents_extend (%d skills)",
+            agent_id,
+            len(cached),
+        )
+        return [_extend_entry_to_skill(entry) for entry in cached]
+
+    if session_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"session_id is required: agent {agent_id!r} has no "
+                "agents_extend record yet, so its skills must be resolved "
+                "from the workspace."
+            ),
+        )
+
+    logger.info(
+        "list skills: agent %s has no agents_extend record; resolving from "
+        "the sandbox (session=%s)",
+        agent_id,
+        session_id,
+    )
+    skills = await _framework_list_skills(
+        agent_id=agent_id,
+        session_id=session_id,
+        user_id=user_id,
+        storage=storage,
+        workspace_manager=workspace_manager,
+    )
+
+    try:
+        await set_agent_skills(
+            storage,
+            agent_id,
+            [{"type": "unknown", "name": s.name} for s in skills],
+            source="sandbox-fallback",
+        )
+    except Exception:  # noqa: BLE001 —— 写回失败不影响本次返回
+        logger.warning(
+            "list skills: failed to cache %d skills for agent %s into "
+            "agents_extend",
+            len(skills),
+            agent_id,
+            exc_info=True,
+        )
+    return skills
+
+
+def install_skill_list_from_table(app: Any) -> None:
+    """把 ``GET /workspace/skill`` 前插成"先查表、无记录回源"的版本。
+
+    与 :func:`bocomadp.session_default_mode.install_create_session_default_mode`
+    同一手法：往 ``app.router.routes`` **前插**一条同路径同方法的路由
+    （Starlette 按顺序取第一个匹配，故生效），框架原路由被遮蔽但保留，
+    便于回退/对比。
+
+    **必须在** ``root_app.mount("/api", app)`` **之前调用**（mount 之后
+    路由不再挂在同一个 router 上，前插无效）。
+
+    Args:
+        app (`Any`):
+            FastAPI 应用（``create_app()`` 的返回值，尚未挂到 ``/api``）。
+    """
+    if getattr(app.state, _SKILL_LIST_INSTALLED_FLAG, False):
+        return
+    app.router.routes.insert(
+        0,
+        APIRoute(
+            # 与框架 workspace_router 的 prefix="/workspace" + "/skill" 同路径
+            "/workspace/skill",
+            list_skills_cached,
+            methods=["GET"],
+            response_model=list[Skill],
+            summary=(
+                "List installed skills (agents_extend cache; falls back to "
+                "the sandbox on first read)"
+            ),
+            name="list_skills_cached",
+        ),
+    )
+    setattr(app.state, _SKILL_LIST_INSTALLED_FLAG, True)
+    logger.info(
+        "installed agents_extend-backed GET /workspace/skill",
+    )
+
+
+__all__ = ["install_skill_list_from_table", "skill_router"]

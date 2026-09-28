@@ -44,6 +44,10 @@ from agentscope.app.storage import (
     InviteConfig,
 )
 from bocomadp.agent_template_store import get_template_entry
+from bocomadp.agents_extend_store import (
+    delete_agent_extend,
+    ensure_agent_extend_row,
+)
 from bocomadp.team_store import (
     ExpertTeamRelation,
     HandoffRelation,
@@ -510,6 +514,11 @@ async def create_agent(
 ) -> CreateAgentResponse:
     """Create and persist a new agent configuration.
 
+    创建成功后**在 ``agents_extend`` 里预置一行**（``payload = {"skills": []}``）：
+    新智能体必定没有已装技能，先落空记录可让 ``GET /workspace/skill`` 直接
+    命中表、不必回源沙箱；该写入是尽力而为（失败只打 warning，读侧会回源
+    并写回），不影响创建结果。
+
     When ``body.parent_agent_id`` is set, the new agent is created as a
     member of that leader's expert team: its ``data.parent_agent_id`` is
     stamped and the leader's ``team_config.member_ids`` is extended with
@@ -594,6 +603,20 @@ async def create_agent(
     record = AgentRecord(user_id=user_id, data=data)
     agent_id = await storage.upsert_agent(user_id, record)
 
+    # 预置一行 agents_extend（payload.skills = []）：新智能体没有任何已装
+    # 技能，先落一条空记录，让 GET /workspace/skill 直接命中表，不必解析
+    # 会话 → 路由 Pod → exec 列举（Pod 不可用时那条路径会失败）。
+    # **尽力而为**：写失败只打 warning —— 读侧找不到记录会自动回源沙箱并
+    # 写回（等同于旧行为），不能为一条缓存把已建好的智能体变成 500。
+    try:
+        await ensure_agent_extend_row(storage, agent_id, source="agent-create")
+    except Exception:  # noqa: BLE001 —— 缓存预置失败不影响创建主流程
+        logger.warning(
+            "create_agent: failed to preset agents_extend row for %s",
+            agent_id,
+            exc_info=True,
+        )
+
     if body.is_team and parent_id is None:
         # Create an empty team "shell" so the agent is already classified
         # as an expert-team leader in listings (is_team=true) before any
@@ -648,6 +671,12 @@ async def copy_agent(
     无技能、工具与 MCP 全部启用（新 id 在白名单里没有条目）、无知识库
     配置 / 无记忆、并发走默认值、模型凭证走运行时兜底解析。
 
+    复制成功后会像 ``POST /agent/`` 一样**在 ``agents_extend`` 里预置一行**
+    （``payload = {"skills": []}``）：复制品此刻确实没有已装技能，预置空行可
+    让 ``/skills/*`` 查询与 ``GET /workspace/skill`` 不必回源沙箱；随后前端
+    调 ``/skill/ensure`` 装的技能会逐条写穿到这一行。该写入是尽力而为（失败
+    只打 warning，读侧会回源沙箱），不影响复制结果。
+
     权限：可读即可复制（:meth:`ResourceAccessService.resolve_agent`），
     不可见 → 404。命名：``body.name`` 缺省为 ``"<源名> 副本"``，允许与
     已有智能体重名。
@@ -689,6 +718,21 @@ async def copy_agent(
         user_id,
         AgentRecord(id=new_id, user_id=user_id, data=AgentData(**payload)),
     )
+
+    # 预置一行 agents_extend（payload.skills = []），与 POST /agent/ 完全一致：
+    # 复制品当前**没有任何已装技能**（响应里的 ``skills`` 只是源模板声明的
+    # 清单，由前端随后调 /skill/ensure 安装；装成后 ensure 会逐条写穿本表，
+    # 见 skill_router._record_installed_skill）。不预置的话，复制品属于
+    # "无记录"，两个 /skills/* 查询每次都要回源沙箱（申请 Pod）。
+    # 尽力而为：写失败只打 warning —— 读侧找不到记录时仍会回源沙箱。
+    try:
+        await ensure_agent_extend_row(storage, new_id, source="agent-copy")
+    except Exception:  # noqa: BLE001 —— 缓存预置失败不影响复制主流程
+        logger.warning(
+            "copy_agent: failed to preset agents_extend row for %s",
+            new_id,
+            exc_info=True,
+        )
 
     logger.info(
         "copy_agent: %s → %s (by=%s, name=%r)",
@@ -839,6 +883,10 @@ async def delete_agent(
     不清理会留下孤儿档案（指向已删智能体的死数据）。团队成员级联删除
     等绕过本接口的路径，由启动时 ``prune_orphan_market_entries`` 兜底。
 
+    同时**级联清理扩展表记录**（``agents_extend`` 行，见
+    :func:`bocomadp.agents_extend_store.delete_agent_extend`），与创建接口
+    预置空记录成对，不留孤儿行；该清理失败只打 warning，不影响删除结果。
+
     Args:
         agent_id (`str`): The agent to delete.
         user_id (`str`): Injected authenticated user ID.
@@ -847,7 +895,7 @@ async def delete_agent(
             to resolve the owning user and enforce the edit permission
             when a shared editor deletes the agent.
         storage (`StorageBase`): Injected storage — used to cascade the
-            agent-market entry.
+            agent-market entry and the ``agents_extend`` row.
 
     Raises:
         `HTTPException`: 404 if the agent is not visible to the caller;
@@ -884,6 +932,17 @@ async def delete_agent(
             "delete_agent_review",
             target=agent_id,
             detail="删除智能体级联清理发布审批记录",
+        )
+    # 扩展表（agents_extend）级联清理：不留指向已删智能体的孤儿行
+    # （读侧只在活智能体上查询，孤儿行无害但会一直占着；同步清理比
+    # 依赖启动扫描更及时）。失败同样不影响删除主流程。
+    try:
+        await delete_agent_extend(storage, agent_id)
+    except Exception:  # noqa: BLE001 —— 缓存清理失败不影响删除结果
+        logger.warning(
+            "delete_agent: failed to drop agents_extend row for %s",
+            agent_id,
+            exc_info=True,
         )
 
 
