@@ -7,6 +7,7 @@ run anywhere ``agentscope[rag]`` is installed.
 """
 import base64
 import io
+import json
 import os
 import zipfile
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -1108,6 +1109,59 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
+
+    async def test_duplicate_and_blank_headers(self) -> None:
+        """Headers remain cell values, without pandas-generated labels."""
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        workbook.active.append(["Name", "Name", None])
+        workbook.active.append(["a", "b", "c"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+
+        for table_format in ("markdown", "json"):
+            for coordinates in (False, True):
+                with self.subTest(
+                    table_format=table_format,
+                    coordinates=coordinates,
+                ):
+                    parser = ExcelParser(
+                        table_format=table_format,
+                        include_cell_coordinates=coordinates,
+                        include_sheet_names=False,
+                    )
+                    sections = await parser.parse(
+                        buffer.getvalue(),
+                        "headers.xlsx",
+                    )
+                    self.assertEqual(len(sections), 1)
+                    text = sections[0].content.text
+                    if table_format == "markdown":
+                        expected = (
+                            "| [A1] Name | [B1] Name | [C1]  |\n"
+                            "| --- | --- | --- |\n"
+                            "| [A2] a | [B2] b | [C2] c |\n"
+                            if coordinates
+                            else "| Name | Name |  |\n"
+                            "| --- | --- | --- |\n"
+                            "| a | b | c |\n"
+                        )
+                        self.assertEqual(text, expected)
+                    else:
+                        rows = [
+                            json.loads(line) for line in text.splitlines()[1:]
+                        ]
+                        self.assertEqual(
+                            rows,
+                            [
+                                {"A1": "Name", "B1": "Name", "C1": ""},
+                                {"A2": "a", "B2": "b", "C2": "c"},
+                            ]
+                            if coordinates
+                            else [["Name", "Name", ""], ["a", "b", "c"]],
+                        )
 
     async def test_invalid_input_errors(self) -> None:
         """Missing paths and invalid workbooks use documented errors."""
