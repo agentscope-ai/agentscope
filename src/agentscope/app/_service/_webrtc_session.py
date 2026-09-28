@@ -145,15 +145,18 @@ class WebRTCSession:
                                     self.session_id,
                                     payload,
                                 )
-                            if isinstance(
+                            should_checkpoint = isinstance(
                                 event,
                                 (
                                     ReplyEndEvent,
                                     RequireUserConfirmEvent,
-                                    TextBlockEndEvent,
                                     ToolResultEndEvent,
                                 ),
-                            ):
+                            ) or (
+                                isinstance(event, TextBlockEndEvent)
+                                and event.text is not None
+                            )
+                            if should_checkpoint:
                                 try:
                                     await self._persist_state()
                                 except Exception as exc:

@@ -142,18 +142,17 @@ async def _create_realtime_offer(
     previous = connections.get(connection_key)
     if previous is not None:
         await previous.close()
-
-    # The old runner persists during close, so reload after it is gone.
-    session = await storage.get_session(
-        user_id,
-        body.agent_id,
-        session_id,
-    )
-    if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id!r} not found.",
+        # The old runner persists during close, so reload after it is gone.
+        session = await storage.get_session(
+            user_id,
+            body.agent_id,
+            session_id,
         )
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session {session_id!r} not found.",
+            )
     config = session.config.realtime_model_config
     if config is None:
         raise HTTPException(

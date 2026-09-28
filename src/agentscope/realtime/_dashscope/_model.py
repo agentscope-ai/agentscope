@@ -94,17 +94,15 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         """Open the WebSocket and send the session config."""
         import websockets
 
-        # Stop the previous session and drop its terminal events.
+        # Stop the previous session. Replacing the queue below isolates the
+        # new event stream from its terminal events.
         await self.close()
-        while not self._queue.empty():
-            self._queue.get_nowait()
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
                 update={"turn_detection": "none"},
             )
 
-        await self._stop_connection()
         self._queue = asyncio.Queue()
         self._session_ready.clear()
         self._session_setup_error = None

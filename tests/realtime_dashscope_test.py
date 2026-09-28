@@ -902,7 +902,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
                 "connected": {
                     "queue_replaced": True,
                     "new_queue_size": 0,
-                    "old_queue_size": 0,
+                    "old_queue_size": 2,
                     "sent": [
                         {
                             "type": "session.update",

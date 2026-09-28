@@ -28,6 +28,7 @@ from agentscope.event import (
     DataBlockDeltaEvent,
     ReplyEndEvent,
     RequireUserConfirmEvent,
+    TextBlockEndEvent,
     ToolResultEndEvent,
 )
 from agentscope.message import ToolCallBlock, ToolResultState
@@ -1028,8 +1029,8 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_tool_boundaries_checkpoint_state(self) -> None:
-        """Persist before confirmation waits and after tool completion."""
+    async def test_checkpoint_boundaries_persist_state(self) -> None:
+        """Persist tool boundaries and explicit transcript corrections."""
         message = {"id": "message-1", "role": "assistant"}
         tool_call = ToolCallBlock(
             id="call-1",
@@ -1037,18 +1038,31 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             input='{"path":"README.md"}',
         )
         events = [
+            TextBlockEndEvent(
+                id="event-0",
+                created_at="2026-01-01T00:00:00",
+                reply_id="message-1",
+                block_id="block-1",
+            ),
             RequireUserConfirmEvent(
                 id="event-1",
-                created_at="2026-01-01T00:00:00",
+                created_at="2026-01-01T00:00:01",
                 reply_id="message-1",
                 tool_calls=[tool_call],
             ),
             ToolResultEndEvent(
                 id="event-2",
-                created_at="2026-01-01T00:00:01",
+                created_at="2026-01-01T00:00:02",
                 reply_id="message-1",
                 tool_call_id="call-1",
                 state=ToolResultState.SUCCESS,
+            ),
+            TextBlockEndEvent(
+                id="event-3",
+                created_at="2026-01-01T00:00:03",
+                reply_id="message-1",
+                block_id="block-1",
+                text="corrected",
             ),
         ]
         agent = _FakeAgent(message, events)
@@ -1100,7 +1114,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 ],
             },
             {
-                "storage_calls": expected_writes * 3,
+                "storage_calls": expected_writes * 4,
                 "published_events": [
                     {
                         **event.model_dump(mode="json"),
