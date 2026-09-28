@@ -3,7 +3,7 @@
 from types import SimpleNamespace, TracebackType
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import mcp.types
 
@@ -108,7 +108,25 @@ class MCPClientToolCacheTest(IsolatedAsyncioTestCase):
         _VersionedSession.server = _FakeServer()
         _VersionedSession.list_tools_calls = 0
 
-    def _new_client(self, name: str) -> MCPClient:
+    def _patched(self) -> Any:
+        """Patch the transport factory and the session class.
+
+        Both patches must be active when the client is *constructed*, because
+        ``model_post_init`` builds the stdio transport eagerly.
+
+        Returns:
+            `Any`:
+                A patch context manager for the fake transport and session.
+        """
+        return patch.multiple(
+            "agentscope.mcp._mcp_client",
+            stdio_client=MagicMock(
+                side_effect=lambda *args, **kwargs: _OneShotTransport(),
+            ),
+            ClientSession=_VersionedSession,
+        )
+
+    def _client(self, name: str) -> MCPClient:
         """Create a stateful stdio client for the fake server.
 
         Args:
@@ -125,27 +143,12 @@ class MCPClientToolCacheTest(IsolatedAsyncioTestCase):
             mcp_config=StdioMCPConfig(command="unused"),
         )
 
-    def _patched(self) -> Any:
-        """Patch the transport factory and the session class.
-
-        Returns:
-            `Any`:
-                A patch context manager for the fake transport and session.
-        """
-        return patch(
-            "agentscope.mcp._mcp_client.stdio_client",
-            side_effect=lambda *args, **kwargs: _OneShotTransport(),
-        )
-
     async def test_reconnect_rediscovers_changed_schemas(self) -> None:
         """A reconnect must expose the new schemas and new tools."""
         _VersionedSession.server.tools = [_echo_tool("echo", "text")]
-        client = self._new_client("schema_change")
 
-        with self._patched(), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _VersionedSession,
-        ):
+        with self._patched():
+            client = self._client("schema_change")
             await client.connect()
             first = await client.get_tool("echo")
             self.assertEqual(first.input_schema["required"], ["text"])
@@ -169,12 +172,9 @@ class MCPClientToolCacheTest(IsolatedAsyncioTestCase):
             _echo_tool("echo", "text"),
             _echo_tool("legacy", "text"),
         ]
-        client = self._new_client("removed_tool")
 
-        with self._patched(), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _VersionedSession,
-        ):
+        with self._patched():
+            client = self._client("removed_tool")
             await client.connect()
             await client.get_tool("legacy")
             await client.close()
@@ -191,12 +191,9 @@ class MCPClientToolCacheTest(IsolatedAsyncioTestCase):
             _echo_tool("echo", "text"),
             _echo_tool("added", "value"),
         ]
-        client = self._new_client("single_connection")
 
-        with self._patched(), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _VersionedSession,
-        ):
+        with self._patched():
+            client = self._client("single_connection")
             await client.connect()
             await client.get_tool("echo")
             await client.get_tool("added")
