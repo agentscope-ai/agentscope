@@ -186,7 +186,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
             return {
                 "type": "input_audio",
                 "input_audio": {
-                    "data": f"data:;base64,{source.data}",
+                    "data": f"data:{source.media_type};base64,{source.data}",
                     "format": fmt,
                 },
             }
@@ -200,7 +200,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
                 return {
                     "type": "input_audio",
                     "input_audio": {
-                        "data": f"data:;base64,{encoded}",
+                        "data": f"data:{source.media_type};base64,{encoded}",
                         "format": fmt,
                     },
                 }

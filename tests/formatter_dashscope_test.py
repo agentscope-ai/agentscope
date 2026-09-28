@@ -3,6 +3,7 @@
 DashScopeMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import mock_open, patch
 
@@ -24,7 +25,6 @@ from agentscope.message import (
     ThinkingBlock,
     HintBlock,
 )
-
 
 # A fixed short-uuid used to make promote-to-multimodal tests deterministic.
 _FIXED_ID = "TESTID1234567"
@@ -400,7 +400,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_audio",
                             "input_audio": {
-                                "data": "data:;base64,UklGRg==",
+                                "data": "data:audio/wav;base64,UklGRg==",
                                 "format": "wav",
                             },
                         },
@@ -437,7 +437,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_audio",
                             "input_audio": {
-                                "data": "data:;base64,SUQz",
+                                "data": "data:audio/mpeg;base64,SUQz",
                                 "format": "mp3",
                             },
                         },
@@ -478,7 +478,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "input_audio",
                             "input_audio": {
-                                "data": "data:;base64,UklGRg==",
+                                "data": "data:audio/wav;base64,UklGRg==",
                                 "format": "wav",
                             },
                         },
