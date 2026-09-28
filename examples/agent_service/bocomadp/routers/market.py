@@ -219,20 +219,27 @@ def _row_to_view(
     entry: AgentMarketEntry | None,
     heat: int,
 ) -> MarketAgentView:
-    # payload 存储契约见 _market_agent_rows docstring：名称/提示词嵌在
-    # payload["data"] 下（AgentData.name / AgentData.system_prompt）；
+    # payload 存储契约见 _market_agent_rows docstring：名称/简介/提示词嵌在
+    # payload["data"] 下（AgentData.name / description / system_prompt）；
     # get("data", {}) 兜底防御历史脏数据。
+    #
+    # ``description`` 取**智能体自身**的简介
+    # （``agents.payload.data.description``，创建/编辑时作者填的那份）；
+    # **不取**发布档案里的 ``agent_market.description``——那是审批弹窗的
+    # 用途说明，市场卡片要展示的是智能体作者的介绍。
+    # ``department`` / ``system_name`` 智能体侧没有对应字段，仍取发布档案；
+    # ``tag``（业务条线）同理。
     data = row.payload.get("data", {}) if isinstance(row.payload, dict) else {}
     e = entry or AgentMarketEntry(agent_id=row.id)
     return MarketAgentView(
         id=row.id,
         name=str(data.get("name", "")),
+        description=str(data.get("description", "")),
         system_prompt=str(data.get("system_prompt", "")),
         source=row.source,
         tag=e.tag,  # 名单内必有行；空串 = 未打标（业务条线随发布带入）
         department=e.department,
         system_name=e.system_name,
-        description=e.description,
         heat=heat,
         created_at=row.created_at,
         updated_at=row.updated_at,
