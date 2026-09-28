@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.event import (
     ConfirmResult,
     RequireUserConfirmEvent,
@@ -235,14 +237,18 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(executor.received), 1)
 
     async def test_retry_keeps_a_multimodal_goal(self) -> None:
-        """The reminder for a verifier that skips the tool carries the goal
-        as blocks, so a multimodal goal survives the retry intact."""
-        image = DataBlock(
-            source=Base64Source(data="aGVsbG8=", media_type="image/png"),
-        )
+        """The retry reminder carries a multimodal goal as blocks."""
         query = UserMsg(
             name="user",
-            content=[TextBlock(text="Check this chart"), image],
+            content=[
+                TextBlock(text="Check this chart"),
+                DataBlock(
+                    source=Base64Source(
+                        data="aGVsbG8=",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
         )
         executor = StubAgent("executor", [[_report()]])
         verifier = StubAgent(
@@ -253,14 +259,48 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
 
         await self._run(pipe, query)
 
-        retry = verifier.received[1]
-        self.assertIn(
-            "GenerateStructuredOutput",
-            retry.get_text_content(),
+        self.assertListEqual(
+            [block.model_dump() for block in verifier.received[1].content],
+            [
+                {
+                    "type": "text",
+                    "text": "<system-reminder>You have failed to generate "
+                    "valid verification result. You should call the "
+                    "'GenerateStructuredOutput' tool with a valid structured "
+                    "output that matches the schema. Recall the verification "
+                    "requirements as follows:\n<goal>",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "text",
+                    "text": "Check this chart",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG8=",
+                        "media_type": "image/png",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "text",
+                    "text": "</goal></system-reminder>",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
         )
-        self.assertIn(image, retry.content)
-        # The goal blocks must not be flattened into a repr.
-        self.assertNotIn("aGVsbG8=", retry.get_text_content())
 
     async def test_reprompts_an_executor_that_skips_the_tool(self) -> None:
         """The same for the executor: a missing report is asked for again
