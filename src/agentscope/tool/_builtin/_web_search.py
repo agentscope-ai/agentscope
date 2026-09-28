@@ -20,11 +20,12 @@ class WebSearch(ToolBase):
     """The tool name presented to the agent."""
 
     description: str = """A web search tool using DuckDuckGo.
-    
+
   Usage:
 - Use this tool to search the internet for up-to-date information.
 - Provide a clear search query.
-- You can optionally set max_results to limit the number of search results (default is 5)."""
+- You can optionally set max_results to limit the number of search
+  results (default is 5)."""
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -87,7 +88,11 @@ class WebSearch(ToolBase):
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text="Error: duckduckgo-search is not installed. Please install it using `pip install duckduckgo-search`.",
+                        text=(
+                            "Error: duckduckgo-search is not installed. "
+                            "Please install it using "
+                            "`pip install duckduckgo-search`."
+                        ),
                     ),
                 ],
                 state=ToolResultState.ERROR,

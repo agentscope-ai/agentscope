@@ -455,7 +455,9 @@ class MCPClient(BaseModel):
         available_tools: list = self._cached_tools
         if self.enable_tools is not None:
             available_tools = [
-                tool for tool in available_tools if tool.name in self.enable_tools
+                tool
+                for tool in available_tools
+                if tool.name in self.enable_tools
             ]
         if self.disable_tools is not None:
             available_tools = [
@@ -550,5 +552,6 @@ class MCPClient(BaseModel):
             )
         if not self._session:
             raise RuntimeError(
-                f"MCP '{self.name}' session is not initialized. Call connect() first.",
+                f"MCP '{self.name}' session is not initialized. "
+                "Call connect() first.",
             )

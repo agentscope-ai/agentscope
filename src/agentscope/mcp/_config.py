@@ -38,7 +38,10 @@ class StdioMCPConfig(BaseModel):
     encoding: str = Field(
         default="utf-8",
         title="Encoding",
-        description="The text encoding used when sending/receiving messages to the server.",
+        description=(
+            "The text encoding used when sending/receiving "
+            "messages to the server."
+        ),
     )
 
     encoding_error_handler: Literal["strict", "ignore", "replace"] = Field(
@@ -72,6 +75,9 @@ class HttpMCPConfig(BaseModel):
 
     sse_read_timeout: float | None = Field(
         title="SSE Read Timeout",
-        description="The timeout in seconds for SSE read operations. Only applicable to SSE connections.",
+        description=(
+            "The timeout in seconds for SSE read operations. "
+            "Only applicable to SSE connections."
+        ),
         default=5.0,
     )
