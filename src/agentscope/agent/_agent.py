@@ -465,6 +465,7 @@ class Agent:
         )
 
         n_msgs = len(self.state.context)
+        summary = self.state.summary
         try:
             await self.compress_context(context_config=context_config)
 
@@ -474,7 +475,12 @@ class Agent:
                 state=ToolResultState.ERROR,
             )
 
-        if len(self.state.context) == n_msgs:
+        # The message count alone is not proof that nothing happened: when the
+        # first message is itself over the reserve budget it is chosen as the
+        # boundary message and split by content block, which leaves the
+        # reserved list exactly as long as the original context even though a
+        # summary was generated. Key off the summary as well.
+        if len(self.state.context) == n_msgs and self.state.summary == summary:
             text = (
                 "The context is not long enough to compress, so it remains "
                 "unchanged."
