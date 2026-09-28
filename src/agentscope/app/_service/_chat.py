@@ -77,14 +77,7 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import (
-    AssistantMsg,
-    HintBlock,
-    Msg,
-    ToolCallBlock,
-    ToolCallState,
-    UserMsg,
-)
+from ...message import AssistantMsg, HintBlock, Msg, UserMsg
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
@@ -744,7 +737,7 @@ class ChatService:
         if input_msg is not None:
             return False
 
-        awaiting = ChatService._parked_tool_calls(agent)
+        awaiting = agent.state.get_awaiting_tool_calls(agent.name)
         if not awaiting:
             return False
 
@@ -756,28 +749,6 @@ class ChatService:
             len(awaiting),
         )
         return True
-
-    @staticmethod
-    def _parked_tool_calls(agent: Agent) -> list[ToolCallBlock]:
-        """Return tool calls that keep an agent parked for an external event.
-
-        The dispatcher and the in-run inbox hand-off both need to recognize
-        the same parked state. Keeping the context inspection in one place
-        prevents one entry point from re-entering ``reply_stream(None)`` while
-        the other correctly skips the wake-up.
-        """
-        if not agent.state.context:
-            return []
-
-        last_msg = agent.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != agent.name:
-            return []
-
-        return [
-            tc
-            for tc in last_msg.get_content_blocks("tool_call")
-            if tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-        ]
 
     async def _run_impl(
         # pylint: disable=too-many-statements,too-many-branches
@@ -1401,20 +1372,10 @@ class ChatService:
                         released = True
                         break
 
-                    if self._parked_tool_calls(agent):
-                        # The inbox payload must remain queued until the
-                        # confirmation or external result resumes the agent.
-                        # Abandoning the consumer also prevents this run from
-                        # being re-entered with ``input_msg=None``.
-                        await abandon_inbox_consumer(
-                            self._message_bus,
-                            user_id=user_id,
-                            session_id=session_id,
-                            agent_id=agent_id,
-                        )
-                        released = True
+                    # A parked agent can't take a ``None`` turn; the queued
+                    # payloads are drained once it resumes.
+                    if agent.state.has_awaiting_tool_calls(agent.name):
                         break
-
                     input_msg = None
 
             finally:
