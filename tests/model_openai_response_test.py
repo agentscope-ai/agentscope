@@ -695,6 +695,59 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_reasoning_text_deltas(self) -> None:
+        """Reasoning text streams without duplicating the done snapshot."""
+        reasoning_item = _MockReasoningItem(
+            id="rs_text",
+            summary=[],
+            content=[{"type": "reasoning_text", "text": "First second"}],
+        )
+        events = [
+            _make_event(
+                "response.reasoning_text.delta",
+                delta=text,
+                item_id="rs_text",
+            )
+            for text in ("First ", "second")
+        ]
+        events.extend(
+            [
+                _make_event(
+                    "response.reasoning_text.done",
+                    text="First second",
+                    item_id="rs_text",
+                ),
+                _make_event("response.output_text.delta", delta="Answer"),
+                _make_event(
+                    "response.completed",
+                    response=_mock_completion(
+                        reasoning_output_item=reasoning_item,
+                    ),
+                ),
+            ],
+        )
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        responses = [response async for response in await self.model([])]
+        self.assertEqual(responses[0].content[0].thinking, "First ")
+        self.assertEqual(responses[1].content[0].thinking, "second")
+        self.assertFalse(responses[0].is_last)
+        self.assertFalse(responses[1].is_last)
+        result = responses[-1]
+        self.assertTrue(result.is_last)
+        self.assertEqual(len(result.content), 2)
+        self.assertIsInstance(result.content[0], ThinkingBlock)
+        self.assertEqual(result.content[0].thinking, "First second")
+        self.assertEqual(result.content[0].reasoning_item_id, "rs_text")
+        self.assertEqual(
+            result.content[0].reasoning_item_raw,
+            reasoning_item.model_dump(exclude_none=True),
+        )
+        self.assertIsInstance(result.content[1], TextBlock)
+        self.assertEqual(result.content[1].text, "Answer")
+
     async def test_stream_preserves_multiple_reasoning_items(self) -> None:
         """Streaming keeps every reasoning item's encrypted payload."""
         first_raw = {

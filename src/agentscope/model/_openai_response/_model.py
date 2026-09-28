@@ -302,11 +302,11 @@ class OpenAIResponseModel(ChatModelBase):
                     id=response_id,
                 )
 
-                if event_type == "response.reasoning_summary_text.delta":
-                    # Reasoning summary text is NOT emitted by all models.
-                    # As of 2026-05, o1 and o4-mini do not stream reasoning
-                    # summary deltas. This handler exists for forward
-                    # compatibility with models that do expose it.
+                if event_type in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_text.delta",
+                }:
+                    # Both event types carry text for a reasoning item.
                     delta_res.append_thinking(
                         event.delta,
                         block_id=reasoning_block_ids.setdefault(
