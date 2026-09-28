@@ -25,6 +25,7 @@ _INSTANCE_VALUE_KEYWORDS = frozenset(
     {"default", "const", "enum", "examples"},
 )
 
+
 def _id_factory() -> str:
     return uuid.uuid4().hex
 

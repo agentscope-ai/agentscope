@@ -635,7 +635,8 @@ class Agent:
                 structured_model=cfg.summary_schema,
             )
 
-        except Exception:
+        except Exception as e:
+            error = e
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -678,7 +679,7 @@ class Agent:
 
             if res is None:
                 if not cfg.compression_fallback_to_truncation:
-                    raise error
+                    raise error from e
                 logger.warning(
                     "[AGENT %s]: Summary generation failed: %s. "
                     "Falling back to context truncation.",
