@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """Unit tests for the tracing module using an in-memory OTel exporter."""
 import asyncio
 import json

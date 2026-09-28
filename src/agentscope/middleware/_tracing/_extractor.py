@@ -596,9 +596,9 @@ def _get_tool_request_attributes(
             )
             description = getattr(registered, "description", None)
             if description:
-                attributes[SpanAttributes.GEN_AI_TOOL_DESCRIPTION] = (
-                    description
-                )
+                attributes[
+                    SpanAttributes.GEN_AI_TOOL_DESCRIPTION
+                ] = description
 
     return attributes
 
