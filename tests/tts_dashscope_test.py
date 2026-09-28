@@ -1450,7 +1450,8 @@ class TTSModelBaseIsAbstractTest(IsolatedAsyncioTestCase):
             """A TTS model that forgets to implement ``synthesize``."""
 
         with self.assertRaises(TypeError):
-            _Incomplete(
+            # Instantiating an abstract class is the point of this test.
+            _Incomplete(  # pylint: disable=abstract-class-instantiated
                 credential=DashScopeCredential(api_key="test"),
                 model="m",
             )
