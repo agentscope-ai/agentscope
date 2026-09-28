@@ -754,9 +754,11 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             structured_model=_MemorySelection,
         )
 
-        # 3. Validate: discard hallucinated filenames.
+        # 3. Discard hallucinated filenames and count each memory only once.
         raw_selected: list[str] = res.content.get("selected_files", [])
-        selected = [f for f in raw_selected if f in valid_filenames][:5]
+        selected = list(
+            dict.fromkeys(f for f in raw_selected if f in valid_filenames),
+        )[:5]
         if not selected:
             return None
 

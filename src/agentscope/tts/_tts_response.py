@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .._utils._common import _get_timestamp
+from .._utils._common import _generate_timestamp, _get_timestamp
 from .._utils._mixin import DictMixin
 from ..message import DataBlock
 from ..types import JSONSerializableObject
@@ -38,7 +38,7 @@ class TTSResponse(DictMixin):
     id: str = field(default_factory=lambda: _get_timestamp(True))
     """The unique identifier of the response."""
 
-    created_at: str = field(default_factory=_get_timestamp)
+    created_at: str = field(default_factory=_generate_timestamp)
     """When the response was created."""
 
     type: Literal["tts"] = field(default_factory=lambda: "tts")

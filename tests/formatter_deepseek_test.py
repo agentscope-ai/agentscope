@@ -23,6 +23,9 @@ from agentscope.message import (
 )
 
 
+_FIXED_ID = "TESTID1234567"
+
+
 class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
     """Comprehensive tests for DeepSeek Chat and MultiAgent formatters."""
 
@@ -213,6 +216,42 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         # Empty
         self.assertListEqual([], await fmt.format([]))
 
+    async def test_chat_formatter_preserves_user_images(self) -> None:
+        """User images are preserved, while images in other roles are
+        dropped since DeepSeek only accepts them in user messages."""
+        fmt = DeepSeekChatFormatter(input_types=["text/plain", "image/*"])
+        image = DataBlock(
+            source=Base64Source(
+                data="ZmFrZQ==",
+                media_type="image/png",
+            ),
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[TextBlock(text="Inspect this image."), image],
+            ),
+            AssistantMsg(name="assistant", content=[image]),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,ZmFrZQ==",
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
+
     async def test_chat_formatter_reasoning_content_always_present(
         self,
     ) -> None:
@@ -310,6 +349,57 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
+
+    async def test_multiagent_formatter_preserves_all_agent_images(
+        self,
+    ) -> None:
+        """Collapsed history preserves images regardless of source role."""
+        fmt = DeepSeekMultiAgentFormatter(
+            input_types=["text/plain", "image/png"],
+        )
+        msgs = [
+            UserMsg(name="user", content="Inspect the result."),
+            AssistantMsg(
+                name="analyst",
+                content=[
+                    TextBlock(text="Here is the screenshot."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZQ==",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        prompt = fmt.conversation_history_prompt
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"{prompt}<history>\n"
+                                "user: Inspect the result.\n"
+                                "analyst: Here is the screenshot.\n"
+                                "analyst: "
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,ZmFrZQ==",
+                            },
+                        },
+                        {"type": "text", "text": "\n</history>"},
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
@@ -493,6 +583,104 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_promotes_tool_result_image(self) -> None:
+        """Tool-result images are promoted after the tool message."""
+        fmt = DeepSeekChatFormatter(
+            input_types=["text/plain", "image/png"],
+        )
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_image",
+                        name="capture",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_image",
+                        name="capture",
+                        output=[
+                            TextBlock(text="Screenshot captured."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data="ZmFrZQ==",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="I can inspect it now."),
+                ],
+            ),
+        ]
+        tool_content = (
+            "Screenshot captured.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_image",
+                            "type": "function",
+                            "function": {
+                                "name": "capture",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_image",
+                    "content": tool_content,
+                    "name": "capture",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<system-reminder>The multimodal data and "
+                                "their identifiers are listed as follows:"
+                            ),
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,ZmFrZQ==",
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "</system-reminder>",
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "I can inspect it now.",
+                    "reasoning_content": "",
+                },
+            ],
+            await fmt.format(msgs),
         )
 
     async def test_chat_formatter_hint_block_multimodal(self) -> None:

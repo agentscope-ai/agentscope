@@ -792,9 +792,9 @@ class WorkspaceBase:
     async def _close_mcp_instance(instance: MCPClient) -> None:
         """Close one live handle, downgrading failures to warnings.
 
-        Stateless clients hold no connection, so they are skipped.
+        Unconnected clients (e.g. local stateless ones) are skipped.
         """
-        if not (instance.is_stateful and instance.is_connected):
+        if not instance.is_connected:
             return
         try:
             await instance.close()

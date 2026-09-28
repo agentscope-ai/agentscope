@@ -250,9 +250,15 @@ class ExcelParser(ParserBase):
             ) from e
 
         if isinstance(file, str):
-            excel_file = pd.ExcelFile(file)
-        else:
+            with open(file, "rb") as fp:
+                file = fp.read()
+
+        try:
             excel_file = pd.ExcelFile(io.BytesIO(file))
+        except Exception as e:  # pylint: disable=broad-except
+            raise ValueError(
+                f"Failed to parse {filename!r} as Excel: {e}",
+            ) from e
 
         workbook = None
         try:
