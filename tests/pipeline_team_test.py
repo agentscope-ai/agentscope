@@ -113,45 +113,6 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         owners = {_.state.reply_id: _.name for _ in agents}
         return [(_.type.value, owners[_.reply_id]) for _ in events]
 
-    def _msg_base(self, name: str) -> dict:
-        """The fields shared by every assistant message."""
-        return {
-            "id": AnyString(),
-            "created_at": AnyString(),
-            "finished_at": None,
-            "finished_reason": None,
-            "structured_output": None,
-            "error": None,
-            "metadata": {},
-            "name": name,
-            "role": "assistant",
-            "usage": None,
-        }
-
-    def _user_msg(self, text: str) -> dict:
-        """The dumped user message carrying the given text."""
-        return {
-            "id": AnyString(),
-            "created_at": AnyString(),
-            "finished_at": AnyString(),
-            "finished_reason": None,
-            "structured_output": None,
-            "error": None,
-            "metadata": {},
-            "name": "user",
-            "role": "user",
-            "usage": None,
-            "content": [
-                {
-                    "type": "text",
-                    "created_at": AnyString(),
-                    "finished_at": None,
-                    "id": AnyString(),
-                    "text": text,
-                },
-            ],
-        }
-
     async def test_delegation_round_trip(self) -> None:
         """The researcher's final reply becomes the leader's tool result,
         its intermediate events are streamed, and its context is reset once
@@ -199,9 +160,38 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [_.model_dump() for _ in self.leader.state.context],
             [
-                self._user_msg("What is A?"),
                 {
-                    **self._msg_base("leader"),
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "metadata": {},
+                    "name": "user",
+                    "role": "user",
+                    "usage": None,
+                    "content": [
+                        {
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "id": AnyString(),
+                            "text": "What is A?",
+                        },
+                    ],
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "metadata": {},
+                    "name": "leader",
+                    "role": "assistant",
+                    "usage": None,
                     "content": [
                         {
                             "type": "tool_call",
@@ -335,9 +325,38 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [_.model_dump() for _ in self.researcher.state.context],
             [
-                self._user_msg("Find A"),
                 {
-                    **self._msg_base("researcher"),
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "metadata": {},
+                    "name": "user",
+                    "role": "user",
+                    "usage": None,
+                    "content": [
+                        {
+                            "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                            "id": AnyString(),
+                            "text": "Find A",
+                        },
+                    ],
+                },
+                {
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "metadata": {},
+                    "name": "researcher",
+                    "role": "assistant",
+                    "usage": None,
                     "content": [
                         {
                             "type": "tool_call",
@@ -494,3 +513,370 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
             [("call-1", "interrupted")],
         )
         self.assertListEqual(self.researcher.state.context, [])
+
+    async def test_repaired_assignment_input(self) -> None:
+        """An assignment input that only parses after repair still reaches
+        the member instead of leaving the leader parked."""
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    "{'member': 'researcher', 'prompt': 'Find A'}",
+                ),
+                _text("A is 42."),
+            ],
+        )
+        self.researcher.model.set_responses([_text("Found: A = 42")])
+
+        await self._run(self.query)
+
+        self.assertDictEqual(
+            self.leader.state.context[-1].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "leader",
+                "role": "assistant",
+                "usage": None,
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "input": "{'member': 'researcher', "
+                        "'prompt': 'Find A'}",
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Found: A = 42",
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "A is 42.",
+                    },
+                ],
+            },
+        )
+
+    async def test_one_member_parks_in_a_round(self) -> None:
+        """With the researcher parked, the coder's result is fed right away
+        and the leader stays parked until the researcher resumes."""
+        coder = _agent("coder")
+        self.pipeline = TeamPipeline(
+            leader=self.leader,
+            members=[
+                TeamMember(agent=self.researcher, description="Researches"),
+                TeamMember(agent=coder, description="Codes"),
+            ],
+        )
+        self.leader.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="call-1",
+                                name="TeamAssign",
+                                input='{"member": "researcher", '
+                                '"prompt": "Find A"}',
+                            ),
+                            ToolCallBlock(
+                                id="call-2",
+                                name="TeamAssign",
+                                input='{"member": "coder", '
+                                '"prompt": "Write A"}',
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                _text("Both done."),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call("call-r1", '{"input": "A"}', name="ask_tool"),
+                _text("Found: A = 42"),
+            ],
+        )
+        coder.model.set_responses([_text("Wrote a.py")])
+
+        await self._run(self.query)
+
+        self.assertListEqual(
+            [
+                (_.id, _.state)
+                for _ in self.leader.state.get_awaiting_tool_calls("leader")
+            ],
+            [("call-1", "submitted")],
+        )
+
+        await self._run(
+            UserConfirmResultEvent(
+                reply_id=self.researcher.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=self.researcher.state.context[-1].content[0],
+                    ),
+                ],
+            ),
+        )
+
+        self.assertDictEqual(
+            self.leader.state.context[-1].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "leader",
+                "role": "assistant",
+                "usage": None,
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "input": '{"member": "researcher", '
+                        '"prompt": "Find A"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-2",
+                        "name": "TeamAssign",
+                        "input": '{"member": "coder", "prompt": "Write A"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-2",
+                        "name": "TeamAssign",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Wrote a.py",
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Found: A = 42",
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Both done.",
+                    },
+                ],
+            },
+        )
+
+    async def test_same_member_assignments_queue(self) -> None:
+        """A second assignment to a parked researcher waits for the first
+        one to finish, then runs, and both results land in call order."""
+        self.leader.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="call-1",
+                                name="TeamAssign",
+                                input='{"member": "researcher", '
+                                '"prompt": "Find A"}',
+                            ),
+                            ToolCallBlock(
+                                id="call-2",
+                                name="TeamAssign",
+                                input='{"member": "researcher", '
+                                '"prompt": "Find B"}',
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                _text("Both found."),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call("call-r1", '{"input": "A"}', name="ask_tool"),
+                _text("Found A"),
+                _text("Found B"),
+            ],
+        )
+
+        events = await self._run(self.query)
+
+        self.assertEqual(events.count(("REPLY_START", "researcher")), 1)
+        self.assertListEqual(
+            [
+                (_.id, _.state)
+                for _ in self.leader.state.get_awaiting_tool_calls("leader")
+            ],
+            [("call-1", "submitted"), ("call-2", "submitted")],
+        )
+
+        # The researcher starts a new reply for the queued call, so the
+        # events are drained without mapping owners
+        _ = [
+            _
+            async for _ in self.pipeline.reply_stream(
+                UserConfirmResultEvent(
+                    reply_id=self.researcher.state.reply_id,
+                    confirm_results=[
+                        ConfirmResult(
+                            confirmed=True,
+                            tool_call=self.researcher.state.context[
+                                -1
+                            ].content[0],
+                        ),
+                    ],
+                ),
+            )
+        ]
+
+        self.assertDictEqual(
+            self.leader.state.context[-1].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "leader",
+                "role": "assistant",
+                "usage": None,
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "input": '{"member": "researcher", '
+                        '"prompt": "Find A"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-2",
+                        "name": "TeamAssign",
+                        "input": '{"member": "researcher", '
+                        '"prompt": "Find B"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-1",
+                        "name": "TeamAssign",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Found A",
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "call-2",
+                        "name": "TeamAssign",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Found B",
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Both found.",
+                    },
+                ],
+            },
+        )

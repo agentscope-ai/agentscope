@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The team pipeline class."""
 import asyncio
-import json
 from asyncio import Queue
 from typing import Any, AsyncGenerator
 
 from pydantic import BaseModel, ConfigDict
 
+from .._utils._common import _json_loads_with_repair
 from ..agent import Agent
 from ..event import (
     AgentEvent,
@@ -21,7 +21,6 @@ from ..message import (
     Msg,
     TextBlock,
     ToolCallBlock,
-    ToolCallState,
     ToolResultBlock,
     ToolResultState,
     UserMsg,
@@ -116,8 +115,10 @@ class TeamPipeline:
     its own context and feeds its final reply back as the tool result, so
     the leader only ever sees the summary, never the member's intermediate
     steps. Members assigned in the same round run concurrently, except that
-    assignments to the same member run one after another. Members do not
-    talk to each other; a member's result always returns to the leader.
+    assignments to the same member run one after another in call order, a
+    later one waiting until the earlier one finishes, even across a HITL
+    pause. Members do not talk to each other; a member's result always
+    returns to the leader.
 
     HITL works per participant: a member that needs user confirmation parks
     like any agent, its request is streamed out unchanged, and the result
@@ -154,6 +155,7 @@ class TeamPipeline:
         self.leader = leader
         self.members = {_.agent.name: _ for _ in members}
         self.reset_members = reset_members
+        self._assign_tool = _TeamAssign(members)
         self._tool_registered = False
 
     async def reply_stream(
@@ -164,8 +166,7 @@ class TeamPipeline:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        yield_final_msg: bool = False,
-    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+    ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream the events of every
         participant.
 
@@ -176,19 +177,15 @@ class TeamPipeline:
                 Messages go to the leader. A confirmation or external
                 result is routed by ``reply_id`` to whichever participant is
                 parked on it. An interrupt aborts every parked participant.
-            yield_final_msg (`bool`, defaults to `False`):
-                If yield the leader's final reply message.
 
         Yields:
-            `AgentEvent | Msg`:
+            `AgentEvent`:
                 The events of the leader and the members it assigns to. The
                 stream ends when every participant has either finished or
                 parked on a HITL request.
         """
         if not self._tool_registered:
-            await self.leader.toolkit.add_tool(
-                _TeamAssign(list(self.members.values())),
-            )
+            await self.leader.toolkit.add_tool(self._assign_tool)
             self._tool_registered = True
 
         if isinstance(inputs, UserInterruptEvent):
@@ -207,11 +204,21 @@ class TeamPipeline:
             and inputs.reply_id != self.leader.state.reply_id
         ):
             # A parked member's turn; the leader only continues once the
-            # member finishes, so its reply becomes the tool result
+            # member finishes, so its reply becomes the tool result. The
+            # first awaiting call is the parked one, the rest are queued
             results: list[ToolResultBlock] = []
             member = self._parked_member(inputs.reply_id)
-            async for evt in self._run_member(member, inputs, results):
+            calls = self._assigning_calls(member)
+            async for evt in self._run_member(
+                member,
+                inputs,
+                results,
+                calls[0].id,
+            ):
                 yield evt
+            if not self._is_parked(member):
+                async for evt in self._run_assignments(calls[1:], results):
+                    yield evt
             if not results:
                 return
             inputs = ExternalExecutionResultEvent(
@@ -221,10 +228,7 @@ class TeamPipeline:
 
         while True:
             assignments: list[ToolCallBlock] = []
-            async for evt in self.leader.reply_stream(
-                inputs,
-                yield_final_msg=yield_final_msg,
-            ):
+            async for evt in self.leader.reply_stream(inputs):
                 # Assignments are executed by the pipeline itself, so their
                 # require events are not the caller's business
                 if isinstance(evt, RequireExternalExecutionEvent) and all(
@@ -257,73 +261,37 @@ class TeamPipeline:
                         yield evt
                 return
 
-    async def reply(
-        self,
-        inputs: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | UserInterruptEvent
-        | ExternalExecutionResultEvent
-        | None = None,
-    ) -> Msg:
-        """Reply to the given inputs, consuming all streamed events.
-
-        Args:
-            inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
-            optional):
-                The inputs, see :meth:`reply_stream`.
-
-        Returns:
-            `Msg`:
-                The leader's final reply message.
-        """
-        final_msg: Msg | None = None
-        async for evt_or_msg in self.reply_stream(
-            inputs,
-            yield_final_msg=True,
-        ):
-            if isinstance(evt_or_msg, Msg):
-                final_msg = evt_or_msg
-        if final_msg is None:
-            raise RuntimeError("Agent did not produce a final message.")
-        return final_msg
-
     async def _run_assignments(
         self,
         tool_calls: list[ToolCallBlock],
         results: list[ToolResultBlock],
     ) -> AsyncGenerator[AgentEvent, None]:
         """Run one round of assignments, concurrently across members and
-        sequentially within one, collecting the tool results of those that
-        finish."""
+        sequentially within one, appending the tool results of those that
+        finish in call order."""
         groups: dict[str, list[ToolCallBlock]] = {}
         for tool_call in tool_calls:
-            member = json.loads(tool_call.input)["member"]
+            member = self._parse(tool_call)["member"]
             groups.setdefault(member, []).append(tool_call)
 
         sentinel = object()
         queue: Queue = Queue()
+        round_results: list[ToolResultBlock] = []
 
         async def run_group(name: str, calls: list[ToolCallBlock]) -> None:
-            """Run the assignments to one member one after another."""
+            """Run the assignments to one member one after another; once it
+            parks, the rest stay queued until it resumes."""
             member = self.members[name]
             for tool_call in calls:
                 if self._is_parked(member):
-                    results.append(
-                        self._to_tool_result(
-                            tool_call.id,
-                            f"The member {name!r} is waiting for the user on "
-                            "a previous task, try again later.",
-                            ToolResultState.ERROR,
-                        ),
-                    )
-                    continue
-                prompt = json.loads(tool_call.input)["prompt"]
+                    break
                 async for evt in self._run_member(
                     member,
-                    UserMsg(name="user", content=prompt),
-                    results,
+                    UserMsg(
+                        name="user",
+                        content=self._parse(tool_call)["prompt"],
+                    ),
+                    round_results,
                     tool_call.id,
                 ):
                     await queue.put(evt)
@@ -342,21 +310,21 @@ class TeamPipeline:
             await gather_task
         finally:
             gather_task.cancel()
+            await asyncio.gather(gather_task, return_exceptions=True)
         # Results land in the leader's context in the order it called
         order = {_.id: i for i, _ in enumerate(tool_calls)}
-        results.sort(key=lambda _: order[_.id])
+        results.extend(sorted(round_results, key=lambda _: order[_.id]))
 
     async def _run_member(
         self,
         member: TeamMember,
         inputs: Msg | UserConfirmResultEvent | ExternalExecutionResultEvent,
         results: list[ToolResultBlock],
-        tool_call_id: str | None = None,
+        tool_call_id: str,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Run one member reply, streaming its events and turning its final
         message into the tool result of the assigning call. Nothing is
         appended when the member parks on a HITL request."""
-        tool_call_id = tool_call_id or self._assigning_call(member).id
         async for evt in member.agent.reply_stream(
             inputs,
             yield_final_msg=True,
@@ -408,19 +376,22 @@ class TeamPipeline:
             f"No participant is waiting on the reply {reply_id!r}.",
         )
 
-    def _assigning_call(self, member: TeamMember) -> ToolCallBlock:
-        """The leader's submitted tool call that assigns to the member.
-        Assignments to one member run one after another, so at most one is
-        in flight."""
-        for tool_call in self.leader.state.get_awaiting_tool_calls(
-            self.leader.name,
-        ):
-            if (
-                tool_call.name == _TeamAssign.name
-                and tool_call.state == ToolCallState.SUBMITTED
-                and json.loads(tool_call.input)["member"] == member.agent.name
-            ):
-                return tool_call
-        raise RuntimeError(
-            f"The leader is not assigning to {member.agent.name!r}.",
+    def _parse(self, tool_call: ToolCallBlock) -> dict:
+        """Parse an assignment's input the same way the leader validated
+        it, so a repaired input parses here too."""
+        return _json_loads_with_repair(
+            tool_call.input,
+            self._assign_tool.input_schema,
         )
+
+    def _assigning_calls(self, member: TeamMember) -> list[ToolCallBlock]:
+        """The leader's awaiting assignments to the member in call order,
+        the first of which is the one the member is running."""
+        return [
+            _
+            for _ in self.leader.state.get_awaiting_tool_calls(
+                self.leader.name,
+            )
+            if _.name == _TeamAssign.name
+            and self._parse(_)["member"] == member.agent.name
+        ]
