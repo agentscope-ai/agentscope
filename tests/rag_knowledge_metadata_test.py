@@ -108,16 +108,34 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
             timeout=5,
         )
 
-        for scope, knowledge in scopes.items():
-            documents = await knowledge.list_documents()
             self.assertEqual(
-                [document.document_id for document in documents],
-                [f"doc-{scope}"],
+                [document.model_dump() for document in documents],
+                [
+                    {
+                        "document_id": f"doc-{scope}",
+                        "source": self.chunks[0].source,
+                        "chunk_count": len(self.chunks),
+                        "metadata": {
+                            "page": 1,
+                            "origin": "parser",
+                            "corpus": scope,
+                        },
+                    },
+                ],
             )
             stored = await knowledge.list_chunks(f"doc-{scope}")
             self.assertEqual(
-                [chunk.metadata for chunk in stored],
-                [{"page": 1, "origin": "parser", "corpus": scope}],
+                [chunk.model_dump() for chunk in stored],
+                [
+                    {
+                        **before[0],
+                        "metadata": {
+                            "page": 1,
+                            "origin": "parser",
+                            "corpus": scope,
+                        },
+                    },
+                ],
             )
         self.assertEqual(
             [chunk.model_dump() for chunk in self.chunks],
