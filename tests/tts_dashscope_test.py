@@ -1438,3 +1438,19 @@ class TestDashScopeCosyVoiceRealtimeMode(
             self.mock_synthesizer.close.assert_called_once()
             self.assertTrue(model._connected)
             self.assertIsNot(model._callback, old_callback)
+
+
+class TTSModelBaseIsAbstractTest(IsolatedAsyncioTestCase):
+    """``TTSModelBase`` must actually enforce the ``synthesize`` contract."""
+
+    def test_subclass_without_synthesize_cannot_be_created(self) -> None:
+        """An adapter that forgets ``synthesize`` must fail at construction."""
+
+        class _Incomplete(TTSModelBase):
+            """A TTS model that forgets to implement ``synthesize``."""
+
+        with self.assertRaises(TypeError):
+            _Incomplete(
+                credential=DashScopeCredential(api_key="test"),
+                model="m",
+            )
