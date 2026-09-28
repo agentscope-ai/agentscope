@@ -10,9 +10,7 @@ from ._base import CredentialBase
 if TYPE_CHECKING:
     from ..model import ChatModelBase
 
-# MiniMax officially recommends its Anthropic-compatible endpoint for the
-# M-series chat models, see
-# https://platform.minimax.io/docs/api-reference/text-anthropic-api
+# MiniMax's recommended Anthropic-compatible endpoint (international site)
 _MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 
 
@@ -30,9 +28,8 @@ class MiniMaxCredential(CredentialBase):
     base_url: str = Field(
         default=_MINIMAX_BASE_URL,
         description=(
-            "The base URL for the MiniMax Anthropic-compatible API. "
-            "Defaults to ``https://api.minimax.io/anthropic`` per "
-            "MiniMax's official recommendation."
+            "The base URL for the MiniMax Anthropic-compatible API, use "
+            "``https://api.minimax.cn/anthropic`` for China mainland."
         ),
     )
     """The base URL for the MiniMax API."""

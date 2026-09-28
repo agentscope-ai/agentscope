@@ -198,6 +198,7 @@ class AnthropicChatModel(ChatModelBase):
             # Anthropic requires max_tokens > budget_tokens strictly.
             budget = self.parameters.thinking_budget or (max_tokens // 2)
             if budget >= max_tokens:
+                # Auto-expand max_tokens to satisfy the inequality.
                 max_tokens = budget + 1024
             thinking["budget_tokens"] = budget
 
@@ -256,10 +257,13 @@ class AnthropicChatModel(ChatModelBase):
         }
 
         if "thinking" not in kwargs:
-            thinking, max_tokens = self._build_thinking_config(max_tokens)
+            thinking, expanded_max_tokens = self._build_thinking_config(
+                max_tokens,
+            )
             if thinking is not None:
                 kwargs["thinking"] = thinking
-                kwargs["max_tokens"] = max_tokens
+            if expanded_max_tokens != max_tokens:
+                kwargs["max_tokens"] = expanded_max_tokens
 
         # Effort travels inside ``output_config``, not as a top-level field.
         if "output_config" not in kwargs:

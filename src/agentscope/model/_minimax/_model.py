@@ -82,19 +82,14 @@ class MiniMaxChatModel(AnthropicChatModel):
             client_kwargs=client_kwargs,
         )
 
-    def _thinking_mode(self) -> str | None:
-        """Resolve MiniMax's adaptive thinking mode."""
-        return "adaptive" if self.parameters.thinking_enable else None
-
     def _build_thinking_config(
         self,
         max_tokens: int,
     ) -> tuple[dict[str, Any] | None, int]:
-        """Build MiniMax's thinking configuration."""
-        mode = self._thinking_mode()
-        if mode is None:
-            return None, max_tokens
-        return {"type": mode}, max_tokens
+        """MiniMax only accepts adaptive thinking, without a token budget."""
+        if self.parameters.thinking_enable:
+            return {"type": "adaptive"}, max_tokens
+        return None, max_tokens
 
     def _build_output_config(self) -> None:
         """MiniMax does not support Anthropic's output configuration."""
