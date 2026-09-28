@@ -834,3 +834,82 @@ class TestOpenAIChatFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertIsNone(fmt_choice)
+
+
+
+class OpenAIChatExtraBodyTest(IsolatedAsyncioTestCase):
+    """A per-call ``extra_body`` must merge into the configured one."""
+
+    def _model(self, extra_body: dict | None) -> Any:
+        """Build an OpenAI chat model with a configured extra_body.
+
+        Args:
+            extra_body (`dict | None`):
+                The constructor-level extra body, or ``None``.
+
+        Returns:
+            `Any`:
+                The model under test.
+        """
+        return OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="gpt-4o",
+            stream=False,
+            context_size=128_000,
+            extra_body=extra_body,
+        )
+
+    async def _call(self, model: Any, **kwargs: Any) -> Any:
+        """Run one call against a mocked client.
+
+        Args:
+            model (`Any`):
+                The model under test.
+            **kwargs (`Any`):
+                Per-call generation keyword arguments.
+
+        Returns:
+            `Any`:
+                The mocked ``chat.completions.create``.
+        """
+        create = AsyncMock(return_value=_mock_completion(text="ok"))
+        client = MagicMock()
+        client.chat.completions.create = create
+        model.client = client
+        await model._call_api("gpt-4o", [], **kwargs)
+        return create
+
+    async def test_call_extra_body_merges_with_configured(self) -> None:
+        """Per-call keys must add to the configured extra_body."""
+        model = self._model({"thinking": {"type": "disabled"}})
+        call_extra = {"top_k": 5}
+
+        create = await self._call(model, extra_body=call_extra)
+
+        self.assertEqual(
+            create.call_args.kwargs["extra_body"],
+            {"thinking": {"type": "disabled"}, "top_k": 5},
+        )
+        self.assertEqual(call_extra, {"top_k": 5})
+
+    async def test_call_extra_body_overrides_a_configured_key(self) -> None:
+        """An explicit per-call key still wins over the configured one."""
+        model = self._model({"top_k": 1})
+
+        create = await self._call(model, extra_body={"top_k": 5})
+
+        self.assertEqual(
+            create.call_args.kwargs["extra_body"],
+            {"top_k": 5},
+        )
+
+    async def test_call_extra_body_without_configuration(self) -> None:
+        """With nothing configured, the per-call value is forwarded."""
+        model = self._model(None)
+
+        create = await self._call(model, extra_body={"top_k": 5})
+
+        self.assertEqual(
+            create.call_args.kwargs["extra_body"],
+            {"top_k": 5},
+        )

@@ -255,10 +255,16 @@ class OpenAIChatModel(ChatModelBase):
             }
             kwargs["modalities"] = ["text", "audio"]
 
-        if self.extra_body is not None:
-            kwargs["extra_body"] = dict(self.extra_body)
-
         kwargs.update(generate_kwargs)
+
+        if self.extra_body is not None:
+            # Merge *after* the update so a per-call ``extra_body`` adds to
+            # the configured one instead of replacing it wholesale, and build
+            # a new dict so the caller's mapping is never aliased.
+            kwargs["extra_body"] = {
+                **self.extra_body,
+                **(generate_kwargs.get("extra_body") or {}),
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
