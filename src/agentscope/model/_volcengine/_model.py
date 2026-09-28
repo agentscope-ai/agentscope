@@ -210,7 +210,9 @@ class VolcengineChatModel(ChatModelBase):
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
-            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"] = dict(
+                kwargs.get("extra_body") or {},
+            )
             kwargs["extra_body"].setdefault("thinking", {})
             kwargs["extra_body"]["thinking"].setdefault(
                 "type",
