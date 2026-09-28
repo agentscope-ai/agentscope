@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=redefined-builtin
 """Tests that mem0 does not persist a reply parked on permission.
 
 A parked reply ends the stream with a placeholder assistant message instead of
@@ -11,12 +12,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import MockModel
 
 from agentscope.agent import Agent
-from agentscope.message import (
-    TextBlock,
-    ToolCallBlock,
-    ToolChunk,
-    UserMsg,
-)
+from agentscope.message import TextBlock, ToolCallBlock, UserMsg
 from agentscope.middleware import Mem0Middleware
 from agentscope.model import ChatResponse
 from agentscope.permission import (
@@ -24,7 +20,7 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
-from agentscope.tool import ToolBase, Toolkit
+from agentscope.tool import ToolBase, ToolChunk, Toolkit
 
 TOOL_NAME = "ask_permission_tool"
 TOOL_INPUT = "remind"
