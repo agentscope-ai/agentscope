@@ -795,6 +795,12 @@ class RAGMiddleware(MiddlewareBase):
                     "hint_template must contain exactly one '{context}' "
                     f"placeholder; found {count}.",
                 )
+            try:
+                value.format(context="")
+            except (IndexError, KeyError) as e:
+                raise ValueError(
+                    f"hint_template has an unknown placeholder: {e}.",
+                ) from e
             return value
 
     def __init__(
