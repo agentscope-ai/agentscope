@@ -63,6 +63,7 @@ class _FakeChannel(ChannelBase):
         self.closed = False
         self.sent_to = ""
         self.returned = False
+        self.bound_bus: Any = None
 
     @property
     def channel_id(self) -> str:
@@ -79,6 +80,10 @@ class _FakeChannel(ChannelBase):
     async def aclose(self) -> None:
         """Record that the factory released this instance."""
         self.closed = True
+
+    def bind_message_bus(self, message_bus: Any) -> None:
+        """Record the shared bus supplied by the channel runtime."""
+        self.bound_bus = message_bus
 
     async def send_response(
         self,
@@ -129,10 +134,14 @@ def _record(bot_id: str = "bot-1", enabled: bool = True) -> ChannelRecord:
 class ChannelClientsTest(IsolatedAsyncioTestCase):
     """The factory hands out usable channels without connecting."""
 
-    def _clients(self, storage: _Storage) -> ChannelClients:
+    def _clients(
+        self,
+        storage: _Storage,
+        bus: InMemoryMessageBus | None = None,
+    ) -> ChannelClients:
         return ChannelClients(
             storage=storage,
-            message_bus=InMemoryMessageBus(),
+            message_bus=bus if bus is not None else InMemoryMessageBus(),
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         )
 
@@ -146,6 +155,14 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(channel, _FakeChannel)
         self.assertFalse(channel.listened)
         self.assertEqual(channel.bot_id, "bot-1")
+
+    async def test_build_binds_the_shared_message_bus(self) -> None:
+        """Channels can retain shared state across client/listener nodes."""
+        bus = InMemoryMessageBus()
+        channel = await self._clients(_Storage(_record()), bus).get("chan-1")
+
+        self.assertIsInstance(channel, _FakeChannel)
+        self.assertIs(channel.bound_bus, bus)
 
     async def test_cached_until_the_record_changes(self) -> None:
         """A rotated credential takes effect without a restart."""
