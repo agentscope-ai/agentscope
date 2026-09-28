@@ -5,9 +5,11 @@ import hashlib
 import json
 import os
 import tempfile
+from datetime import datetime
 from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import MockModel, AnyString
 
@@ -1516,7 +1518,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
     async def test_context_compression_resolves_current_time_placeholder(
         self,
     ) -> None:
-        """The compression prompt reaches the model with a real timestamp."""
+        """The compression prompt reaches the model with the injection time."""
         model = RecordingStructuredMockModel(
             context_size=100,
             fail_structured_output_times=1,
@@ -1529,6 +1531,11 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             context_config=ContextConfig(
                 trigger_ratio=0.7,
                 reserve_ratio=0.4,
+                compression_prompt="Now is {current_time}. Keep {braces}.",
+            ),
+            injection_config=InjectionConfig(
+                timezone="Asia/Shanghai",
+                time_format="%Y-%m-%d %H:%M",
             ),
             state=AgentState(
                 session_id="123",
@@ -1565,28 +1572,21 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        # The first structured call fails and the overflow flag forces the
-        # retry loop, so both prompt-building paths are exercised
-        await agent.compress_context()
+        # The first call fails under overflow, so the retry path runs too
+        with patch("agentscope.agent._agent.datetime") as mock_datetime:
+            mock_datetime.now.return_value = datetime(2026, 7, 1, 12, 0)
+            await agent.compress_context()
 
-        self.assertEqual(len(model.recorded_structured_messages), 2)
-        for recorded in model.recorded_structured_messages:
-            parts = []
-            for msg in recorded:
-                if isinstance(msg.content, str):
-                    parts.append(msg.content)
-                else:
-                    parts.extend(
-                        getattr(block, "text", "") for block in msg.content
-                    )
-            combined = "\n".join(parts)
-            self.assertIn("The current time is", combined)
-            self.assertNotIn("{current_time}", combined)
-            # The default timestamp factory emits an ISO-8601 string
-            self.assertRegex(
-                combined,
-                r"The current time is \d{4}-\d{2}-\d{2}",
-            )
+        self.assertListEqual(
+            [
+                msgs[-1].get_text_content()
+                for msgs in model.recorded_structured_messages
+            ],
+            [
+                "Now is 2026-07-01 12:00 (Asia/Shanghai). Keep {braces}.",
+                "Now is 2026-07-01 12:00 (Asia/Shanghai). Keep {braces}.",
+            ],
+        )
 
     async def test_context_compression_overflow_retry_keeps_instructions(
         self,

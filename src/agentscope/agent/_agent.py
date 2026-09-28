@@ -30,7 +30,6 @@ from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
     _generate_id,
-    _generate_timestamp,
     _json_loads_with_repair,
     _execute_async_or_sync_func,
 )
@@ -591,13 +590,12 @@ class Agent:
                 ),
             )
 
-        # Resolve the {current_time} placeholder at compression time, so
-        # the model can anchor relative expressions to a real timestamp
-        # (via the global timestamp factory). A user-supplied prompt is
-        # substituted the same way and passes other braces through.
+        # Same time text as the runtime injection; keeps other braces intact
+        timezone = self.injection_config.timezone
+        now = datetime.now(_resolve_timezone(timezone))
         compression_prompt = cfg.compression_prompt.replace(
             "{current_time}",
-            _generate_timestamp(),
+            f"{now.strftime(self.injection_config.time_format)} ({timezone})",
         )
 
         messages = (
