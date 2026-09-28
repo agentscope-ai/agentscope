@@ -230,8 +230,7 @@ class SOPRunRow(_JsonRecordMixin):
 
     _indexed_fields = ("user_id", "sop_id")
 
-    # Derived from the steps rather than stored beside them, so it is
-    # read out of the run state instead of being a field of its own.
+    # A copy of the run state's derived phase, for filtering.
     _index_paths: ClassVar[dict[str, str]] = {"phase": "state.phase"}
 
 

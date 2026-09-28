@@ -11,11 +11,7 @@ class SOPSchemaResponse(BaseModel):
 
     schema_: dict = Field(
         alias="schema",
-        description=(
-            "JSON Schema of ``SOPData``, as pydantic emits it — "
-            "``$defs`` and all, since a verifier is a tagged union "
-            "whose discriminator points into them."
-        ),
+        description="JSON Schema of ``SOPData``, ``$defs`` included.",
     )
 
 
@@ -70,8 +66,5 @@ class SubmitVerdictRequest(BaseModel):
     passed: bool = Field(description="Whether the attempt is accepted.")
     message: str = Field(
         default="",
-        description=(
-            "Why it was refused. Handed to the author verbatim on the "
-            "next attempt."
-        ),
+        description="Why it was refused, handed to the author verbatim.",
     )

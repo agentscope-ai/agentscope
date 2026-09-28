@@ -15,21 +15,11 @@ from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
 class SOPStepSubmitMiddleware(MiddlewareBase):
     """Require a step's agent to end its turn through its submit tool.
 
-    A SOP step's result is a row in the run state, written by
-    ``SubmitHandover`` or ``SubmitVerdict``. An agent that simply stops
-    talking has produced nothing the run can act on, so its reply-end is
-    swallowed and it is told to submit; after ``max_nudges`` of those the
-    reply is failed instead, which costs the step one attempt rather
-    than holding the session forever.
-
-    A session only ever carries one of the two tools, so this accepts
-    either and names whichever the agent has when it nudges.
+    A reply-end with nothing submitted is swallowed with a nudge, and
+    failed after ``max_nudges`` so it costs an attempt instead of hanging.
     """
 
-    #: The submit tools, either of which ends a step's turn. Which one
-    #: an agent actually has is decided in :func:`get_toolkit` from the
-    #: half of the step it is playing, so this middleware accepts
-    #: whichever is there rather than deriving that role a second time.
+    #: Either ends a step's turn; :func:`get_toolkit` gives an agent one.
     TOOLS = ("SubmitHandover", "SubmitVerdict")
 
     def __init__(self, max_nudges: int = 3) -> None:
@@ -46,14 +36,9 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
     def _submitted(self, agent: "Agent") -> bool:
         """Whether this reply's last tool call was a successful submit.
 
-        A later tool call invalidates an earlier submission the same way
-        it does for a team report: whatever the agent did last is what
-        its turn amounts to.
-
         Args:
             agent (`Agent`):
-                The replying agent, read for its context and the id of
-                the reply in flight.
+                The replying agent.
 
         Returns:
             `bool`:
@@ -106,9 +91,7 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
 
         Args:
             agent (`Agent`):
-                The replying agent. Its context receives the reminders,
-                and its ``cur_iter`` is relaxed so a nudged reply can
-                still act.
+                The replying agent.
             input_kwargs (`dict`):
                 The reply arguments, forwarded unchanged.
             next_handler (`Callable[..., AsyncGenerator]`):
@@ -116,9 +99,8 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
 
         Yields:
             `AgentEvent | Msg`:
-                Everything the inner reply produces, except a reply-end
-                that arrives with nothing submitted: that becomes a
-                reminder, or an ``ERROR`` ending once the nudges run out.
+                The inner reply's events, with unsubmitted reply-ends
+                replaced by a reminder or an ``ERROR`` ending.
         """
         nudges = 0
 
@@ -135,8 +117,7 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
                 ReplyFinishedReason.COMPLETED,
                 ReplyFinishedReason.EXCEED_MAX_ITERS,
             ):
-                # An interrupted or already-failed ending cannot be
-                # continued by swallowing it.
+                # Interrupted or failed endings cannot be continued.
                 yield event
                 continue
 
@@ -167,9 +148,7 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
                 f"`{sorted(equipped)[0] if equipped else self.TOOLS[0]}`. "
                 f"Call it now.</system-reminder>"
             )
-            # Free one iteration so the agent can actually make the call;
-            # without it a reply that ended on its last iteration comes
-            # straight back as EXCEED_MAX_ITERS with nothing in between.
+            # Free one iteration so the agent can actually make the call.
             agent.state.cur_iter = min(
                 agent.state.cur_iter,
                 agent.react_config.max_iters - 1,

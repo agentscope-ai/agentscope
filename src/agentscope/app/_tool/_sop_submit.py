@@ -1,11 +1,6 @@
 # -*- coding: utf-8 -*-
-"""The tools a SOP step ends its turn with.
-
-A step's result is a row, not a sentence: the executor's handover and
-the verifier's verdict both go straight into the run state, so nothing
-downstream has to parse a reply to find out what happened. Which of the
-two an agent gets is decided by the role its session plays in the run.
-"""
+"""The tools a SOP step's agent files its handover or verdict with,
+straight into the run state."""
 from typing import Any, TYPE_CHECKING
 
 from pydantic import Field
@@ -55,13 +50,8 @@ class _SubmitVerdictParams(ParamsBase):
 
 
 class _SOPSubmitBase(ToolBase):
-    """Shared plumbing for the two submission tools.
-
-    Both are built at agent assembly time with the run and step the
-    session is working on, and both write the run state directly —
-    there is no service in between, the same way the team tools reach
-    storage themselves.
-    """
+    """Shared plumbing for the two submission tools, bound to one step
+    of one run and writing its state directly."""
 
     name: str
     description: str
@@ -106,9 +96,9 @@ class _SOPSubmitBase(ToolBase):
 
         Args:
             tool_input (`dict[str, Any]`):
-                The arguments the agent passed; ignored here.
+                Ignored.
             context (`PermissionContext`):
-                The active permission context; ignored here.
+                Ignored.
 
         Returns:
             `PermissionDecision`:
@@ -120,11 +110,8 @@ class _SOPSubmitBase(ToolBase):
         )
 
     async def _write(self, apply: Any) -> ToolChunk | None:
-        """Read the run, let *apply* change the step, and write it back.
-
-        Returns an error chunk when the run has gone, and ``None`` when
-        the write went through.
-        """
+        """Apply *apply* to the step and write the run back; returns an
+        error chunk if the run is gone, else ``None``."""
         record = await self._storage.get_sop_run(
             self._user_id,
             self._sop_run_id,
@@ -252,8 +239,7 @@ something the step was never asked to do.
             if passed:
                 step.phase = SOPPhase.COMPLETED
             else:
-                # The next attempt starts from the work, not from the
-                # judging — the same rule ``SOPStepBase.record`` keeps.
+                # Same rule as ``SOPStepBase.record``.
                 step.submission = None
                 step.phase = SOPPhase.PENDING
 

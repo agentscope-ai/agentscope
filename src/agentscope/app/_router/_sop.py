@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
 """SOP router — procedures, their runs, and the verdicts people file.
 
-A run advances on its own as far as it can and then stops for someone:
-a person to judge a step, or a tool call to be approved in one of its
-sessions. Only the first is answered here; the second goes through
-``POST /chat`` like any other tool call, because a step's session is an
-ordinary session. Neither needs an endpoint to restart the run —
-answering is what restarts it.
+A tool call parked in a step's session is answered through ``POST /chat``
+like any other; answering either kind is what carries the run on.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -79,14 +75,10 @@ async def _require_run(
     summary="The schema a procedure's editor is built from",
 )
 async def get_sop_schema() -> SOPSchemaResponse:
-    """Return :class:`SOPData`'s JSON Schema.
+    """Return :class:`SOPData`'s JSON Schema, unflattened.
 
-    Left as pydantic emits it, ``$defs`` and all. The agent editor's
-    schema is flattened because some model providers choke on ``$ref``,
-    but nothing here is shown to a model — and a verifier is a tagged
-    union whose ``discriminator.mapping`` points into ``$defs``, so
-    inlining the variants would leave that mapping pointing at
-    definitions no longer there.
+    Kept with ``$defs``: the verifier union's discriminator mapping
+    points into them, and no model ever reads this schema.
 
     Returns:
         `SOPSchemaResponse`:
@@ -234,10 +226,6 @@ async def delete_sop_run(
 ) -> None:
     """Delete one run and the conversations it opened.
 
-    The conversations go too: the run minted every one of them, and left
-    behind they are sessions nobody opened, still wakeable by a
-    background tool finishing long after the run is gone.
-
     Args:
         sop_run_id (`str`):
             The run to delete.
@@ -266,11 +254,8 @@ async def submit_verdict(
 ) -> SOPRunRecord:
     """Answer a step that was waiting on a person.
 
-    Filed through the same tool an agent reviewer calls, so a verdict is
-    one thing however it was reached. Answers as soon as the verdict is
-    recorded: carrying the run on from it can take the rest of the
-    procedure, which is no more this request's business than a chat
-    turn's events are ``POST /chat``'s.
+    Returns once the verdict is recorded; the run carries on in the
+    background.
 
     Args:
         sop_run_id (`str`):
@@ -288,8 +273,8 @@ async def submit_verdict(
 
     Raises:
         `HTTPException`:
-            404 if there is no such run, and 409 if that step is not one
-            a person was asked to judge, or is not waiting to be.
+            404 if there is no such run or step, 409 if the step is
+            not waiting on a person.
     """
     try:
         updated = await service.record_verdict(
@@ -351,10 +336,7 @@ async def update_sop(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> SOPRecord:
-    """Rewrite a procedure, leaving its runs as they were.
-
-    A run carries its own copy of the procedure, so editing one here
-    never changes what a run already in flight is doing.
+    """Rewrite a procedure; runs keep the copy they started with.
 
     Args:
         sop_id (`str`):
@@ -390,10 +372,7 @@ async def delete_sop(
     user_id: str = Depends(get_current_user_id),
     service: SOPService = Depends(get_sop_service),
 ) -> None:
-    """Delete a procedure and every run of it.
-
-    The runs go too because a run is only readable through the
-    definition it copied, and their sessions with them.
+    """Delete a procedure, every run of it, and their sessions.
 
     Args:
         sop_id (`str`):
@@ -422,12 +401,7 @@ async def start_sop_run(
     user_id: str = Depends(get_current_user_id),
     service: SOPService = Depends(get_sop_service),
 ) -> SOPRunRecord:
-    """Open a run of a procedure and set it going.
-
-    Returns as soon as the run exists — its conversations are opened
-    first, so the client can watch them immediately, and the run itself
-    proceeds in the background. Poll ``GET /sop/runs/{id}`` for where it
-    got to.
+    """Open a run of a procedure and set it going in the background.
 
     Args:
         sop_id (`str`):
@@ -457,9 +431,8 @@ async def start_sop_run(
 def _reject_unconfigured_sessions(data: SOPData) -> None:
     """Refuse a procedure a run could not open its sessions from.
 
-    Checked here rather than on the model, so a stored run still loads
-    after what counts as a valid model config changes.
-    """
+    Not a model validator, so stored runs still load if model configs
+    change shape."""
     try:
         agents = _session_agents(data.steps)
         missing = sorted(set(agents) - set(data.session_settings))

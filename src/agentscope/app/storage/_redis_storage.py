@@ -121,8 +121,7 @@ class RedisStorage(StorageBase):
         sop_index: str = "agentscope:user:{user_id}:sops"
         sop_run: str = "agentscope:user:{user_id}:sop_run:{sop_run_id}"
         sop_run_index: str = "agentscope:user:{user_id}:sop_runs"
-        # Per-procedure run index, so listing one SOP's runs does
-        # not read every run the user has.
+        # Per-procedure run index.
         sop_run_sop_index: str = "agentscope:user:{user_id}:sop:{sop_id}:runs"
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
@@ -1673,12 +1672,8 @@ class RedisStorage(StorageBase):
         sop_id: str | None = None,
         phase: SOPPhase | None = None,
     ) -> list[SOPRunRecord]:
-        """Return the user's runs, newest first.
-
-        ``sop_id`` narrows which index is read; ``phase`` is applied
-        after reading, since a run's phase is derived from its steps and
-        Redis has nothing to index it by.
-        """
+        """Return the user's runs, newest first. ``phase`` is filtered
+        after reading, since Redis has no index for it."""
         index_key = (
             self._key(self.key_config.sop_run_index, user_id=user_id)
             if sop_id is None
@@ -1717,9 +1712,8 @@ class RedisStorage(StorageBase):
         if record is None:
             return False
         for session_id in record.sessions.values():
-            # ``get_session`` keys on the session alone, so the agent id
-            # it wants is read back off the record it returns — the run
-            # never stored one.
+            # Redis keys sessions by id alone; the agent id comes back
+            # off the record.
             session = await self.get_session(user_id, "", session_id)
             if session is not None:
                 await self.delete_session(

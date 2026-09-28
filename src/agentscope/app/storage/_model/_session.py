@@ -88,9 +88,7 @@ class SOPOrigin(BaseModel):
     """The run that opened it."""
 
     session_key: str
-    """Which of the run's conversations this is, under the name the
-    procedure gave it. Enough to label the session without reading the
-    run."""
+    """Which of the run's conversations this is."""
 
 
 # How a session came to exist. Fixed when the session is created and

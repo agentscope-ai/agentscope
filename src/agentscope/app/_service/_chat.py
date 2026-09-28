@@ -316,12 +316,8 @@ class ChatService:
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
             sop_dispatch (`str | None`, optional):
-                ``"<run id>:<step index>"`` when a procedure is asking
-                for this turn, which is what gives it a submit tool.
-                Passed rather than looked up: a claim left where the
-                session can see it would be picked up by whichever run
-                takes the session lock first, and that may be a person
-                who happened to be typing.
+                ``"<run id>:<step index>"`` when a SOP run dispatched
+                this turn, which gives it a submit tool.
         """
         try:
             await self._run_impl(
@@ -802,8 +798,7 @@ class ChatService:
         otherwise a waiter can assemble an agent from a snapshot that the
         preceding holder replaces before releasing the lock."""
 
-        # Set when this turn answers a step's parked tool call; that run
-        # is carried on after the lock is let go, not under it.
+        # The run to carry on after the lock, if this turn resumed a step.
         resumed_sop_run_id: str | None = None
         interrupted = False
 
@@ -863,8 +858,7 @@ class ChatService:
                         (UserConfirmResultEvent, ExternalExecutionResultEvent),
                     )
                 ):
-                    # Only the answer to a step's parked tool call resumes
-                    # that step; anything else typed here is a chat.
+                    # Only an answer to the step's parked call resumes it.
                     sop_dispatch = await self._parked_dispatch(
                         user_id,
                         session_id,
@@ -1000,12 +994,8 @@ class ChatService:
                         ),
                     )
 
-                # A step of a procedure answers through its submit
-                # tool, so a reply that ends without one has produced
-                # nothing the run can act on. Only the turn the run
-                # asked for: a person typing into the same session is
-                # having a conversation, and holding that to a
-                # submission would put their words in a deliverable.
+                # Only a turn the run asked for must end in a submission;
+                # a person chatting in the same session must not.
                 if sop_dispatch is not None:
                     middlewares.append(SOPStepSubmitMiddleware())
 
@@ -1529,9 +1519,8 @@ class ChatService:
                     trigger_text,
                 )
 
-        # Handed off rather than awaited, since the rest of the procedure
-        # can be many turns more. An interrupted turn is a person saying
-        # stop, so the run waits where it is.
+        # Detached, since the rest of the run can be many turns; an
+        # interrupted turn leaves the run where it is.
         if (
             resumed_sop_run_id is not None
             and not interrupted
@@ -1544,11 +1533,9 @@ class ChatService:
         user_id: str,
         session_id: str,
     ) -> str | None:
-        """What a step still expects of this session, if anything.
+        """The claim of a step parked on this session, if still valid.
 
-        A claim carries no lease, so it is checked rather than timed
-        out: the step it names has to be parked, and on this session's
-        half of it. Anything else is a claim left behind.
+        Valid only while the step is parked on this session's half.
 
         Args:
             user_id (`str`):
@@ -1558,8 +1545,7 @@ class ChatService:
 
         Returns:
             `str | None`:
-                ``"<run id>:<step index>"``, or ``None`` when nothing
-                is owed.
+                ``"<run id>:<step index>"``, or ``None``.
         """
         claim = await self._message_bus.registry_get(
             MessageBusKeys.sop_dispatch(session_id),

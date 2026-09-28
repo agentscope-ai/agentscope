@@ -5,10 +5,7 @@ Revision ID: 0004_sops
 Revises: 0003_channels
 Create Date: 2026-09-14 00:00:00.000000
 
-Both tables are new, so there is nothing to backfill. ``phase`` is a
-copy of the run state's derived phase, promoted to a column so a
-listing can filter on it — "which of my runs is waiting on someone" —
-without loading and replaying every run.
+Both tables are new; ``phase`` copies the run state's derived phase.
 """
 from typing import Sequence, Union
 

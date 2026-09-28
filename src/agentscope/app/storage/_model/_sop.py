@@ -1,10 +1,6 @@
 # -*- coding: utf-8 -*-
-"""The SOP storage classes — a procedure's description, and its runs.
-
-A :class:`~agentscope.sop.SOP` holds live agents, so it is code and
-never lands in a database. What is stored is the description the
-service rebuilds one from, and the run state the SDK already models.
-"""
+"""The SOP storage classes: a procedure's description, and its runs.
+A live :class:`~agentscope.sop.SOP` holds agents, so only this is stored."""
 from enum import StrEnum
 from typing import Annotated, Literal, Union
 
@@ -16,14 +12,8 @@ from ....sop import SOPRunState
 
 
 class SOPWorkspaceGrain(StrEnum):
-    """How many workspaces a run gets.
-
-    A run's workspaces are its own either way — minted for it rather
-    than drawn under the deployment's isolation policy, which would
-    otherwise hand two runs the workspace their first agent already
-    had. The cost is that a pre-warming workspace manager has no say in
-    the id, so a run's first step waits for a cold one.
-    """
+    """How many workspaces a run gets. Always minted for the run, never
+    shared with another run."""
 
     RUN = "run"
     """One for the whole run, so steps can hand files to each other."""
@@ -39,9 +29,8 @@ class SOPAgentRef(BaseModel):
 
     session_key: str = Field(
         description=(
-            "Which conversation it does it in. Two references sharing a "
-            "key share one session, and therefore one context; distinct "
-            "keys keep them apart even for the same agent."
+            "Which conversation it does it in; references sharing a key "
+            "share one session."
         ),
     )
 
@@ -56,11 +45,7 @@ class AgentVerifier(BaseModel):
     criteria: str = Field(
         default="",
         description=(
-            "What to hold the work to, beyond the step's own "
-            "description — which the verifier is shown regardless. "
-            "Lives here rather than in the agent's system prompt "
-            "because one reviewer can serve several steps at "
-            "different bars."
+            "What to hold the work to, beyond the step's own description."
         ),
         json_schema_extra={"format": "textarea"},
     )
@@ -78,8 +63,7 @@ class HumanVerifier(BaseModel):
     )
 
 
-# Who judges a step. A tagged union because judging is not an agent's
-# job in particular — a person does it, and so will a script.
+# Who judges a step: an agent or a person.
 SOPVerifier = Annotated[
     Union[AgentVerifier, HumanVerifier],
     Field(discriminator="type"),
@@ -88,12 +72,8 @@ SOPVerifier = Annotated[
 
 class SOPStepDataV1(BaseModel):
     """One milestone, as :class:`~agentscope.sop.SOPStep` runs it.
-
-    Tagged with :attr:`version` from the start. A step whose runtime
-    stops being able to run what an older one wrote becomes its own
-    model beside this one, discriminated on that tag, rather than a
-    round of optional fields on this one.
-    """
+    An incompatible change becomes a new model discriminated on
+    :attr:`version`."""
 
     version: Literal["v1"] = "v1"
 
@@ -107,10 +87,7 @@ class SOPStepDataV1(BaseModel):
 
     verifier: SOPVerifier | None = Field(
         default=None,
-        description=(
-            "Who judges it. ``None`` accepts whatever comes back, which "
-            "is right for a step that only has to happen."
-        ),
+        description="Who judges it. ``None`` accepts whatever comes back.",
     )
 
     max_attempts: int = Field(
@@ -121,7 +98,7 @@ class SOPStepDataV1(BaseModel):
 
 
 def _session_agents(steps: list[SOPStepDataV1]) -> dict[str, str]:
-    """Map each session key the steps name to the one agent it belongs to.
+    """Map each session key the steps name to its agent.
 
     Raises:
         `ValueError`:
@@ -156,12 +133,7 @@ class SOPData(BaseModel):
 
     steps: list[SOPStepDataV1] = Field(
         min_length=1,
-        description=(
-            "Its milestones, in the order they must happen. At least "
-            "one: a run of a procedure with no steps could never reach "
-            "any phase but pending, so there would be no way for it to "
-            "end."
-        ),
+        description="Its milestones, in the order they must happen.",
     )
 
     workspace_grain: SOPWorkspaceGrain = Field(
@@ -172,11 +144,7 @@ class SOPData(BaseModel):
     session_settings: dict[str, SessionSettings] = Field(
         default_factory=dict,
         description=(
-            "What each conversation is opened with, keyed by the same "
-            "session key the steps use. Keyed by conversation rather "
-            "than by reference because the model and permission mode "
-            "belong to the session: two references sharing a key could "
-            "otherwise ask for different ones."
+            "What each conversation is opened with, keyed by session key."
         ),
     )
 
@@ -198,24 +166,15 @@ class SOPRunRecord(_RecordBase):
     """The user id."""
 
     sop_id: str = Field(frozen=True)
-    """The :class:`SOPRecord` this run came from.
-
-    Frozen: a backend indexes runs under it, and moving one would leave
-    it listed under the procedure it left — and so deletable by a
-    cascade that no longer owns it."""
+    """The :class:`SOPRecord` this run came from. Frozen, since backends
+    index runs under it."""
 
     definition: SOPData
-    """The procedure as it read when the run started.
-
-    A copy rather than a lookup: editing a SOP would otherwise strand
-    every run of it that is still waiting on someone, since the engine
-    refuses a state whose steps no longer line up."""
+    """A copy of the procedure at start, so editing it cannot strand
+    the run."""
 
     sessions: dict[str, str] = Field(default_factory=dict)
-    """Which session each of :attr:`SOPAgentRef.session_key` names.
-
-    Keyed by the key rather than by agent or by step, so a step that
-    grows a third role needs nothing here."""
+    """The session id for each :attr:`SOPAgentRef.session_key`."""
 
     state: SOPRunState = Field(default_factory=SOPRunState)
-    """How the run is going. The SDK's own model, stored as it is."""
+    """How the run is going."""

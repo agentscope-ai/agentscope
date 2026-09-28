@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Running a stored procedure.
+"""Running a stored procedure, one ``ChatService`` turn per step half.
 
-A step here does not drive an agent itself — it hands the turn to
-:class:`~._chat.ChatService`, which already owns everything a turn
-needs: the session lock, the toolkit, event fan-out, message
-persistence. What comes back is read out of the run state rather than
-out of the reply, because the step's agent wrote it there through its
-submit tool.
+A step's result is read back from the run state, where its agent's
+submit tool wrote it.
 """
 import asyncio
 from typing import Any, AsyncGenerator, Awaitable, Callable, Self
@@ -55,11 +51,8 @@ _PARKED = (
 class SessionSOPStep(SOPStepBase):
     """One milestone, worked on in ordinary chat sessions.
 
-    One call hands one turn to one session — the author's, or the
-    reviewer's — and reads back what that turn filed. The half of the
-    step being played is told by whether anything has been handed over
-    yet, so the engine's own loop carries the step from working to being
-    judged without either side knowing about the other.
+    One call hands one turn to the executor's or the reviewer's session,
+    chosen by whether anything has been handed over yet.
     """
 
     def __init__(
@@ -80,25 +73,21 @@ class SessionSOPStep(SOPStepBase):
             data (`SOPStepDataV1`):
                 The milestone as the procedure describes it.
             index (`int`):
-                Its position, which is also its identity in the run.
+                Its position in the run.
             user_id (`str`):
                 The owner user id.
             sop_run_id (`str`):
                 The run this step is part of.
             sessions (`dict[str, str]`):
-                The run's conversations, keyed the way the steps name
-                them.
+                The run's session ids, by session key.
             chat (`ChatService`):
                 Where a turn is actually taken.
             storage (`StorageBase`):
-                Read back what the turn filed.
+                Application storage.
             message_bus (`MessageBus`):
-                Records the turn as this run's while it is in flight,
-                which is what gives that turn its submit tool.
+                Holds the dispatch claim of a parked turn.
             persist (`Callable[[], Awaitable[None]]`):
-                Writes the whole run state. Called before a turn is
-                handed over, because the submit tool finds its step by
-                reading which one the stored run says is running.
+                Writes the whole run state.
         """
         super().__init__(data.subject, data.description, data.max_attempts)
         self._data = data
@@ -123,9 +112,7 @@ class SessionSOPStep(SOPStepBase):
     ) -> AsyncGenerator[Any, None]:
         """Hand one turn to one session and read back what it filed.
 
-        Nothing is ever yielded: a step's agent publishes into its own
-        session, which is where anyone watching a run is already
-        looking. The empty loop is what makes this a generator at all.
+        Yields nothing: the agent publishes into its own session.
         """
         for event in ():
             yield event
@@ -139,8 +126,7 @@ class SessionSOPStep(SOPStepBase):
             self.record(state, True)
             return
         elif isinstance(verifier, HumanVerifier):
-            # Nobody to dispatch to: the verdict arrives as a write from
-            # whoever is asked, and the run is picked up again after.
+            # The person's verdict is filed via ``record_verdict``.
             state.phase = SOPPhase.AWAITING
             return
         else:
@@ -148,8 +134,7 @@ class SessionSOPStep(SOPStepBase):
 
         session_id = self._sessions[ref.session_key]
         if state.phase is SOPPhase.AWAITING:
-            # Still parked on a tool call: a fresh brief would be refused
-            # by an agent waiting for that answer.
+            # Still parked on a tool call, which a new brief can't answer.
             session = await self._storage.get_session(
                 self._user_id,
                 ref.agent_id,
@@ -162,8 +147,7 @@ class SessionSOPStep(SOPStepBase):
                 return
 
         state.phase = SOPPhase.RUNNING
-        # The submit tool locates its step by reading which one the
-        # stored run says is running, so this has to land first.
+        # Before the turn, since its submit tool reads the stored state.
         await self._persist()
 
         dispatch = f"{self._sop_run_id}:{self._index}"
@@ -224,11 +208,8 @@ class SessionSOPStep(SOPStepBase):
                 "sop",
             )
         finally:
-            # A parked turn is unfinished, not over: whoever answers it
-            # resumes this same attempt through the ordinary chat
-            # endpoint, which knows nothing of this step, so what it is
-            # owed is left where that turn will find it. Every other
-            # ending is the step letting go of the session.
+            # A parked turn keeps its claim for the chat turn that
+            # resumes it; any other ending releases the session.
             if state.phase is SOPPhase.AWAITING:
                 await self._message_bus.registry_set(
                     MessageBusKeys.sop_dispatch(session_id),
@@ -283,10 +264,8 @@ class SessionSOPStep(SOPStepBase):
 class SOPService:
     """Start runs of a stored procedure, and carry them forward.
 
-    Enter it as a context manager for the life of the application:
-    an advance outlives the request that set it going, and on the way
-    out it has to be stopped before the storage and bus it is writing
-    to are closed under it.
+    Enter it as a context manager so detached advances are cancelled
+    before storage closes.
     """
 
     def __init__(
@@ -309,17 +288,15 @@ class SOPService:
             chat (`ChatService`):
                 Where each step's turn is taken.
             session_service (`SessionService`):
-                Deletes a run's sessions along with their bus and
-                workspace state.
+                Deletes a run's sessions.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
         self._message_bus = message_bus
         self._chat = chat
         self._session_service = session_service
-        # asyncio keeps only a weak reference to a running task, so a
-        # detached advance has to live somewhere. Keyed by run so that
-        # deleting one can stop what is carrying it on first.
+        # Strong refs to detached advances, by run, so a delete can
+        # cancel them.
         self._advancing: dict[str, set[asyncio.Task]] = {}
 
     async def create_run(
@@ -328,20 +305,15 @@ class SOPService:
         sop_id: str,
         inputs: list[Msg] | None = None,
     ) -> SOPRunRecord:
-        """Open a run: its conversations, its workspace, its record.
-
-        Every conversation the procedure names is opened up front, so
-        dispatching a step never has to ask whether one exists yet.
+        """Open a run with all of its sessions created up front.
 
         Args:
             user_id (`str`):
                 The owner user id.
             sop_id (`str`):
-                The procedure to run. Read under its own lock and copied
-                into the run, so neither editing nor deleting it
-                afterwards can strand what this opens.
+                The procedure to run, copied into the run.
             inputs (`list[Msg] | None`, optional):
-                What the run is started with, read by its first step.
+                What the first step is given.
 
         Returns:
             `SOPRunRecord`:
@@ -380,13 +352,8 @@ class SOPService:
 
         agents = _session_agents(data.steps)
 
-        # Minted here rather than asked of the workspace manager. Its
-        # ``assign_workspace_id`` answers under the deployment's
-        # isolation policy, which under the default grain hands back a
-        # workspace the agent already had — so two runs would share one,
-        # and two keys on one agent would too. The grain is the author
-        # saying how their procedure passes work along, and a field that
-        # says that has to mean it.
+        # Minted rather than assigned: ``assign_workspace_id`` may reuse
+        # the agent's workspace across runs, breaking the grain.
         shared = _generate_id()
         try:
             for key, agent_id in agents.items():
@@ -421,7 +388,7 @@ class SOPService:
 
             return await self._storage.upsert_sop_run(user_id, run)
         except Exception:
-            # Nothing reaches these sessions without the run record.
+            # Unreachable without the run record, so roll them back.
             for key, session_id in run.sessions.items():
                 await self._storage.delete_session(
                     user_id,
@@ -443,12 +410,7 @@ class SOPService:
         self._advancing.clear()
 
     def advance_later(self, user_id: str, sop_run_id: str) -> None:
-        """Set a run going without waiting for it to stop again.
-
-        A run is many chat turns long — often the whole rest of the
-        procedure — so whatever asked for this (a request handler, a
-        finished chat turn) must not be held open for it. Failures are
-        logged: there is no caller left to raise at.
+        """Advance a run in a detached task; failures are logged.
 
         Args:
             user_id (`str`):
@@ -472,13 +434,9 @@ class SOPService:
         task.add_done_callback(going.discard)
 
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
-        """Delete a procedure, its runs, and the sessions they opened.
+        """Delete a procedure and every run of it.
 
-        Under the procedure's lock, so a run being opened cannot slip in
-        behind the cascade, and under each run's, so a step in flight
-        finishes writing before its record goes. Whatever is carrying a
-        run on in this process is cancelled first — waiting for the lock
-        alone would mean waiting out the rest of the procedure.
+        Under the procedure's lock, so no run is opened mid-cascade.
 
         Args:
             user_id (`str`):
@@ -502,12 +460,10 @@ class SOPService:
             return await self._storage.delete_sop(user_id, sop_id)
 
     async def delete_run(self, user_id: str, sop_run_id: str) -> bool:
-        """Delete a run and the conversations it opened.
+        """Delete a run, its sessions, claims and workspaces.
 
-        Under the run's lock, and after stopping whatever is carrying it
-        on in this process: an advance reads the run, changes it in
-        memory and writes it back, so one that finishes after the delete
-        would put the record back with its sessions already gone.
+        Local advances are cancelled first, then the rest runs under the
+        run's lock so no advance writes the record back afterwards.
 
         Args:
             user_id (`str`):
@@ -540,8 +496,7 @@ class SOPService:
                 )
                 if session is not None:
                     workspace_ids.add(session.config.workspace_id)
-                # Through the session service so its in-flight turn,
-                # bus state and workspace state go with it.
+                # Via the session service, to also cancel and purge.
                 await self._session_service.delete_session(
                     user_id,
                     agents[key],
@@ -551,7 +506,7 @@ class SOPService:
                     MessageBusKeys.sop_dispatch(session_id),
                 )
             deleted = await self._storage.delete_sop_run(user_id, sop_run_id)
-        # Minted for this run alone, so nothing else will close them.
+        # Minted for this run alone, so nobody else closes them.
         for workspace_id in workspace_ids:
             await self._workspace_manager.close(workspace_id)
         return deleted
@@ -564,13 +519,9 @@ class SOPService:
         passed: bool,
         message: str = "",
     ) -> SOPRunRecord:
-        """File a person's verdict on a step that was waiting for one.
+        """File a person's verdict on a step waiting for one.
 
-        Under the run's lock, because a run's own advance writes the
-        whole run state back when it stops — a verdict landing between
-        that advance's read and its write would be overwritten, and the
-        step would sit waiting for an answer that had already been
-        given.
+        Under the run's lock, so an advance cannot overwrite it.
 
         Args:
             user_id (`str`):
@@ -592,8 +543,7 @@ class SOPService:
             `KeyError`:
                 If the user has no such run, or it has no such step.
             `ValueError`:
-                If that step is not one a person was asked to judge, or
-                is not waiting to be.
+                If that step is not judged by a person, or not waiting.
         """
         async with self._message_bus.acquire_lock(
             MessageBusKeys.sop_run_lock(sop_run_id),
@@ -616,8 +566,7 @@ class SOPService:
                     f"Step {step_index} is not waiting to be judged.",
                 )
 
-            # The same tool an agent reviewer calls, so a verdict is one
-            # thing however it was reached.
+            # The same tool an agent reviewer calls.
             await SubmitVerdict(
                 storage=self._storage,
                 user_id=user_id,
@@ -633,12 +582,7 @@ class SOPService:
         return updated
 
     async def run(self, user_id: str, sop_run_id: str) -> SOPRunState:
-        """Carry a run as far as it goes this time.
-
-        Returns when the run finishes, gives up, or stops for someone —
-        a person to judge a step, or a tool call to be approved in one
-        of its sessions. The latter is answered through ``POST /chat``,
-        whose turn carries the run on afterwards.
+        """Carry a run on until it finishes, fails, or waits on someone.
 
         Args:
             user_id (`str`):

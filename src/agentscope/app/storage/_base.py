@@ -851,10 +851,6 @@ class StorageBase(ABC):
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
         """Delete a procedure, every run of it, and their conversations.
 
-        The runs go too because a run is only readable through the
-        definition it snapshotted — nothing else can rebuild one — and
-        each run takes its own conversations with it.
-
         Args:
             user_id (`str`):
                 The owner user id.
@@ -919,9 +915,7 @@ class StorageBase(ABC):
             sop_id (`str | None`, optional):
                 Only runs of this procedure. ``None`` means all of them.
             phase (`SOPPhase | None`, optional):
-                Only runs standing here — ``AWAITING`` is the one worth
-                asking for, since those are the runs waiting on a
-                person. ``None`` means all of them.
+                Only runs in this phase. ``None`` means all of them.
 
         Returns:
             `list[SOPRunRecord]`:
@@ -936,10 +930,7 @@ class StorageBase(ABC):
         state: SOPRunState,
         sessions: dict[str, str] | None = None,
     ) -> None:
-        """Update only what a run changes as it goes.
-
-        The hot path: every attempt writes back, and the definition it
-        snapshotted never changes, so it is not resent.
+        """Update a run's state (and sessions), leaving its definition.
 
         Args:
             user_id (`str`):
@@ -949,8 +940,7 @@ class StorageBase(ABC):
             state (`SOPRunState`):
                 How the run is going now.
             sessions (`dict[str, str] | None`, optional):
-                The run's conversations, when it opened one this time.
-                ``None`` leaves them as they are.
+                The run's conversations. ``None`` leaves them as is.
 
         Raises:
             `KeyError`:
@@ -960,11 +950,6 @@ class StorageBase(ABC):
 
     async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
         """Delete one run and the conversations it opened.
-
-        The conversations go too because the run minted every one of
-        them: left behind they are sessions nobody opened, still
-        wakeable by a background tool finishing, and still carrying the
-        procedure's instructions.
 
         Args:
             user_id (`str`):
