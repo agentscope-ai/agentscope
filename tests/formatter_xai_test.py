@@ -7,8 +7,6 @@ dicts), a lightweight xai_sdk stub is built at module load so that tests run
 without the real package.  The stub objects support __eq__ and __repr__ so
 full assertListEqual comparisons work.
 """
-import os
-import re
 import sys
 from typing import Any
 from types import ModuleType
