@@ -353,7 +353,9 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 call_id = data.get("call_id", "")
                 accumulated = self._tool_args.pop(call_id, "")
                 arguments = data.get("arguments") or accumulated
-                name = data.get("name") or self._tool_names.pop(call_id, "")
+                name = self._tool_names.pop(call_id, "")
+                if data.get("name"):
+                    name = data["name"]
                 return me.ToolCallEvent(
                     item_id=self._item_id,
                     tool_call=ToolCallBlock(
