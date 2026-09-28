@@ -805,7 +805,6 @@ class StorageBase(ABC):
     # SOP persistence
     # ------------------------------------------------------------------
 
-    @abstractmethod
     async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
         """Create or overwrite a procedure.
 
@@ -819,8 +818,8 @@ class StorageBase(ABC):
             `SOPRecord`:
                 The stored record, with its timestamps refreshed.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
         """Fetch one procedure; owner-scoped.
 
@@ -834,8 +833,8 @@ class StorageBase(ABC):
             `SOPRecord | None`:
                 The record, or ``None`` if the user has no such one.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def list_sops(self, user_id: str) -> list[SOPRecord]:
         """List the user's procedures.
 
@@ -847,8 +846,8 @@ class StorageBase(ABC):
             `list[SOPRecord]`:
                 Every procedure the user owns.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
         """Delete a procedure, every run of it, and their conversations.
 
@@ -866,8 +865,8 @@ class StorageBase(ABC):
             `bool`:
                 Whether there was one to delete.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def upsert_sop_run(
         self,
         user_id: str,
@@ -885,8 +884,8 @@ class StorageBase(ABC):
             `SOPRunRecord`:
                 The stored record, with its timestamps refreshed.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def get_sop_run(
         self,
         user_id: str,
@@ -904,8 +903,8 @@ class StorageBase(ABC):
             `SOPRunRecord | None`:
                 The record, or ``None`` if the user has no such one.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def list_sop_runs(
         self,
         user_id: str,
@@ -928,8 +927,8 @@ class StorageBase(ABC):
             `list[SOPRunRecord]`:
                 The matching runs.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def update_sop_run(
         self,
         user_id: str,
@@ -957,8 +956,8 @@ class StorageBase(ABC):
             `KeyError`:
                 If the user has no such run.
         """
+        raise NotImplementedError
 
-    @abstractmethod
     async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
         """Delete one run and the conversations it opened.
 
@@ -977,6 +976,7 @@ class StorageBase(ABC):
             `bool`:
                 Whether there was one to delete.
         """
+        raise NotImplementedError
 
     # ------------------------------------------------------------------
     # Team persistence
