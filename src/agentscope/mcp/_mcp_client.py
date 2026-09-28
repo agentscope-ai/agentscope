@@ -200,7 +200,7 @@ class MCPClient(BaseModel):
                     args=config.args or [],
                     env=config.env,
                     cwd=str(config.cwd) if config.cwd else None,
-                    encoding="utf-8",
+                    encoding=config.encoding,
                     encoding_error_handler=config.encoding_error_handler,
                 ),
             )
@@ -215,6 +215,7 @@ class MCPClient(BaseModel):
                 url=config.url,
                 headers=config.headers,
                 timeout=config.timeout,
+                sse_read_timeout=config.sse_read_timeout,
             )
 
         return self._create_streamable_http_client()
