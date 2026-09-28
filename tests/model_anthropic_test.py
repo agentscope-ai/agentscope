@@ -7,10 +7,11 @@ Anthropic uses event-based streaming (message_start, content_block_start,
 content_block_delta, message_delta events).
 """
 import json
+from datetime import datetime, timedelta
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from anthropic import types as anthropic_types
 
@@ -528,6 +529,83 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         # instance so messages.create() hits it instead of the network.
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+
+class _SteppingClock:
+    """A fake ``datetime`` whose ``now()`` advances one second per call.
+
+    Used to make streaming latency assertions exact instead of racy.
+    """
+
+    def __init__(self) -> None:
+        self._base = datetime(2026, 1, 1)
+        self._calls = 0
+
+    def now(self) -> datetime:
+        """Return the next stepped timestamp."""
+        self._calls += 1
+        return self._base + timedelta(seconds=self._calls - 1)
+
+    async def test_stream_usage_time_spans_the_reply(self) -> None:
+        """Usage time must cover the whole generation, not the first token.
+
+        ``ChatUsage.time`` used to be stamped when ``message_start`` arrived
+        and never refreshed, so a long generation reported only the time to
+        first token - and disagreed with the non-streaming path.
+        """
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 10
+        msg_usage.output_tokens = 0
+        msg_usage.cache_creation_input_tokens = 0
+        msg_usage.cache_read_input_tokens = 0
+
+        message = MagicMock()
+        message.id = "msg-1"
+        message.usage = msg_usage
+
+        delta1 = MagicMock()
+        delta1.type = "text_delta"
+        delta1.text = "Hello"
+
+        delta2 = MagicMock()
+        delta2.type = "text_delta"
+        delta2.text = " world"
+
+        msg_delta_usage = MagicMock()
+        msg_delta_usage.output_tokens = 5
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
+            _make_event("content_block_delta", index=0, delta=delta1),
+            _make_event("content_block_delta", index=0, delta=delta2),
+            _make_event("message_delta", usage=msg_delta_usage),
+        ]
+        mock_create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        self.mock_client.messages.create = mock_create
+
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+            _SteppingClock(),
+        ):
+            gen = await self.model([])
+            responses = [r async for r in gen]
+
+        # The clock advances one second per ``now()`` call, and the module
+        # has exactly three: the start timestamp, the ``message_start``
+        # stamp, and the ``message_delta`` refresh. The final reported time
+        # must therefore be 2.0, not the 1.0 of time-to-first-token.
+        self.assertEqual(responses[-1].usage.time, 2.0)
+        self.assertEqual(responses[-1].usage.output_tokens, 5)
 
     async def test_stream_text(self) -> None:
         """Stream text yields n deltas + 1 final with full content."""
