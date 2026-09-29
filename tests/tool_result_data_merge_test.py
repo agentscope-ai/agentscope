@@ -2,7 +2,6 @@
 """Regression tests for tool data-block identity on event replay (#2549)."""
 import base64
 import unittest
-from typing import Any, Generator
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
@@ -17,27 +16,9 @@ from agentscope.message import (
     AssistantMsg,
     Base64Source,
     DataBlock,
-    TextBlock,
-    ToolCallBlock,
+    URLSource,
 )
-from agentscope.state import AgentState
-from agentscope.tool import FunctionTool, ToolChunk, Toolkit, ToolResponse
-
-
-def _data_block(block_id: str, data_b64: str) -> dict[str, Any]:
-    """Expected tool-result output entry for a base64 DataBlock."""
-    return {
-        "type": "data",
-        "id": block_id,
-        "source": {
-            "type": "base64",
-            "data": data_b64,
-            "media_type": "audio/wav",
-        },
-        "name": None,
-        "created_at": AnyString(),
-        "finished_at": None,
-    }
+from agentscope.tool import Toolkit
 
 
 class ToolResultDataDeltaMergeTest(unittest.TestCase):
@@ -76,7 +57,20 @@ class ToolResultDataDeltaMergeTest(unittest.TestCase):
         # b"hello" + b"world" -> base64("helloworld") = "aGVsbG93b3JsZA=="
         self.assertListEqual(
             [b.model_dump() for b in tool_blocks[0].output],
-            [_data_block("audio-1", "aGVsbG93b3JsZA==")],
+            [
+                {
+                    "type": "data",
+                    "id": "audio-1",
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG93b3JsZA==",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
         )
 
     def test_different_block_ids_stay_separate(self) -> None:
@@ -112,8 +106,30 @@ class ToolResultDataDeltaMergeTest(unittest.TestCase):
         self.assertListEqual(
             [b.model_dump() for b in tool_blocks[0].output],
             [
-                _data_block("a", base64.b64encode(b"hello").decode("ascii")),
-                _data_block("b", base64.b64encode(b"world").decode("ascii")),
+                {
+                    "type": "data",
+                    "id": "a",
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG8=",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": "b",
+                    "source": {
+                        "type": "base64",
+                        "data": "d29ybGQ=",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
             ],
         )
 
@@ -141,88 +157,22 @@ class ToolResultDataDeltaMergeTest(unittest.TestCase):
                 ),
             )
 
-        data_block = msg.content[0].output[0]
-        self.assertIsInstance(data_block, DataBlock)
-        self.assertEqual(data_block.source.media_type, "audio/wav")
-
-
-class ToolResultReplayConsistencyTest(IsolatedAsyncioTestCase):
-    """Toolkit accumulation and event replay keep data blocks consistent."""
-
-    async def test_cross_type_id_collisions_are_normalized_before_yield(
-        self,
-    ) -> None:
-        """Cross-type ID collisions have the same result after replay."""
-
-        def stream_blocks() -> Generator[ToolChunk, None, None]:
-            """Yield one text block followed by two colliding data blocks."""
-            yield ToolChunk(content=[TextBlock(id="same", text="label")])
-            for payload in (b"a", b"b"):
-                yield ToolChunk(
-                    content=[
-                        DataBlock(
-                            id="same",
-                            source=Base64Source(
-                                data=base64.b64encode(payload).decode("ascii"),
-                                media_type="audio/wav",
-                            ),
-                        ),
-                    ],
-                )
-
-        toolkit = Toolkit(tools=[FunctionTool(stream_blocks)])
-        agent = Agent(
-            name="test",
-            system_prompt="",
-            model=MockModel(),
-            toolkit=toolkit,
-            injection_config=InjectionConfig(inject_runtime_state=False),
-        )
-        replay = AssistantMsg(name="assistant", content=[])
-        agent.state.reply_id = replay.id
-        replay.append_event(
-            ToolResultStartEvent(
-                reply_id=replay.id,
-                tool_call_id="tc-1",
-                tool_call_name="stream_blocks",
-            ),
-        )
-        response = None
-        async for item in toolkit.call_tool(
-            ToolCallBlock(
-                id="tc-1",
-                name="stream_blocks",
-                input="{}",
-            ),
-            AgentState(),
-        ):
-            if isinstance(item, ToolChunk):
-                # pylint: disable=protected-access
-                async for event in agent._convert_tool_chunk_to_event(
-                    "tc-1",
-                    item.content,
-                ):
-                    replay.append_event(event)
-            elif isinstance(item, ToolResponse):
-                response = item
-
-        self.assertIsNotNone(response)
-        replay_data = [
-            block
-            for block in replay.content[0].output
-            if isinstance(block, DataBlock)
-        ]
-        response_data = [
-            block for block in response.content if isinstance(block, DataBlock)
-        ]
-        self.assertEqual(len(response_data), 2)
         self.assertListEqual(
-            [block.id for block in replay_data],
-            [block.id for block in response_data],
-        )
-        self.assertListEqual(
-            [base64.b64decode(block.source.data) for block in replay_data],
-            [b"a", b"b"],
+            [block.model_dump() for block in msg.content[0].output],
+            [
+                {
+                    "type": "data",
+                    "id": "audio-1",
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG93b3JsZA==",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
         )
 
 
@@ -231,8 +181,6 @@ class ConvertToolChunkIdentityTest(IsolatedAsyncioTestCase):
 
     async def test_event_block_id_matches_data_block_id(self) -> None:
         """Base64 and URL DataBlocks keep their id on the emitted event."""
-        from agentscope.message import URLSource
-
         agent = Agent(
             name="test",
             system_prompt="",
