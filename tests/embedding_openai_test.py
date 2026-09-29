@@ -222,3 +222,49 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["embeddings"], [[0.1]])
         self.assertEqual(mock_client.embeddings.create.await_count, 2)
+
+
+class EmbeddingMergeSourceTest(IsolatedAsyncioTestCase):
+    """A merged response must keep the provenance of its batches."""
+
+    @staticmethod
+    def _resp(
+        source: str,
+        embedding: list[float],
+        tokens: int = 0,
+    ) -> EmbeddingResponse:
+        """Build a one-embedding response with the given provenance."""
+        return EmbeddingResponse(
+            embeddings=[embedding],
+            usage=EmbeddingUsage(tokens=tokens, time=0.0),
+            source=source,
+        )
+
+    def test_all_cached_merges_to_cache(self) -> None:
+        """No API request was made, so the merge must report ``cache``."""
+        merged = OpenAIEmbeddingModel._merge_responses(
+            [
+                self._resp("cache", [0.1]),
+                self._resp("cache", [0.2]),
+            ],
+        )
+        self.assertEqual(merged.source, "cache")
+        self.assertEqual(merged.embeddings, [[0.1], [0.2]])
+
+    def test_partly_cached_merges_to_api(self) -> None:
+        """One genuine request is enough to keep ``api``."""
+        merged = OpenAIEmbeddingModel._merge_responses(
+            [
+                self._resp("cache", [0.1]),
+                self._resp("api", [0.2], tokens=2),
+            ],
+        )
+        self.assertEqual(merged.source, "api")
+        self.assertEqual(merged.embeddings, [[0.1], [0.2]])
+        self.assertEqual(merged.usage.tokens, 2)
+
+    def test_single_cached_response_is_passed_through(self) -> None:
+        """The one-batch path already reports ``cache``; keep that."""
+        only = self._resp("cache", [0.9])
+        self.assertIs(OpenAIEmbeddingModel._merge_responses([only]), only)
+        self.assertEqual(only.source, "cache")

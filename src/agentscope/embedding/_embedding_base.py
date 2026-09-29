@@ -291,13 +291,20 @@ class EmbeddingModelBase(Generic[InputT]):
                 if resp.usage.tokens:
                     total_tokens += resp.usage.tokens
 
+        # Provenance: the single-batch path returns its response untouched,
+        # so a fully cached call already reports ``cache``. Merging must not
+        # lose that, or a call which made no API request at all is reported
+        # as coming from the API. A mixed set keeps ``api``, since at least
+        # one request was real.
+        all_cached = all(resp.source == "cache" for resp in responses)
+
         return EmbeddingResponse(
             embeddings=all_embeddings,
             usage=EmbeddingUsage(
                 tokens=total_tokens,
                 time=total_time,
             ),
-            source="api",
+            source="cache" if all_cached else "api",
         )
 
     # ------------------------------------------------------------------
