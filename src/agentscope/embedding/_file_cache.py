@@ -182,8 +182,12 @@ class FileEmbeddingCache(EmbeddingCacheBase):
         ]
         files.sort(key=lambda x: x[1])
 
-        if self.max_file_number and len(files) > self.max_file_number:
-            for file_name, _ in files[: 0 - self.max_file_number]:
+        if (
+            self.max_file_number is not None
+            and len(files) > self.max_file_number
+        ):
+            excess_file_number = len(files) - self.max_file_number
+            for file_name, _ in files[:excess_file_number]:
                 os.remove(os.path.join(self.cache_dir, file_name))
                 logger.info(
                     "Remove cached embedding file %s for limited number "
@@ -191,7 +195,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     file_name,
                     self.max_file_number,
                 )
-            files = files[0 - self.max_file_number :]
+            files = files[excess_file_number:]
 
         if (
             self.max_cache_size is not None

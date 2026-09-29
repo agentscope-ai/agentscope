@@ -27,6 +27,16 @@ def _vectors(count: int) -> list:
 class FileEmbeddingCacheEvictionTest(IsolatedAsyncioTestCase):
     """The size limit must never cost more entries than it stores."""
 
+    async def test_zero_file_limit_drops_new_entries(self) -> None:
+        """验证文件数量上限为零时不会保留新缓存。"""
+        with tempfile.TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir, max_file_number=0)
+
+            await cache.store(_vectors(1), "entry")
+
+            self.assertIsNone(await cache.retrieve("entry"))
+            self.assertEqual(os.listdir(cache_dir), [])
+
     async def test_oversized_entry_is_not_cached_and_keeps_the_cache(
         self,
     ) -> None:
