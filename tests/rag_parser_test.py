@@ -7,6 +7,7 @@ run anywhere ``agentscope[rag]`` is installed.
 """
 import base64
 import io
+import json
 import os
 import zipfile
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -1702,6 +1703,71 @@ class WordParserTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_omitted_table_cells_keep_column_alignment(self) -> None:
+        """Omitted cells must not shift columns or truncate later rows."""
+        # python-docx has no public setter for omitted grid positions.
+        # pylint: disable=protected-access
+        from docx import Document
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = Document()
+        table = doc.add_table(rows=4, cols=4)
+        values = [
+            ["unused", "B", "C", "unused"],
+            ["a", "b", "c", "d"],
+            ["unused", "wide", "unused", "last"],
+            ["unused", "unused", "tail", "unused"],
+        ]
+        for row, cells in zip(table.rows, values):
+            for cell, text in zip(row.cells, cells):
+                cell.text = text
+        table.cell(2, 1).merge(table.cell(2, 2)).text = "wide"
+        for row, (before, after) in zip(
+            table.rows,
+            [(1, 1), (0, 0), (1, 0), (2, 1)],
+        ):
+            for tag, count, index in (
+                ("w:gridBefore", before, 0),
+                ("w:gridAfter", after, -1),
+            ):
+                if count:
+                    for _ in range(count):
+                        row._tr.remove(row._tr.tc_lst[index])
+                    omitted = OxmlElement(tag)
+                    omitted.set(qn("w:val"), str(count))
+                    row._tr.get_or_add_trPr().append(omitted)
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        for table_format in ("markdown", "json"):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    table_format=table_format,
+                    separate_table=True,
+                ).parse(buffer.getvalue(), "omitted.docx")
+                self.assertEqual(len(sections), 1)
+                text = sections[0].content.text
+                if table_format == "markdown":
+                    self.assertEqual(
+                        text,
+                        "|  | B | C |  |\n"
+                        "| --- | --- | --- | --- |\n"
+                        "| a | b | c | d |\n"
+                        "|  | wide |  | last |\n"
+                        "|  |  | tail |  |\n",
+                    )
+                else:
+                    self.assertEqual(
+                        json.loads(text.split("\n", 1)[1]),
+                        [
+                            ["", "B", "C", ""],
+                            ["a", "b", "c", "d"],
+                            ["", "wide", "", "last"],
+                            ["", "", "tail", ""],
+                        ],
+                    )
 
     async def test_nested_table_text_is_kept(self) -> None:
         """Text inside a table nested in another cell must survive parsing."""
