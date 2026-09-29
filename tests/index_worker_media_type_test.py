@@ -16,10 +16,12 @@ class NormalizeMediaTypeTest(TestCase):
     def test_bare_media_type_is_unchanged(self) -> None:
         """A plain type passes through lowercased."""
         self.assertEqual(
-            _normalize_media_type("text/markdown"), "text/markdown"
+            _normalize_media_type("text/markdown"),
+            "text/markdown",
         )
         self.assertEqual(
-            _normalize_media_type("application/pdf"), "application/pdf"
+            _normalize_media_type("application/pdf"),
+            "application/pdf",
         )
 
     def test_parameters_are_stripped(self) -> None:
@@ -47,7 +49,8 @@ class NormalizeMediaTypeTest(TestCase):
     def test_type_is_lowercased(self) -> None:
         """``type``/``subtype`` are case-insensitive per RFC 9110."""
         self.assertEqual(
-            _normalize_media_type("TEXT/Markdown"), "text/markdown"
+            _normalize_media_type("TEXT/Markdown"),
+            "text/markdown",
         )
         self.assertEqual(
             _normalize_media_type("Application/PDF; charset=binary"),
