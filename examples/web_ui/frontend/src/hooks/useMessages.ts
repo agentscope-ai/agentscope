@@ -356,14 +356,19 @@ export function useMessages(
 		let cancelled = false;
 
 		(async () => {
+			let eventCursor: string | null = null;
 			// 1. Fetch persisted history — unless this tab just created the
 			// session, in which case there is provably none.
 			if (takeFreshlyCreated(sessionId)) {
 				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
 			} else {
 				try {
-					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+					const { messages, is_running, event_cursor } = await sessionApi.messages(
+						sessionId,
+						agentId,
+					);
 					if (cancelled) return;
+					eventCursor = event_cursor;
 					msgsRef.current = messages;
 					// If a reply is in flight (running on a worker) OR the
 					// tail msg is parked on a pending tool_call (awaiting
@@ -408,6 +413,7 @@ export function useMessages(
 					sessionId,
 					agentId,
 					controller.signal,
+					eventCursor,
 				)) {
 					if (cancelled) break;
 					processEvent(event);

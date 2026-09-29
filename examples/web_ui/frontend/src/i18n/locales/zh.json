@@ -451,8 +451,7 @@
 		"disable": "停用语音模型",
 		"selectFirst": "请先选择语音模型",
 		"start": "开始语音对话",
-		"stop": "结束语音对话",
-		"connecting": "正在连接语音对话"
+		"stop": "结束语音对话"
 	},
 	"embedding-select": {
 		"placeholder": "选择 Embedding 模型",

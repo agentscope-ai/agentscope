@@ -119,8 +119,18 @@ function BooleanField({ id, label, prop, value, onChange }: FieldProps) {
 	);
 }
 
-function EnumField({ id, label, required, prop, value, onChange }: FieldProps) {
-	const enumValues = resolveType(prop).enumValues ?? [];
+function EnumField({
+	id,
+	label,
+	required,
+	prop,
+	value,
+	onChange,
+	excludedValues = [],
+}: FieldProps & { excludedValues?: unknown[] }) {
+	const enumValues = (resolveType(prop).enumValues ?? []).filter(
+		(option) => !excludedValues.includes(option),
+	);
 	// TODO: experiment with using prop.description as placeholder text
 	const displayValue = value !== undefined && value !== null ? String(value) : '';
 
@@ -243,6 +253,8 @@ interface Props {
 	idPrefix?: string;
 	/** Accessible label for the icon-only trigger. */
 	triggerLabel?: string;
+	/** Enum values unavailable in the current transport or UI. */
+	excludedEnumValues?: Record<string, unknown[]>;
 }
 
 /**
@@ -265,6 +277,7 @@ export function ModelParametersPopover({
 	disabled: locked = false,
 	idPrefix = 'model',
 	triggerLabel,
+	excludedEnumValues,
 }: Props) {
 	const [values, setValues] = useState<Record<string, unknown>>({});
 	const { t } = useTranslation();
@@ -274,7 +287,9 @@ export function ModelParametersPopover({
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
 	const required = schema?.required ?? [];
-	const entries = Object.entries(properties);
+	const entries = Object.entries(properties).filter(
+		([, prop]) => resolveType(prop).type !== 'array',
+	);
 
 	useEffect(() => {
 		setValues({
@@ -480,7 +495,12 @@ export function ModelParametersPopover({
 										if (effectiveType === 'boolean') {
 											field = <BooleanField {...fieldProps} />;
 										} else if (enumValues) {
-											field = <EnumField {...fieldProps} />;
+											field = (
+												<EnumField
+													{...fieldProps}
+													excludedValues={excludedEnumValues?.[key]}
+												/>
+											);
 										} else if (
 											effectiveType === 'number' ||
 											effectiveType === 'integer'

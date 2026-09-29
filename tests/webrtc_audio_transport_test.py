@@ -16,7 +16,10 @@ import numpy as np
 from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError
 from av import AudioFrame as AVAudioFrame
+from fastapi import HTTPException
 
+from agentscope.app._router._realtime import _create_realtime_offer
+from agentscope.app._router._schema import RealtimeOfferRequest
 from agentscope.app._service import get_realtime_model
 from agentscope.app._service._webrtc_audio_transport import (
     WebRTCAudioTransport,
@@ -257,6 +260,31 @@ class _FakeMessageBus:
     async def log_trim(self, key: str) -> None:
         """Record replay-log cleanup."""
         self.calls.append({"method": "log_trim", "key": key})
+
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        """Record one registry write."""
+        self.calls.append(
+            {
+                "method": "registry_set",
+                "namespace": namespace,
+                "field": field,
+                "value": value,
+                "ttl_secs": ttl_secs,
+            },
+        )
+
+    async def registry_drop(self, namespace: str) -> None:
+        """Record registry cleanup."""
+        self.calls.append(
+            {"method": "registry_drop", "namespace": namespace},
+        )
 
 
 class _BlockedMessageBus(_FakeMessageBus):
@@ -684,6 +712,57 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             "credential-1",
         )
 
+    async def test_browser_rejects_manual_turn_detection(self) -> None:
+        """Browser voice requires provider-owned turn detection."""
+        session = SimpleNamespace(
+            config=SimpleNamespace(
+                realtime_model_config=SimpleNamespace(
+                    parameters={"turn_detection": "none"},
+                ),
+            ),
+        )
+        storage = SimpleNamespace(get_session=AsyncMock(return_value=session))
+        access = SimpleNamespace(resolve_agent=AsyncMock())
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(realtime_connections={}),
+            ),
+        )
+
+        with (
+            patch(
+                "agentscope.app._router._realtime.get_realtime_model",
+                new=AsyncMock(),
+            ) as get_model_mock,
+            self.assertRaises(HTTPException) as raised,
+        ):
+            await _create_realtime_offer(
+                session_id="session-1",
+                body=RealtimeOfferRequest(agent_id="agent-1", sdp="v=0"),
+                request=request,
+                user_id="alice",
+                storage=storage,
+                message_bus=object(),
+                access=access,
+                realtime_service=object(),
+            )
+
+        self.assertEqual(
+            (
+                raised.exception.status_code,
+                raised.exception.detail,
+                get_model_mock.await_count,
+            ),
+            (
+                409,
+                (
+                    "Browser voice mode does not support "
+                    "turn_detection='none'. Select provider turn detection."
+                ),
+                0,
+            ),
+        )
+
 
 class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     """Verify that a WebRTC run keeps the normal session contract."""
@@ -805,7 +884,44 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                         "_entry_id": "1-0",
                     },
                 },
+                {
+                    "method": "acquire_lock",
+                    "key": MessageBusKeys.session_event_checkpoint_lock(
+                        "session-1",
+                    ),
+                    "ttl_secs": (
+                        MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+                    ),
+                },
+                {
+                    "method": "registry_set",
+                    "namespace": (
+                        MessageBusKeys.session_event_checkpoint(
+                            "session-1",
+                        )
+                    ),
+                    "field": MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    "value": "1-0",
+                    "ttl_secs": None,
+                },
+                {
+                    "method": "acquire_lock",
+                    "key": MessageBusKeys.session_event_checkpoint_lock(
+                        "session-1",
+                    ),
+                    "ttl_secs": (
+                        MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+                    ),
+                },
                 {"method": "log_trim", "key": events_key},
+                {
+                    "method": "registry_drop",
+                    "namespace": (
+                        MessageBusKeys.session_event_checkpoint(
+                            "session-1",
+                        )
+                    ),
+                },
             ],
         )
         self.assertEqual(
@@ -973,7 +1089,24 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "key": events_key,
                     "event": event.model_dump(mode="json"),
                 },
+                {
+                    "method": "acquire_lock",
+                    "key": MessageBusKeys.session_event_checkpoint_lock(
+                        "session-1",
+                    ),
+                    "ttl_secs": (
+                        MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+                    ),
+                },
                 {"method": "log_trim", "key": events_key},
+                {
+                    "method": "registry_drop",
+                    "namespace": (
+                        MessageBusKeys.session_event_checkpoint(
+                            "session-1",
+                        )
+                    ),
+                },
             ],
         )
 
@@ -1112,6 +1245,11 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     for call in message_bus.calls
                     if call["method"] == "publish"
                 ],
+                "cursor_writes": [
+                    call
+                    for call in message_bus.calls
+                    if call["method"] == "registry_set"
+                ],
             },
             {
                 "storage_calls": expected_writes * 4,
@@ -1122,6 +1260,20 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     }
                     for event in events
                 ],
+                "cursor_writes": [
+                    {
+                        "method": "registry_set",
+                        "namespace": (
+                            MessageBusKeys.session_event_checkpoint(
+                                "session-1",
+                            )
+                        ),
+                        "field": (MessageBusKeys.SESSION_EVENT_CURSOR_FIELD),
+                        "value": "1-0",
+                        "ttl_secs": None,
+                    },
+                ]
+                * 3,
             },
         )
 

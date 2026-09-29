@@ -272,8 +272,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			if (voiceState === 'connecting') {
 				return {
 					icon: Loader2,
-					tooltip: t('realtime.connecting'),
-					disabled: true,
+					tooltip: t('realtime.stop'),
+					disabled: false,
 					onClick: onVoiceToggle,
 				};
 			}

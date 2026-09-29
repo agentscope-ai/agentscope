@@ -159,6 +159,14 @@ async def _create_realtime_offer(
             status_code=status.HTTP_409_CONFLICT,
             detail="Configure a realtime model before starting voice mode.",
         )
+    if config.parameters.get("turn_detection") == "none":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Browser voice mode does not support "
+                "turn_detection='none'. Select provider turn detection."
+            ),
+        )
 
     try:
         model = await get_realtime_model(user_id, config, access)

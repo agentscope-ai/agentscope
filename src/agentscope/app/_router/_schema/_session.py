@@ -229,6 +229,12 @@ class ListMessagesResponse(BaseModel):
     """Response body for listing messages in a session."""
 
     messages: list = Field(description="Messages in chronological order.")
+    event_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Latest replay event already included in these messages."
+        ),
+    )
     is_running: bool = Field(
         description="Whether the session is currently running.",
     )

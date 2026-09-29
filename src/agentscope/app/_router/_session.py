@@ -631,7 +631,8 @@ async def list_messages(
         message_bus: Injected message bus.
 
     Returns:
-        Messages, running status, and whether more pages exist.
+        Messages, their replay cursor, running status, and whether more
+        pages exist.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -645,15 +646,25 @@ async def list_messages(
     if offset is not None:
         extra["offset"] = offset
 
-    messages, has_more = await storage.list_messages(
-        user_id,
-        session_id,
-        limit=limit,
-        before=before,
-        **extra,
-    )
+    checkpoint_key = MessageBusKeys.session_event_checkpoint(session_id)
+    async with message_bus.acquire_lock(
+        MessageBusKeys.session_event_checkpoint_lock(session_id),
+        ttl_secs=MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS,
+    ):
+        event_cursor = await message_bus.registry_get(
+            checkpoint_key,
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+        )
+        messages, has_more = await storage.list_messages(
+            user_id,
+            session_id,
+            limit=limit,
+            before=before,
+            **extra,
+        )
     return ListMessagesResponse(
         messages=messages,
+        event_cursor=event_cursor,
         is_running=await message_bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ),
@@ -793,6 +804,11 @@ async def _worker_still_asking(
 async def stream_session_events(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
+    after: str
+    | None = Query(
+        None,
+        description=("Replay only events after this checkpoint cursor."),
+    ),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
@@ -815,6 +831,8 @@ async def stream_session_events(
         agent_id (`str`):
             The agent that owns the session (used for ownership
             validation).
+        after (`str | None`):
+            Persisted replay cursor returned by the messages endpoint.
         user_id (`str`):
             Injected authenticated user id.
         storage (`StorageBase`):
@@ -837,6 +855,7 @@ async def stream_session_events(
         # 1. Replay buffered events from the current run (if any).
         for _entry_id, event in await message_bus.log_read(
             MessageBusKeys.session_events(session_id),
+            since=after,
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

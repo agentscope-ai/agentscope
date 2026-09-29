@@ -294,6 +294,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 message_bus=message_bus,
                 registry=chat_run_registry,
                 bg_manager=bg_manager,
+                realtime_connections=app.state.realtime_connections,
             ),
         )
 

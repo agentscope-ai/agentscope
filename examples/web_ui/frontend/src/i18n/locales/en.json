@@ -451,8 +451,7 @@
 		"disable": "Disable voice model",
 		"selectFirst": "Select a voice model first",
 		"start": "Start voice conversation",
-		"stop": "End voice conversation",
-		"connecting": "Connecting voice conversation"
+		"stop": "End voice conversation"
 	},
 	"embedding-select": {
 		"placeholder": "Select an embedding model",

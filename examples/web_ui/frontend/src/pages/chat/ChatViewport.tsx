@@ -61,6 +61,10 @@ import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
 
+const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
+	turn_detection: ['none'],
+};
+
 interface ChatViewportProps {
 	/**
 	 * The agent that owns the session being viewed. May be the
@@ -805,6 +809,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										idPrefix="realtime"
 										triggerLabel={t('realtime.parameters')}
 										disabled={configPending || realtimeVoice.state !== 'idle'}
+										excludedEnumValues={REALTIME_EXCLUDED_ENUM_VALUES}
 									/>
 									<LlmSelect
 										id="tour-llm-select"

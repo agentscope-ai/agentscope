@@ -20,6 +20,10 @@ from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ._webrtc_audio_transport import WebRTCAudioTransport
 
+_CHECKPOINT_LOCK_TTL_SECS = (
+    MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+)
+
 
 class WebRTCSession:
     """Run and persist one realtime agent over a peer connection."""
@@ -135,12 +139,13 @@ class WebRTCSession:
                                 event,
                                 DataBlockDeltaEvent,
                             ) and event.media_type.startswith("audio/pcm"):
+                                entry_id = None
                                 await self.message_bus.publish(
                                     events_key,
                                     payload,
                                 )
                             else:
-                                await publish_session_event(
+                                entry_id = await publish_session_event(
                                     self.message_bus,
                                     self.session_id,
                                     payload,
@@ -158,7 +163,7 @@ class WebRTCSession:
                             )
                             if should_checkpoint:
                                 try:
-                                    await self._persist_state()
+                                    await self._checkpoint_state(entry_id)
                                 except Exception as exc:
                                     logger.warning(
                                         "Failed to checkpoint WebRTC "
@@ -178,8 +183,19 @@ class WebRTCSession:
                 self._closing = True
             if self._lock_acquired.is_set():
                 try:
-                    await self._persist_state()
-                    await self.message_bus.log_trim(events_key)
+                    async with self.message_bus.acquire_lock(
+                        MessageBusKeys.session_event_checkpoint_lock(
+                            self.session_id,
+                        ),
+                        ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                    ):
+                        await self._persist_state()
+                        await self.message_bus.log_trim(events_key)
+                        await self.message_bus.registry_drop(
+                            MessageBusKeys.session_event_checkpoint(
+                                self.session_id,
+                            ),
+                        )
                 except Exception as exc:
                     logger.exception(
                         "Failed to persist WebRTC session %r: %s",
@@ -189,6 +205,20 @@ class WebRTCSession:
             await self.transport.close()
             await self.peer_connection.close()
             self._on_closed(self)
+
+    async def _checkpoint_state(self, entry_id: str | None) -> None:
+        """Persist state and bind it to the replay entry it includes."""
+        async with self.message_bus.acquire_lock(
+            MessageBusKeys.session_event_checkpoint_lock(self.session_id),
+            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+        ):
+            await self._persist_state()
+            if entry_id is not None:
+                await self.message_bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint(self.session_id),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    entry_id,
+                )
 
     async def _persist_state(self) -> None:
         """Persist the latest complete messages and agent state."""

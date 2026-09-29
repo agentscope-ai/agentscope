@@ -126,10 +126,27 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     SESSION_REPLAY_MAX_LEN = 1000
     """Replay log length cap; older events are trimmed on append."""
 
+    _SESSION_EVENT_CHECKPOINT = "agentscope:session:event_checkpoint:{sid}"
+    _SESSION_EVENT_CHECKPOINT_LOCK = (
+        "agentscope:session:event_checkpoint:lock:{sid}"
+    )
+    SESSION_EVENT_CURSOR_FIELD: Final = "cursor"
+    SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS = 30
+
     @classmethod
     def session_events(cls, session_id: str) -> str:
         """Replay log + live pub/sub channel key for a session."""
         return cls._SESSION_EVENTS.format(sid=session_id)
+
+    @classmethod
+    def session_event_checkpoint(cls, session_id: str) -> str:
+        """Registry namespace for the persisted replay cursor."""
+        return cls._SESSION_EVENT_CHECKPOINT.format(sid=session_id)
+
+    @classmethod
+    def session_event_checkpoint_lock(cls, session_id: str) -> str:
+        """Lock pairing a persisted message snapshot with its cursor."""
+        return cls._SESSION_EVENT_CHECKPOINT_LOCK.format(sid=session_id)
 
     # ------------------------------------------------------------------
     # Session run lock
