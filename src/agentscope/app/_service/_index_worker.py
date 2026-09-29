@@ -379,6 +379,8 @@ class IndexWorker:
         media_type = (
             data.content_type or mimetypes.guess_type(data.filename)[0]
         )
+        if media_type:
+            media_type = media_type.split(";", 1)[0].strip().lower()
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
