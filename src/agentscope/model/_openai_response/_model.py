@@ -270,7 +270,8 @@ class OpenAIResponseModel(ChatModelBase):
         response. Because the Responses API only returns the upstream
         response id on the final ``response.completed`` event, we assign a
         locally-generated ``response_id`` up-front so every delta chunk
-        carries a stable id.
+        carries a stable id, and replace it with the real one as soon as the
+        completed event makes it available.
 
         Args:
             start_datetime (`datetime`):
@@ -345,6 +346,17 @@ class OpenAIResponseModel(ChatModelBase):
 
                 elif event_type == "response.completed":
                     resp = event.response
+                    # This is the first and only point at which the upstream
+                    # id exists. The base class folds each delta's id into the
+                    # accumulated response, and this is the last delta, so
+                    # adopting the id here is what makes the final
+                    # ``is_last=True`` chunk identify the real call. Earlier
+                    # deltas keep the local placeholder, because the id is
+                    # genuinely unknown at that point.
+                    upstream_id = getattr(resp, "id", None)
+                    if upstream_id:
+                        response_id = upstream_id
+                        delta_res.id = response_id
                     if resp.usage:
                         u = resp.usage
                         details = getattr(u, "input_tokens_details", None)

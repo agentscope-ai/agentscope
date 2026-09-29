@@ -593,6 +593,40 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_adopts_upstream_response_id(self) -> None:
+        """The final response carries the upstream id, not a placeholder.
+
+        The Responses API only exposes the real id on the
+        ``response.completed`` event, so earlier deltas must use a local
+        placeholder. That event is also the last delta the base class folds
+        into the accumulated response, which is what lets the final chunk
+        identify the real upstream call.
+        """
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-upstream-42"
+        completed_resp.output = []
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 3
+        completed_resp.usage.output_tokens = 4
+        completed_resp.usage.input_tokens_details = None
+
+        events = [
+            _make_event("response.output_text.delta", delta="Hi"),
+            _make_event("response.completed", response=completed_resp),
+        ]
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertEqual(len(responses), 2)
+        self.assertTrue(responses[-1].is_last)
+        # A delta emitted before the id exists cannot know it.
+        self.assertNotEqual(responses[0].id, "resp-upstream-42")
+        self.assertEqual(responses[-1].id, "resp-upstream-42")
+
     async def test_stream_reasoning_and_text(
         self,
     ) -> None:
