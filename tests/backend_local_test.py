@@ -22,7 +22,7 @@ from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool import ExecResult, LocalBackend
-from agentscope.tool._builtin._backend import _normalize_newlines
+from agentscope.tool._builtin._backend import BackendBase, _normalize_newlines
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -213,6 +213,34 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
         """Drop the temp dir."""
         self.temp_dir.cleanup()
 
+    async def test_expandvars(self) -> None:
+        """``$VAR`` / ``${VAR}`` expand; an undefined one is left."""
+        with mock.patch.dict(
+            os.environ,
+            {"AS_TEST_DIR": "/opt/as"},
+            clear=False,
+        ):
+            self.assertEqual(
+                await self.backend.expandvars("$AS_TEST_DIR/bin"),
+                "/opt/as/bin",
+            )
+            self.assertEqual(
+                await self.backend.expandvars("${AS_TEST_DIR}/bin"),
+                "/opt/as/bin",
+            )
+            self.assertEqual(
+                await self.backend.expandvars("$AS_TEST_DIR/$AS_TEST_DIR"),
+                "/opt/as//opt/as",
+            )
+        self.assertEqual(
+            await self.backend.expandvars("$AS_UNDEFINED_VAR/bin"),
+            "$AS_UNDEFINED_VAR/bin",
+        )
+        self.assertEqual(
+            await self.backend.expandvars("/plain/path"),
+            "/plain/path",
+        )
+
     async def test_file_exists(self) -> None:
         """``file_exists`` is True for files and dirs, False otherwise."""
         path = os.path.join(self.temp_dir.name, "f.txt")
@@ -401,6 +429,87 @@ class TestLocalBackendShellWrapping(IsolatedAsyncioTestCase):
         )
         self.assertTrue(result.ok())
         self.assertEqual(result.stdout.decode().strip(), "chained")
+
+
+class _StubBackend(BackendBase):
+    """A backend that answers ``printenv`` from a fixed map, standing in
+    for a remote sandbox whose environment differs from the host's."""
+
+    def __init__(self, env: dict[str, str]) -> None:
+        """Store the environment the stub reports."""
+        self.env = env
+        self.commands: list[list[str]] = []
+
+    async def exec_shell(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        timeout: float | None = None,
+    ) -> ExecResult:
+        """Record the command and answer ``printenv`` from the map."""
+        self.commands.append(list(command))
+        if command[:1] == ["printenv"]:
+            value = self.env.get(command[1], "")
+            return ExecResult(
+                exit_code=0,
+                stdout=value.encode("utf-8"),
+                stderr=b"",
+            )
+        return ExecResult(exit_code=0, stdout=b"", stderr=b"")
+
+    async def read_file(self, path: str) -> bytes:
+        """Report an empty file."""
+        return b""
+
+    async def write_file(self, path: str, data: bytes) -> None:
+        """Discard the write."""
+
+
+class TestBackendExpandVars(IsolatedAsyncioTestCase):
+    """Test cases for the default ``expandvars`` implementation."""
+
+    async def test_expands_against_the_backend_environment(self) -> None:
+        """Each variable is queried in the backend, not the host."""
+        backend = _StubBackend({"HOME": "/root", "WORK": "/srv/work"})
+
+        self.assertEqual(
+            await backend.expandvars("$WORK/out"),
+            "/srv/work/out",
+        )
+        self.assertEqual(backend.commands, [["printenv", "WORK"]])
+
+        # Both names are looked up, in a stable order, before the
+        # substitution runs.
+        self.assertEqual(
+            await backend.expandvars("${WORK}/$HOME"),
+            "/srv/work//root",
+        )
+        self.assertEqual(
+            backend.commands,
+            [
+                ["printenv", "WORK"],
+                ["printenv", "HOME"],
+                ["printenv", "WORK"],
+            ],
+        )
+
+    async def test_undefined_variable_is_left_alone(self) -> None:
+        """An undefined spelling stays visible rather than vanishing."""
+        backend = _StubBackend({})
+
+        self.assertEqual(
+            await backend.expandvars("$MISSING/bin"),
+            "$MISSING/bin",
+        )
+        self.assertEqual(backend.commands, [["printenv", "MISSING"]])
+
+    async def test_path_without_a_variable_spawns_nothing(self) -> None:
+        """A plain path is returned without any round trip."""
+        backend = _StubBackend({})
+
+        self.assertEqual(await backend.expandvars("/plain"), "/plain")
+        self.assertEqual(backend.commands, [])
 
 
 if __name__ == "__main__":
