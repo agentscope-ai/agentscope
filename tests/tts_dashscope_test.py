@@ -54,6 +54,7 @@ def _make_api_chunk(
     """Build a chunk shaped like what dashscope.MultiModalConversation
     yields. ``data_bytes=None`` represents a chunk with no output."""
     chunk = MagicMock()
+    chunk.status_code = 200
     chunk.usage = usage
     if data_bytes is None:
         chunk.output = None
@@ -201,6 +202,43 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
         )
 
     # -- non-streaming --
+
+    async def test_api_errors_are_not_successful_audio(self) -> None:
+        """Provider errors must propagate, including after partial audio."""
+        from dashscope.api_entities.dashscope_response import (
+            MultiModalConversationResponse,
+        )
+
+        for stream in (False, True):
+            for status, code in ((401, "InvalidApiKey"), (429, "Throttling")):
+                for partial in (False, True):
+                    with self.subTest(
+                        stream=stream,
+                        status=status,
+                        partial=partial,
+                    ):
+                        error = MultiModalConversationResponse(
+                            status_code=status,
+                            code=code,
+                            message="Request rejected",
+                            request_id="test-request",
+                        )
+                        chunks = (
+                            [
+                                _make_api_chunk(b"AAAA"),
+                                _make_api_chunk(b"BBBB"),
+                            ]
+                            if partial
+                            else []
+                        )
+                        chunks.append(error)
+                        self.mock_mmc.call.return_value = iter(chunks)
+                        model = self._make_model(stream=stream)
+                        with self.assertRaisesRegex(RuntimeError, code):
+                            result = await model.synthesize("Hello")
+                            if stream:
+                                async for chunk in result:
+                                    self.assertFalse(chunk.is_last)
 
     async def test_aggregates_chunks(self) -> None:
         """All API chunks are aggregated into one self-contained WAV."""
