@@ -1045,6 +1045,51 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                     expected,
                 )
 
+    async def test_separated_backup_suffix(self) -> None:
+        """A separated dotted -i suffix is a backup suffix, not a script.
+
+        On BSD/macOS sed the backup suffix is always a separate argument,
+        and it is usually dotted. Before the fix, ``sed -i .bak 's/x/y/'
+        notes.txt`` was judged as the script ``.bak`` and rejected, while
+        the actual substitution and file arguments were never analyzed.
+        """
+        cases = [
+            (
+                "sed -i .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .orig 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed --in-place .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -i bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                # A dot inside a script keeps the token unconsumed.
+                "sed -i '/example.com/d' notes.txt",
+                "sed expression '/example.com/d' not in allowlist",
+            ),
+        ]
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        cmd,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""
         test_cases = [
