@@ -369,6 +369,8 @@ def _flatten_json_schema(schema: dict) -> dict:
                 return obj
 
             def_name = ref_path.split("/")[-1]
+            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
+            def_name = def_name.replace("~1", "/").replace("~0", "~")
             if def_name in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
