@@ -140,6 +140,24 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
+# AST node types an argument that names a path can take. ``word`` is a
+# plain literal; ``concatenation`` mixes literals with expansions
+# (``$HOME/.env``); ``string`` is the double-quoted form, which expands
+# variables just the same (``"$HOME/.env"``); ``simple_expansion`` /
+# ``expansion`` are a variable on its own (``rm -r $HOME``).  Leaving
+# any of them out hides the argument from every check that judges paths
+# — ``rm "$HOME/.bashrc"`` used to extract nothing at all.
+# ``raw_string`` (single quotes) is deliberately absent: the shell
+# expands nothing inside it, so its text is the literal path — and
+# skipping it also keeps a ``sed`` script from reading as a path.
+_PATH_ARG_TYPES = (
+    "word",
+    "concatenation",
+    "string",
+    "simple_expansion",
+    "expansion",
+)
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -310,19 +328,27 @@ class BashCommandParser:
     ) -> None:
         """Recursively extract file paths from AST nodes.
 
+        An argument that mixes literal text with a shell variable —
+        ``$HOME/.env``, ``"$HOME/.env"``, ``${HOME}/x`` — parses as a
+        ``concatenation`` or ``string`` node rather than a ``word``, so
+        those are accepted too and their source text is taken verbatim.
+        The ``$VAR`` spelling is kept for the caller to expand: the
+        checks that judge a path decide what a variable means, and
+        dropping the argument instead would hide it from them.
+
         Args:
             node (`Node`):
                 The AST node to process
             command (`str`):
                 The original command string
             paths (`List[Tuple[str, str]]`):
-                List to append (command_name, path) tuples to
+                List to append (command_name, path) tuples
         """
         # Check for redirections
         if node.type == "file_redirect":
             # Extract the target file
             for child in node.children:
-                if child.type == "word":
+                if child.type in _PATH_ARG_TYPES:
                     path = command[child.start_byte : child.end_byte]
                     paths.append(("redirect", path.strip("'\"")))
         # Check for commands
@@ -334,7 +360,7 @@ class BashCommandParser:
             for child in node.children:
                 if child.type == "command_name":
                     cmd_name = command[child.start_byte : child.end_byte]
-                elif child.type == "word" and cmd_name:
+                elif child.type in _PATH_ARG_TYPES and cmd_name:
                     arg = command[child.start_byte : child.end_byte]
                     args.append(arg.strip("'\""))
 

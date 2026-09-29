@@ -638,14 +638,24 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 self.assertEqual(result, expected)
 
     async def test_quoted_paths(self) -> None:
-        """Test file path extraction with quoted paths."""
+        """Test file path extraction with quoted paths.
+
+        A double-quoted argument is extracted, because the shell
+        expands variables inside it just as it does unquoted — skipping
+        it hid ``rm "$HOME/.env"`` from every check that judges paths.
+        A single-quoted one is not: nothing is expanded inside it, so
+        its text is the literal path (and a ``sed`` script is not a
+        path at all).
+        """
         test_cases = [
-            ('rm "file with spaces.txt"', []),  # Quoted paths not extracted
-            ("rm 'file.txt'", []),  # Quoted paths not extracted
+            ('rm "file with spaces.txt"', [("rm", "file with spaces.txt")]),
+            ("rm 'file.txt'", []),  # Single quotes expand nothing
             (
                 'mv "old file.txt" "new file.txt"',
-                [],  # Quoted paths not extracted
+                [("mv", "old file.txt"), ("mv", "new file.txt")],
             ),
+            ('rm "$HOME/.env"', [("rm", "$HOME/.env")]),
+            ("rm '$HOME/.env'", []),
         ]
         for cmd, expected in test_cases:
             with self.subTest(cmd=cmd):
@@ -653,7 +663,7 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 self.assertEqual(result, expected)
 
     async def test_dangerous_paths(self) -> None:
-        """Test file path extraction with dangerous paths."""
+        """Test file path extraction from dangerous paths."""
         test_cases = [
             ("rm ~/.bashrc", [("rm", "~/.bashrc")]),
             ("chmod 600 ~/.ssh/config", [("chmod", "~/.ssh/config")]),
@@ -661,6 +671,25 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 "mv file.txt .git/hooks/",
                 [("mv", "file.txt"), ("mv", ".git/hooks/")],
             ),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_variable_spelled_paths(self) -> None:
+        """An argument that names its target through a variable is
+        extracted, with the spelling left for the caller to expand."""
+        test_cases = [
+            ("rm $HOME/.env", [("rm", "$HOME/.env")]),
+            ('rm "$HOME/.env"', [("rm", "$HOME/.env")]),
+            ("rm -r $HOME", [("rm", "$HOME")]),
+            ("rm -r ${HOME}", [("rm", "${HOME}")]),
+            ("cp x $HOME/.env", [("cp", "x"), ("cp", "$HOME/.env")]),
+            ("echo x > $HOME/.env", [("redirect", "$HOME/.env")]),
+            ("rm $HOME/*", [("rm", "$HOME/*")]),
+            # A command substitution is not a path spelling
+            ("rm $(echo x)", []),
         ]
         for cmd, expected in test_cases:
             with self.subTest(cmd=cmd):

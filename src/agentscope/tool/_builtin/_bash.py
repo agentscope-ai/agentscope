@@ -653,8 +653,11 @@ easier to review tool calls and give permission.
         # Expand tilde and resolve to an absolute path inside the
         # backend environment.  Don't resolve symlinks — ``/tmp`` is a
         # symlink on macOS but is still a root-child and should be
-        # flagged.
+        # flagged.  Variables are expanded too: the shell will do it,
+        # so ``$HOME`` must be judged as the home directory it names
+        # rather than as a relative path that happens to look tame.
         expanded = await self._backend.expanduser(path)
+        expanded = await self._backend.expandvars(expanded)
         backend_cwd = await self._backend.getcwd()
         abs_path = self._backend.abspath(expanded, cwd=backend_cwd)
 
