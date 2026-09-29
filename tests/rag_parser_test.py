@@ -464,6 +464,62 @@ class PDFParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await parser.parse(b"not a pdf", "broken.pdf")
 
+    async def test_password_protected_pdf_raises_value_error(self) -> None:
+        """Errors deferred until page iteration retain filename context."""
+        from pypdf import PdfWriter
+        from pypdf.errors import FileNotDecryptedError
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt("secret")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Failed to parse 'locked\.pdf' as PDF:",
+        ) as context:
+            await PDFParser().parse(buffer.getvalue(), "locked.pdf")
+        self.assertIsInstance(
+            context.exception.__cause__,
+            FileNotDecryptedError,
+        )
+
+    async def test_empty_user_password_pdf_remains_readable(self) -> None:
+        """An encrypted PDF that opens without a password is still parsed."""
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt(user_password="", owner_password="owner")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        sections = await PDFParser().parse(buffer.getvalue(), "open.pdf")
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].content.text, "")
+        self.assertEqual(sections[0].metadata, {"page": 1})
+        self.assertEqual(sections[0].source, "open.pdf")
+
+    async def test_text_extraction_read_error_raises_value_error(self) -> None:
+        """Read errors raised after page enumeration are wrapped as well."""
+        from unittest.mock import patch
+        from pypdf import PageObject
+        from pypdf.errors import PdfReadError
+
+        error = PdfReadError("broken content stream")
+        with patch.object(PageObject, "extract_text", side_effect=error):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"Failed to parse 'broken-stream\.pdf' as PDF:",
+            ) as context:
+                await PDFParser().parse(
+                    _make_pdf(["Hello"]),
+                    "broken-stream.pdf",
+                )
+        self.assertIs(context.exception.__cause__, error)
+
     async def test_supported_extensions(self) -> None:
         """``.pdf`` is the only extension exposed to the file picker."""
         self.assertEqual(PDFParser.supported_extensions(), [".pdf"])
