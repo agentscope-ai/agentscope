@@ -150,6 +150,8 @@ class DashScopeTTSModel(TTSModelBase):
         audio_bytes = bytearray()
         usage = None
         for chunk in response:
+            if chunk.status_code != 200:
+                raise RuntimeError(f"DashScope TTS API error: {chunk}")
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.output is not None:
@@ -205,6 +207,8 @@ class DashScopeTTSModel(TTSModelBase):
             chunk = next(it, _SENTINEL)
             if chunk is _SENTINEL:
                 break
+            if chunk.status_code != 200:
+                raise RuntimeError(f"DashScope TTS API error: {chunk}")
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.output is None:
