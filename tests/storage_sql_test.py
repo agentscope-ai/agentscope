@@ -1844,3 +1844,74 @@ class ChannelSessionLookupTest(IsolatedAsyncioTestCase):
                 chat_name="产品群",
             ),
         )
+
+
+class SessionOwnerScopeTest(IsolatedAsyncioTestCase):
+    """A preset session id must only ever address the caller's own row."""
+
+    async def asyncSetUp(self) -> None:
+        """Create a fresh in-memory storage."""
+        self._stack = AsyncExitStack()
+        self.storage = await self._stack.enter_async_context(
+            AsyncSQLAlchemyStorage(url="sqlite+aiosqlite:///:memory:"),
+        )
+
+    async def asyncTearDown(self) -> None:
+        """Close the storage."""
+        await self._stack.aclose()
+
+    async def test_foreign_session_id_cannot_overwrite(self) -> None:
+        """User B must not clobber user A's session by passing its id."""
+        owner = await self.storage.upsert_session(
+            user_id="ownerA",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-A"),
+        )
+
+        try:
+            await self.storage.upsert_session(
+                user_id="ownerB",
+                agent_id="agent",
+                config=SessionConfig(workspace_id="ws-B"),
+                session_id=owner.id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            # A collision on the global primary id is expected to fail
+            # loudly rather than overwrite the holder. Either way the
+            # invariant asserted below is the same.
+            pass
+
+        still = await self.storage.get_session(
+            "ownerA",
+            "agent",
+            owner.id,
+        )
+        self.assertIsNotNone(still)
+        self.assertEqual(still.config.workspace_id, "ws-A")
+
+        held = [
+            _.id for _ in await self.storage.list_sessions("ownerB", "agent")
+        ]
+        self.assertNotIn(owner.id, held)
+
+    async def test_owner_can_still_update_its_own_session(self) -> None:
+        """The in-place update path for a genuinely owned row is kept."""
+        owner = await self.storage.upsert_session(
+            user_id="ownerA",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-A"),
+        )
+
+        updated = await self.storage.upsert_session(
+            user_id="ownerA",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-A2"),
+            session_id=owner.id,
+        )
+
+        self.assertEqual(updated.id, owner.id)
+        self.assertEqual(updated.config.workspace_id, "ws-A2")
+        self.assertEqual(
+            len(await self.storage.list_sessions("ownerA", "agent")),
+            1,
+        )
