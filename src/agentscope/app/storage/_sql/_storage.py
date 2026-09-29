@@ -1231,9 +1231,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
         # while the SQL table keys on a global primary id. An unscoped
         # ``sess.get`` would let one tenant overwrite another tenant's
         # session config and agent state by passing its id. Only a row the
-        # caller already owns is updated in place; any other preset id goes
-        # through a plain INSERT, which fails loudly on a global collision
-        # instead of overwriting the holder.
+        # caller already owns is updated in place; any other preset id is
+        # written with a plain INSERT so a global collision raises instead
+        # of overwriting the holder.
+        foreign_id = False
         if session_id:
             from sqlalchemy import select
 
@@ -1253,6 +1254,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     record.state = state
                 await self._write_row(SessionRow, record)
                 return record
+            foreign_id = True
 
         new_id_kwargs = {"id": session_id} if session_id else {}
         record = SessionRecord(
@@ -1270,6 +1272,19 @@ class AsyncSQLAlchemyStorage(StorageBase):
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
+        if foreign_id:
+            # A preset id the caller does not own. ``_write_row`` is an
+            # id-conflict upsert, so on a global primary-key collision it
+            # would overwrite the holder's row and transfer ownership to
+            # this caller. Insert plainly instead — exactly as
+            # ``upsert_credential`` does — so the collision surfaces.
+            record.created_at = _to_naive_utc(record.created_at)
+            record.updated_at = _utcnow()
+            async with self._session() as sess:
+                sess.add(_from_record(SessionRow, record))
+                await sess.commit()
+            return record
+
         await self._write_row(
             SessionRow,
             record,

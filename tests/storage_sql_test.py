@@ -17,6 +17,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from pydantic import SecretStr
 from sqlalchemy.dialects import mysql
+from sqlalchemy.exc import IntegrityError
 
 from utils import AnyString
 
@@ -1860,56 +1861,63 @@ class SessionOwnerScopeTest(IsolatedAsyncioTestCase):
         """Close the storage."""
         await self._stack.aclose()
 
-    async def test_foreign_session_id_cannot_overwrite(self) -> None:
-        """User B must not clobber user A's session by passing its id."""
+    async def _seed_owner(self) -> str:
+        """Create one session for ``ownerA`` and return its id."""
         owner = await self.storage.upsert_session(
             user_id="ownerA",
             agent_id="agent",
             config=SessionConfig(workspace_id="ws-A"),
         )
+        self.assertIsNotNone(owner.id)
+        return owner.id
 
-        try:
-            await self.storage.upsert_session(
-                user_id="ownerB",
-                agent_id="agent",
-                config=SessionConfig(workspace_id="ws-B"),
-                session_id=owner.id,
-            )
-        except Exception:  # pylint: disable=broad-except
-            # A collision on the global primary id is expected to fail
-            # loudly rather than overwrite the holder. Either way the
-            # invariant asserted below is the same.
-            pass
-
-        still = await self.storage.get_session(
-            "ownerA",
-            "agent",
-            owner.id,
+    async def _steal(self, session_id: str) -> None:
+        """Try to overwrite ``ownerA``'s session as ``ownerB``."""
+        await self.storage.upsert_session(
+            user_id="ownerB",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-B"),
+            session_id=session_id,
         )
+
+    async def test_foreign_session_id_is_rejected(self) -> None:
+        """The id is a global key, so a foreign use must raise."""
+        await self._steal(await self._seed_owner())
+        # Nothing to assert about the row here: this test exists to pin the
+        # loud failure, and the next one pins that the owner keeps its data
+        # even once the steal has been attempted.
+        with self.assertRaises(IntegrityError):
+            await self._steal("sess-does-not-belong-to-b")
+
+    async def test_owner_row_survives_a_foreign_attempt(self) -> None:
+        """A rejected steal must leave the owner's session untouched."""
+        owner_id = await self._seed_owner()
+
+        with self.assertRaises(IntegrityError):
+            await self._steal(owner_id)
+
+        still = await self.storage.get_session("ownerA", "agent", owner_id)
         self.assertIsNotNone(still)
         self.assertEqual(still.config.workspace_id, "ws-A")
+        self.assertEqual(still.user_id, "ownerA")
 
         held = [
             _.id for _ in await self.storage.list_sessions("ownerB", "agent")
         ]
-        self.assertNotIn(owner.id, held)
+        self.assertEqual(held, [])
 
     async def test_owner_can_still_update_its_own_session(self) -> None:
         """The in-place update path for a genuinely owned row is kept."""
-        owner = await self.storage.upsert_session(
-            user_id="ownerA",
-            agent_id="agent",
-            config=SessionConfig(workspace_id="ws-A"),
-        )
+        owner_id = await self._seed_owner()
 
         updated = await self.storage.upsert_session(
             user_id="ownerA",
             agent_id="agent",
             config=SessionConfig(workspace_id="ws-A2"),
-            session_id=owner.id,
+            session_id=owner_id,
         )
 
-        self.assertEqual(updated.id, owner.id)
+        self.assertEqual(updated.id, owner_id)
         self.assertEqual(updated.config.workspace_id, "ws-A2")
         self.assertEqual(
             len(await self.storage.list_sessions("ownerA", "agent")),
