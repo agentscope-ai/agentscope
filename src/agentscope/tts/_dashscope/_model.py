@@ -131,7 +131,7 @@ class DashScopeTTSModel(TTSModelBase):
             model=self.model,
             api_key=self.credential.api_key.get_secret_value(),
             text=text,
-            voice=self.parameters.voice,
+            voice=kwargs.pop("voice", self.parameters.voice),
             stream=True,
             **kwargs,
         )

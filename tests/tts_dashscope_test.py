@@ -240,6 +240,35 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                                 async for chunk in result:
                                     self.assertFalse(chunk.is_last)
 
+    async def test_per_call_voice_override(self) -> None:
+        """A temporary voice reaches the SDK without changing the default."""
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                model = self._make_model(stream=stream)
+                for kwargs, expected in (
+                    ({"voice": "Serena"}, "Serena"),
+                    ({}, "Cherry"),
+                ):
+                    self.mock_mmc.call.return_value = _make_api_generator(
+                        [b"AAAA"],
+                    )
+                    result = await model.synthesize("Hello", **kwargs)
+                    responses = (
+                        [chunk async for chunk in result]
+                        if stream
+                        else [result]
+                    )
+                    self.assertEqual(
+                        self.mock_mmc.call.call_args.kwargs["voice"],
+                        expected,
+                    )
+                    self.assertTrue(
+                        self.mock_mmc.call.call_args.kwargs["stream"],
+                    )
+                    self.assertEqual(model.parameters.voice, "Cherry")
+                    self.assertTrue(responses[-1].is_last)
+                    self.assertTrue(responses[0].content.source.data)
+
     async def test_aggregates_chunks(self) -> None:
         """All API chunks are aggregated into one self-contained WAV."""
         self.mock_mmc.call.return_value = _make_api_generator(
