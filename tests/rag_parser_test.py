@@ -465,6 +465,26 @@ class PDFParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await parser.parse(b"not a pdf", "broken.pdf")
 
+    async def test_deferred_pdf_read_error_raises_value_error(self) -> None:
+        """加密 PDF 的延迟读取错误统一转换为 ValueError。"""
+        from pypdf import PdfWriter
+        from pypdf.errors import FileNotDecryptedError
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt("secret")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        parser = PDFParser()
+        with self.assertRaisesRegex(ValueError, "locked.pdf") as context:
+            await parser.parse(buffer.getvalue(), "locked.pdf")
+
+        self.assertIsInstance(
+            context.exception.__cause__,
+            FileNotDecryptedError,
+        )
+
     async def test_supported_extensions(self) -> None:
         """``.pdf`` is the only extension exposed to the file picker."""
         self.assertEqual(PDFParser.supported_extensions(), [".pdf"])
