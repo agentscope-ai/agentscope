@@ -2,10 +2,12 @@
 """Grep tool test case."""
 import os
 import tempfile
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.message import ToolResultState
-from agentscope.tool import Grep
+from agentscope.tool import ExecResult, Grep, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -93,6 +95,46 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Should find files containing "Hello"
         self.assertIn("test1.py", content)
         self.assertIn("test.txt", content)
+
+    async def test_dash_prefixed_paths(self) -> None:
+        """Relative paths must not be interpreted as ripgrep options."""
+        backend = LocalBackend()
+        grep = Grep(backend=backend)
+        exec_shell = backend.exec_shell
+
+        async def exec_in_temp(
+            command: list[str],
+            **kwargs: Any,
+        ) -> ExecResult:
+            return await exec_shell(command, cwd=self.temp_dir, **kwargs)
+
+        for name in ("-notes.txt", "--help", "-folder"):
+            target = os.path.join(self.temp_dir, name)
+            if name == "-folder":
+                os.makedirs(target)
+                target = os.path.join(target, "notes.txt")
+            with open(target, "w", encoding="utf-8") as stream:
+                stream.write("-needle\n")
+
+            for pattern in ("needle", "-needle"):
+                with self.subTest(path=name, pattern=pattern):
+                    with patch.object(
+                        backend,
+                        "exec_shell",
+                        side_effect=exec_in_temp,
+                    ):
+                        chunk = await grep(
+                            pattern=pattern,
+                            path=name,
+                            output_mode="content",
+                            n=False,
+                        )
+                    self.assertEqual(chunk.state, ToolResultState.SUCCESS)
+                    content = chunk.content[0].text
+                    self.assertIn("-needle", content)
+                    self.assertNotIn("USAGE:", content)
+                    if name != "-folder":
+                        self.assertEqual(content, "-needle")
 
     async def test_content_mode(self) -> None:
         """Test grep with content output mode."""
