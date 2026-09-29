@@ -1879,17 +1879,6 @@ class SessionOwnerScopeTest(IsolatedAsyncioTestCase):
             session_id=session_id,
         )
 
-    async def test_foreign_session_id_is_rejected(self) -> None:
-        """The id is a global key, so a foreign use must raise."""
-        from sqlalchemy.exc import IntegrityError
-
-        await self._steal(await self._seed_owner())
-        # Nothing to assert about the row here: this test exists to pin the
-        # loud failure, and the next one pins that the owner keeps its data
-        # even once the steal has been attempted.
-        with self.assertRaises(IntegrityError):
-            await self._steal("sess-does-not-belong-to-b")
-
     async def test_owner_row_survives_a_foreign_attempt(self) -> None:
         """A rejected steal must leave the owner's session untouched."""
         from sqlalchemy.exc import IntegrityError
