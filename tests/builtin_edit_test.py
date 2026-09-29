@@ -81,6 +81,41 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunk.state, "error")
         self.assertIn("not found", chunk.content[0].text)
 
+    async def test_empty_target_preserves_file(self) -> None:
+        """An empty target must not expand between every character."""
+        for original in (b"abc\r\ndef\r\n", b""):
+            for replace_all in (False, True):
+                with self.subTest(original=original, replace_all=replace_all):
+                    with open(self.temp_file.name, "wb") as stream:
+                        stream.write(original)
+                    chunk = await self.edit_tool(
+                        file_path=self.temp_file.name,
+                        old_string="",
+                        new_string="X",
+                        replace_all=replace_all,
+                    )
+                    with open(self.temp_file.name, "rb") as stream:
+                        self.assertEqual(stream.read(), original)
+                    self.assertEqual(chunk.state, "error")
+                    self.assertIn(
+                        "old_string must not be empty",
+                        chunk.content[0].text,
+                    )
+
+    async def test_whitespace_target_can_be_deleted(self) -> None:
+        """A nonempty whitespace target and an empty replacement are valid."""
+        with open(self.temp_file.name, "w", encoding="utf-8") as stream:
+            stream.write("a b c")
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string=" ",
+            new_string="",
+            replace_all=True,
+        )
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "r", encoding="utf-8") as stream:
+            self.assertEqual(stream.read(), "abc")
+
     async def test_edit_multiple_occurrences(self) -> None:
         """Test editing with multiple occurrences."""
         # Write file with duplicate content
