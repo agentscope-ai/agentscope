@@ -10,6 +10,8 @@ from ..._logging import logger
 from ...agent import RealtimeAgent
 from ...event import (
     DataBlockDeltaEvent,
+    DataBlockEndEvent,
+    DataBlockStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
 )
@@ -57,6 +59,7 @@ class WebRTCSession:
         self._lock_acquired = asyncio.Event()
         self._persisted_message_ids: set[str] = set()
         self._open_user_replies: set[str] = set()
+        self._pcm_block_ids: set[str] = set()
         self._last_entry_id: str | None = None
         self._checkpoint_entry_id: str | None = None
 
@@ -136,15 +139,27 @@ class WebRTCSession:
                             async for event in self.agent.reply_stream(
                                 self.transport,
                             ):
-                                checkpoint = self.agent.checkpoint_snapshot(
-                                    event,
-                                )
-                                payload = event.model_dump(mode="json")
+                                if isinstance(event, DataBlockStartEvent) and (
+                                    event.media_type.startswith("audio/pcm")
+                                ):
+                                    self._pcm_block_ids.add(event.block_id)
+                                    continue
                                 if isinstance(
                                     event,
                                     DataBlockDeltaEvent,
                                 ) and event.media_type.startswith("audio/pcm"):
+                                    self._pcm_block_ids.add(event.block_id)
                                     continue
+                                if (
+                                    isinstance(event, DataBlockEndEvent)
+                                    and event.block_id in self._pcm_block_ids
+                                ):
+                                    self._pcm_block_ids.discard(event.block_id)
+                                    continue
+                                checkpoint = self.agent.checkpoint_snapshot(
+                                    event,
+                                )
+                                payload = event.model_dump(mode="json")
                                 entry_id = await publish_session_event(
                                     self.message_bus,
                                     self.session_id,

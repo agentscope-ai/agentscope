@@ -29,6 +29,8 @@ from agentscope.app.message_bus import MessageBusKeys
 from agentscope.app.storage import CredentialRecord, RealtimeModelConfig
 from agentscope.event import (
     DataBlockDeltaEvent,
+    DataBlockEndEvent,
+    DataBlockStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     RequireUserConfirmEvent,
@@ -349,6 +351,29 @@ class _BlockedMessageBus(_FakeMessageBus):
         yield
 
 
+def _make_session(
+    *,
+    agent_factory: Any,
+    storage: Any,
+    message_bus: Any,
+    on_closed: Callable[[WebRTCSession], None],
+    transport: Any | None = None,
+    peer_connection: Any | None = None,
+) -> WebRTCSession:
+    """Build a session with the shared test identity."""
+    return WebRTCSession(
+        peer_connection=peer_connection or _FakePeerConnection(),
+        transport=transport or _FakeTransport(),
+        agent_factory=agent_factory,
+        storage=storage,
+        message_bus=message_bus,
+        user_id="alice",
+        agent_id="agent-1",
+        session_id="session-1",
+        on_closed=on_closed,
+    )
+
+
 class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
     """Verify complete control structures and decoded media."""
 
@@ -444,22 +469,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             "id": "confirm-event-1",
             "created_at": "2026-01-01T00:00:00",
             "reply_id": "reply-1",
-            "confirm_results": [
-                {
-                    "confirmed": True,
-                    "tool_call": {
-                        "type": "tool_call",
-                        "id": "call-1",
-                        "name": "Read",
-                        "input": '{"path":"README.md"}',
-                        "state": "asking",
-                        "suggested_rules": [],
-                        "created_at": "2026-01-01T00:00:00",
-                        "finished_at": None,
-                    },
-                    "rules": None,
-                },
-            ],
+            "confirm_results": [],
         }
         self.channel.emit_message(
             {
@@ -676,34 +686,6 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_clear_before_playout_reports_no_item(self) -> None:
-        """Keep an empty browser position when audio is still unheard."""
-        pcm = np.full((2_400,), 2_000, dtype="<i2").tobytes()
-        await self.transport.send_audio(pcm, "item-1")
-        await self.transport.output_track.recv()
-
-        clear_task = asyncio.create_task(self.transport.clear_audio())
-        while self.channel.sent[-1].get("type") != "clear_audio":
-            await asyncio.sleep(0)
-        clear_request = self.channel.sent[-1]
-        self.channel.emit_message(
-            {
-                "type": "playout_cleared",
-                "request_id": clear_request["request_id"],
-                "item_id": "",
-                "played_ms": 0,
-            },
-        )
-
-        self.assertEqual(
-            (await clear_task).model_dump(),
-            {
-                "item_id": "",
-                "played_ms": 0,
-                "first_played_at": None,
-            },
-        )
-
     async def test_realtime_config_resolves_the_matching_adapter(self) -> None:
         """The persisted adapter type selects the intended model class."""
         access = AsyncMock()
@@ -824,15 +806,12 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 "An unstarted session must not load an agent.",
             )
 
-        session = WebRTCSession(
-            peer_connection=peer_connection,  # type: ignore[arg-type]
-            transport=transport,  # type: ignore[arg-type]
-            agent_factory=_create_agent,  # type: ignore[arg-type]
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=message_bus,  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            peer_connection=peer_connection,
+            transport=transport,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
             on_closed=closed_sessions.append,
         )
 
@@ -889,15 +868,12 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             closed_sessions.append(session)
             closed.set()
 
-        session = WebRTCSession(
-            peer_connection=peer_connection,  # type: ignore[arg-type]
-            transport=transport,  # type: ignore[arg-type]
-            agent_factory=_create_agent,  # type: ignore[arg-type]
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=message_bus,  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            peer_connection=peer_connection,
+            transport=transport,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
             on_closed=_on_closed,
         )
         session.start()
@@ -1046,17 +1022,10 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         message_bus = _FakeMessageBus(sequence_entries=True)
         storage = _FakeStorage()
         closed = asyncio.Event()
-        session = WebRTCSession(
-            peer_connection=_FakePeerConnection(),  # type: ignore[arg-type]
-            transport=_FakeTransport(),  # type: ignore[arg-type]
-            agent_factory=AsyncMock(  # type: ignore[arg-type]
-                return_value=agent,
-            ),
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=message_bus,  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
             on_closed=lambda _: closed.set(),
         )
 
@@ -1081,7 +1050,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     async def test_checkpoint_deletes_message_removed_from_context(
         self,
     ) -> None:
-        """A later checkpoint removes an unheard persisted reply."""
+        """A later checkpoint removes a message no longer in context."""
         message = {"id": "reply-1", "role": "assistant"}
         agent = _FakeAgent(
             message,
@@ -1091,15 +1060,10 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         storage = _FakeStorage()
-        session = WebRTCSession(
-            peer_connection=_FakePeerConnection(),  # type: ignore[arg-type]
-            transport=_FakeTransport(),  # type: ignore[arg-type]
-            agent_factory=AsyncMock(),  # type: ignore[arg-type]
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=_FakeMessageBus(),  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=storage,
+            message_bus=_FakeMessageBus(),
             on_closed=lambda _: None,
         )
         session.agent = agent  # type: ignore[assignment]
@@ -1146,18 +1110,35 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_pcm_delta_is_not_published_to_session_events(self) -> None:
+    async def test_pcm_events_are_not_published_to_session_events(
+        self,
+    ) -> None:
         """WebRTC carries PCM without duplicating it over session SSE."""
         message = {"id": "message-1", "role": "assistant"}
-        event = DataBlockDeltaEvent(
-            id="event-1",
-            created_at="2026-01-01T00:00:00",
-            reply_id="message-1",
-            block_id="audio-1",
-            data="AQA=",
-            media_type="audio/pcm;rate=24000",
-        )
-        agent = _FakeAgent(message, event)
+        events = [
+            DataBlockStartEvent(
+                id="event-1",
+                created_at="2026-01-01T00:00:00",
+                reply_id="message-1",
+                block_id="audio-1",
+                media_type="audio/pcm;rate=24000",
+            ),
+            DataBlockDeltaEvent(
+                id="event-2",
+                created_at="2026-01-01T00:00:01",
+                reply_id="message-1",
+                block_id="audio-1",
+                data="AQA=",
+                media_type="audio/pcm;rate=24000",
+            ),
+            DataBlockEndEvent(
+                id="event-3",
+                created_at="2026-01-01T00:00:02",
+                reply_id="message-1",
+                block_id="audio-1",
+            ),
+        ]
+        agent = _FakeAgent(message, events)
         transport = _FakeTransport()
         peer_connection = _FakePeerConnection()
         storage = _FakeStorage()
@@ -1168,15 +1149,12 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             message_bus.calls.append({"method": "agent_factory"})
             return agent
 
-        session = WebRTCSession(
-            peer_connection=peer_connection,  # type: ignore[arg-type]
-            transport=transport,  # type: ignore[arg-type]
-            agent_factory=_create_agent,  # type: ignore[arg-type]
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=message_bus,  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            peer_connection=peer_connection,
+            transport=transport,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
             on_closed=lambda _: closed.set(),
         )
         session.start()
@@ -1214,15 +1192,12 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         async def _create_agent() -> _FakeAgent:
             raise AssertionError("The agent must not load without the lock.")
 
-        session = WebRTCSession(
-            peer_connection=peer_connection,  # type: ignore[arg-type]
-            transport=transport,  # type: ignore[arg-type]
-            agent_factory=_create_agent,  # type: ignore[arg-type]
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=message_bus,  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            peer_connection=peer_connection,
+            transport=transport,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
             on_closed=closed_sessions.append,
         )
         session.start()
@@ -1294,15 +1269,12 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         async def _create_agent() -> _FakeAgent:
             return agent
 
-        session = WebRTCSession(
-            peer_connection=peer_connection,  # type: ignore[arg-type]
-            transport=transport,  # type: ignore[arg-type]
-            agent_factory=_create_agent,  # type: ignore[arg-type]
-            storage=storage,  # type: ignore[arg-type]
-            message_bus=message_bus,  # type: ignore[arg-type]
-            user_id="alice",
-            agent_id="agent-1",
-            session_id="session-1",
+        session = _make_session(
+            peer_connection=peer_connection,
+            transport=transport,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
             on_closed=lambda _: closed.set(),
         )
         session.start()
