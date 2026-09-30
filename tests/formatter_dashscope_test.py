@@ -1271,3 +1271,21 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class DashScopeMultiAgentInputValidationTest(IsolatedAsyncioTestCase):
+    """The multi-agent formatter must validate input like its siblings."""
+
+    async def test_rejects_a_non_msg_element(self) -> None:
+        """A dict inside the list must raise the documented ``TypeError``."""
+        with self.assertRaises(TypeError):
+            await DashScopeMultiAgentFormatter().format(
+                [{"role": "user", "content": "hi"}],  # type: ignore
+            )
+
+    async def test_rejects_a_non_list_input(self) -> None:
+        """A bare ``Msg`` instead of a list must also raise ``TypeError``."""
+        with self.assertRaises(TypeError):
+            await DashScopeMultiAgentFormatter().format(
+                UserMsg("u", "hi"),  # type: ignore[arg-type]
+            )
