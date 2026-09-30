@@ -6,6 +6,7 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
+
 from typing import Any, Literal
 
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -15,6 +16,7 @@ from .._tool import (
     SubmitVerdict,
     AgentCreate,
     AgentInvite,
+    AgentKick,
     TeamCreate,
     TeamDelete,
     TeamSay,
@@ -71,7 +73,8 @@ async def get_toolkit(
        session has a model configured (Schedule tools need a model to
        fire new chats with).
     5. Team tools — by caller-resolved ``team_role``: a worker gets only
-       ``TeamSay``; anyone else gets the full leader-side toolset.
+       ``TeamSay``; anyone else gets the full leader-side toolset,
+       including ``AgentKick`` for single-member removal.
     6. Caller-supplied extras (``extra_factory``)
     7. Channel platform tools — the caller resolves them (once, shared
        with the system-prompt attachment) and passes ``channel_tools``.
@@ -194,6 +197,7 @@ time or interval"
                 sub_agent_templates=sub_agent_templates or {},
             ),
             TeamSay(**team_tool_kwargs, role="leader"),
+            AgentKick(**team_tool_kwargs),
             TeamDelete(**team_tool_kwargs),
         ]
         # Conditionally attach AgentInvite. Skipping construction when

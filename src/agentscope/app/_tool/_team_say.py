@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
+
 import json
 from typing import Any
 
 from pydantic import Field
 
-from ._constants import HANDLE_LEN
+from ._team_routing import _build_member_directory
 from ._team_tool_base import _TeamToolBase
 from .._bus_ops import deliver_to_inbox
-from ..storage._utils import _ensure_team_members, _resolve_team_leader
+from ..storage._utils import _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -158,10 +159,9 @@ class TeamSay(_TeamToolBase):
             # borrowed agent whose name collides with an already-created
             # member (or the leader) remains addressable.
             #
-            # Uniqueness of the resulting display strings within a team
-            # is preserved by the AgentCreate name check (which rejects
-            # ``@``) and by AgentInvite's one-borrow-per-agent-per-team
-            # rule.
+            # The shared directory qualifies renamed members with a
+            # stable handle when a display name collides with the leader
+            # or another member, so no entry is silently overwritten.
             leader = await _resolve_team_leader(
                 self._storage,
                 self._user_id,
@@ -182,25 +182,13 @@ class TeamSay(_TeamToolBase):
             directory: dict[str, tuple[str, str]] = {
                 leader.name: (leader.session_id, leader.agent.id),
             }
-            members = await _ensure_team_members(
+            member_directory = await _build_member_directory(
                 self._storage,
                 self._user_id,
                 team,
+                reserved_names={leader.name},
             )
-            for member in members:
-                member_agent = await self._storage.get_agent(
-                    member.owner_id,
-                    member.agent_id,
-                )
-                if member_agent is None:
-                    continue
-                if member.role == "invited":
-                    display = (
-                        f"{member_agent.data.name}"
-                        f"@{member.agent_id[:HANDLE_LEN]}"
-                    )
-                else:
-                    display = member_agent.data.name
+            for display, member in member_directory.items():
                 directory[display] = (member.session_id, member.agent_id)
 
             own_session_ids = {sid for sid, _aid in directory.values()}
