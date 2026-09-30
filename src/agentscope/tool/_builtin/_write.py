@@ -2,7 +2,6 @@
 """The write tool in agentscope."""
 import difflib
 import fnmatch
-from pathlib import Path
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -292,13 +291,11 @@ Usage:
                 # render a best-effort "add" diff in the UI.
                 previous_content = ""
 
-        # Create parent directories if they don't exist
-        parent_dir = Path(file_path).parent
-        await self._backend.exec_shell(
-            ["mkdir", "-p", str(parent_dir)],
-        )
-
-        # Write content to file (backend handles parent dir creation)
+        # The backend creates the parent directories itself (every
+        # implementation does, and with the path semantics of the
+        # environment it writes into), so no shell round trip is needed
+        # here — and deriving the parent with the host's ``Path`` would
+        # produce a wrong path when a Windows host drives a POSIX sandbox.
         await self._backend.write_file(
             file_path,
             content.encode("utf-8"),

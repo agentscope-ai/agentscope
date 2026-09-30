@@ -14,6 +14,7 @@ from agentscope.permission import (
 )
 from agentscope.state import AgentState
 from agentscope.message import ToolResultState
+from agentscope.tool._builtin._backend import ExecResult, LocalBackend
 
 
 class WriteToolTest(IsolatedAsyncioTestCase):
@@ -127,6 +128,47 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "")
+
+    async def test_write_creates_parents_without_a_shell_round_trip(
+        self,
+    ) -> None:
+        """Parent directories are the backend's job, so Write must not
+        spawn its own ``mkdir`` for them."""
+        commands: list[list[str]] = []
+
+        class RecordingBackend(LocalBackend):
+            """A local backend that records the commands it is asked to
+            run."""
+
+            async def exec_shell(
+                self,
+                command: list[str],
+                *,
+                cwd: str | None = None,
+                timeout: float | None = None,
+            ) -> ExecResult:
+                """Record the command, then run it for real."""
+                commands.append(list(command))
+                return await super().exec_shell(
+                    command,
+                    cwd=cwd,
+                    timeout=timeout,
+                )
+
+        write_tool = Write(backend=RecordingBackend())
+        file_path = os.path.join(self.temp_dir, "a", "b", "test.txt")
+
+        chunk = await write_tool(
+            file_path=file_path,
+            content="nested",
+        )
+
+        self.assertEqual(chunk.state, "running")
+        self.assertTrue(os.path.exists(file_path))
+        self.assertListEqual(
+            [command for command in commands if command[0] == "mkdir"],
+            [],
+        )
 
     async def test_written_line_count_matches_read_numbering(self) -> None:
         """The reported line count matches the ``Read`` tool numbering."""
