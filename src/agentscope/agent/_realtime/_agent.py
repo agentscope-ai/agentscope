@@ -616,7 +616,8 @@ class RealtimeAgent:
             self._start_user_turn()
             await self._barge_in()
         elif speech is SpeechTransition.ENDED:
-            self._end_user_turn()
+            if not self.model.input_transcription_enabled:
+                self._end_user_turn()
             now = time.monotonic()
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
@@ -831,6 +832,8 @@ class RealtimeAgent:
                 if generation != self._connection_generation:
                     continue
                 self._mark_disconnected()
+                self._end_user_turn()
+                self._user_turn = ""
                 self._finish_reply(ReplyFinishedReason.ERROR)
             logger.info(
                 "RealtimeAgent: model session ended; keep talking and it "
@@ -846,7 +849,8 @@ class RealtimeAgent:
                 await self._barge_in()
 
             case me.SpeechEndedEvent():
-                self._end_user_turn()
+                if not self.model.input_transcription_enabled:
+                    self._end_user_turn()
                 # With provider turn detection this is also its commit.
                 now = time.monotonic()
                 self._metrics.user_speech_end_at = now
@@ -945,7 +949,7 @@ class RealtimeAgent:
         )
 
     def _end_user_turn(self) -> None:
-        """Close the user's turn; the transcript may still be on its way."""
+        """Close the user reply once no transcript remains pending."""
         if not self._user_turn_open:
             return
         self._user_turn_open = False
@@ -963,6 +967,8 @@ class RealtimeAgent:
         turn = self.aggregator.take(event.text)
         if turn is None:
             logger.debug("RealtimeAgent: dropping %r", event.text)
+            self._end_user_turn()
+            self._user_turn = ""
             return
 
         # A transcript with no detected speech, e.g. after a reconnect,
@@ -979,8 +985,6 @@ class RealtimeAgent:
             ),
         )
         self._emit(TextBlockEndEvent(reply_id=reply_id, block_id=block_id))
-        self._end_user_turn()
-        self._user_turn = ""
 
         if not (
             self.aggregator.merges_with_previous() and self._merge_user(turn)
@@ -988,6 +992,8 @@ class RealtimeAgent:
             self.state.context.append(
                 UserMsg(name="user", content=turn, id=reply_id),
             )
+        self._end_user_turn()
+        self._user_turn = ""
 
     def _merge_user(self, text: str) -> bool:
         """Append *text* to the previous user turn that endpointing split.

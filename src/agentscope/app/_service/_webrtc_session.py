@@ -11,6 +11,7 @@ from ...agent import RealtimeAgent
 from ...event import (
     DataBlockDeltaEvent,
     ReplyEndEvent,
+    ReplyStartEvent,
     RequireUserConfirmEvent,
     TextBlockEndEvent,
     ToolResultEndEvent,
@@ -57,6 +58,7 @@ class WebRTCSession:
         self._closing = False
         self._lock_acquired = asyncio.Event()
         self._persisted_message_ids: set[str] = set()
+        self._open_user_replies: set[str] = set()
 
     def start(self) -> None:
         """Start the agent pump after WebRTC negotiation succeeds."""
@@ -125,52 +127,90 @@ class WebRTCSession:
                 ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
             ):
                 self._lock_acquired.set()
-                self.agent = await self._agent_factory()
-                self._persisted_message_ids.update(
-                    message.id for message in self.agent.state.context
-                )
-                async with self.transport:
-                    async with self.agent:
-                        async for event in self.agent.reply_stream(
-                            self.transport,
-                        ):
-                            payload = event.model_dump(mode="json")
-                            if isinstance(
-                                event,
-                                DataBlockDeltaEvent,
-                            ) and event.media_type.startswith("audio/pcm"):
-                                entry_id = None
-                                await self.message_bus.publish(
-                                    events_key,
-                                    payload,
-                                )
-                            else:
-                                entry_id = await publish_session_event(
-                                    self.message_bus,
-                                    self.session_id,
-                                    payload,
-                                )
-                            should_checkpoint = isinstance(
-                                event,
-                                (
-                                    ReplyEndEvent,
-                                    RequireUserConfirmEvent,
-                                    ToolResultEndEvent,
-                                ),
-                            ) or (
-                                isinstance(event, TextBlockEndEvent)
-                                and event.text is not None
-                            )
-                            if should_checkpoint:
-                                try:
-                                    await self._checkpoint_state(entry_id)
-                                except Exception as exc:
-                                    logger.warning(
-                                        "Failed to checkpoint WebRTC "
-                                        "session %r: %s",
-                                        self.session_id,
-                                        exc,
+                try:
+                    self.agent = await self._agent_factory()
+                    self._persisted_message_ids.update(
+                        message.id for message in self.agent.state.context
+                    )
+                    async with self.transport:
+                        async with self.agent:
+                            async for event in self.agent.reply_stream(
+                                self.transport,
+                            ):
+                                payload = event.model_dump(mode="json")
+                                if isinstance(
+                                    event,
+                                    DataBlockDeltaEvent,
+                                ) and event.media_type.startswith("audio/pcm"):
+                                    entry_id = None
+                                    await self.message_bus.publish(
+                                        events_key,
+                                        payload,
                                     )
+                                else:
+                                    entry_id = await publish_session_event(
+                                        self.message_bus,
+                                        self.session_id,
+                                        payload,
+                                    )
+                                if (
+                                    isinstance(event, ReplyStartEvent)
+                                    and event.role == "user"
+                                ):
+                                    self._open_user_replies.add(
+                                        event.reply_id,
+                                    )
+                                elif isinstance(event, ReplyEndEvent):
+                                    self._open_user_replies.discard(
+                                        event.reply_id,
+                                    )
+                                should_checkpoint = isinstance(
+                                    event,
+                                    (
+                                        ReplyEndEvent,
+                                        RequireUserConfirmEvent,
+                                        ToolResultEndEvent,
+                                    ),
+                                ) or (
+                                    isinstance(event, TextBlockEndEvent)
+                                    and event.text is not None
+                                )
+                                if should_checkpoint:
+                                    try:
+                                        cursor = (
+                                            None
+                                            if self._open_user_replies
+                                            else entry_id
+                                        )
+                                        await self._checkpoint_state(cursor)
+                                    except Exception as exc:
+                                        logger.warning(
+                                            "Failed to checkpoint WebRTC "
+                                            "session %r: %s",
+                                            self.session_id,
+                                            exc,
+                                        )
+                finally:
+                    try:
+                        async with self.message_bus.acquire_lock(
+                            MessageBusKeys.session_event_checkpoint_lock(
+                                self.session_id,
+                            ),
+                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                        ):
+                            await self._persist_state()
+                            await self.message_bus.log_trim(events_key)
+                            await self.message_bus.registry_drop(
+                                MessageBusKeys.session_event_checkpoint(
+                                    self.session_id,
+                                ),
+                            )
+                    except Exception as exc:
+                        logger.exception(
+                            "Failed to persist WebRTC session %r: %s",
+                            self.session_id,
+                            exc,
+                        )
         except Exception as exc:
             logger.exception(
                 "WebRTC session %r failed: %s",
@@ -181,27 +221,6 @@ class WebRTCSession:
         finally:
             async with self._close_lock:
                 self._closing = True
-            if self._lock_acquired.is_set():
-                try:
-                    async with self.message_bus.acquire_lock(
-                        MessageBusKeys.session_event_checkpoint_lock(
-                            self.session_id,
-                        ),
-                        ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
-                    ):
-                        await self._persist_state()
-                        await self.message_bus.log_trim(events_key)
-                        await self.message_bus.registry_drop(
-                            MessageBusKeys.session_event_checkpoint(
-                                self.session_id,
-                            ),
-                        )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to persist WebRTC session %r: %s",
-                        self.session_id,
-                        exc,
-                    )
             await self.transport.close()
             await self.peer_connection.close()
             self._on_closed(self)

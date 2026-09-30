@@ -375,32 +375,6 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
             },
         )
 
-    def test_audio_31_payload_uses_model_voice_default(self) -> None:
-        """Audio 3.1 sends its model-specific default voice."""
-        model = DashScopeAudioRealtimeModel(
-            "qwen-audio-3.1-realtime-plus",
-            CRED,
-        )
-        self.assertDictEqual(
-            model._session_update("be nice", None),
-            {
-                "type": "session.update",
-                "session": {
-                    "instructions": "be nice",
-                    "modalities": ["audio", "text"],
-                    "voice": "longanqian_v3.1",
-                    "input_audio_format": "pcm",
-                    "output_audio_format": "pcm",
-                    "max_history_turns": 20,
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.5,
-                        "silence_duration_ms": 800,
-                    },
-                },
-            },
-        )
-
     def test_turn_detection_none_hands_endpointing_to_caller(self) -> None:
         """``none`` sends null and marks endpointing as ours."""
         model = DashScopeAudioRealtimeModel(

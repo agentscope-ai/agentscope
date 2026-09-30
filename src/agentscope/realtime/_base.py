@@ -151,6 +151,17 @@ class RealtimeModelBase(ABC):
         """The PCM rate of the audio in :class:`AudioDelta`, in Hz."""
         return self.card.output_sample_rate
 
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether a settled user transcript is expected after speech."""
+        return bool(
+            getattr(
+                getattr(self, "parameters", None),
+                "input_audio_transcription",
+                False,
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

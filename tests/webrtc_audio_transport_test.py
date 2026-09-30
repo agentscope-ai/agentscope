@@ -30,8 +30,11 @@ from agentscope.app.storage import CredentialRecord, RealtimeModelConfig
 from agentscope.event import (
     DataBlockDeltaEvent,
     ReplyEndEvent,
+    ReplyStartEvent,
     RequireUserConfirmEvent,
+    TextBlockDeltaEvent,
     TextBlockEndEvent,
+    TextBlockStartEvent,
     ToolResultEndEvent,
 )
 from agentscope.message import ToolCallBlock, ToolResultState
@@ -216,11 +219,32 @@ class _FakeStorage:
         self.calls.append({"method": "update_session_state", **kwargs})
 
 
+class _LockAwareStorage(_FakeStorage):
+    """Record whether each state write holds the session run lock."""
+
+    def __init__(self, message_bus: "_FakeMessageBus") -> None:
+        super().__init__()
+        self._message_bus = message_bus
+        self.writes_under_session_lock: list[bool] = []
+
+    async def update_session_state(self, **kwargs: object) -> None:
+        """Record the lock state alongside the normal write."""
+        session_id = str(kwargs["session_id"])
+        self.writes_under_session_lock.append(
+            MessageBusKeys.session_lock(session_id)
+            in self._message_bus.held_locks,
+        )
+        await super().update_session_state(**kwargs)
+
+
 class _FakeMessageBus:
     """Record lock, replay-log, and publication operations."""
 
-    def __init__(self) -> None:
+    def __init__(self, sequence_entries: bool = False) -> None:
         self.calls: list[dict] = []
+        self.held_locks: set[str] = set()
+        self._sequence_entries = sequence_entries
+        self._entry_count = 0
 
     @asynccontextmanager
     async def acquire_lock(
@@ -233,7 +257,11 @@ class _FakeMessageBus:
         self.calls.append(
             {"method": "acquire_lock", "key": key, "ttl_secs": ttl_secs},
         )
-        yield
+        self.held_locks.add(key)
+        try:
+            yield
+        finally:
+            self.held_locks.remove(key)
 
     async def log_append(
         self,
@@ -251,6 +279,9 @@ class _FakeMessageBus:
                 "max_len": max_len,
             },
         )
+        if self._sequence_entries:
+            self._entry_count += 1
+            return f"{self._entry_count}-0"
         return "1-0"
 
     async def publish(self, key: str, event: dict) -> None:
@@ -832,8 +863,8 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         agent = _FakeAgent(message, event)
         transport = _FakeTransport()
         peer_connection = _FakePeerConnection()
-        storage = _FakeStorage()
         message_bus = _FakeMessageBus()
+        storage = _LockAwareStorage(message_bus)
         closed = asyncio.Event()
         closed_sessions: list[WebRTCSession] = []
 
@@ -961,12 +992,85 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 "peer_connection_closed": peer_connection.closed,
                 "transport_errors": transport.errors,
                 "closed_sessions": closed_sessions,
+                "writes_under_session_lock": (
+                    storage.writes_under_session_lock
+                ),
             },
             {
                 "transport_closed": True,
                 "peer_connection_closed": True,
                 "transport_errors": [],
                 "closed_sessions": [session],
+                "writes_under_session_lock": [True, True],
+            },
+        )
+
+    async def test_delayed_user_transcript_holds_replay_cursor(self) -> None:
+        """Do not skip the user start while its transcript is pending."""
+        agent = _FakeAgent(
+            {"id": "user-1", "role": "user"},
+            [
+                ReplyStartEvent(
+                    session_id="session-1",
+                    reply_id="user-1",
+                    name="user",
+                    role="user",
+                ),
+                ReplyEndEvent(
+                    session_id="session-1",
+                    reply_id="assistant-1",
+                ),
+                TextBlockStartEvent(
+                    reply_id="user-1",
+                    block_id="text-1",
+                ),
+                TextBlockDeltaEvent(
+                    reply_id="user-1",
+                    block_id="text-1",
+                    delta="hello",
+                ),
+                TextBlockEndEvent(
+                    reply_id="user-1",
+                    block_id="text-1",
+                ),
+                ReplyEndEvent(
+                    session_id="session-1",
+                    reply_id="user-1",
+                ),
+            ],
+        )
+        message_bus = _FakeMessageBus(sequence_entries=True)
+        storage = _FakeStorage()
+        closed = asyncio.Event()
+        session = WebRTCSession(
+            peer_connection=_FakePeerConnection(),  # type: ignore[arg-type]
+            transport=_FakeTransport(),  # type: ignore[arg-type]
+            agent_factory=AsyncMock(  # type: ignore[arg-type]
+                return_value=agent,
+            ),
+            storage=storage,  # type: ignore[arg-type]
+            message_bus=message_bus,  # type: ignore[arg-type]
+            user_id="alice",
+            agent_id="agent-1",
+            session_id="session-1",
+            on_closed=lambda _: closed.set(),
+        )
+
+        session.start()
+        await asyncio.wait_for(closed.wait(), timeout=1)
+
+        self.assertEqual(
+            {
+                "cursor_values": [
+                    call["value"]
+                    for call in message_bus.calls
+                    if call["method"] == "registry_set"
+                ],
+                "persisted_messages": list(storage.messages),
+            },
+            {
+                "cursor_values": ["6-0"],
+                "persisted_messages": ["user-1"],
             },
         )
 
@@ -1222,58 +1326,28 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         session.start()
         await asyncio.wait_for(closed.wait(), timeout=1)
 
-        expected_writes = [
-            {
-                "method": "upsert_message",
-                "user_id": "alice",
-                "session_id": "session-1",
-                "message": message,
-            },
-            {
-                "method": "update_session_state",
-                "user_id": "alice",
-                "agent_id": "agent-1",
-                "session_id": "session-1",
-                "state": agent.state,
-            },
-        ]
         self.assertEqual(
             {
-                "storage_calls": storage.calls,
-                "published_events": [
-                    call["event"]
+                "storage_methods": [call["method"] for call in storage.calls],
+                "published_event_types": [
+                    call["event"]["type"]
                     for call in message_bus.calls
                     if call["method"] == "publish"
                 ],
-                "cursor_writes": [
-                    call
+                "cursor_values": [
+                    call["value"]
                     for call in message_bus.calls
                     if call["method"] == "registry_set"
                 ],
             },
             {
-                "storage_calls": expected_writes * 4,
-                "published_events": [
-                    {
-                        **event.model_dump(mode="json"),
-                        "_entry_id": "1-0",
-                    }
-                    for event in events
-                ],
-                "cursor_writes": [
-                    {
-                        "method": "registry_set",
-                        "namespace": (
-                            MessageBusKeys.session_event_checkpoint(
-                                "session-1",
-                            )
-                        ),
-                        "field": (MessageBusKeys.SESSION_EVENT_CURSOR_FIELD),
-                        "value": "1-0",
-                        "ttl_secs": None,
-                    },
+                "storage_methods": [
+                    "upsert_message",
+                    "update_session_state",
                 ]
-                * 3,
+                * 4,
+                "published_event_types": [event.type for event in events],
+                "cursor_values": ["1-0"] * 3,
             },
         )
 

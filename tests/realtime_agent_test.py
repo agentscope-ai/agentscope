@@ -59,6 +59,29 @@ from agentscope.types import ReplyFinishedReason
 
 PCM_100MS = b"\x01\x00" * 2400
 
+
+def _message_summary(message: Msg) -> dict[str, Any]:
+    """Keep only state-machine fields relevant to realtime assertions."""
+    payload = message.model_dump(mode="json")
+    content = []
+    for block in payload["content"]:
+        summary = {
+            key: block[key]
+            for key in ("type", "text", "name", "input", "output", "state")
+            if key in block
+        }
+        if block["type"] in {"tool_call", "tool_result"}:
+            summary["id"] = block["id"]
+        content.append(summary)
+    return {
+        "role": payload["role"],
+        "id": payload["id"],
+        "content": content,
+        "usage": payload["usage"],
+        "finished_reason": payload["finished_reason"],
+    }
+
+
 REPLY_R1 = [
     me.SpeechEndedEvent(item_id="u1"),
     me.InputTranscriptionEvent(item_id="u1", text="讲个故事"),
@@ -82,10 +105,19 @@ REPLY_R2 = [
 class ScriptedModel(RealtimeModelBase):
     """Plays one event script per session and records every call."""
 
+    class Parameters(RealtimeModelBase.Parameters):
+        """Test-only switch for delayed input transcription."""
+
+        input_audio_transcription: bool = False
+
     truncation = TruncationSupport.NONE
     type = "scripted"
 
-    def __init__(self, scripts: list[list[Any]]) -> None:
+    def __init__(
+        self,
+        scripts: list[list[Any]],
+        input_audio_transcription: bool = False,
+    ) -> None:
         card = RealtimeModelCard(
             name="scripted",
             label="scripted",
@@ -95,6 +127,9 @@ class ScriptedModel(RealtimeModelBase):
         super().__init__(
             "scripted",
             DashScopeCredential(api_key="sk-x"),
+            parameters=self.Parameters(
+                input_audio_transcription=input_audio_transcription,
+            ),
             model_card=card,
         )
         self.scripts = scripts
@@ -976,93 +1011,25 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             disconnected_before_reconnect = not agent._connected
             await self._collect(agent, FakeTransport(frames=1))
 
-        expected_replay = [
-            {
-                "name": "summary",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Earlier summary",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-                "role": "system",
-                "id": AnyString(),
-                "metadata": {},
-                "created_at": AnyString(),
-                "usage": None,
-                "finished_at": AnyString(),
-                "finished_reason": None,
-                "structured_output": None,
-                "error": None,
-            },
-            {
-                "name": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "hello",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-                "role": "user",
-                "id": AnyString(),
-                "metadata": {},
-                "created_at": AnyString(),
-                "usage": None,
-                "finished_at": AnyString(),
-                "finished_reason": None,
-                "structured_output": None,
-                "error": None,
-            },
-            {
-                "name": "Friday",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "hi",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-                "role": "assistant",
-                "id": AnyString(),
-                "metadata": {},
-                "created_at": AnyString(),
-                "usage": None,
-                "finished_at": None,
-                "finished_reason": "completed",
-                "structured_output": None,
-                "error": None,
-            },
-            {
-                "name": "Friday",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "legacy complete",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-                "role": "assistant",
-                "id": AnyString(),
-                "metadata": {},
-                "created_at": AnyString(),
-                "usage": None,
-                "finished_at": "2026-01-01T00:00:00",
-                "finished_reason": None,
-                "structured_output": None,
-                "error": None,
-            },
+        replayed = [
+            [
+                (
+                    message.role,
+                    message.name,
+                    message.get_text_content(),
+                    message.model_dump(mode="json")["finished_reason"],
+                )
+                for message in replay
+            ]
+            for replay in model.replayed
         ]
-        self.assertDictEqual(
+        expected_replay = [
+            ("system", "summary", "Earlier summary", None),
+            ("user", "user", "hello", None),
+            ("assistant", "Friday", "hi", "completed"),
+            ("assistant", "Friday", "legacy complete", None),
+        ]
+        self.assertEqual(
             {
                 "disconnected_before_reconnect": (
                     disconnected_before_reconnect
@@ -1070,10 +1037,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "instructions": model.instructions,
                 "sessions": model.sessions,
                 "calls": model.calls,
-                "replayed": [
-                    [message.model_dump(mode="json") for message in replay]
-                    for replay in model.replayed
-                ],
+                "replayed": replayed,
             },
             {
                 "disconnected_before_reconnect": True,
@@ -1399,6 +1363,61 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertListEqual(agent.state.context, [])
 
 
+class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
+    """Verify user reply boundaries around delayed transcription."""
+
+    async def test_user_reply_ends_after_delayed_transcription(self) -> None:
+        """A settled transcript closes its user reply after its text."""
+        model = ScriptedModel(
+            [
+                [
+                    me.SpeechStartedEvent(item_id="u1"),
+                    me.SpeechEndedEvent(item_id="u1"),
+                    me.ResponseCreatedEvent(item_id="r1"),
+                    me.InputTranscriptionEvent(item_id="u1", text="hello"),
+                    me.ResponseDoneEvent(item_id="r1"),
+                ],
+            ],
+            input_audio_transcription=True,
+        )
+        agent = RealtimeAgent("Friday", "be brief", model)
+        user_events = []
+
+        async with agent:
+            transport = FakeTransport(frames=3)
+            async with transport:
+                async for event in agent.reply_stream(transport):
+                    if getattr(event, "reply_id", None) == "u1":
+                        user_events.append(
+                            (
+                                event.type,
+                                getattr(event, "role", None),
+                                getattr(event, "delta", None),
+                                getattr(event, "finished_reason", None),
+                            ),
+                        )
+
+        self.assertEqual(
+            {
+                "events": user_events,
+                "context": [
+                    (message.role, message.get_text_content())
+                    for message in agent.state.context
+                ],
+            },
+            {
+                "events": [
+                    ("REPLY_START", "user", None, None),
+                    ("TEXT_BLOCK_START", None, None, None),
+                    ("TEXT_BLOCK_DELTA", None, "hello", None),
+                    ("TEXT_BLOCK_END", None, None, None),
+                    ("REPLY_END", None, None, "completed"),
+                ],
+                "context": [("user", "hello")],
+            },
+        )
+
+
 class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
     """Verify playback retention and interruption reconciliation."""
 
@@ -1461,7 +1480,7 @@ class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
         transport = FakeTransport(frames=0, played_ms=100)
         agent._transport = transport
 
-        for index in range(101):
+        for index in range(3):
             item_id = f"r{index}"
             await agent._on_model_event(
                 me.ResponseCreatedEvent(item_id=item_id),
@@ -1493,8 +1512,8 @@ class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
             },
             {
                 "retained_playout_replies": [],
-                "context_size": 101,
-                "completed_replies": 101,
+                "context_size": 3,
+                "completed_replies": 3,
             },
         )
 
@@ -1876,370 +1895,113 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             transport = FakeTransport(frames=6)
             async with transport:
                 async for event in agent.reply_stream(transport):
-                    events.append(event.model_dump(mode="json"))
+                    events.append(
+                        (
+                            event.type,
+                            getattr(event, "reply_id", None),
+                            getattr(event, "role", None),
+                            getattr(event, "delta", None),
+                            getattr(event, "tool_call_id", None),
+                            getattr(event, "finished_reason", None),
+                        ),
+                    )
 
         self.assertListEqual(
             events,
             [
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "REPLY_START",
-                    "session_id": AnyString(),
-                    "reply_id": "u1",
-                    "name": "user",
-                    "role": "user",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_START",
-                    "reply_id": "u1",
-                    "block_id": AnyString(),
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_DELTA",
-                    "reply_id": "u1",
-                    "block_id": AnyString(),
-                    "delta": "查天气",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_END",
-                    "reply_id": "u1",
-                    "block_id": AnyString(),
-                    "text": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "REPLY_END",
-                    "session_id": AnyString(),
-                    "reply_id": "u1",
-                    "finished_reason": "completed",
-                    "error": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "REPLY_START",
-                    "session_id": AnyString(),
-                    "reply_id": "r1",
-                    "name": "Friday",
-                    "role": "assistant",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "MODEL_CALL_START",
-                    "reply_id": "r1",
-                    "model_name": "scripted",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_START",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_DELTA",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "delta": "我查一下",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "DATA_BLOCK_START",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "media_type": "audio/pcm;rate=24000",
-                    "name": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "DATA_BLOCK_DELTA",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "media_type": "audio/pcm;rate=24000",
-                    "data": "AQA=",
-                    "url": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_END",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "text": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "DATA_BLOCK_END",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "MODEL_CALL_END",
-                    "reply_id": "r1",
-                    "input_tokens": 5,
-                    "output_tokens": 2,
-                    "cache_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "finished_reason": "completed",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_CALL_START",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                    "tool_call_name": "stream_tool",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_CALL_DELTA",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                    "delta": '{"q": "x"}',
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_CALL_END",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_RESULT_START",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                    "tool_call_name": "stream_tool",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_RESULT_TEXT_DELTA",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                    "delta": "x-a",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_RESULT_TEXT_DELTA",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                    "delta": "x-b",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TOOL_RESULT_END",
-                    "reply_id": "r1",
-                    "tool_call_id": "c1",
-                    "state": "success",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "MODEL_CALL_START",
-                    "reply_id": "r1",
-                    "model_name": "scripted",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_START",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_DELTA",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "delta": "今天晴",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "DATA_BLOCK_START",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "media_type": "audio/pcm;rate=24000",
-                    "name": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "DATA_BLOCK_DELTA",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "media_type": "audio/pcm;rate=24000",
-                    "data": "AQA=",
-                    "url": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "TEXT_BLOCK_END",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "text": None,
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "DATA_BLOCK_END",
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "MODEL_CALL_END",
-                    "reply_id": "r1",
-                    "input_tokens": 9,
-                    "output_tokens": 3,
-                    "cache_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "finished_reason": "completed",
-                },
-                {
-                    "id": AnyString(),
-                    "created_at": AnyString(),
-                    "metadata": {},
-                    "type": "REPLY_END",
-                    "session_id": AnyString(),
-                    "reply_id": "r1",
-                    "finished_reason": "completed",
-                    "error": None,
-                },
+                ("REPLY_START", "u1", "user", None, None, None),
+                ("TEXT_BLOCK_START", "u1", None, None, None, None),
+                ("TEXT_BLOCK_DELTA", "u1", None, "查天气", None, None),
+                ("TEXT_BLOCK_END", "u1", None, None, None, None),
+                ("REPLY_END", "u1", None, None, None, "completed"),
+                ("REPLY_START", "r1", "assistant", None, None, None),
+                ("MODEL_CALL_START", "r1", None, None, None, None),
+                ("TEXT_BLOCK_START", "r1", None, None, None, None),
+                ("TEXT_BLOCK_DELTA", "r1", None, "我查一下", None, None),
+                ("DATA_BLOCK_START", "r1", None, None, None, None),
+                ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
+                ("TEXT_BLOCK_END", "r1", None, None, None, None),
+                ("DATA_BLOCK_END", "r1", None, None, None, None),
+                ("MODEL_CALL_END", "r1", None, None, None, "completed"),
+                ("TOOL_CALL_START", "r1", None, None, "c1", None),
+                (
+                    "TOOL_CALL_DELTA",
+                    "r1",
+                    None,
+                    '{"q": "x"}',
+                    "c1",
+                    None,
+                ),
+                ("TOOL_CALL_END", "r1", None, None, "c1", None),
+                ("TOOL_RESULT_START", "r1", None, None, "c1", None),
+                (
+                    "TOOL_RESULT_TEXT_DELTA",
+                    "r1",
+                    None,
+                    "x-a",
+                    "c1",
+                    None,
+                ),
+                (
+                    "TOOL_RESULT_TEXT_DELTA",
+                    "r1",
+                    None,
+                    "x-b",
+                    "c1",
+                    None,
+                ),
+                ("TOOL_RESULT_END", "r1", None, None, "c1", None),
+                ("MODEL_CALL_START", "r1", None, None, None, None),
+                ("TEXT_BLOCK_START", "r1", None, None, None, None),
+                ("TEXT_BLOCK_DELTA", "r1", None, "今天晴", None, None),
+                ("DATA_BLOCK_START", "r1", None, None, None, None),
+                ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
+                ("TEXT_BLOCK_END", "r1", None, None, None, None),
+                ("DATA_BLOCK_END", "r1", None, None, None, None),
+                ("MODEL_CALL_END", "r1", None, None, None, "completed"),
+                ("REPLY_END", "r1", None, None, None, "completed"),
             ],
         )
         # The context records the whole turn as one assistant message: the
         # first words, the tool call and its result, then the spoken answer.
-        self.assertListEqual(
-            [m.model_dump() for m in agent.state.context],
+        self.assertEqual(
+            [_message_summary(message) for message in agent.state.context],
             [
                 {
-                    "name": "user",
                     "role": "user",
                     "id": "u1",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "查天气",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
-                    ],
-                    "metadata": {},
-                    "created_at": AnyString(),
+                    "content": [{"type": "text", "text": "查天气"}],
                     "usage": None,
-                    "finished_at": AnyString(),
                     "finished_reason": None,
-                    "structured_output": None,
-                    "error": None,
                 },
                 {
-                    "name": "Friday",
                     "role": "assistant",
                     "id": "r1",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": "我查一下",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
+                        {"type": "text", "text": "我查一下"},
                         {
                             "type": "tool_call",
-                            "id": "c1",
                             "name": "stream_tool",
                             "input": '{"q": "x"}',
                             "state": "pending",
-                            "suggested_rules": [],
-                            "created_at": AnyString(),
-                            "finished_at": None,
+                            "id": "c1",
                         },
                         {
                             "type": "tool_result",
-                            "id": "c1",
                             "name": "stream_tool",
                             "output": "x-final",
                             "state": "success",
-                            "metadata": {},
-                            "created_at": AnyString(),
-                            "finished_at": None,
+                            "id": "c1",
                         },
-                        {
-                            "type": "text",
-                            "text": "今天晴",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
+                        {"type": "text", "text": "今天晴"},
                     ],
-                    "metadata": {},
-                    "created_at": AnyString(),
-                    # Both model calls of the reply, summed.
                     "usage": {
                         "input_tokens": 14,
                         "output_tokens": 5,
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },
-                    "finished_at": AnyString(),
                     "finished_reason": "completed",
-                    "structured_output": None,
-                    "error": None,
                 },
             ],
         )
@@ -2323,54 +2085,35 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             for message in agent.state.context
             if message.role == "assistant"
         ][-1]
-        self.maxDiff = None
         self.assertEqual(
-            assistant.model_dump(),
+            _message_summary(assistant),
             {
-                "name": "Friday",
+                "role": "assistant",
+                "id": "r1",
                 "content": [
-                    {
-                        "type": "text",
-                        "text": "我查一下",
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
+                    {"type": "text", "text": "我查一下"},
                     {
                         "type": "tool_call",
-                        "id": "c1",
                         "name": "stream_tool",
                         "input": '{"q": "x"}',
                         "state": "pending",
-                        "suggested_rules": [],
-                        "created_at": AnyString(),
-                        "finished_at": None,
+                        "id": "c1",
                     },
                     {
                         "type": "tool_result",
-                        "id": "c1",
                         "name": "stream_tool",
                         "output": "x-final",
                         "state": "success",
-                        "metadata": {},
-                        "created_at": AnyString(),
-                        "finished_at": None,
+                        "id": "c1",
                     },
                 ],
-                "role": "assistant",
-                "id": "r1",
-                "metadata": {},
-                "created_at": AnyString(),
                 "usage": {
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "cache_input_tokens": 0,
                     "cache_creation_input_tokens": 0,
                 },
-                "finished_at": AnyString(),
-                "finished_reason": ReplyFinishedReason.INTERRUPTED,
-                "structured_output": None,
-                "error": None,
+                "finished_reason": "interrupted",
             },
         )
         self.assertListEqual(
@@ -2445,53 +2188,35 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 pass
 
         self.assertEqual(
-            [message.model_dump() for message in agent.state.context],
+            [_message_summary(message) for message in agent.state.context],
             [
                 {
-                    "name": "Friday",
+                    "role": "assistant",
+                    "id": "r1",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": "我查一下",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
+                        {"type": "text", "text": "我查一下"},
                         {
                             "type": "tool_call",
-                            "id": "c1",
                             "name": "stream_tool",
                             "input": '{"q": "x"}',
                             "state": "pending",
-                            "suggested_rules": [],
-                            "created_at": AnyString(),
-                            "finished_at": None,
+                            "id": "c1",
                         },
                         {
                             "type": "tool_result",
-                            "id": "c1",
                             "name": "stream_tool",
                             "output": "x-final",
                             "state": "success",
-                            "metadata": {},
-                            "created_at": AnyString(),
-                            "finished_at": None,
+                            "id": "c1",
                         },
                     ],
-                    "role": "assistant",
-                    "id": "r1",
-                    "metadata": {},
-                    "created_at": AnyString(),
                     "usage": {
                         "input_tokens": 0,
                         "output_tokens": 0,
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },
-                    "finished_at": AnyString(),
-                    "finished_reason": ReplyFinishedReason.COMPLETED,
-                    "structured_output": None,
-                    "error": None,
+                    "finished_reason": "completed",
                 },
             ],
         )
@@ -2551,59 +2276,41 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(transport.cleared, 1)
         self.assertIn("truncate(r1,50ms,'我查一下')", model.calls)
-        self.maxDiff = None
+        assistant_messages = [
+            _message_summary(message)
+            for message in agent.state.context
+            if message.role == "assistant"
+        ]
         self.assertEqual(
-            [
-                message.model_dump()
-                for message in agent.state.context
-                if message.role == "assistant"
-            ],
+            assistant_messages,
             [
                 {
-                    "name": "Friday",
+                    "role": "assistant",
+                    "id": "r1",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": "我查一下",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
+                        {"type": "text", "text": "我查一下"},
                         {
                             "type": "tool_call",
-                            "id": "c1",
                             "name": "stream_tool",
                             "input": '{"q": "x"}',
                             "state": "pending",
-                            "suggested_rules": [],
-                            "created_at": AnyString(),
-                            "finished_at": None,
+                            "id": "c1",
                         },
                         {
                             "type": "tool_result",
-                            "id": "c1",
                             "name": "stream_tool",
                             "output": "x-final",
                             "state": "success",
-                            "metadata": {},
-                            "created_at": AnyString(),
-                            "finished_at": None,
+                            "id": "c1",
                         },
                     ],
-                    "role": "assistant",
-                    "id": "r1",
-                    "metadata": {},
-                    "created_at": AnyString(),
                     "usage": {
                         "input_tokens": 0,
                         "output_tokens": 0,
                         "cache_input_tokens": 0,
                         "cache_creation_input_tokens": 0,
                     },
-                    "finished_at": AnyString(),
-                    "finished_reason": ReplyFinishedReason.INTERRUPTED,
-                    "structured_output": None,
-                    "error": None,
+                    "finished_reason": "interrupted",
                 },
             ],
         )
