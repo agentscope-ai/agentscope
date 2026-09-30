@@ -259,15 +259,62 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                         else [result]
                     )
                     self.assertEqual(
-                        self.mock_mmc.call.call_args.kwargs["voice"],
-                        expected,
+                        self.mock_mmc.call.call_args.kwargs,
+                        {
+                            "model": "qwen3-tts-flash",
+                            "api_key": "test",
+                            "text": "Hello",
+                            "voice": expected,
+                            "stream": True,
+                        },
                     )
-                    self.assertTrue(
-                        self.mock_mmc.call.call_args.kwargs["stream"],
+                    self.assertEqual(
+                        model.parameters.model_dump(),
+                        {"voice": "Cherry"},
                     )
-                    self.assertEqual(model.parameters.voice, "Cherry")
                     self.assertTrue(responses[-1].is_last)
                     self.assertTrue(responses[0].content.source.data)
+
+    async def test_request_options_keep_credentials_and_transport(
+        self,
+    ) -> None:
+        """Request options preserve configured credentials and transport."""
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                model = self._make_model(stream=stream)
+                self.mock_mmc.call.return_value = _make_api_generator(
+                    [b"AAAA"],
+                )
+                result = await model.synthesize(
+                    "Hello",
+                    model="qwen-tts",
+                    voice="Serena",
+                    language_type="English",
+                    api_key="ignored",
+                    stream=False,
+                )
+                responses = (
+                    [chunk async for chunk in result] if stream else [result]
+                )
+                self.assertEqual(
+                    self.mock_mmc.call.call_args.kwargs,
+                    {
+                        "model": "qwen-tts",
+                        "api_key": "test",
+                        "text": "Hello",
+                        "voice": "Serena",
+                        "language_type": "English",
+                        "stream": True,
+                    },
+                )
+                self.assertEqual(
+                    model.parameters.model_dump(),
+                    {"voice": "Cherry"},
+                )
+                self.assertEqual(model.model, "qwen3-tts-flash")
+                self.assertEqual(model.stream, stream)
+                self.assertTrue(responses[-1].is_last)
+                self.assertTrue(responses[0].content.source.data)
 
     async def test_aggregates_chunks(self) -> None:
         """All API chunks are aggregated into one self-contained WAV."""
