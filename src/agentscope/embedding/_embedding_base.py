@@ -283,13 +283,20 @@ class EmbeddingModelBase(Generic[InputT]):
         all_embeddings: list = []
         total_tokens = 0
         total_time = 0.0
+        sources: set[str] = set()
 
         for resp in responses:
             all_embeddings.extend(resp.embeddings)
+            if resp.source:
+                sources.add(resp.source)
             if resp.usage:
                 total_time += resp.usage.time
                 if resp.usage.tokens:
                     total_tokens += resp.usage.tokens
+
+        # Preserve the documented EmbeddingResponse.source contract: a merge
+        # served entirely from cache must not claim source="api" (#2689).
+        merged_source = "cache" if sources and sources == {"cache"} else "api"
 
         return EmbeddingResponse(
             embeddings=all_embeddings,
@@ -297,7 +304,7 @@ class EmbeddingModelBase(Generic[InputT]):
                 tokens=total_tokens,
                 time=total_time,
             ),
-            source="api",
+            source=merged_source,
         )
 
     # ------------------------------------------------------------------
