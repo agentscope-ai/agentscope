@@ -935,6 +935,60 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_escaped_definition_names(self) -> None:
+        """JSON Pointer escapes are decoded once and in the correct order."""
+        for keyword in ("$defs", "definitions"):
+            for name, token in (
+                ("a/b", "a~1b"),
+                ("a~b", "a~0b"),
+                ("a~1b", "a~01b"),
+            ):
+                with self.subTest(keyword=keyword, name=name):
+                    ref = {
+                        "$ref": f"#/{keyword}/{token}",
+                        "description": "Value",
+                    }
+                    schema = {
+                        keyword: {name: {"type": "string"}},
+                        "properties": {"value": ref},
+                    }
+                    original = json.dumps(schema, sort_keys=True)
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {
+                            "properties": {
+                                "value": {
+                                    "type": "string",
+                                    "description": "Value",
+                                },
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        json.dumps(schema, sort_keys=True),
+                        original,
+                    )
+
+    def test_flatten_escaped_recursive_definition(self) -> None:
+        """Escaped names use the same decoded key for cycle detection."""
+        result = _flatten_json_schema(
+            {
+                "$defs": {
+                    "Node/Child": {
+                        "type": "object",
+                        "properties": {
+                            "next": {"$ref": "#/$defs/Node~1Child"},
+                        },
+                    },
+                },
+                "properties": {"root": {"$ref": "#/$defs/Node~1Child"}},
+            },
+        )
+        self.assertEqual(
+            result["properties"]["root"]["properties"]["next"],
+            {"type": "object", "description": "(circular: Node/Child)"},
+        )
+
     def test_flatten_circular_ref_returns_placeholder(self) -> None:
         """Circular $ref produces a placeholder without infinite recursion."""
         self.assertEqual(
