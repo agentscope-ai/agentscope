@@ -280,6 +280,44 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd}' to be non-read-only",
                 )
 
+    async def test_quoted_mutating_find_predicates_are_not_read_only(
+        self,
+    ) -> None:
+        """Quoted mutating find predicates still reach find as predicates."""
+        mutating_find_commands = [
+            'find . "-delete"',
+            "find . '-delete'",
+            r"find . '-exec' rm {} \;",
+            r'find . "-execdir" rm {} \;',
+            r"find . '-ok' rm {} \;",
+            'find . "-fls" results.txt',
+            'find . "-fprint0" results.txt',
+            """find . -name '*.tmp' "-delete\"""",
+        ]
+        for cmd in mutating_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_quoted_find_predicate_values_stay_read_only(self) -> None:
+        """Quoted predicate values must not be mistaken for predicates."""
+        read_only_commands = [
+            "find . -name '-delete'",
+            'find . -name "-delete"',
+            "find . -path './-fprint'",
+            'find . -path "./-fprint"',
+            "find . -regex '.*-exec.*'",
+            'find . -newermt "-delete"',
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be read-only",
+                )
+
     async def test_tee_writes_through_are_not_read_only(self) -> None:
         """Test commands writing through ``tee`` are not read-only."""
         writing_commands = [

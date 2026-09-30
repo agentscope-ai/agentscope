@@ -140,6 +140,43 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
+# ``find`` predicates whose next token is the predicate's value; a value
+# such as ``-name '-delete'`` must never be mistaken for a mutating
+# predicate itself.
+FIND_VALUE_PREDICATES = {
+    "-name",
+    "-iname",
+    "-lname",
+    "-ilname",
+    "-path",
+    "-wholename",
+    "-ipath",
+    "-regex",
+    "-iregex",
+    "-regextype",
+    "-type",
+    "-xtype",
+    "-perm",
+    "-size",
+    "-user",
+    "-group",
+    "-uid",
+    "-gid",
+    "-mmin",
+    "-mtime",
+    "-amin",
+    "-atime",
+    "-cmin",
+    "-ctime",
+    "-inum",
+    "-samefile",
+    "-maxdepth",
+    "-mindepth",
+    "-newer",
+    "-anewer",
+    "-cnewer",
+}
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -261,11 +298,31 @@ class BashCommandParser:
         if name_node is None or name_node.text.decode("utf8") != "find":
             return False
 
-        for child in cmd_node.children:
-            if child.type == "word":
-                text = child.text.decode("utf8")
-                if text in FIND_MUTATING_PREDICATES:
-                    return True
+        # Match against shell-dequoted tokens instead of AST node types:
+        # quoted arguments are ``string``/``raw_string`` nodes, so a quoted
+        # ``"-delete"`` is invisible to a node-type scan while the shell
+        # still passes it to find as a predicate.
+        try:
+            tokens = shlex.split(cmd_node.text.decode("utf8"))
+        except ValueError:
+            return False
+
+        # Skip environment assignments before the program name
+        i = 0
+        while i < len(tokens) and "=" in tokens[i]:
+            i += 1
+        if i >= len(tokens) or tokens[i] != "find":
+            return False
+
+        expect_value = False
+        for token in tokens[i + 1 :]:
+            if expect_value:
+                expect_value = False
+                continue
+            if token in FIND_MUTATING_PREDICATES:
+                return True
+            if token in FIND_VALUE_PREDICATES or token.startswith("-newer"):
+                expect_value = True
 
         return False
 
