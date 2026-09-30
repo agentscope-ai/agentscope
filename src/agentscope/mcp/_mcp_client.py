@@ -18,9 +18,10 @@ from mcp.client.streamable_http import (
     create_mcp_http_client,
     streamable_http_client,
 )
-from pydantic import Field, BaseModel, PrivateAttr
+from pydantic import ConfigDict, Field, BaseModel, PrivateAttr
 
 from ._config import StdioMCPConfig, HttpMCPConfig
+from ._oauth import build_token_auth, TokenAuth
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ class MCPClient(BaseModel):
     - _http_client: The live HTTP client, while one is open
     - _static_headers: Its headers before any runtime override
     - _runtime_headers: See :meth:`set_runtime_headers`
+    - _auth: The HTTP authentication handler, when OAuth is configured
 
     Example:
 
@@ -76,7 +78,27 @@ class MCPClient(BaseModel):
         # No connect() needed
         tools = await client.list_tools()
 
+        # OAuth, refreshed automatically before the token expires
+        client = MCPClient(
+            name="feishu",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                url="https://example.com/mcp",
+                oauth=OAuthClientConfig(
+                    grant_type="refresh_token",
+                    token_url="https://example.com/oauth/token",
+                    client_id="cli_xxx",
+                    client_secret="***",
+                    refresh_token="***",
+                ),
+            ),
+        )
+
     """
+
+    # httpx.Auth and arbitrary callables are not pydantic-friendly types,
+    # and token_provider accepts both.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # httpx derives these from the request URL and body with setdefault,
     # so a client-level value silently wins and breaks routing or framing.
@@ -122,6 +144,15 @@ class MCPClient(BaseModel):
     execution_timeout: float | None = None
     """The execution timeout in seconds for calling the tools from this MCP."""
 
+    token_provider: Any = Field(default=None, exclude=True)
+    """A custom credential source for HTTP MCP servers, for providers the
+    declarative ``mcp_config.oauth`` cannot describe. Either an async
+    callable returning an :class:`~agentscope.mcp.OAuthToken` (or a bare
+    token string), or an :class:`httpx.Auth` for full control of the
+    exchange -- the MCP SDK's ``OAuthClientProvider``, for one. It is live
+    instance state, excluded from ``model_dump`` and workspace
+    persistence, and cannot be combined with ``mcp_config.oauth``."""
+
     # Private attributes
     _client: Any = PrivateAttr(default=None)
     _session: ClientSession | None = PrivateAttr(default=None)
@@ -131,6 +162,7 @@ class MCPClient(BaseModel):
     _http_client: httpx.AsyncClient | None = PrivateAttr(default=None)
     _static_headers: httpx.Headers | None = PrivateAttr(default=None)
     _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
+    _auth: httpx.Auth | None = PrivateAttr(default=None)
 
     @property
     def is_connected(self) -> bool:
@@ -187,6 +219,20 @@ class MCPClient(BaseModel):
                     f"should not overlap, but got {intersection}.",
                 )
 
+        # The credential source, from the explicit provider or the
+        # declarative OAuth config. STDIO speaks no HTTP, so neither
+        # applies there.
+        if self.mcp_config.type == "stdio_mcp":
+            if self.token_provider is not None:
+                raise ValueError(
+                    "token_provider requires an HTTP MCP client.",
+                )
+        else:
+            self._auth = build_token_auth(
+                self.token_provider,
+                self.mcp_config.oauth,
+            )
+
         # Initialize the underlying client
         self._initialize_client()
 
@@ -215,6 +261,7 @@ class MCPClient(BaseModel):
                 url=config.url,
                 headers=config.headers,
                 timeout=config.timeout,
+                auth=self._auth,
             )
 
         return self._create_streamable_http_client()
@@ -238,9 +285,10 @@ class MCPClient(BaseModel):
             client = httpx.AsyncClient(
                 headers=config.headers,
                 timeout=config.timeout,
+                auth=self._auth,
             )
         else:
-            client = create_mcp_http_client()
+            client = create_mcp_http_client(auth=self._auth)
         # Snapshot before overlaying: clearing runtime headers restores it.
         self._static_headers = httpx.Headers(client.headers)
         client.headers.update(self._runtime_headers)
@@ -256,6 +304,17 @@ class MCPClient(BaseModel):
         finally:
             if self._http_client is client:
                 self._http_client = None
+
+    @property
+    def _auth_header_name(self) -> str | None:
+        """The lower-cased header the configured credential is sent in.
+
+        `None` when no credential is configured, or when it is a caller
+        supplied :class:`httpx.Auth` whose header is not ours to know.
+        """
+        if isinstance(self._auth, TokenAuth):
+            return self._auth.header_name.lower()
+        return None
 
     async def set_runtime_headers(
         self,
@@ -275,7 +334,9 @@ class MCPClient(BaseModel):
         is established. Headers MCP sends itself (``mcp-session-id``,
         ``content-type``, ...) are set per request and always win over
         the ones set here; the few httpx derives from the URL and body
-        are rejected outright.
+        are rejected outright. So is the header an OAuth credential is
+        sent in, when one is configured: the auth handler rewrites it on
+        every request, so setting it here would have no effect.
 
         Args:
             headers (`dict[str, str]`):
@@ -306,6 +367,11 @@ class MCPClient(BaseModel):
             if name.lower() in self._RESERVED_HEADERS:
                 raise ValueError(
                     f"Runtime header {name!r} is owned by the HTTP layer.",
+                )
+            if name.lower() == self._auth_header_name:
+                raise ValueError(
+                    f"Runtime header {name!r} is owned by the configured "
+                    "OAuth credential, which rewrites it on every request.",
                 )
 
         self._runtime_headers = dict(headers)
