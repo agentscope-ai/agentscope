@@ -127,6 +127,12 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
 
         Returns:
             `EmbeddingResponse`: Embedding vectors and usage info.
+
+        Raises:
+            `ValueError`:
+                If the provider returns fewer vectors than there are inputs,
+                or an index outside the batch, so the result would be
+                partial.
         """
         api_kwargs: dict[str, Any] = {
             "input": inputs,
@@ -163,6 +169,18 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
                     "dense_embedding",
                     None,
                 )
+
+        # ``embeddings`` was pre-filled with ``None``, so a short response or
+        # an out-of-range index silently leaves holes. Returning those would
+        # hand callers ``None`` vectors to index or compare, and caching them
+        # would make the bad result permanent for every later identical call.
+        if any(vector is None for vector in embeddings):
+            missing = sum(1 for vector in embeddings if vector is None)
+            raise ValueError(
+                f"The embedding API returned no vector for {missing} of "
+                f"{len(inputs)} inputs; refusing to return or cache "
+                "partial embeddings.",
+            )
 
         if self.embedding_cache:
             await self.embedding_cache.store(
