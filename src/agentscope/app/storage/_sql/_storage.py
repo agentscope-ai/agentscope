@@ -1225,9 +1225,28 @@ class AsyncSQLAlchemyStorage(StorageBase):
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
+        # Scope the create-or-update to *user_id*, for the same reason as
+        # ``upsert_credential``: the Redis backend namespaces its keys by
+        # user, so a preset id can only address the caller's own record,
+        # while the SQL table keys on a global primary id. An unscoped
+        # ``sess.get`` would let one tenant overwrite another tenant's
+        # session config and agent state by passing its id. Only a row the
+        # caller already owns is updated in place; any other preset id is
+        # written with a plain INSERT so a global collision raises instead
+        # of overwriting the holder.
+        foreign_id = False
         if session_id:
+            from sqlalchemy import select
+
             async with self._session() as sess:
-                existing = await sess.get(SessionRow, session_id)
+                existing = (
+                    await sess.execute(
+                        select(SessionRow).where(
+                            SessionRow.id == session_id,
+                            SessionRow.user_id == user_id,
+                        ),
+                    )
+                ).scalar_one_or_none()
             if existing is not None:
                 record = _to_record(existing, SessionRecord)
                 record.config = config
@@ -1235,6 +1254,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     record.state = state
                 await self._write_row(SessionRow, record)
                 return record
+            foreign_id = True
 
         new_id_kwargs = {"id": session_id} if session_id else {}
         record = SessionRecord(
@@ -1252,6 +1272,19 @@ class AsyncSQLAlchemyStorage(StorageBase):
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
+        if foreign_id:
+            # A preset id the caller does not own. ``_write_row`` is an
+            # id-conflict upsert, so on a global primary-key collision it
+            # would overwrite the holder's row and transfer ownership to
+            # this caller. Insert plainly instead — exactly as
+            # ``upsert_credential`` does — so the collision surfaces.
+            record.created_at = _to_naive_utc(record.created_at)
+            record.updated_at = _utcnow()
+            async with self._session() as sess:
+                sess.add(_from_record(SessionRow, record))
+                await sess.commit()
+            return record
+
         await self._write_row(
             SessionRow,
             record,
