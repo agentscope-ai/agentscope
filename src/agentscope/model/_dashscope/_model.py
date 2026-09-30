@@ -8,7 +8,10 @@ from typing import Any, AsyncGenerator, List, Literal, Type, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._audio import (
+    _build_streaming_wav_header,
+    _build_wav_header,
+)
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
