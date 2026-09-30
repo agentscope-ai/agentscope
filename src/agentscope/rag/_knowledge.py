@@ -128,6 +128,7 @@ class KnowledgeBase:
         # successful ensure_collection so subsequent operations avoid
         # the extra round-trip.
         self._collection_ready = False
+        self._collection_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Read-only accessors
@@ -176,12 +177,16 @@ class KnowledgeBase:
         """
         if self._collection_ready:
             return
-        if not await self._vector_store.has_collection(self._collection):
-            await self._vector_store.create_collection(
-                self._collection,
-                dimensions=self._embedding_model.dimensions,
-            )
-        self._collection_ready = True
+        async with self._collection_lock:
+            # Another caller may have initialized while we waited for I/O.
+            if self._collection_ready:
+                return
+            if not await self._vector_store.has_collection(self._collection):
+                await self._vector_store.create_collection(
+                    self._collection,
+                    dimensions=self._embedding_model.dimensions,
+                )
+            self._collection_ready = True
 
     # ------------------------------------------------------------------
     # Search
