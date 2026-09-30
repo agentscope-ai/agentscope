@@ -2011,3 +2011,77 @@ class WordParserTest(IsolatedAsyncioTestCase):
         """Unknown ``table_format`` raises :class:`ValueError`."""
         with self.assertRaises(ValueError):
             WordParser(table_format="csv")  # type: ignore[arg-type]
+
+
+class PPTSoftLineBreakTest(IsolatedAsyncioTestCase):
+    """A PowerPoint soft line break must reach the parser as a newline."""
+
+    @staticmethod
+    def _deck_with_soft_break() -> bytes:
+        """Build a deck whose text frame has one soft line break."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        paragraph = box.text_frame.paragraphs[0]
+        paragraph.add_run().text = "one"
+        paragraph.add_line_break()
+        paragraph.add_run().text = "two"
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        return buffer.getvalue()
+
+    async def test_soft_line_break_becomes_a_newline(self) -> None:
+        """``add_line_break()`` shows up as ``\n``, not as a control char."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            self._deck_with_soft_break(),
+            "soft_break.pptx",
+        )
+
+        texts = [
+            section.model_dump()["content"].get("text", "")
+            for section in sections
+        ]
+        joined = "\n".join(texts)
+        self.assertTrue(texts, "no text section was produced")
+        self.assertIn("one\ntwo", joined)
+        self.assertNotIn("\v", joined)
+
+    async def test_ordinary_newlines_are_preserved(self) -> None:
+        """A paragraph per line still yields newline-separated text."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        frame = box.text_frame
+        frame.text = "one"
+        for line in ("two", "three"):
+            paragraph = frame.add_paragraph()
+            paragraph.text = line
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(buffer.getvalue(), "paras.pptx")
+
+        joined = "\n".join(
+            section.model_dump()["content"].get("text", "")
+            for section in sections
+        )
+        self.assertIn("one\ntwo\nthree", joined)
