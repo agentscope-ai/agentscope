@@ -788,10 +788,15 @@ class BashCommandParser:
                 # consumed as the remainder above.
                 if flag_chars.endswith("i") and i + 1 < len(args):
                     next_arg = args[i + 1]
+                    # A dotted suffix such as ".bak" (the BSD/macOS
+                    # spelling) starts with a dot, which a sed script
+                    # never does -- consume it as the suffix. A dot
+                    # elsewhere can still belong to a script such as
+                    # "/example.com/d", so leave those tokens alone.
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
-                        and "." not in next_arg
+                        and (next_arg.startswith(".") or "." not in next_arg)
                     ):
                         i += 1
             elif name == "--in-place":
@@ -803,7 +808,7 @@ class BashCommandParser:
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
-                        and "." not in next_arg
+                        and (next_arg.startswith(".") or "." not in next_arg)
                     ):
                         i += 1
             elif not arg.startswith("-"):
