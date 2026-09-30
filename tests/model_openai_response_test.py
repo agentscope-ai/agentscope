@@ -407,6 +407,52 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_reasoning_content_with_optional_summary(self) -> None:
+        """Raw reasoning remains visible and separate from its summary."""
+        for summary in ([], [_MockReasoningSummary(text="Summary")]):
+            with self.subTest(summary=summary):
+                item = _MockReasoningItem(
+                    id="rs_content",
+                    summary=summary,
+                    content=[
+                        {"type": "reasoning_text", "text": "Raw "},
+                        {"type": "reasoning_text", "text": "reasoning"},
+                    ],
+                )
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=_mock_completion(
+                        text="Answer",
+                        reasoning_output_item=item,
+                    ),
+                )
+                result = await self.model([])
+                texts = (["Summary"] if summary else []) + ["Raw reasoning"]
+                self.assertEqual(
+                    (result.is_last, result.content),
+                    (
+                        True,
+                        [
+                            *[
+                                ThinkingBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    thinking=text,
+                                    reasoning_item_id=item.id,
+                                    reasoning_item_raw=item.model_dump(
+                                        exclude_none=True,
+                                    ),
+                                )
+                                for text in texts
+                            ],
+                            TextBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                text="Answer",
+                            ),
+                        ],
+                    ),
+                )
+
     async def test_reasoning_raw_item_excludes_none_fields(self) -> None:
         """Optional null SDK fields are not stored for history replay."""
         reasoning_item = _MockReasoningItem.model_validate(
@@ -694,6 +740,100 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_reasoning_text_with_optional_summary(self) -> None:
+        """Raw and summary deltas stay separate without done repeats."""
+        parts = {
+            "reasoning_summary_text": ("Summary ", "text"),
+            "reasoning_text": ("Raw ", "reasoning"),
+        }
+        for kinds in (
+            ("reasoning_text",),
+            ("reasoning_summary_text", "reasoning_text"),
+        ):
+            with self.subTest(kinds=kinds):
+                item = _MockReasoningItem(
+                    id="rs_text",
+                    summary=[_MockReasoningSummary(text="Summary text")]
+                    if len(kinds) == 2
+                    else [],
+                    content=[
+                        {"type": "reasoning_text", "text": "Raw reasoning"},
+                    ],
+                )
+                raw = item.model_dump(exclude_none=True)
+                events = [
+                    _make_event(
+                        f"response.{kind}.delta",
+                        item_id=item.id,
+                        delta=parts[kind][index],
+                    )
+                    for index in range(2)
+                    for kind in kinds
+                ]
+                events.extend(
+                    _make_event(
+                        f"response.{kind}.done",
+                        item_id=item.id,
+                        text="".join(parts[kind]),
+                    )
+                    for kind in kinds
+                )
+                events.extend(
+                    [
+                        _make_event(
+                            "response.output_text.delta",
+                            delta="Answer",
+                        ),
+                        _make_event(
+                            "response.completed",
+                            response=_mock_completion(
+                                reasoning_output_item=item,
+                            ),
+                        ),
+                    ],
+                )
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(events),
+                )
+                responses = [r async for r in await self.model([])]
+                answer = TextBlock.model_construct(
+                    id=A,
+                    created_at=A,
+                    text="Answer",
+                )
+                self.assertEqual(
+                    (responses[0].is_last, responses[0].content),
+                    (
+                        False,
+                        [
+                            ThinkingBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                thinking=parts[kinds[0]][0],
+                            ),
+                        ],
+                    ),
+                )
+                self.assertEqual(
+                    (responses[-1].is_last, responses[-1].content),
+                    (
+                        True,
+                        [
+                            *[
+                                ThinkingBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    thinking="".join(parts[kind]),
+                                    reasoning_item_id=item.id,
+                                    reasoning_item_raw=raw,
+                                )
+                                for kind in kinds
+                            ],
+                            answer,
+                        ],
+                    ),
+                )
 
     async def test_stream_preserves_multiple_reasoning_items(self) -> None:
         """Streaming keeps every reasoning item's encrypted payload."""
