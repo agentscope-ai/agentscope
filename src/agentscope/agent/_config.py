@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
+from typing import Callable
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -440,3 +441,37 @@ class ModelConfig(BaseModel):
     )
     """The fallback model used when the main model fails. Also supports the
     max_retries logic."""
+
+    candidate_models: dict[str, ChatModelBase] = Field(
+        default_factory=dict,
+        description=(
+            "The named pool of chat models the 'model_router' can choose "
+            "from by returning the model name instead of the model object."
+        ),
+    )
+    """The named pool of chat models that ``model_router`` can select by
+    name, e.g. ``{"fast": model_a, "reasoning": model_b}``."""
+
+    model_router: Callable[..., ChatModelBase | str | None] | None = Field(
+        default=None,
+        description=(
+            "A sync or async callable invoked before each model call to "
+            "choose the model for that step. It receives the keyword "
+            "arguments 'agent', 'messages' and 'tools', and returns a "
+            "'ChatModelBase', a name from 'candidate_models', or 'None' to "
+            "keep the agent's default model."
+        ),
+    )
+    """A sync or async callable that selects the chat model for the upcoming
+    model call, so that the agent can switch models per reasoning step
+    according to the user input or what the model returned before.
+
+    It is called as ``model_router(agent=..., messages=..., tools=...)`` and
+    may return:
+
+    - a ``ChatModelBase`` instance, used for this call;
+    - a ``str`` key of ``candidate_models``, whose model is used;
+    - ``None``, to keep the agent's default ``model``.
+
+    The selected model only applies to the reasoning call, the fallback
+    model and the retry logic still apply on top of it."""
