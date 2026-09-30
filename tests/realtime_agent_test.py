@@ -1490,7 +1490,7 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
         self,
         tool: ToolBase,
         confirm: bool | None = None,
-    ) -> tuple[list[tuple[str, Any]], ScriptedModel]:
+    ) -> tuple[list[tuple[Any, ...]], ScriptedModel]:
         """Run one tool-calling reply; answer a permission prompt with
         *confirm* if one appears. Returns the tool-related events."""
         model = ScriptedModel([_tool_script(tool.name)])
@@ -1500,7 +1500,18 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
             model,
             toolkit=Toolkit(tools=[tool]),
         )
-        events: list[tuple[str, Any]] = []
+
+        def _checkpoint_tool_state(event: Any) -> str:
+            checkpoint = agent.checkpoint_snapshot(event)
+            if checkpoint is None:
+                self.fail("The tool lifecycle event has no checkpoint.")
+            tool_calls = checkpoint.context[-1].get_content_blocks(
+                "tool_call",
+            )
+            self.assertEqual([call.id for call in tool_calls], ["c1"])
+            return str(tool_calls[0].state)
+
+        events: list[tuple[Any, ...]] = []
         async with agent:
             transport = FakeTransport(frames=4)
             async with transport:
@@ -1512,7 +1523,11 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                             events.append(("call_end", event.tool_call_id))
                         case RequireUserConfirmEvent():
                             events.append(
-                                ("ask", [c.name for c in event.tool_calls]),
+                                (
+                                    "ask",
+                                    [c.name for c in event.tool_calls],
+                                    _checkpoint_tool_state(event),
+                                ),
                             )
                             await agent.send(
                                 UserConfirmResultEvent(
@@ -1532,7 +1547,13 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                         case ToolResultTextDeltaEvent():
                             events.append(("delta", event.delta))
                         case ToolResultEndEvent():
-                            events.append(("result_end", event.state))
+                            events.append(
+                                (
+                                    "result_end",
+                                    event.state,
+                                    _checkpoint_tool_state(event),
+                                ),
+                            )
         return events, model
 
     async def test_streamed_tool_result_is_not_duplicated(self) -> None:
@@ -1548,7 +1569,7 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                 ("result_start", "stream_tool"),
                 ("delta", "x-a"),
                 ("delta", "x-b"),
-                ("result_end", "success"),
+                ("result_end", "success", "finished"),
             ],
         )
         self.assertListEqual(
@@ -1570,11 +1591,11 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
             [
                 ("call_start", "ask_tool"),
                 ("call_end", "c1"),
-                ("ask", ["ask_tool"]),
+                ("ask", ["ask_tool"], "asking"),
                 ("result_start", "ask_tool"),
                 ("delta", "x-a"),
                 ("delta", "x-b"),
-                ("result_end", "success"),
+                ("result_end", "success", "finished"),
             ],
         )
         self.assertIn("tool_result(c1,'x-final')", model.calls)
@@ -1588,10 +1609,10 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
             [
                 ("call_start", "ask_tool"),
                 ("call_end", "c1"),
-                ("ask", ["ask_tool"]),
+                ("ask", ["ask_tool"], "asking"),
                 ("result_start", "ask_tool"),
                 ("delta", 'Tool "ask_tool" denied by user.'),
-                ("result_end", "denied"),
+                ("result_end", "denied", "finished"),
             ],
         )
         self.assertIn(
@@ -1611,7 +1632,7 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                 ("call_end", "c1"),
                 ("result_start", "broken_tool"),
                 ("delta", "boom"),
-                ("result_end", "error"),
+                ("result_end", "error", "finished"),
             ],
         )
         self.assertIn("tool_result(c1,'boom')", model.calls)
@@ -1848,7 +1869,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             "type": "tool_call",
                             "name": "stream_tool",
                             "input": '{"q": "x"}',
-                            "state": "pending",
+                            "state": "finished",
                             "id": "c1",
                         },
                         {
@@ -1957,7 +1978,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         "type": "tool_call",
                         "name": "stream_tool",
                         "input": '{"q": "x"}',
-                        "state": "pending",
+                        "state": "finished",
                         "id": "c1",
                     },
                     {
@@ -2055,7 +2076,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             "type": "tool_call",
                             "name": "stream_tool",
                             "input": '{"q": "x"}',
-                            "state": "pending",
+                            "state": "finished",
                             "id": "c1",
                         },
                         {
@@ -2148,7 +2169,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             "type": "tool_call",
                             "name": "stream_tool",
                             "input": '{"q": "x"}',
-                            "state": "pending",
+                            "state": "finished",
                             "id": "c1",
                         },
                         {

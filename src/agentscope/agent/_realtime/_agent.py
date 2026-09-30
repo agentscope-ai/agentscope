@@ -48,6 +48,7 @@ from ...message import (
     SystemMsg,
     TextBlock,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
     ToolResultState,
     Usage,
@@ -1132,6 +1133,8 @@ class RealtimeAgent:
                 state=ToolResultState.DENIED,
             )
             return
+        else:
+            call.state = ToolCallState.ALLOWED
 
         self._emit(
             ToolResultStartEvent(
@@ -1193,6 +1196,7 @@ class RealtimeAgent:
     ) -> bool:
         """Ask the user to confirm *call* and wait for the answer."""
         call.suggested_rules = decision.suggested_rules or []
+        call.state = ToolCallState.ASKING
         self._emit(
             RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),
         )
@@ -1209,6 +1213,11 @@ class RealtimeAgent:
 
         for rule in result.rules or []:
             self._engine.add_rule(rule)
+        call.state = (
+            ToolCallState.ALLOWED
+            if result.confirmed
+            else ToolCallState.FINISHED
+        )
         return result.confirmed
 
     async def _report_tool(
@@ -1220,6 +1229,7 @@ class RealtimeAgent:
         started: bool = False,
     ) -> None:
         """Close the tool result lifecycle and send the output back."""
+        call.state = ToolCallState.FINISHED
         if not started:
             self._emit(
                 ToolResultStartEvent(
