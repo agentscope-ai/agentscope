@@ -220,7 +220,13 @@ class Grep(ToolBase):
         path = tool_input.get("path", "")
         if not path:
             path = await self._backend.getcwd()
-        return fnmatch.fnmatch(path, rule_content)
+        # The suggestion this class generates is ``<dir>/**``, and fnmatch
+        # needs the trailing separator for that to match, so also try the
+        # directory with one.
+        return any(
+            fnmatch.fnmatch(candidate, rule_content)
+            for candidate in (path, path.rstrip("/\\") + "/")
+        )
 
     async def generate_suggestions(
         self,
