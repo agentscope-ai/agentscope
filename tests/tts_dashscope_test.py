@@ -22,6 +22,8 @@ from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, Mock, patch
 
+from utils import AnyString, AnyValue
+
 from agentscope.app._service._tts_model import _resolve_tts_class
 from agentscope.credential import DashScopeCredential
 from agentscope.tts import (
@@ -40,6 +42,31 @@ _TTS_SAMPLE_RATE = 24000
 _TTS_CHANNELS = 1
 _TTS_SAMPLE_WIDTH = 2  # bytes (= 16 bit)
 _WAV_HEADER_LEN = 44
+_EXPECTED_SINGLE_AUDIO_RESPONSE = {
+    "content": {
+        "type": "data",
+        "id": AnyString(),
+        "source": {
+            "type": "base64",
+            "data": AnyString(),
+            "media_type": _MEDIA_TYPE,
+        },
+        "name": None,
+        "created_at": AnyString(),
+        "finished_at": None,
+    },
+    "id": AnyString(),
+    "created_at": AnyString(),
+    "type": "tts",
+    "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "time": AnyValue(),
+        "type": "tts",
+    },
+    "metadata": None,
+    "is_last": True,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +132,7 @@ class _DummyTTS(TTSModelBase):
         text: str | None = None,
         **kwargs: Any,
     ) -> TTSResponse | AsyncGenerator[TTSResponse, None]:
+        """Return an empty TTS response."""
         del text, kwargs
         return TTSResponse(content=None)
 
@@ -121,9 +149,11 @@ class _RealtimeDummyTTS(_DummyTTS):
         self.close_calls = 0
 
     async def connect(self) -> None:
+        """Record a mock connection."""
         self.connect_calls += 1
 
     async def close(self) -> None:
+        """Record a mock disconnection."""
         self.close_calls += 1
 
 
@@ -272,8 +302,17 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                         model.parameters.model_dump(),
                         {"voice": "Cherry"},
                     )
-                    self.assertTrue(responses[-1].is_last)
-                    self.assertTrue(responses[0].content.source.data)
+                    self.assertEqual(
+                        [
+                            {
+                                **response,
+                                "content": response.content.model_dump(),
+                                "usage": dict(response.usage),
+                            }
+                            for response in responses
+                        ],
+                        [_EXPECTED_SINGLE_AUDIO_RESPONSE],
+                    )
 
     async def test_request_options_keep_credentials_and_transport(
         self,
@@ -313,8 +352,17 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(model.model, "qwen3-tts-flash")
                 self.assertEqual(model.stream, stream)
-                self.assertTrue(responses[-1].is_last)
-                self.assertTrue(responses[0].content.source.data)
+                self.assertEqual(
+                    [
+                        {
+                            **response,
+                            "content": response.content.model_dump(),
+                            "usage": dict(response.usage),
+                        }
+                        for response in responses
+                    ],
+                    [_EXPECTED_SINGLE_AUDIO_RESPONSE],
+                )
 
     async def test_aggregates_chunks(self) -> None:
         """All API chunks are aggregated into one self-contained WAV."""
