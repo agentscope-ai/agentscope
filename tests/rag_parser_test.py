@@ -306,6 +306,28 @@ def _make_docx_with_image() -> bytes:
     return buffer.getvalue()
 
 
+def _make_docx_with_image_in_table_cell() -> bytes:
+    """Build a DOCX whose 1x1 table cell contains text and an embedded
+    PNG image."""
+    from docx import Document as DocxDocument
+    from docx.shared import Inches
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before table")
+    table = doc.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)
+    cell.text = "see screenshot"
+    cell.add_paragraph().add_run().add_picture(
+        io.BytesIO(_PNG_PIXEL),
+        width=Inches(1),
+    )
+    doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -2029,6 +2051,38 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(ds.source, "rich.docx")
         self.assertEqual(ds.content.name, "rich.docx")
         self.assertIn("media_type", ds.metadata)
+
+    async def test_image_inside_table_cell_emits_data_block(self) -> None:
+        """Images pasted into table cells are not dropped."""
+        docx_bytes = _make_docx_with_image_in_table_cell()
+        parser = WordParser(include_image=True)
+        sections = await parser.parse(docx_bytes, "table.docx")
+
+        data_sections = [s for s in sections if s.content.type == "data"]
+        self.assertEqual(len(data_sections), 1)
+        ds = data_sections[0]
+        self.assertEqual(ds.source, "table.docx")
+        self.assertEqual(ds.metadata["media_type"], "image/png")
+
+        texts = [s.content.text for s in sections if s.content.type == "text"]
+        joined = "\n".join(texts)
+        self.assertIn("Before table", joined)
+        self.assertIn("see screenshot", joined)
+        self.assertIn("After table", joined)
+
+    async def test_image_inside_table_cell_excluded_when_disabled(
+        self,
+    ) -> None:
+        """``include_image=False`` keeps only text sections."""
+        docx_bytes = _make_docx_with_image_in_table_cell()
+        parser = WordParser(include_image=False)
+        sections = await parser.parse(docx_bytes, "table.docx")
+
+        self.assertEqual([s.content.type for s in sections], ["text"])
+        self.assertIn(
+            "see screenshot",
+            "\n".join(s.content.text for s in sections),
+        )
 
     async def test_image_excluded_when_disabled(self) -> None:
         """``include_image=False`` keeps only text sections."""
