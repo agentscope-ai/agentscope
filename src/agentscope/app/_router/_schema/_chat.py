@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The chat endpoint schema."""
 
-from pydantic import BaseModel, Field
+from typing import Self
+
+from pydantic import BaseModel, Field, model_validator
 
 from ....message import Msg
 from ....event import UserConfirmResultEvent, ExternalExecutionResultEvent
@@ -27,6 +29,24 @@ class ChatRequest(BaseModel):
     ) = Field(
         description="The input message(s), or agent event, or None.",
     )
+
+    @model_validator(mode="after")
+    def _validate_message_roles(self) -> Self:
+        """Reject server-authored roles at the public chat boundary."""
+        if isinstance(self.input, Msg):
+            messages = [self.input]
+        elif isinstance(self.input, list):
+            messages = self.input
+        else:
+            return self
+
+        for message in messages:
+            if message.role != "user":
+                raise ValueError(
+                    "The chat API only accepts client messages with "
+                    "role='user'.",
+                )
+        return self
 
 
 class ChatTriggerResponse(BaseModel):
