@@ -143,7 +143,15 @@ class FileEmbeddingCache(EmbeddingCacheBase):
     @staticmethod
     def _get_filename(identifier: JSONSerializableObject) -> str:
         """Generate a filename based on the identifier."""
-        json_str = json.dumps(identifier, ensure_ascii=False)
+        # ``sort_keys`` is required, not cosmetic: every in-tree provider
+        # passes a dict identifier, and without it the SHA-256 depends on key
+        # insertion order, so two semantically identical calls hash to
+        # different files.
+        json_str = json.dumps(
+            identifier,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         return hashlib.sha256(json_str.encode("utf-8")).hexdigest() + ".npy"
 
     async def _maintain_cache_dir(
