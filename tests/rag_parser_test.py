@@ -497,10 +497,22 @@ class PDFParserTest(IsolatedAsyncioTestCase):
 
         sections = await PDFParser().parse(buffer.getvalue(), "open.pdf")
 
-        self.assertEqual(len(sections), 1)
-        self.assertEqual(sections[0].content.text, "")
-        self.assertEqual(sections[0].metadata, {"page": 1})
-        self.assertEqual(sections[0].source, "open.pdf")
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "open.pdf",
+                    "metadata": {"page": 1},
+                },
+            ],
+        )
 
     async def test_text_extraction_read_error_raises_value_error(self) -> None:
         """Read errors raised after page enumeration are wrapped as well."""
