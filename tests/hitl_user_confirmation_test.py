@@ -548,6 +548,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.final_response_text,
                     },
                 ],
+                "finished_reason": "completed",
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
@@ -936,6 +937,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.final_response_text,
                     },
                 ],
+                "finished_reason": "completed",
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
@@ -1304,6 +1306,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.final_response_text,
                     },
                 ],
+                "finished_reason": "completed",
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]

@@ -32,6 +32,7 @@ from agentscope.tool import (
     Write,
 )
 from agentscope.permission import PermissionDecision, PermissionBehavior
+from agentscope.types import ReplyFinishedReason
 from agentscope.workspace import LocalWorkspace, WorkspaceBase
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
@@ -1135,7 +1136,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
                 "structured_output": None,
                 "error": None,
                 "usage": None,
@@ -1357,7 +1358,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
                 '"usage":null,'
                 '"finished_at":null,'
-                '"finished_reason":null,"structured_output":null,'
+                '"finished_reason":"completed","structured_output":null,'
                 '"error":null}'
             )
             expected_user_msg_b_json = (
@@ -1421,7 +1422,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
                 "structured_output": None,
                 "error": None,
                 "usage": None,

@@ -505,6 +505,43 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual([m.id for m in listed], [long_msg_id])
 
+    async def test_delete_message(self) -> None:
+        """Deleting by id removes only the matching persisted message."""
+        first = UserMsg(name="u", content="first")
+        second = AssistantMsg(name="a", content="second")
+        await self.storage.upsert_message("user-1", "sess-1", first)
+        await self.storage.upsert_message("user-1", "sess-1", second)
+
+        deleted = await self.storage.delete_message(
+            "user-1",
+            "sess-1",
+            first.id,
+        )
+        deleted_again = await self.storage.delete_message(
+            "user-1",
+            "sess-1",
+            first.id,
+        )
+        messages, has_more = await self.storage.list_messages(
+            "user-1",
+            "sess-1",
+        )
+
+        self.assertEqual(
+            {
+                "deleted": deleted,
+                "deleted_again": deleted_again,
+                "messages": [message.model_dump() for message in messages],
+                "has_more": has_more,
+            },
+            {
+                "deleted": True,
+                "deleted_again": False,
+                "messages": [second.model_dump()],
+                "has_more": False,
+            },
+        )
+
     # ------------------------------------------------------------------
     # SOPs
     # ------------------------------------------------------------------

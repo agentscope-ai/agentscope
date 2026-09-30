@@ -4,14 +4,14 @@ import inspect
 from abc import ABC, abstractmethod
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 
 from pydantic import BaseModel
 
 from ._events import ModelEvent
 from ._model_card import RealtimeModelCard
 from ..credential import CredentialBase
-from ..message import ToolResultBlock
+from ..message import Msg, ToolResultBlock
 
 
 class ModelDisconnectedError(ConnectionError):
@@ -56,6 +56,9 @@ class RealtimeModelBase(ABC):
     supports_text_input: bool = False
     """Whether a text turn can be injected mid-session."""
 
+    supports_history_replay: bool = False
+    """Whether completed messages can seed a newly opened session."""
+
     def __init__(
         self,
         model: str,
@@ -83,8 +86,18 @@ class RealtimeModelBase(ABC):
         """
         self.model = model
         self.credential = credential
-        self.parameters = parameters or self.Parameters()
         self.card = model_card or self._find_card(model)
+        card_defaults = {
+            name: override["default"]
+            for name, override in self.card.parameter_overrides.items()
+            if "default" in override
+        }
+        explicit_parameters = (
+            parameters.model_dump(exclude_unset=True) if parameters else {}
+        )
+        self.parameters = self.Parameters(
+            **{**card_defaults, **explicit_parameters},
+        )
 
     @classmethod
     def _find_card(cls, model: str) -> RealtimeModelCard:
@@ -138,6 +151,17 @@ class RealtimeModelBase(ABC):
         """The PCM rate of the audio in :class:`AudioDelta`, in Hz."""
         return self.card.output_sample_rate
 
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether a settled user transcript is expected after speech."""
+        return bool(
+            getattr(
+                getattr(self, "parameters", None),
+                "input_audio_transcription",
+                False,
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -189,6 +213,26 @@ class RealtimeModelBase(ABC):
             `NotImplementedError`: If :attr:`supports_text_input` is
                 ``False``.
         """
+
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Seed a newly opened session without requesting a response.
+
+        Providers that implement this method must preserve message roles and
+        must not trigger model inference. The caller invokes it after
+        :meth:`connect` and before forwarding new user input.
+
+        Args:
+            messages (`Sequence[Msg]`):
+                Completed conversation messages in chronological order.
+
+        Raises:
+            `NotImplementedError`: If the adapter does not support structured
+                history replay.
+        """
+        if messages:
+            raise NotImplementedError(
+                f"{type(self).__name__} cannot replay conversation history.",
+            )
 
     @abstractmethod
     async def push_tool_result(self, block: ToolResultBlock) -> None:

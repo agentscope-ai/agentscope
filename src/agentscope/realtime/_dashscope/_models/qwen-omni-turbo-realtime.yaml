@@ -23,4 +23,5 @@ max_session_duration_s: 7200
 
 parameter_overrides:
   voice:
+    default: "Chelsie"
     enum: ["Cherry", "Serena", "Ethan", "Chelsie"]

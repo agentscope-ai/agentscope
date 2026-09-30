@@ -60,6 +60,11 @@ class XAIRealtimeModel(RealtimeModelBase):
     truncation = TruncationSupport.NONE
     supports_text_input = True
 
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """xAI always reports settled input transcription events."""
+        return True
+
     def __init__(
         self,
         model: str,

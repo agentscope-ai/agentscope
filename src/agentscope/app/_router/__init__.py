@@ -14,6 +14,7 @@ from ._session import session_router
 from ._skill import skill_router
 from ._sop import sop_router
 from ._model import model_router
+from ._realtime import realtime_router
 from ._tts_model import tts_model_router
 from ._workspace import workspace_router
 
@@ -21,6 +22,7 @@ __all__ = [
     "agent_router",
     "channel_router",
     "model_router",
+    "realtime_router",
     "embedding_model_router",
     "tts_model_router",
     "chat_router",

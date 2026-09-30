@@ -88,9 +88,10 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  *   background retrigger, team member message, …).
  *
  * The hook opens the SSE connection immediately after fetching
- * history. User input and human-in-the-loop confirmations are sent
- * via ``POST /chat/`` (fire-and-forget); the resulting events arrive
- * through the already-open SSE connection.
+ * history. User input is sent via ``POST /chat/``. Human-in-the-loop
+ * confirmations use the active realtime control channel during voice
+ * mode and ``POST /chat/`` otherwise. Resulting events arrive through
+ * the already-open SSE connection.
  *
  * ``phase`` is driven by event content, not HTTP lifecycle: it moves
  * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
@@ -131,6 +132,10 @@ export function useMessages(
 		 * the session list to pick the new one up.
 		 */
 		onSessionUpdated?: () => void;
+		/** True when a dedicated realtime transport already plays PCM audio. */
+		isRealtimeAudioActive?: () => boolean;
+		/** Send a tool confirmation over the active realtime transport. */
+		sendRealtimeUserConfirm?: (event: UserConfirmResultEvent) => Promise<void>;
 	},
 ) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -147,6 +152,7 @@ export function useMessages(
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
+	const realtimeAudioBlocksRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
@@ -177,6 +183,26 @@ export function useMessages(
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
+			let appendToMessage = true;
+			if (
+				event.type === EventType.DATA_BLOCK_START &&
+				(event as DataBlockStartEvent).media_type.startsWith('audio/') &&
+				optionsRef.current?.isRealtimeAudioActive?.()
+			) {
+				realtimeAudioBlocksRef.current.add((event as DataBlockStartEvent).block_id);
+				appendToMessage = false;
+			} else if (
+				(event.type === EventType.DATA_BLOCK_DELTA ||
+					event.type === EventType.DATA_BLOCK_END) &&
+				realtimeAudioBlocksRef.current.has(
+					(event as DataBlockDeltaEvent | DataBlockEndEvent).block_id,
+				)
+			) {
+				appendToMessage = false;
+				if (event.type === EventType.DATA_BLOCK_END) {
+					realtimeAudioBlocksRef.current.delete((event as DataBlockEndEvent).block_id);
+				}
+			}
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -218,15 +244,23 @@ export function useMessages(
 					currentReplyRef.current = existing;
 				} else {
 					audioManager?.stopAllPlayback();
-					const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
+					const msg =
+						e.role === 'user'
+							? UserMsg({ id: e.reply_id, name: e.name, content: [] })
+							: AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
 					msgsRef.current = [...msgsRef.current, msg];
 					currentReplyRef.current = msg;
 				}
 				clearInterruptTimer();
 				setPhase('streaming');
 			} else {
-				if (currentReplyRef.current) {
-					const reply = currentReplyRef.current;
+				// Realtime providers may start the assistant response before the
+				// user's final transcription arrives. Route every identified event
+				// to its own reply instead of assuming event streams never overlap.
+				const reply = event.reply_id
+					? (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
+					: currentReplyRef.current;
+				if (reply && appendToMessage) {
 					appendEvent(reply, event);
 					// ``appendEvent`` mutates in place, which would leave
 					// every Msg identical across renders and force the whole
@@ -238,9 +272,16 @@ export function useMessages(
 					// everything else looks the reply up by id.
 					const updated = { ...reply, content: [...reply.content] };
 					msgsRef.current = msgsRef.current.map((m) => (m === reply ? updated : m));
-					currentReplyRef.current = updated;
+					if (currentReplyRef.current?.id === reply.id) {
+						currentReplyRef.current = updated;
+					}
 				}
-				if (event.type === EventType.REPLY_END) {
+				if (
+					event.type === EventType.REPLY_END &&
+					(!event.reply_id ||
+						currentReplyRef.current === null ||
+						currentReplyRef.current.id === event.reply_id)
+				) {
 					clearInterruptTimer();
 					setPhase('idle');
 					currentReplyRef.current = null;
@@ -251,7 +292,7 @@ export function useMessages(
 			// flow through `appendEvent` above (which builds up `source.data`
 			// in the Msg), but MessageBubble reads playback state from the
 			// manager so it can show progress and autoplay on completion.
-			if (audioManager) {
+			if (audioManager && !optionsRef.current?.isRealtimeAudioActive?.()) {
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
@@ -280,6 +321,7 @@ export function useMessages(
 		setLoadedKey(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
+		realtimeAudioBlocksRef.current.clear();
 		setMsgs([]);
 		setError(null);
 		clearInterruptTimer();
@@ -294,14 +336,19 @@ export function useMessages(
 		let cancelled = false;
 
 		(async () => {
+			let eventCursor: string | null = null;
 			// 1. Fetch persisted history — unless this tab just created the
 			// session, in which case there is provably none.
 			if (takeFreshlyCreated(sessionId)) {
 				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
 			} else {
 				try {
-					const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+					const { messages, is_running, event_cursor } = await sessionApi.messages(
+						sessionId,
+						agentId,
+					);
 					if (cancelled) return;
+					eventCursor = event_cursor;
 					msgsRef.current = messages;
 					// If a reply is in flight (running on a worker) OR the
 					// tail msg is parked on a pending tool_call (awaiting
@@ -346,6 +393,7 @@ export function useMessages(
 					sessionId,
 					agentId,
 					controller.signal,
+					eventCursor,
 				)) {
 					if (cancelled) break;
 					processEvent(event);
@@ -394,9 +442,10 @@ export function useMessages(
 	);
 
 	/**
-	 * Confirm or deny a tool call (human-in-the-loop). Fires a
-	 * ``POST /chat/`` with a ``UserConfirmResultEvent``; events
-	 * arrive via SSE.
+	 * Confirm or deny a tool call (human-in-the-loop). Sends a
+	 * ``UserConfirmResultEvent`` through realtime control while voice mode
+	 * is active, or through ``POST /chat/`` otherwise. Events arrive via
+	 * SSE in both cases.
 	 *
 	 * @param toolCall - The tool call block to confirm/deny.
 	 * @param confirm - Whether the user confirmed.
@@ -427,11 +476,18 @@ export function useMessages(
 			};
 
 			try {
-				await chatApi.trigger({
-					agent_id: agentId,
-					session_id: sessionId,
-					input: event,
-				});
+				if (
+					optionsRef.current?.isRealtimeAudioActive?.() &&
+					optionsRef.current.sendRealtimeUserConfirm
+				) {
+					await optionsRef.current.sendRealtimeUserConfirm(event);
+				} else {
+					await chatApi.trigger({
+						agent_id: agentId,
+						session_id: sessionId,
+						input: event,
+					});
+				}
 			} catch (e) {
 				setError(e as Error);
 				throw e;
