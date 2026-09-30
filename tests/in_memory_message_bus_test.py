@@ -313,6 +313,31 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             self.assertFalse(await self.bus.is_locked("k"))
             self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
 
+    async def test_expired_holder_cannot_unlock_successor(self) -> None:
+        """A late cleanup from an expired owner preserves a new lease."""
+        acquired = asyncio.Event()
+        release = asyncio.Event()
+        now = 1_000.0
+
+        async def old_holder() -> None:
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+            acquired.set()
+            await release.wait()
+            await self.bus.unlock("k")
+
+        with patch.object(_bus.time, "monotonic", side_effect=lambda: now):
+            task = asyncio.create_task(old_holder())
+            await acquired.wait()
+
+            now += 10
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+            release.set()
+            await task
+
+            self.assertTrue(await self.bus.is_locked("k"))
+            await self.bus.unlock("k")
+            self.assertFalse(await self.bus.is_locked("k"))
+
     async def test_acquire_lock_ignores_ttl_secs(self) -> None:
         """``acquire_lock`` documents that it holds until the body ends."""
         with patch.object(_bus.time, "monotonic") as monotonic:
