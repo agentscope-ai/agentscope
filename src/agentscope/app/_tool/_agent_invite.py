@@ -337,6 +337,7 @@ class AgentInvite(_TeamToolBase):
                 self._storage,
                 self._user_id,
                 team,
+                access=self._resource_access_service,
             )
             # Fall back to the id so a missing leader agent record does
             # not block the invite.

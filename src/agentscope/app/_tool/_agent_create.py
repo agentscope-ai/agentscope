@@ -25,6 +25,7 @@ from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 
 if TYPE_CHECKING:
+    from .._service._access import ResourceAccessService
     from ..message_bus import MessageBus
     from ..storage import StorageBase
     from ..workspace_manager import WorkspaceManagerBase
@@ -189,6 +190,7 @@ overall communication topology unnecessarily complex.
         session_id: str,
         agent_id: str,
         sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
+        resource_access_service: "ResourceAccessService | None" = None,
     ) -> None:
         """Bind the base dependencies plus the sub-agent templates.
 
@@ -212,6 +214,13 @@ overall communication topology unnecessarily complex.
             sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
 optional):
                 Template registry keyed by type.
+            resource_access_service (`ResourceAccessService | None`, \
+optional):
+                Resolves a cross-owner shared leader agent against the
+                caller's current access grants so the worker's system
+                prompt carries the leader's real name. ``None`` keeps
+                leader resolution owner-scoped for owner-only
+                integrations.
         """
         super().__init__(
             storage,
@@ -222,6 +231,7 @@ optional):
             agent_id,
         )
 
+        self._resource_access_service = resource_access_service
         self._sub_agent_templates: dict[str, SubAgentTemplate] = dict(
             sub_agent_templates or {},
         )
@@ -361,6 +371,7 @@ optional):
                 self._storage,
                 self._user_id,
                 team,
+                access=self._resource_access_service,
             )
             # Fall back to the id so a missing leader agent record does
             # not block member creation.

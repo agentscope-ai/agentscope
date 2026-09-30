@@ -83,7 +83,7 @@ async def _build_team_detail(
             member paired with its session id when available).
     """
     leader_agent: AgentView | None = None
-    leader = await _resolve_team_leader(storage, user_id, team)
+    leader = await _resolve_team_leader(storage, user_id, team, access=access)
     if leader is not None:
         leader_agent = AgentView.model_validate(
             {
