@@ -37,6 +37,10 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.edit_tool.name, "Edit")
         self.assertIsInstance(self.edit_tool.description, str)
         self.assertIsInstance(self.edit_tool.input_schema, dict)
+        old_string_schema = self.edit_tool.input_schema["properties"][
+            "old_string"
+        ]
+        self.assertEqual(old_string_schema["minLength"], 1)
         self.assertFalse(self.edit_tool.is_mcp)
         self.assertFalse(self.edit_tool.is_read_only)
         self.assertFalse(self.edit_tool.is_concurrency_safe)
@@ -96,10 +100,29 @@ class EditToolTest(IsolatedAsyncioTestCase):
                     )
                     with open(self.temp_file.name, "rb") as stream:
                         self.assertEqual(stream.read(), original)
-                    self.assertEqual(chunk.state, "error")
-                    self.assertIn(
-                        "old_string must not be empty",
-                        chunk.content[0].text,
+                    self.assertEqual(
+                        chunk.model_dump(
+                            exclude={
+                                "id": True,
+                                "content": {"__all__": {"id", "created_at"}},
+                            },
+                        ),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Error: old_string must not be empty. "
+                                        "Use the Write tool to populate "
+                                        "an empty file."
+                                    ),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                        },
                     )
 
     async def test_whitespace_target_can_be_deleted(self) -> None:
