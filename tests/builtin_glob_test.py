@@ -3,9 +3,10 @@
 import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import AnyString
-from agentscope.tool import Glob
+from agentscope.tool import ExecResult, Glob, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -72,6 +73,45 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
         # Read/Glob/Grep are read-only, return PASSTHROUGH
         self.assertEqual(decision.behavior, PermissionBehavior.PASSTHROUGH)
+
+    async def test_invalid_helper_output(self) -> None:
+        """Malformed helper output must not masquerade as no matches."""
+        backend = LocalBackend()
+        backend.is_dir = AsyncMock(return_value=True)
+        backend.exec_shell = AsyncMock()
+        tool = Glob(backend=backend)
+        for output in (
+            b"not-json",
+            b"null",
+            b"{}",
+            b'"path.py"',
+            b"[1]",
+            b"[null]",
+        ):
+            with self.subTest(output=output):
+                backend.exec_shell.return_value = ExecResult(0, output, b"")
+                chunk = await tool(pattern="*.py", path=self.temp_dir)
+                self.assertEqual(
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    ),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Glob helper returned invalid output: "
+                                "expected a JSON array of file paths.",
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "error",
+                        "is_last": True,
+                        "metadata": {},
+                    },
+                )
 
     async def test_simple_pattern(self) -> None:
         """Test simple glob pattern."""
