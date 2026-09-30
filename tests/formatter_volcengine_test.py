@@ -822,3 +822,45 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class VolcengineHintUnsupportedMediaTest(IsolatedAsyncioTestCase):
+    """An unsupported attachment in a hint must not vanish silently."""
+
+    async def test_unsupported_media_gets_a_placeholder(self) -> None:
+        """A media type the provider cannot send still leaves a trace."""
+        fmt = VolcengineChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    "a",
+                    [
+                        HintBlock(
+                            hint=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data="QUJD",
+                                        media_type="audio/wav",
+                                    ),
+                                    name="a.wav",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        texts = []
+        for message in res:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    texts.append(part.get("text", ""))
+
+        self.assertTrue(
+            any("audio/wav" in t and "not supported" in t for t in texts),
+            f"no placeholder emitted, got: {texts}",
+        )
