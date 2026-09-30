@@ -174,6 +174,14 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "untimed",
                 HttpMCPConfig(url="https://example.com/mcp", timeout=None),
             ),
+            (
+                "untimed_with_headers",
+                HttpMCPConfig(
+                    url="https://example.com/mcp",
+                    headers={"X-Static": "static"},
+                    timeout=None,
+                ),
+            ),
         ):
             client = MCPClient(
                 name="runtime_headers",
@@ -185,16 +193,25 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 defaults[label] = {
                     "follow_redirects": http_client.follow_redirects,
                     "read_timeout": http_client.timeout.read,
+                    "static_header": http_client.headers.get("X-Static"),
                 }
 
         self.assertDictEqual(
             defaults,
             {
                 "configured": {
-                    "follow_redirects": False,
+                    "follow_redirects": transport_defaults["follow_redirects"],
                     "read_timeout": 30.0,
+                    "static_header": "static",
                 },
-                "untimed": transport_defaults,
+                "untimed": {
+                    **transport_defaults,
+                    "static_header": None,
+                },
+                "untimed_with_headers": {
+                    **transport_defaults,
+                    "static_header": "static",
+                },
             },
         )
 
