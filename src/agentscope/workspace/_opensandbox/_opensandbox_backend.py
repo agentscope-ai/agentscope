@@ -22,6 +22,16 @@ if TYPE_CHECKING:
     from opensandbox.sandbox import Sandbox
 
 
+#: File mode requested for every ``files.write_files`` entry.
+#:
+#: OpenSandbox encodes permissions as an integer whose *decimal digits*
+#: are the octal mode — the SDK's own default is ``755``, and execd
+#: parses the value as octal. ``0o644`` would put ``420`` on the wire,
+#: which execd reads as ``0o420``: owner read-only, so the second write
+#: to the same file fails with ``permission denied``.
+WRITE_ENTRY_FILE_MODE = 644
+
+
 class _WriteEntry:
     """Small SDK-compatible write entry used when the SDK type is absent."""
 
@@ -181,9 +191,17 @@ class OpenSandboxBackend(BackendBase):
         try:
             from opensandbox.models.filesystem import WriteEntry
 
-            return WriteEntry(path=path, data=data, mode=0o644)
+            return WriteEntry(
+                path=path,
+                data=data,
+                mode=WRITE_ENTRY_FILE_MODE,
+            )
         except Exception:  # noqa: BLE001
-            return _WriteEntry(path=path, data=data, mode=0o644)
+            return _WriteEntry(
+                path=path,
+                data=data,
+                mode=WRITE_ENTRY_FILE_MODE,
+            )
 
     @staticmethod
     def _make_run_opts(cwd: str, timeout: float | None) -> Any:
