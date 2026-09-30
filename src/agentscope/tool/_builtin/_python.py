@@ -21,7 +21,7 @@ class Python(ToolBase):
     """The tool name presented to the agent."""
 
     description: str = """Executes Python code and returns its output.
-    
+
 Usage:
 - Provide valid Python code in the `code` parameter.
 - The code will be saved to a temporary file and executed via `python`.
