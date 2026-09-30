@@ -237,7 +237,7 @@ class ExcelParser(ParserBase):
             `FileNotFoundError`: If ``file`` is a ``str`` pointing to
                 a path that does not exist.
             `ImportError`: If :mod:`pandas` is not installed.
-            `ValueError`: If the bytes cannot be parsed.
+            `ValueError`: If the workbook or any worksheet cannot be parsed.
         """
         try:
             import pandas as pd
@@ -319,8 +319,9 @@ class ExcelParser(ParserBase):
                 keep_default_na=False,
             )
         except Exception as e:
-            logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
-            return sheet_sections
+            raise ValueError(
+                f"Failed to parse sheet {sheet_name!r} in {filename!r}: {e}",
+            ) from e
 
         # Keep the first row as cell data: pandas column labels would rename
         # duplicate headers and replace blank headers with "Unnamed: ...".
