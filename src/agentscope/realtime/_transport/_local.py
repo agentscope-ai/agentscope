@@ -173,6 +173,13 @@ class LocalAudioTransport(TransportBase):
             logger.debug("LocalAudioTransport: output %s", status)
         wanted = frames * 2
         with self._lock:
+            # Providers stream base64 PCM in chunks that need not end on a
+            # sample boundary, so the buffer can carry a dangling half-byte.
+            # Drop it here rather than hand ``np.frombuffer`` an unaligned
+            # buffer, which raises -- on PortAudio's thread, where the block
+            # would then be left unfilled.
+            if len(self._pending) % 2:
+                del self._pending[-1:]
             chunk = bytes(self._pending[:wanted])
             del self._pending[:wanted]
             if chunk:
@@ -188,7 +195,12 @@ class LocalAudioTransport(TransportBase):
         with self._lock:
             position = self._position()
             fade_bytes = self.output_sample_rate * self._fade_ms // 1000 * 2
-            head = np.frombuffer(bytes(self._pending[:fade_bytes]), np.int16)
+            head_bytes = bytes(self._pending[:fade_bytes])
+            # Same sample-alignment rule as the output callback.
+            head = np.frombuffer(
+                head_bytes[: len(head_bytes) - len(head_bytes) % 2],
+                np.int16,
+            )
             self._pending.clear()
             if len(head):
                 ramp = np.linspace(1.0, 0.0, len(head), dtype=np.float32)
