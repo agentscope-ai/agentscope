@@ -133,6 +133,19 @@ class _FakeAgent:
         for event in self.events:
             yield event
 
+    def checkpoint_snapshot(self, event: Any) -> object | None:
+        """Return state for the same boundaries as the real agent."""
+        if isinstance(
+            event,
+            (
+                ReplyEndEvent,
+                RequireUserConfirmEvent,
+                ToolResultEndEvent,
+            ),
+        ) or (isinstance(event, TextBlockEndEvent) and event.text is not None):
+            return self.state
+        return None
+
 
 class _FakeTransport:
     """Idempotently closing transport double."""
@@ -935,42 +948,11 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "value": "1-0",
                     "ttl_secs": None,
                 },
-                {
-                    "method": "acquire_lock",
-                    "key": MessageBusKeys.session_event_checkpoint_lock(
-                        "session-1",
-                    ),
-                    "ttl_secs": (
-                        MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
-                    ),
-                },
-                {"method": "log_trim", "key": events_key},
-                {
-                    "method": "registry_drop",
-                    "namespace": (
-                        MessageBusKeys.session_event_checkpoint(
-                            "session-1",
-                        )
-                    ),
-                },
             ],
         )
         self.assertEqual(
             storage.calls,
             [
-                {
-                    "method": "upsert_message",
-                    "user_id": "alice",
-                    "session_id": "session-1",
-                    "message": message,
-                },
-                {
-                    "method": "update_session_state",
-                    "user_id": "alice",
-                    "agent_id": "agent-1",
-                    "session_id": "session-1",
-                    "state": agent.state,
-                },
                 {
                     "method": "upsert_message",
                     "user_id": "alice",
@@ -1001,7 +983,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 "peer_connection_closed": True,
                 "transport_errors": [],
                 "closed_sessions": [session],
-                "writes_under_session_lock": [True, True],
+                "writes_under_session_lock": [True],
             },
         )
 
@@ -1202,15 +1184,6 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                         MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
                     ),
                 },
-                {"method": "log_trim", "key": events_key},
-                {
-                    "method": "registry_drop",
-                    "namespace": (
-                        MessageBusKeys.session_event_checkpoint(
-                            "session-1",
-                        )
-                    ),
-                },
             ],
         )
 
@@ -1345,7 +1318,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "upsert_message",
                     "update_session_state",
                 ]
-                * 4,
+                * 3,
                 "published_event_types": [event.type for event in events],
                 "cursor_values": ["1-0"] * 3,
             },

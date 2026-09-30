@@ -111,6 +111,14 @@ class _Reply:
         return self.text[:length]
 
 
+@dataclass
+class _QueuedEvent:
+    """One outward event and its state at a persistence boundary."""
+
+    event: AgentEvent
+    checkpoint: AgentState | None = None
+
+
 class RealtimeAgent:
     """A voice agent: a realtime model on one side, a transport on the
     other, and the turn-taking state machine in between.
@@ -196,7 +204,8 @@ class RealtimeAgent:
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
-        self._out: asyncio.Queue = asyncio.Queue()
+        self._out: asyncio.Queue[_QueuedEvent] = asyncio.Queue()
+        self._yielded_checkpoint: tuple[str, AgentState] | None = None
         self._reply: _Reply | None = None
         # A response can finish generating before its queued audio reaches
         # the speaker. Keep its alignment until the next barge-in can decide
@@ -481,7 +490,16 @@ class RealtimeAgent:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if getter in done:
-                    yield getter.result()
+                    queued = getter.result()
+                    self._yielded_checkpoint = (
+                        (queued.event.id, queued.checkpoint)
+                        if queued.checkpoint is not None
+                        else None
+                    )
+                    try:
+                        yield queued.event
+                    finally:
+                        self._yielded_checkpoint = None
                 else:
                     getter.cancel()
             # The transport is gone: cut off any reply still in flight so
@@ -490,7 +508,16 @@ class RealtimeAgent:
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
             while not self._out.empty():
-                yield self._out.get_nowait()
+                queued = self._out.get_nowait()
+                self._yielded_checkpoint = (
+                    (queued.event.id, queued.checkpoint)
+                    if queued.checkpoint is not None
+                    else None
+                )
+                try:
+                    yield queued.event
+                finally:
+                    self._yielded_checkpoint = None
             # A transport failure must not look like a clean disconnect.
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
@@ -1192,7 +1219,24 @@ class RealtimeAgent:
 
     def _emit(self, event: AgentEvent) -> None:
         """Queue one event for :meth:`reply_stream`."""
-        self._out.put_nowait(event)
+        checkpoint = None
+        if isinstance(
+            event,
+            (
+                ReplyEndEvent,
+                RequireUserConfirmEvent,
+                ToolResultEndEvent,
+            ),
+        ) or (isinstance(event, TextBlockEndEvent) and event.text is not None):
+            checkpoint = self.state.model_copy(deep=True)
+        self._out.put_nowait(_QueuedEvent(event, checkpoint))
+
+    def checkpoint_snapshot(self, event: AgentEvent) -> AgentState | None:
+        """Return the immutable state paired with the yielded event."""
+        checkpoint = self._yielded_checkpoint
+        if checkpoint is None or checkpoint[0] != event.id:
+            return None
+        return checkpoint[1]
 
     # ------------------------------------------------------------------
     # Tools
@@ -1389,13 +1433,6 @@ class RealtimeAgent:
                     delta=output,
                 ),
             )
-        self._emit(
-            ToolResultEndEvent(
-                reply_id=reply_id,
-                tool_call_id=call.id,
-                state=state,
-            ),
-        )
         block = ToolResultBlock(
             id=call.id,
             name=call.name,
@@ -1410,4 +1447,11 @@ class RealtimeAgent:
                 break
         else:
             self.state.append_context(self.name, [block])
+        self._emit(
+            ToolResultEndEvent(
+                reply_id=reply_id,
+                tool_call_id=call.id,
+                state=state,
+            ),
+        )
         await self.model.push_tool_result(block)

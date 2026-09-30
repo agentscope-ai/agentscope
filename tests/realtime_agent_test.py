@@ -442,6 +442,46 @@ class EndOnSecondFrameVAD(VADBase):
         self.seen = 0
 
 
+class RealtimeCheckpointSnapshotTest(IsolatedAsyncioTestCase):
+    """Checkpoint state must stay aligned with its emitted event."""
+
+    async def test_checkpoint_snapshot_stays_at_its_event_boundary(
+        self,
+    ) -> None:
+        """A queued later response cannot advance an earlier checkpoint."""
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            ScriptedModel([[]]),
+        )
+        agent.state.context.append(
+            AssistantMsg(id="r1", name="Friday", content="first"),
+        )
+        agent._emit(ReplyEndEvent(session_id="s1", reply_id="r1"))
+        agent.state.context.append(
+            AssistantMsg(id="r2", name="Friday", content="second"),
+        )
+
+        checkpoint = agent._out.get_nowait().checkpoint
+        assert checkpoint is not None
+        self.assertEqual(
+            {
+                "checkpoint": [
+                    (msg.id, msg.get_text_content())
+                    for msg in checkpoint.context
+                ],
+                "current": [
+                    (msg.id, msg.get_text_content())
+                    for msg in agent.state.context
+                ],
+            },
+            {
+                "checkpoint": [("r1", "first")],
+                "current": [("r1", "first"), ("r2", "second")],
+            },
+        )
+
+
 class RealtimeAgentTest(IsolatedAsyncioTestCase):
     """Behaviour of the turn-taking state machine."""
 

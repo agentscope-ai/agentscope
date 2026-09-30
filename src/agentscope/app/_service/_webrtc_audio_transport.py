@@ -53,7 +53,7 @@ class WebRTCAudioTrack(MediaStreamTrack):
             rate=_WEBRTC_SAMPLE_RATE,
         )
         self._chunks: deque[tuple[str, bytearray]] = deque()
-        self._started_items: set[str] = set()
+        self._started_item_id = ""
         self._pts = 0
         self._started_at: float | None = None
 
@@ -105,8 +105,8 @@ class WebRTCAudioTrack(MediaStreamTrack):
             if not chunk:
                 self._chunks.popleft()
 
-        if frame_item and frame_item not in self._started_items:
-            self._started_items.add(frame_item)
+        if frame_item and frame_item != self._started_item_id:
+            self._started_item_id = frame_item
             self._on_item_started(
                 frame_item,
                 self._pts * 1_000 // _WEBRTC_SAMPLE_RATE,

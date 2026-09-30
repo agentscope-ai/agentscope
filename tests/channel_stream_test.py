@@ -14,7 +14,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app.channel._stream import open_reply_stream
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -118,6 +118,26 @@ class EventStreamTest(IsolatedAsyncioTestCase):
             await _drain(bus, "s-1"),
             ["REPLY_START", "REPLY_END"],
         )
+
+    async def test_replay_starts_after_persisted_checkpoint(self) -> None:
+        """Retained events from the prior run are not redelivered."""
+        bus = InMemoryMessageBus()
+        await _publish(bus, "s-1", _start())
+        await _publish(bus, "s-1", _end())
+        entries = await bus.log_read(MessageBusKeys.session_events("s-1"))
+        await bus.registry_set(
+            MessageBusKeys.session_event_checkpoint("s-1"),
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            entries[-1][0],
+        )
+
+        async def _run() -> None:
+            await asyncio.sleep(0.01)
+            await _publish(bus, "s-1", _start())
+            await _publish(bus, "s-1", _end())
+
+        drained, _ = await asyncio.gather(_drain(bus, "s-1"), _run())
+        self.assertListEqual(drained, ["REPLY_START", "REPLY_END"])
 
     async def test_delivers_events_published_while_streaming(self) -> None:
         """The common case: delivery starts first, events arrive after."""

@@ -54,7 +54,7 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 export const AVAILABLE_MODELS_KEY = ['available-models'];
 
 export function useAvailableModels() {
-	const { data, isPending, error, refetch } = useQuery({
+	const { data, isPending, error } = useQuery({
 		queryKey: AVAILABLE_MODELS_KEY,
 		queryFn: fetchGroups,
 	});
@@ -63,6 +63,5 @@ export function useAvailableModels() {
 		groups: data ?? {},
 		loading: isPending,
 		error: error as Error | null,
-		refetch: () => void refetch(),
 	};
 }

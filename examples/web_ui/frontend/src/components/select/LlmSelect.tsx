@@ -1,5 +1,4 @@
 import { ChevronDown, PlusCircle, Ban } from 'lucide-react';
-import { useEffect } from 'react';
 
 import type { ChatModelConfig } from '@/api';
 import { Button } from '@/components/ui/button';
@@ -29,7 +28,6 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 	 */
 	onChange?: (value: ChatModelConfig | null) => void;
 	onAddCredential?: () => void;
-	refetchTrigger?: number;
 	/** Override the trigger label shown when no model is selected. */
 	placeholder?: string;
 	/**
@@ -45,14 +43,13 @@ export function LlmSelect({
 	value,
 	onChange,
 	onAddCredential,
-	refetchTrigger,
 	placeholder,
 	allowClear = false,
 	clearLabel,
 	className,
 	...props
 }: Props) {
-	const { groups, loading, refetch } = useAvailableModels();
+	const { groups, loading } = useAvailableModels();
 	const { t } = useTranslation();
 	// Credentials whose model list failed to load come back with an empty
 	// `models` array; drop them so they don't render empty submenus
@@ -60,10 +57,6 @@ export function LlmSelect({
 		.map(([type, items]) => [type, items.filter((i) => i.models.length > 0)] as const)
 		.filter(([, usable]) => usable.length > 0);
 	const hasOptions = groupEntries.length > 0;
-
-	useEffect(() => {
-		if (refetchTrigger !== undefined && refetchTrigger > 0) refetch();
-	}, [refetchTrigger, refetch]);
 
 	const handleSelect = (type: string, credentialId: string, model: string) => {
 		onChange?.({ type, credential_id: credentialId, model, parameters: {} });

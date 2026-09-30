@@ -12,10 +12,8 @@ from ...event import (
     DataBlockDeltaEvent,
     ReplyEndEvent,
     ReplyStartEvent,
-    RequireUserConfirmEvent,
-    TextBlockEndEvent,
-    ToolResultEndEvent,
 )
+from ...state import AgentState
 from .._bus_ops import publish_session_event
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
@@ -59,6 +57,8 @@ class WebRTCSession:
         self._lock_acquired = asyncio.Event()
         self._persisted_message_ids: set[str] = set()
         self._open_user_replies: set[str] = set()
+        self._last_entry_id: str | None = None
+        self._checkpoint_entry_id: str | None = None
 
     def start(self) -> None:
         """Start the agent pump after WebRTC negotiation succeeds."""
@@ -137,6 +137,9 @@ class WebRTCSession:
                             async for event in self.agent.reply_stream(
                                 self.transport,
                             ):
+                                checkpoint = self.agent.checkpoint_snapshot(
+                                    event,
+                                )
                                 payload = event.model_dump(mode="json")
                                 if isinstance(
                                     event,
@@ -153,6 +156,7 @@ class WebRTCSession:
                                         self.session_id,
                                         payload,
                                     )
+                                    self._last_entry_id = entry_id
                                 if (
                                     isinstance(event, ReplyStartEvent)
                                     and event.role == "user"
@@ -164,25 +168,15 @@ class WebRTCSession:
                                     self._open_user_replies.discard(
                                         event.reply_id,
                                     )
-                                should_checkpoint = isinstance(
-                                    event,
-                                    (
-                                        ReplyEndEvent,
-                                        RequireUserConfirmEvent,
-                                        ToolResultEndEvent,
-                                    ),
-                                ) or (
-                                    isinstance(event, TextBlockEndEvent)
-                                    and event.text is not None
-                                )
-                                if should_checkpoint:
+                                if (
+                                    checkpoint is not None
+                                    and not self._open_user_replies
+                                ):
                                     try:
-                                        cursor = (
-                                            None
-                                            if self._open_user_replies
-                                            else entry_id
+                                        await self._checkpoint_state(
+                                            entry_id,
+                                            checkpoint,
                                         )
-                                        await self._checkpoint_state(cursor)
                                     except Exception as exc:
                                         logger.warning(
                                             "Failed to checkpoint WebRTC "
@@ -192,19 +186,21 @@ class WebRTCSession:
                                         )
                 finally:
                     try:
-                        async with self.message_bus.acquire_lock(
-                            MessageBusKeys.session_event_checkpoint_lock(
-                                self.session_id,
-                            ),
-                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                        if (
+                            self._checkpoint_entry_id is None
+                            or self._last_entry_id != self._checkpoint_entry_id
                         ):
-                            await self._persist_state()
-                            await self.message_bus.log_trim(events_key)
-                            await self.message_bus.registry_drop(
-                                MessageBusKeys.session_event_checkpoint(
+                            async with self.message_bus.acquire_lock(
+                                MessageBusKeys.session_event_checkpoint_lock(
                                     self.session_id,
                                 ),
-                            )
+                                ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                            ):
+                                await self._persist_state()
+                                if self._last_entry_id is not None:
+                                    await self._set_checkpoint_cursor(
+                                        self._last_entry_id,
+                                    )
                     except Exception as exc:
                         logger.exception(
                             "Failed to persist WebRTC session %r: %s",
@@ -225,26 +221,36 @@ class WebRTCSession:
             await self.peer_connection.close()
             self._on_closed(self)
 
-    async def _checkpoint_state(self, entry_id: str | None) -> None:
+    async def _checkpoint_state(
+        self,
+        entry_id: str | None,
+        state: AgentState,
+    ) -> None:
         """Persist state and bind it to the replay entry it includes."""
         async with self.message_bus.acquire_lock(
             MessageBusKeys.session_event_checkpoint_lock(self.session_id),
             ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
         ):
-            await self._persist_state()
+            await self._persist_state(state)
             if entry_id is not None:
-                await self.message_bus.registry_set(
-                    MessageBusKeys.session_event_checkpoint(self.session_id),
-                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
-                    entry_id,
-                )
+                await self._set_checkpoint_cursor(entry_id)
 
-    async def _persist_state(self) -> None:
+    async def _set_checkpoint_cursor(self, entry_id: str) -> None:
+        """Record the last event included in the persisted state."""
+        await self.message_bus.registry_set(
+            MessageBusKeys.session_event_checkpoint(self.session_id),
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            entry_id,
+        )
+        self._checkpoint_entry_id = entry_id
+
+    async def _persist_state(self, state: AgentState | None = None) -> None:
         """Persist the latest complete messages and agent state."""
         if self.agent is None:
             return
-        current_ids = {message.id for message in self.agent.state.context}
-        for message in self.agent.state.context:
+        state = state or self.agent.state
+        current_ids = {message.id for message in state.context}
+        for message in state.context:
             await self.storage.upsert_message(
                 self.user_id,
                 self.session_id,
@@ -263,5 +269,5 @@ class WebRTCSession:
             user_id=self.user_id,
             agent_id=self.agent_id,
             session_id=self.session_id,
-            state=self.agent.state,
+            state=state,
         )

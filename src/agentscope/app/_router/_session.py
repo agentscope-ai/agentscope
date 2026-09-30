@@ -738,6 +738,7 @@ async def get_session_status(
 # ----------------------------------------------------------------------
 
 _HEARTBEAT_INTERVAL_SECS = 30
+_SUBSCRIBE_TIMEOUT_SECS = 5.0
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
@@ -852,63 +853,8 @@ async def stream_session_events(
         )
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
-        # 1. Replay buffered events from the current run (if any).
-        for _entry_id, event in await message_bus.log_read(
-            MessageBusKeys.session_events(session_id),
-            since=after,
-            max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
-        ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-        # 1b. Inject pending subagent HITL cards projected onto this
-        #     session as a team leader (design §3.5). These live in a
-        #     durable Redis hash — NOT in the replay log (trimmed per
-        #     run) nor in the leader's own Msg history — so a fresh
-        #     reconnect after the worker parked still surfaces them.
-        #
-        #     Reconcile-on-read: the worker session's own context is the
-        #     SSOT. Inject only when the worker is still ASKING; drop and
-        #     delete ghosts (worker resolved/cancelled without clearing).
-        projection = SessionProjection(message_bus)
-        for payload in await projection.list(
-            session_id,
-            SubagentHitlProjector.KIND,
-        ):
-            if not await _worker_still_asking(
-                storage,
-                user_id,
-                payload["worker_agent_id"],
-                payload["worker_session_id"],
-                payload["reply_id"],
-            ):
-                await projection.delete(
-                    session_id,
-                    SubagentHitlProjector.KIND,
-                    SubagentHitlProjector.entry_id(
-                        payload["worker_session_id"],
-                        payload["reply_id"],
-                    ),
-                )
-                continue
-            custom = CustomEvent(
-                name=SubagentHitlProjector.EVT_REQUIRE,
-                value=payload,
-            )
-            data = json.dumps(
-                custom.model_dump(mode="json"),
-                ensure_ascii=False,
-            )
-
-            yield f"data: {data}\n\n"
-
-        # 2. Live subscribe via a background feeder task that pushes
-        #    events into a queue. The main loop reads from the queue
-        #    with a timeout so we can interleave heartbeat frames.
-        #
-        #    We avoid calling ``wait_for(__anext__())`` on the async
-        #    generator directly because cancelling a suspended
-        #    ``__anext__`` leaves the generator in a "running" state
-        #    that prevents ``aclose()`` from working.
+        events_key = MessageBusKeys.session_events(session_id)
+        ready = asyncio.Event()
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def _feeder() -> None:
@@ -919,11 +865,10 @@ async def stream_session_events(
             """
             try:
                 async for evt in message_bus.subscribe(
-                    MessageBusKeys.session_events(session_id),
+                    events_key,
+                    on_ready=ready.set,
                 ):
-                    await queue.put(
-                        {k: v for k, v in evt.items() if k != "_entry_id"},
-                    )
+                    await queue.put(evt)
             except asyncio.CancelledError:
                 pass
             finally:
@@ -935,6 +880,55 @@ async def stream_session_events(
         )
 
         try:
+            # Subscribe first, then replay. Events arriving across that
+            # seam are present in both paths and deduplicated by entry id.
+            await asyncio.wait_for(
+                ready.wait(),
+                timeout=_SUBSCRIBE_TIMEOUT_SECS,
+            )
+            seen_entry_ids: set[str] = set()
+            for entry_id, event in await message_bus.log_read(
+                events_key,
+                since=after,
+                max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
+            ):
+                seen_entry_ids.add(str(entry_id))
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            # Inject pending subagent HITL cards projected onto this
+            # session as a team leader. These live in a durable registry,
+            # outside the replay log.
+            projection = SessionProjection(message_bus)
+            for payload in await projection.list(
+                session_id,
+                SubagentHitlProjector.KIND,
+            ):
+                if not await _worker_still_asking(
+                    storage,
+                    user_id,
+                    payload["worker_agent_id"],
+                    payload["worker_session_id"],
+                    payload["reply_id"],
+                ):
+                    await projection.delete(
+                        session_id,
+                        SubagentHitlProjector.KIND,
+                        SubagentHitlProjector.entry_id(
+                            payload["worker_session_id"],
+                            payload["reply_id"],
+                        ),
+                    )
+                    continue
+                custom = CustomEvent(
+                    name=SubagentHitlProjector.EVT_REQUIRE,
+                    value=payload,
+                )
+                data = json.dumps(
+                    custom.model_dump(mode="json"),
+                    ensure_ascii=False,
+                )
+                yield f"data: {data}\n\n"
+
             while True:
                 try:
                     item = await asyncio.wait_for(
@@ -943,7 +937,18 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    entry_id = item.get("_entry_id")
+                    if entry_id is not None:
+                        entry_id = str(entry_id)
+                        if entry_id in seen_entry_ids:
+                            continue
+                    payload = {
+                        key: value
+                        for key, value in item.items()
+                        if key != "_entry_id"
+                    }
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:
