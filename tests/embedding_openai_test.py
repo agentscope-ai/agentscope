@@ -9,7 +9,48 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyValue
 
 from agentscope.credential import OpenAICredential
-from agentscope.embedding import OpenAIEmbeddingModel
+from agentscope.embedding import (
+    EmbeddingResponse,
+    EmbeddingUsage,
+    OpenAIEmbeddingModel,
+)
+
+
+class EmbeddingMergeUsageTest(IsolatedAsyncioTestCase):
+    """Merged usage must not sum concurrently dispatched batch times."""
+
+    async def test_time_is_the_slowest_batch_not_the_sum(self) -> None:
+        """Batches overlap, so their durations must not be added up."""
+        slow = EmbeddingResponse(
+            embeddings=[[0.1]],
+            usage=EmbeddingUsage(tokens=1, time=0.05),
+        )
+        fast = EmbeddingResponse(
+            embeddings=[[0.2]],
+            usage=EmbeddingUsage(tokens=1, time=0.03),
+        )
+
+        merged = OpenAIEmbeddingModel._merge_responses([slow, fast])
+
+        self.assertEqual(merged.usage.tokens, 2)
+        self.assertEqual(merged.usage.time, 0.05)
+
+    async def test_embeddings_are_still_concatenated_in_order(self) -> None:
+        """The token change must not affect the merged vector order."""
+        first = EmbeddingResponse(
+            embeddings=[[0.1]],
+            usage=EmbeddingUsage(tokens=1, time=0.05),
+        )
+        second = EmbeddingResponse(
+            embeddings=[[0.2]],
+            usage=EmbeddingUsage(tokens=1, time=0.03),
+        )
+
+        merged = OpenAIEmbeddingModel._merge_responses([first, second])
+
+        self.assertEqual(merged.embeddings, [[0.1], [0.2]])
+        self.assertEqual(merged.usage.tokens, 2)
+
 
 A = AnyValue()
 
@@ -181,3 +222,49 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["embeddings"], [[0.1]])
         self.assertEqual(mock_client.embeddings.create.await_count, 2)
+
+
+class EmbeddingMergeSourceTest(IsolatedAsyncioTestCase):
+    """A merged response must keep the provenance of its batches."""
+
+    @staticmethod
+    def _resp(
+        source: str,
+        embedding: list[float],
+        tokens: int = 0,
+    ) -> EmbeddingResponse:
+        """Build a one-embedding response with the given provenance."""
+        return EmbeddingResponse(
+            embeddings=[embedding],
+            usage=EmbeddingUsage(tokens=tokens, time=0.0),
+            source=source,
+        )
+
+    def test_all_cached_merges_to_cache(self) -> None:
+        """No API request was made, so the merge must report ``cache``."""
+        merged = OpenAIEmbeddingModel._merge_responses(
+            [
+                self._resp("cache", [0.1]),
+                self._resp("cache", [0.2]),
+            ],
+        )
+        self.assertEqual(merged.source, "cache")
+        self.assertEqual(merged.embeddings, [[0.1], [0.2]])
+
+    def test_partly_cached_merges_to_api(self) -> None:
+        """One genuine request is enough to keep ``api``."""
+        merged = OpenAIEmbeddingModel._merge_responses(
+            [
+                self._resp("cache", [0.1]),
+                self._resp("api", [0.2], tokens=2),
+            ],
+        )
+        self.assertEqual(merged.source, "api")
+        self.assertEqual(merged.embeddings, [[0.1], [0.2]])
+        self.assertEqual(merged.usage.tokens, 2)
+
+    def test_single_cached_response_is_passed_through(self) -> None:
+        """The one-batch path already reports ``cache``; keep that."""
+        only = self._resp("cache", [0.9])
+        self.assertIs(OpenAIEmbeddingModel._merge_responses([only]), only)
+        self.assertEqual(only.source, "cache")
