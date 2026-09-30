@@ -23,6 +23,8 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
+from agentscope.event import ReplyEndEvent
+from agentscope.message import ToolResultState
 from agentscope.types import ReplyFinishedReason
 
 
@@ -2130,3 +2132,137 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
+
+
+class _AlwaysDeniedTool(ToolBase):
+    """A tool that the permission system always denies."""
+
+    name: str = "always_denied"
+    description: str = "Always denied by the permission system."
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    is_concurrency_safe: bool = False
+    is_read_only: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            decision_reason="not allowed",
+            message="not allowed",
+        )
+
+    async def __call__(self, **kwargs: Any) -> ToolChunk:
+        return ToolChunk(
+            content=[TextBlock(text="should never run")],
+            is_last=True,
+        )
+
+
+class AgentStopOnRejectTest(IsolatedAsyncioTestCase):
+    """``ReActConfig.stop_on_reject`` ends the reply when a tool call is
+    rejected, instead of reasoning on."""
+
+    def _make_agent(
+        self,
+        stop_on_reject: bool,
+    ) -> tuple[Agent, MockModel]:
+        model = MockModel()
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(tools=[_AlwaysDeniedTool()]),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(stop_on_reject=stop_on_reject),
+        )
+        return agent, model
+
+    async def test_stop_on_reject_ends_reply_without_further_reasoning(
+        self,
+    ) -> None:
+        """The denied tool call is the last thing that happens; the model
+        is not asked to reason again."""
+        agent, model = self._make_agent(stop_on_reject=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-1",
+                                name="always_denied",
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                # Must never be consumed.
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="should not happen")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        end_events = []
+        async for evt in agent.reply_stream(
+            UserMsg(name="user", content="go"),
+        ):
+            if isinstance(evt, ReplyEndEvent):
+                end_events.append(evt)
+
+        self.assertEqual(model.cnt, 1)
+        self.assertEqual(len(end_events), 1)
+        self.assertEqual(
+            end_events[0].finished_reason,
+            ReplyFinishedReason.COMPLETED,
+        )
+        last_msg = agent.state.context[-1]
+        denied_results = [
+            block
+            for block in last_msg.get_content_blocks("tool_result")
+            if block.state == ToolResultState.DENIED
+        ]
+        self.assertEqual(len(denied_results), 1)
+
+    async def test_without_stop_on_reject_reasoning_continues(
+        self,
+    ) -> None:
+        """The default keeps the previous behavior: the agent reasons
+        again after the rejection."""
+        agent, model = self._make_agent(stop_on_reject=False)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-1",
+                                name="always_denied",
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="kept going")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        async for _ in agent.reply_stream(UserMsg(name="user", content="go")):
+            pass
+
+        self.assertEqual(model.cnt, 2)
+        last_msg = agent.state.context[-1]
+        self.assertIn("kept going", last_msg.get_text_content())

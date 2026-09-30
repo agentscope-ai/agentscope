@@ -3547,6 +3547,37 @@ class Agent:
                 ),
             )
 
+        # The trailing tool results show a rejection and nothing is left
+        # to execute or await: honor ``stop_on_reject`` by ending the
+        # reply instead of reasoning on.
+        if (
+            self.react_config.stop_on_reject
+            and last_msg is not None
+            and last_msg.role == "assistant"
+            and last_msg.name == self.name
+            and any(
+                _.state == ToolResultState.DENIED
+                for _ in last_msg.get_content_blocks("tool_result")
+            )
+        ):
+            return Exit(
+                exit_events=[
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.COMPLETED,
+                    ),
+                ],
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content="The tool call was rejected, so I stopped here "
+                    "and am waiting for your input.",
+                    usage=self._get_reply_usage(),
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+            )
+
         # ===========================================================
         # Step 2: Check structured output if no blocked tool calls
         # ===========================================================
