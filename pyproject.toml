@@ -251,3 +251,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.dynamic]
 version = {attr = "agentscope._version.__version__"}
+
+# AgentScope uses a src layout. Without this, `agentscope` is only
+# importable through an install, so a non-editable `pip install .` makes
+# pytest silently exercise the site-packages copy instead of the working
+# tree. CI installs with `-e`, which hides the difference.
+[tool.pytest.ini_options]
+pythonpath = ["src"]
