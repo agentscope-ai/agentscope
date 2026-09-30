@@ -90,6 +90,48 @@ class FileEmbeddingCacheEvictionTest(IsolatedAsyncioTestCase):
             self.assertIsNone(await cache.retrieve("first"))
             self.assertIsNone(await cache.retrieve("second"))
 
+    async def test_rejected_write_still_enforces_file_count(self) -> None:
+        """Rejected writes must still enforce the independent count cap."""
+        cases: list[tuple[int | None, list[str]]] = [
+            (0, []),
+            (1, ["second"]),
+            (None, ["first", "second"]),
+        ]
+        for limit, retained in cases:
+            with self.subTest(limit=limit):
+                with tempfile.TemporaryDirectory() as cache_dir:
+                    cache = FileEmbeddingCache(cache_dir=cache_dir)
+                    for index, identifier in enumerate(("first", "second")):
+                        await cache.store(_vectors(1), identifier)
+                        path = os.path.join(
+                            cache_dir,
+                            cache._get_filename(identifier),
+                        )
+                        os.utime(path, (1000 + index, 1000 + index))
+                    unrelated = os.path.join(cache_dir, "notes.txt")
+                    with open(unrelated, "w", encoding="utf-8") as file:
+                        file.write("keep me")
+
+                    cache.max_file_number = limit
+                    cache.max_cache_size = 0
+                    await cache.store(_vectors(1), "rejected")
+
+                    self.assertIsNone(await cache.retrieve("rejected"))
+                    for identifier in ("first", "second"):
+                        self.assertEqual(
+                            await cache.retrieve(identifier),
+                            _vectors(1) if identifier in retained else None,
+                        )
+                    self.assertEqual(
+                        sorted(os.listdir(cache_dir)),
+                        sorted(
+                            [cache._get_filename(key) for key in retained]
+                            + ["notes.txt"],
+                        ),
+                    )
+                    with open(unrelated, encoding="utf-8") as file:
+                        self.assertEqual(file.read(), "keep me")
+
     async def test_oversized_entry_is_not_cached_and_keeps_the_cache(
         self,
     ) -> None:

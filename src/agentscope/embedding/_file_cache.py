@@ -160,10 +160,11 @@ class FileEmbeddingCache(EmbeddingCacheBase):
             new_file (`str | None`, defaults to `None`):
                 The path of the file that :meth:`store` has just written.
                 When that file alone is larger than ``max_cache_size`` it is
-                dropped uncached and the rest of the cache is left untouched:
-                evicting oldest-first towards such a limit would delete
-                every other file and still not fit.
+                dropped uncached without size-based eviction of older
+                entries: evicting oldest-first would still not make it fit.
+                The independent file-count limit is still enforced.
         """
+        rejected_oversized = False
         if new_file and self.max_cache_size is not None:
             new_size_mb = os.path.getsize(new_file) / (1024.0 * 1024.0)
             if new_size_mb > self.max_cache_size:
@@ -175,7 +176,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     new_size_mb,
                     self.max_cache_size,
                 )
-                return
+                rejected_oversized = True
 
         files = [
             (_.name, _.stat().st_mtime)
@@ -198,6 +199,9 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     self.max_file_number,
                 )
             files = files[excess:]
+
+        if rejected_oversized:
+            return
 
         if (
             self.max_cache_size is not None
