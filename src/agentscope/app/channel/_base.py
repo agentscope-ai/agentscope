@@ -107,9 +107,10 @@ class ChannelEvent(BaseModel):
 class ChannelConfirmationResultEvent(BaseModel):
     """A user's decision on a pending tool-approval, delivered inbound.
 
-    Enters through the *same* gateway entry point as messages. Carries
-    only lookup keys — the authoritative pending tool call is read from
-    the session state, never trusted from this round-tripped payload.
+    Enters through the *same* gateway entry point as messages. The opaque
+    ``approval_id`` selects server-side routing and authorization data; the
+    other lookup fields remain for platform/backward compatibility and are
+    not trusted by the gateway.
     """
 
     channel_id: str
@@ -122,23 +123,46 @@ class ChannelConfirmationResultEvent(BaseModel):
     """Platform user who decided; routes to the session."""
 
     agent_id: str = ""
-    """Target agent resolved when the card was sent; used directly on
-    click so a re-route or metadata-based rule can't misroute the
-    decision. Empty on older cards → fall back to routing."""
+    """Legacy round-tripped target; server-side approval state is trusted."""
 
     session_id: str = ""
-    """Target session resolved when the card was sent; paired with
-    ``agent_id`` to resume the exact run that is asking."""
+    """Legacy round-tripped target; server-side approval state is trusted."""
 
     tool_call_id: str
-    """Id of the tool call being answered — the correlation key, matched
-    against the session's awaiting confirmations."""
+    """Legacy round-tripped id; server-side approval state is trusted."""
 
     approved: bool
     """The user's decision."""
 
     actor: str = ""
     """Platform-side id of whoever made the decision (for audit)."""
+
+    approval_id: str = ""
+    """Opaque id of the server-side approval record; empty is stale."""
+
+
+class ChannelDecisionStatus(str, Enum):
+    """Outcome returned to a platform after a confirmation-card click."""
+
+    ACCEPTED = "accepted"
+    """The decision passed validation and a resume request was enqueued.
+    Applies to both approve and deny; tool execution may not have started.
+    """
+
+    UNAUTHORIZED = "unauthorized"
+    """The clicker does not match the recorded requester. The pending
+    approval is retained so the requester can still approve or deny it.
+    """
+
+    STALE = "stale"
+    """The approval is missing, invalid for this channel/chat, already
+    claimed, or no longer matches the current pending tool call.
+    """
+
+    ERROR = "error"
+    """An error prevented normal decision processing. Report the failure
+    to the clicker without marking the shared card as resolved.
+    """
 
 
 class ChannelStatus(BaseModel):
@@ -373,7 +397,7 @@ class ChannelBase(ABC):
     _emit: (
         Callable[
             ["ChannelEvent | ChannelConfirmationResultEvent"],
-            Awaitable[None],
+            Awaitable["ChannelDecisionStatus | None"],
         ]
         | None
     ) = None
@@ -393,7 +417,7 @@ class ChannelBase(ABC):
         self,
         emit: Callable[
             ["ChannelEvent | ChannelConfirmationResultEvent"],
-            Awaitable[None],
+            Awaitable["ChannelDecisionStatus | None"],
         ],
     ) -> None:
         """Store ``emit``, set up resources, then connect and loop

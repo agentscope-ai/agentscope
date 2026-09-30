@@ -33,6 +33,7 @@ from .._base import (
     ChannelBase,
     ChannelCapability,
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelStatus,
     ChatKind,
@@ -194,7 +195,7 @@ class DingTalkChannel(ChannelBase):
         self._emit: (
             Callable[
                 [ChannelEvent | ChannelConfirmationResultEvent],
-                Awaitable[None],
+                Awaitable[ChannelDecisionStatus | None],
             ]
             | None
         ) = None
@@ -209,7 +210,7 @@ class DingTalkChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Start the DingTalk Stream connection until cancelled.
@@ -818,6 +819,7 @@ class DingTalkChannel(ChannelBase):
                                 task.add_done_callback(
                                     self._worker_tasks.discard,
                                 )
+                    # pylint: disable-next=try-except-raise
                     except asyncio.CancelledError:
                         raise
                     except (
@@ -901,18 +903,18 @@ class DingTalkChannel(ChannelBase):
         class _CardHandler(dingtalk_stream.CallbackHandler):
             """Forward an advanced-card callback into the channel."""
 
-            async def process(self, callback: Any) -> tuple[int, str]:
+            async def process(self, message: Any) -> tuple[int, str]:
                 """Process one approval-card action callback.
 
                 Args:
-                    callback (`Any`): The Stream SDK callback message.
+                    message (`Any`): The Stream SDK callback message.
 
                 Returns:
                     `tuple[int, str]`: DingTalk acknowledgement status and
                     message.
                 """
                 try:
-                    await on_card_callback(callback.data)
+                    await on_card_callback(message.data)
                 except Exception:  # pylint: disable=broad-except
                     logger.exception(
                         "DingTalk '%s' card callback failed",
@@ -965,11 +967,17 @@ class DingTalkChannel(ChannelBase):
             else ""
         )
         for tool in request.tool_calls:
+            approval_id = str(
+                request.metadata.get("channel_approval_ids", {}).get(
+                    tool.id,
+                    "",
+                ),
+            )
             out_track_id = await self._api().create_approval_card(
                 event.chat_id,
                 approver_id,
                 template_id,
-                _approval_card_data(tool, agent_name),
+                _approval_card_data(tool, agent_name, approval_id),
                 _tracking_id(tool.id),
             )
             if out_track_id is None:
@@ -997,7 +1005,7 @@ class DingTalkChannel(ChannelBase):
             return
         if self._emit is None:
             return
-        await self._emit(
+        status = await self._emit(
             ChannelConfirmationResultEvent(
                 channel_id=self._channel_id,
                 chat_id=decision.chat_id,
@@ -1007,8 +1015,19 @@ class DingTalkChannel(ChannelBase):
                 tool_call_id=decision.tool_call_id,
                 approved=decision.approved,
                 actor=decision.user_id,
+                approval_id=decision.approval_id,
             ),
         )
+        status = status or ChannelDecisionStatus.ACCEPTED
+        if status is not ChannelDecisionStatus.ACCEPTED:
+            if status is ChannelDecisionStatus.UNAUTHORIZED:
+                notice = "只有请求发起者或已授权的审批人可以处理此工具调用。"
+            elif status is ChannelDecisionStatus.STALE:
+                notice = "此审批请求已处理或不再有效。"
+            else:
+                notice = "暂时无法验证审批权限，请稍后重试。"
+            await self._api().send_text(f"user:{decision.user_id}", notice)
+            return
         await self._api().update_approval_card(
             decision.out_track_id,
             _resolved_card_data(decision.approved),

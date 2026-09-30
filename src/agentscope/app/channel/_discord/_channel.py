@@ -24,12 +24,14 @@ from ....message import Base64Source, DataBlock, Msg, TextBlock
 from .._base import (
     ChannelBase,
     ChannelCapability,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelConfirmationResultEvent,
     ChannelStatus,
     ChatKind,
     _EVENT_ADAPTER,
 )
+from ._approval import _approval_custom_id, _parse_approval_custom_id
 
 if TYPE_CHECKING:
     import discord
@@ -160,7 +162,7 @@ class DiscordChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Build the client, register the message handler, run the gateway
@@ -186,6 +188,17 @@ class DiscordChannel(ChannelBase):
                 message (`discord.Message`): The inbound message.
             """
             await self._on_message(message)
+
+        @self._client.event
+        async def on_interaction(interaction: "discord.Interaction") -> None:
+            """Route REST-posted approval buttons through this listener."""
+            if interaction.type != discord.InteractionType.component:
+                return
+            data = interaction.data or {}
+            await self._on_approval_interaction(
+                interaction,
+                data.get("custom_id") if isinstance(data, dict) else None,
+            )
 
         @self._client.event
         async def on_ready() -> None:
@@ -370,6 +383,9 @@ class DiscordChannel(ChannelBase):
         if channel is None:
             return
         for tool in req.tool_calls:
+            approval_id = str(
+                req.metadata.get("channel_approval_ids", {}).get(tool.id, ""),
+            )
             await channel.send(
                 content="🛡️ Tool execution needs approval\n"
                 f"**Tool:** `{tool.name}`\n"
@@ -378,6 +394,7 @@ class DiscordChannel(ChannelBase):
                     tool.id,
                     event.metadata.get("agent_id", ""),
                     event.metadata.get("session_id", ""),
+                    approval_id,
                 ),
             )
 
@@ -432,6 +449,23 @@ class DiscordChannel(ChannelBase):
 
     # -- Helpers --
 
+    async def _on_approval_interaction(
+        self,
+        interaction: "discord.Interaction",
+        custom_id: object,
+    ) -> None:
+        """Handle an approval click received by the connected client."""
+        parsed = _parse_approval_custom_id(custom_id)
+        if parsed is None:
+            return
+        approval_id, approved = parsed
+        await self._decide(
+            interaction,
+            tool_call_id="",
+            approved=approved,
+            approval_id=approval_id,
+        )
+
     async def _channel(
         self,
         chat_id: str,
@@ -458,6 +492,7 @@ class DiscordChannel(ChannelBase):
         tool_call_id: str,
         agent_id: str = "",
         session_id: str = "",
+        approval_id: str = "",
     ) -> "discord.ui.View":
         """Build a two-button approval view whose callbacks freeze the card
         and emit the decision for ``tool_call_id``.
@@ -472,62 +507,26 @@ class DiscordChannel(ChannelBase):
         Returns:
             `discord.ui.View`: The allow/deny view for the card message.
         """
-        # pylint: disable=protected-access
         import discord
 
-        channel = self
-
-        class _ApprovalView(discord.ui.View):
-            """A persistent (never-timing-out) allow/deny button view."""
-
-            def __init__(self) -> None:
-                """Build the view with no timeout."""
-                super().__init__(timeout=None)
-
-            @discord.ui.button(
+        del agent_id, session_id
+        token = approval_id or tool_call_id
+        view = discord.ui.View(timeout=None)
+        view.add_item(
+            discord.ui.Button(
                 label="✅ Approve",
                 style=discord.ButtonStyle.green,
-            )
-            async def approve(
-                self,
-                interaction: "discord.Interaction",
-                _button: "discord.ui.Button",
-            ) -> None:
-                """Emit an approve decision.
-
-                Args:
-                    interaction (`discord.Interaction`): The click.
-                    _button (`discord.ui.Button`): The clicked button.
-                """
-                await channel._decide(
-                    interaction,
-                    tool_call_id,
-                    True,
-                    agent_id,
-                    session_id,
-                )
-
-            @discord.ui.button(label="❌ Deny", style=discord.ButtonStyle.red)
-            async def deny(
-                self,
-                interaction: "discord.Interaction",
-                _button: "discord.ui.Button",
-            ) -> None:
-                """Emit a deny decision.
-
-                Args:
-                    interaction (`discord.Interaction`): The click.
-                    _button (`discord.ui.Button`): The clicked button.
-                """
-                await channel._decide(
-                    interaction,
-                    tool_call_id,
-                    False,
-                    agent_id,
-                    session_id,
-                )
-
-        return _ApprovalView()
+                custom_id=_approval_custom_id(token, True),
+            ),
+        )
+        view.add_item(
+            discord.ui.Button(
+                label="❌ Deny",
+                style=discord.ButtonStyle.red,
+                custom_id=_approval_custom_id(token, False),
+            ),
+        )
+        return view
 
     async def _decide(
         self,
@@ -536,6 +535,7 @@ class DiscordChannel(ChannelBase):
         approved: bool,
         agent_id: str = "",
         session_id: str = "",
+        approval_id: str = "",
     ) -> None:
         """Freeze the card and emit the decision for ``tool_call_id``.
 
@@ -548,17 +548,15 @@ class DiscordChannel(ChannelBase):
                 time; resumes the exact run without re-routing.
             session_id (`str`): Target session pinned alongside
                 ``agent_id``.
+            approval_id (`str`): Opaque key for authoritative server state.
         """
+        # Discord requires a prompt interaction acknowledgement. The
+        # authoritative lookup may cross process/database boundaries, so ack
+        # before doing it and use an ephemeral follow-up for rejected clicks.
         await interaction.response.defer()
-        try:
-            await interaction.message.edit(
-                content="✅ Approved" if approved else "🚫 Denied",
-                view=None,
-            )
-        except Exception:  # pylint: disable=broad-except
-            logger.debug("Discord card freeze failed")
+        status = ChannelDecisionStatus.ACCEPTED
         if self._emit:
-            await self._emit(
+            emitted = await self._emit(
                 ChannelConfirmationResultEvent(
                     channel_id=self._channel_id,
                     chat_id=str(interaction.channel_id),
@@ -567,5 +565,35 @@ class DiscordChannel(ChannelBase):
                     session_id=session_id,
                     tool_call_id=tool_call_id,
                     approved=approved,
+                    actor=str(interaction.user.id),
+                    approval_id=approval_id,
                 ),
             )
+            status = emitted or ChannelDecisionStatus.ACCEPTED
+        if status is ChannelDecisionStatus.UNAUTHORIZED:
+            await interaction.followup.send(
+                "Only the requester or an authorized reviewer can approve "
+                "or deny this tool call.",
+                ephemeral=True,
+            )
+            return
+        if status is ChannelDecisionStatus.STALE:
+            await interaction.followup.send(
+                "This approval request is no longer pending.",
+                ephemeral=True,
+            )
+            return
+        if status is ChannelDecisionStatus.ERROR:
+            await interaction.followup.send(
+                "Your approval permission could not be verified. Please try "
+                "again later.",
+                ephemeral=True,
+            )
+            return
+        try:
+            await interaction.message.edit(
+                content="✅ Approved" if approved else "🚫 Denied",
+                view=None,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Discord card freeze failed")

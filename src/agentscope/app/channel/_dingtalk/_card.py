@@ -72,6 +72,7 @@ class _ApprovalDecision:
     agent_id: str
     session_id: str
     approved: bool
+    approval_id: str
 
 
 def _tracking_id(tool_call_id: str) -> str:
@@ -101,6 +102,7 @@ def _tool_call_id(track: str) -> str:
 def _approval_card_data(
     tool: "ToolCallBlock",
     agent_name: str,
+    approval_id: str = "",
 ) -> dict[str, str]:
     """Build the parameter map consumed by the configured card template.
 
@@ -114,6 +116,7 @@ def _approval_card_data(
         tool (`ToolCallBlock`): The tool call awaiting a decision.
         agent_name (`str`): The agent that asked, for the ready-made
             ``title``; the built-in card does not show it.
+        approval_id (`str`): Opaque key for authoritative server-side state.
 
     Returns:
         `dict[str, str]`: DingTalk card template parameter map.
@@ -127,7 +130,7 @@ def _approval_card_data(
         shown += "…"
     # Markdown reads a lone newline as a space, so the two lines need a
     # blank one between them to stay two lines.
-    return {
+    data = {
         # What the built-in AI card renders.
         "msgTitle": _PENDING_TITLE,
         "staticMsgContent": f"工具：{tool.name}\n\n参数：{shown}",
@@ -139,6 +142,9 @@ def _approval_card_data(
         "created_at": tool.created_at[:19].replace("T", " "),
         "status": "pending",
     }
+    if approval_id:
+        data["approvalId"] = approval_id
+    return data
 
 
 def _resolved_card_data(approved: bool) -> dict[str, str]:
@@ -226,6 +232,7 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
         agent_id=_field(params, "agentId", "agent_id"),
         session_id=_field(params, "sessionId", "session_id"),
         approved=approved,
+        approval_id=_field(params, "approvalId", "approval_id"),
     )
 
 
