@@ -129,12 +129,31 @@ class GrepToolTest(IsolatedAsyncioTestCase):
                             output_mode="content",
                             n=False,
                         )
-                    self.assertEqual(chunk.state, ToolResultState.SUCCESS)
-                    content = chunk.content[0].text
-                    self.assertIn("-needle", content)
-                    self.assertNotIn("USAGE:", content)
-                    if name != "-folder":
-                        self.assertEqual(content, "-needle")
+                    expected_text = "-needle"
+                    if name == "-folder":
+                        expected_text = (
+                            os.path.join("-folder", "notes.txt") + ":-needle"
+                        )
+                    self.assertEqual(
+                        chunk.model_dump(
+                            exclude={
+                                "id": True,
+                                "content": {"__all__": {"id", "created_at"}},
+                            },
+                        ),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": expected_text,
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": ToolResultState.SUCCESS,
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    )
 
     async def test_content_mode(self) -> None:
         """Test grep with content output mode."""
