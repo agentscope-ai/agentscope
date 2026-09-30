@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..access import ResourceKind
 from .._manager import SchedulerManager
+from ..channel import ChannelTypeRegistry
 from ..deps import (
+    get_channel_type_registry,
     get_current_user_id,
     get_resource_access_service,
     get_scheduler_manager,
@@ -33,6 +35,47 @@ schedule_router = APIRouter(
     tags=["schedule"],
     responses={404: {"description": "Not found"}},
 )
+
+
+async def _validate_owned_channel(
+    channel_id: str,
+    user_id: str,
+    storage: StorageBase,
+    registry: ChannelTypeRegistry,
+) -> None:
+    """Ensure an owned channel supports unattended scheduled tools.
+
+    Args:
+        channel_id (`str`): Channel to validate.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        registry (`ChannelTypeRegistry`): Registered adapter capabilities.
+
+    Raises:
+        `HTTPException`: 404 if the channel does not exist, or 403 if it
+            belongs to another user, or 400 if its adapter does not opt in to
+            scheduled tools.
+    """
+    channel = await storage.get_channel(channel_id)
+    if channel is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Channel '{channel_id}' not found.",
+        )
+    if channel.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied.",
+        )
+    channel_cls = registry.get(channel.channel_type)
+    if channel_cls is None or not channel_cls.supports_scheduled_tools:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Channel type '{channel.channel_type}' does not support "
+                "scheduled tools."
+            ),
+        )
 
 
 @schedule_router.get(
@@ -68,6 +111,7 @@ async def create_schedule(
     body: CreateScheduleRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    registry: ChannelTypeRegistry = Depends(get_channel_type_registry),
     access: ResourceAccessService = Depends(get_resource_access_service),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> CreateScheduleResponse:
@@ -81,6 +125,7 @@ async def create_schedule(
         body (`CreateScheduleRequest`): Schedule configuration.
         user_id (`str`): Authenticated user ID.
         storage (`StorageBase`): Storage instance.
+        registry (`ChannelTypeRegistry`): Registered channel capabilities.
         access (`ResourceAccessService`): Access service.
         scheduler (`SchedulerManager`): Scheduler manager.
 
@@ -89,10 +134,10 @@ async def create_schedule(
             The ID of the newly created schedule.
 
     Raises:
-        `HTTPException`: 404 if the specified agent or the credential
-            referenced by ``chat_model_config`` is not visible to the
-            caller; 422 if the cron expression, timezone or activation
-            window is invalid.
+        `HTTPException`: 404 if the specified agent, credential, or channel
+            does not exist; 403 if the channel belongs to another user; 400
+            if the channel adapter does not support scheduled tools; 422 if
+            the cron expression, timezone, or activation window is invalid.
     """
     # Visibility checks — raise 404 when neither owned nor shared. The
     # schedule fires under the owner's user_id, so re-validating the
@@ -104,6 +149,13 @@ async def create_schedule(
         ResourceKind.CREDENTIAL,
         body.chat_model_config.credential_id,
     )
+    if body.channel_id is not None:
+        await _validate_owned_channel(
+            body.channel_id,
+            user_id,
+            storage,
+            registry,
+        )
 
     record = ScheduleRecord(
         user_id=user_id,
@@ -119,6 +171,7 @@ async def create_schedule(
             chat_model_config=body.chat_model_config,
             source=ScheduleSource.USER,
             started_at=datetime.now(),
+            channel_id=body.channel_id,
         ),
     )
 
@@ -146,6 +199,7 @@ async def update_schedule(
     body: UpdateScheduleRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    registry: ChannelTypeRegistry = Depends(get_channel_type_registry),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> ScheduleRecord:
     """Partially update a schedule.
@@ -160,6 +214,7 @@ async def update_schedule(
         body (`UpdateScheduleRequest`): Fields to update.
         user_id (`str`): Authenticated user ID.
         storage (`StorageBase`): Storage instance.
+        registry (`ChannelTypeRegistry`): Registered channel capabilities.
         scheduler (`SchedulerManager`): Scheduler manager.
 
     Returns:
@@ -167,9 +222,11 @@ async def update_schedule(
             The updated schedule record.
 
     Raises:
-        `HTTPException`: 404 if the schedule does not exist; 422 if the
-            update leaves an invalid cron expression, timezone or
-            activation window.
+        `HTTPException`: 404 if the schedule or selected channel does not
+            exist, 403 if the channel belongs to another user, or 400 if the
+            channel adapter does not support scheduled tools; 422 if the
+            update leaves an invalid cron expression, timezone, or activation
+            window.
     """
     existing = await storage.get_schedule(user_id, schedule_id)
     if existing is None:
@@ -178,7 +235,20 @@ async def update_schedule(
             detail=f"Schedule '{schedule_id}' not found.",
         )
 
+    if body.channel_id is not None:
+        await _validate_owned_channel(
+            body.channel_id,
+            user_id,
+            storage,
+            registry,
+        )
+
     updates = body.model_dump(exclude_none=True)
+    # Unlike the existing optional fields, channel_id supports an explicit
+    # null to remove the association. Omission still preserves the stored
+    # value, while null for every other field retains the legacy behaviour.
+    if "channel_id" in body.model_fields_set:
+        updates["channel_id"] = body.channel_id
     updated_data = existing.data.model_copy(update=updates)
     updated_record = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},

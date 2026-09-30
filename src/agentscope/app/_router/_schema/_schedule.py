@@ -29,6 +29,12 @@ class CreateScheduleRequest(BaseModel):
 
     agent_id: str = Field(description="Agent to run when the schedule fires.")
 
+    channel_id: str | None = Field(
+        default=None,
+        description="Optional channel whose scheduled tools are explicitly "
+        "authorized for this unattended task.",
+    )
+
     chat_model_config: ChatModelConfig = Field(
         description="Model configuration for the auto-created session.",
     )
@@ -99,6 +105,12 @@ class UpdateScheduleRequest(BaseModel):
     permission_mode: PermissionMode | None = Field(
         default=None,
         description="New permission mode.",
+    )
+
+    channel_id: str | None = Field(
+        default=None,
+        description="New explicitly authorized scheduled-tool channel, or "
+        "null to remove the association.",
     )
 
 

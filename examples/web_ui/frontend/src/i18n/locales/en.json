@@ -503,6 +503,14 @@
 	"schedule": {
 		"subtitle": "Schedule recurring or one-off tasks for your agents",
 		"calendar": "Calendar",
+		"channelSelector": {
+			"description": "Selecting a channel authorizes this unattended task to use its proactive tools without another confirmation. Other tools still follow the permission mode.",
+			"empty": "No channels support scheduled delivery",
+			"label": "Channel",
+			"loadError": "Could not load channels",
+			"none": "None (no channel)",
+			"triggerLabel": "Select the channel used by this schedule"
+		},
 		"createSchedule": {
 			"description": "Set up a recurring or one-time scheduled task for an agent.",
 			"descriptionLabel": "Description",

@@ -44,6 +44,8 @@ class _FeishuToolBase(ToolBase):
         self,
         channel: "FeishuChannel",
         backend: BackendBase,
+        *,
+        allow_scheduled_actions: bool = False,
     ) -> None:
         """Bind the live channel and the session's workspace backend.
 
@@ -51,10 +53,13 @@ class _FeishuToolBase(ToolBase):
             channel (`FeishuChannel`): The live channel to send / query.
             backend (`BackendBase`): The session workspace backend; the
                 file tools read their payload from it (others ignore it).
+            allow_scheduled_actions (`bool`): Whether explicit schedule
+                channel selection authorises unattended mutating calls.
         """
         super().__init__()
         self._channel = channel
         self._backend = backend
+        self._allow_scheduled_actions = allow_scheduled_actions
 
     async def check_permissions(
         self,
@@ -71,6 +76,12 @@ class _FeishuToolBase(ToolBase):
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message=f"{self.name} is a read-only lookup.",
+            )
+        if self._allow_scheduled_actions:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="This action was authorised by the schedule's "
+                "selected Feishu output channel.",
             )
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
