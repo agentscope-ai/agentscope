@@ -355,6 +355,10 @@ class MCPClient(BaseModel):
             await self._session.initialize()
 
             self._is_connected = True
+            # A new session can advertise a different tool set, or the same
+            # tool names with different schemas, so descriptors from the
+            # previous connection must not be resolved after a reconnect.
+            self._cached_tools = None
             logger.info("MCP connected: %s", self.name)
         except BaseException:
             # asyncio.CancelledError inherits BaseException, so a cancelled
