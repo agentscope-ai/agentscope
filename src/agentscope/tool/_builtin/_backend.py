@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import os
 import posixpath
+import re
 import shlex
 import shutil
 from abc import ABC, abstractmethod
@@ -135,7 +136,7 @@ def _normalize_newlines(text: str) -> str:
 # ── base class ─────────────────────────────────────────────────────────
 
 
-class BackendBase(ABC):
+class BackendBase(ABC):  # pylint: disable=too-many-public-methods
     """Filesystem + subprocess interface consumed by builtin tools.
 
     Subclasses must implement three abstract primitives — ``exec_shell``,
@@ -460,6 +461,50 @@ class BackendBase(ABC):
         if not home:
             return path
         return home + path[1:]
+
+    async def expandvars(self, path: str) -> str:
+        """Expand ``$VAR`` / ``${VAR}`` against the backend environment.
+
+        Tools should call this — instead of :func:`os.path.expandvars`
+        — whenever they need to expand a variable in a path that lives
+        inside the backend's environment, because the host process's
+        environment is meaningless for remote backends.
+
+        The default implementation queries each referenced variable
+        via :meth:`exec_shell` (POSIX-only).  A variable the backend
+        does not define is left as-is, so an undefined spelling stays
+        visible instead of silently disappearing.  Backends with
+        cheaper native access should override (e.g.
+        :class:`LocalBackend`).
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment, possibly
+                containing ``$VAR`` or ``${VAR}``.
+
+        Returns:
+            `str`:
+                ``path`` with every defined variable expanded.
+        """
+        if "$" not in path:
+            return path
+
+        names = sorted(set(re.findall(r"\$\{?(\w+)\}?", path)))
+        values: dict[str, str] = {}
+        for name in names:
+            result = await self.exec_shell(["printenv", name])
+            value = result.stdout.decode("utf-8", errors="replace").strip()
+            if value:
+                values[name] = value
+
+        if not values:
+            return path
+
+        return re.sub(
+            r"\$\{?(\w+)\}?",
+            lambda match: values.get(match.group(1), match.group(0)),
+            path,
+        )
 
     async def file_exists(self, path: str) -> bool:
         """Return ``True`` if ``path`` exists (file or directory).
@@ -928,6 +973,21 @@ class LocalBackend(BackendBase):
                 subprocess.
         """
         return os.path.expanduser(path)
+
+    async def expandvars(self, path: str) -> str:
+        """Expand ``$VAR`` / ``${VAR}`` using the host process's
+        environment.
+
+        Args:
+            path (`str`):
+                A local path, possibly containing ``$VAR``.
+
+        Returns:
+            `str`:
+                ``os.path.expandvars(path)`` — avoids spawning a
+                subprocess per variable.
+        """
+        return os.path.expandvars(path)
 
     async def file_exists(self, path: str) -> bool:
         """Check if a local path exists.
