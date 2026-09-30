@@ -5,7 +5,9 @@ import io
 import os
 import tempfile
 import uuid
+from contextlib import nullcontext
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from utils import AnyString
 
 from agentscope.tool import ToolChunk, Read
@@ -421,6 +423,59 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
             },
         )
+
+    async def test_read_pdf_deferred_errors(self) -> None:
+        """Late extraction and PDF-writing errors become final error chunks."""
+        from pypdf import PdfWriter
+        from pypdf.generic import DecodedStreamObject, NameObject
+
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=72, height=72)
+        writer.add_blank_page(width=72, height=72)
+        content = DecodedStreamObject()
+        content.set_data(b"BT (unterminated")
+        page[NameObject("/Contents")] = content
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as fp:
+            writer.write(fp)
+        self.addCleanup(os.unlink, fp.name)
+
+        for method, message in (
+            (None, "Stream has ended unexpectedly"),
+            ("add_page", "cannot copy page"),
+            ("write", "cannot write PDF"),
+        ):
+            with self.subTest(method=method):
+                tool = Read(
+                    model_input_types=["application/pdf"] if method else [],
+                )
+                failure = (
+                    patch(
+                        f"pypdf.PdfWriter.{method}",
+                        side_effect=ValueError(message),
+                    )
+                    if method
+                    else nullcontext()
+                )
+                with failure:
+                    chunk = await tool(file_path=fp.name, pages="1")
+                self.assertDictEqual(
+                    chunk.model_dump(mode="json"),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Error reading PDF: {message}",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "error",
+                        "is_last": True,
+                        "metadata": {},
+                        "id": AnyString(),
+                    },
+                )
 
     async def test_read_pdf_with_pages_param(self) -> None:
         """Test reading a page range and a single page from a PDF."""
