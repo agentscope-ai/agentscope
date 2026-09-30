@@ -3,12 +3,14 @@
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..agent import ContextConfig, ReActConfig
 from ..event import AgentEvent
+from ..mcp import MCPClient
 from ..middleware import MiddlewareBase
 from ..permission import PermissionContext
+from ..skill import SkillSourceBase
 from ..state import TaskContext
 from ..tool import ToolBase
 from ..workspace import WorkspaceBase
@@ -100,9 +102,11 @@ class SubAgentTemplate(BaseModel):
     per-instance identifier the leader assigns to each worker (used for
     ``TeamSay(to=name)``).
 
-    All fields are pure data (no callables), so the template is fully
-    serializable for future config-driven startup.
+    Fields are configuration rather than callables. :attr:`skills` may
+    hold loader objects, hence ``arbitrary_types_allowed``.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     type: str = Field(
         description=(
@@ -191,5 +195,26 @@ class SubAgentTemplate(BaseModel):
         description=(
             "Pre-defined task context for the sub-agent, allowing "
             "the template to seed an initial workflow."
+        ),
+    )
+
+    mcps: list[MCPClient] = Field(
+        default_factory=list,
+        description=(
+            "MCPs equipped on every sub-agent created from this "
+            "template, declared into the worker's own agent/session "
+            "slot so siblings and the leader are unaffected."
+        ),
+    )
+
+    skills: list[str | SkillSourceBase] = Field(
+        default_factory=list,
+        description=(
+            "Skills equipped on every sub-agent created from this "
+            "template, installed into the worker's own partition. A "
+            "``str`` is a local directory copied as it is; a "
+            ":class:`~agentscope.skill.SkillSourceBase` is opened for "
+            "an archive, which is what a skill kept anywhere but the "
+            "local disk needs."
         ),
     )
