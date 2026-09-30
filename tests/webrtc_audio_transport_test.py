@@ -948,11 +948,33 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "value": "1-0",
                     "ttl_secs": None,
                 },
+                {
+                    "method": "acquire_lock",
+                    "key": MessageBusKeys.session_event_checkpoint_lock(
+                        "session-1",
+                    ),
+                    "ttl_secs": (
+                        MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+                    ),
+                },
             ],
         )
         self.assertEqual(
             storage.calls,
             [
+                {
+                    "method": "upsert_message",
+                    "user_id": "alice",
+                    "session_id": "session-1",
+                    "message": message,
+                },
+                {
+                    "method": "update_session_state",
+                    "user_id": "alice",
+                    "agent_id": "agent-1",
+                    "session_id": "session-1",
+                    "state": agent.state,
+                },
                 {
                     "method": "upsert_message",
                     "user_id": "alice",
@@ -983,7 +1005,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 "peer_connection_closed": True,
                 "transport_errors": [],
                 "closed_sessions": [session],
-                "writes_under_session_lock": [True],
+                "writes_under_session_lock": [True, True],
             },
         )
 
@@ -1124,8 +1146,8 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_pcm_delta_is_live_only(self) -> None:
-        """PCM reaches live subscribers without entering replay storage."""
+    async def test_pcm_delta_is_not_published_to_session_events(self) -> None:
+        """WebRTC carries PCM without duplicating it over session SSE."""
         message = {"id": "message-1", "role": "assistant"}
         event = DataBlockDeltaEvent(
             id="event-1",
@@ -1160,7 +1182,6 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         session.start()
         await asyncio.wait_for(closed.wait(), timeout=1)
 
-        events_key = MessageBusKeys.session_events("session-1")
         self.assertEqual(
             message_bus.calls,
             [
@@ -1170,11 +1191,6 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "ttl_secs": MessageBusKeys.SESSION_RUN_TTL_SECS,
                 },
                 {"method": "agent_factory"},
-                {
-                    "method": "publish",
-                    "key": events_key,
-                    "event": event.model_dump(mode="json"),
-                },
                 {
                     "method": "acquire_lock",
                     "key": MessageBusKeys.session_event_checkpoint_lock(
@@ -1318,7 +1334,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "upsert_message",
                     "update_session_state",
                 ]
-                * 3,
+                * 4,
                 "published_event_types": [event.type for event in events],
                 "cursor_values": ["1-0"] * 3,
             },

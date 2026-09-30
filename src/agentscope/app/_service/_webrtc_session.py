@@ -120,7 +120,6 @@ class WebRTCSession:
 
     async def _run(self) -> None:
         """Hold the session lock while forwarding events to the SSE log."""
-        events_key = MessageBusKeys.session_events(self.session_id)
         try:
             async with self.message_bus.acquire_lock(
                 MessageBusKeys.session_lock(self.session_id),
@@ -145,18 +144,13 @@ class WebRTCSession:
                                     event,
                                     DataBlockDeltaEvent,
                                 ) and event.media_type.startswith("audio/pcm"):
-                                    entry_id = None
-                                    await self.message_bus.publish(
-                                        events_key,
-                                        payload,
-                                    )
-                                else:
-                                    entry_id = await publish_session_event(
-                                        self.message_bus,
-                                        self.session_id,
-                                        payload,
-                                    )
-                                    self._last_entry_id = entry_id
+                                    continue
+                                entry_id = await publish_session_event(
+                                    self.message_bus,
+                                    self.session_id,
+                                    payload,
+                                )
+                                self._last_entry_id = entry_id
                                 if (
                                     isinstance(event, ReplyStartEvent)
                                     and event.role == "user"
@@ -186,21 +180,21 @@ class WebRTCSession:
                                         )
                 finally:
                     try:
-                        if (
-                            self._checkpoint_entry_id is None
-                            or self._last_entry_id != self._checkpoint_entry_id
+                        async with self.message_bus.acquire_lock(
+                            MessageBusKeys.session_event_checkpoint_lock(
+                                self.session_id,
+                            ),
+                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
                         ):
-                            async with self.message_bus.acquire_lock(
-                                MessageBusKeys.session_event_checkpoint_lock(
-                                    self.session_id,
-                                ),
-                                ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                            await self._persist_state()
+                            if (
+                                self._last_entry_id is not None
+                                and self._last_entry_id
+                                != self._checkpoint_entry_id
                             ):
-                                await self._persist_state()
-                                if self._last_entry_id is not None:
-                                    await self._set_checkpoint_cursor(
-                                        self._last_entry_id,
-                                    )
+                                await self._set_checkpoint_cursor(
+                                    self._last_entry_id,
+                                )
                     except Exception as exc:
                         logger.exception(
                             "Failed to persist WebRTC session %r: %s",
