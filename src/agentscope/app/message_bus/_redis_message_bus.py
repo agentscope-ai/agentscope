@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self, TYPE_CHECKING
 
+from ..._logging import logger
 from ._base import MessageBus
 
 if TYPE_CHECKING:
@@ -42,6 +43,17 @@ _REGISTRY_POP_LUA = """
 local value = redis.call('HGET', KEYS[1], ARGV[1])
 if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return value
+"""
+
+# Extend only the caller's own lock lease: if the key no longer holds
+# the caller's token the lease has lapsed and been re-acquired, and
+# renewing it would extend a successor's lease.
+_LOCK_RENEW_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0
 """
 
 
@@ -640,7 +652,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
           ``_LOCK_RETRY_DELAY_SECS`` until acquired.
         - A heartbeat task renews the TTL every ``ttl_secs / 2``
           seconds while the body runs, so a long-running holder
-          does not lose the lease.
+          does not lose the lease. The renewal is token-checked
+          (a Lua GET-compare-EXPIRE), so it never extends a lease
+          that has lapsed and been re-acquired by another worker,
+          and a transient Redis error only skips that tick — the
+          heartbeat keeps running and retries on the next one.
         - On exit, the heartbeat is cancelled and the lock is
           released by GET-then-DEL guarded on the random token —
           we never delete a key whose value isn't ours, so a
@@ -673,7 +689,36 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(max(1.0, ttl_secs / 2))
-                await self._client.expire(key, ttl_secs)
+                try:
+                    renewed = await self._client.eval(
+                        _LOCK_RENEW_LUA,
+                        1,
+                        key,
+                        token,
+                        ttl_secs,
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    # A transient Redis error must not kill the
+                    # heartbeat: a silently dead renewal would let the
+                    # lease lapse mid-run and a second worker into the
+                    # same critical section. Skip this tick and retry
+                    # on the next one.
+                    logger.warning(
+                        "Lock heartbeat renewal failed for %s; "
+                        "retrying on the next tick.",
+                        key,
+                        exc_info=True,
+                    )
+                    continue
+                if not renewed:
+                    # The lease lapsed and another worker re-acquired
+                    # the key; renewing would extend their lease.
+                    logger.warning(
+                        "Lock lease for %s was lost to another holder; "
+                        "stopping the heartbeat.",
+                        key,
+                    )
+                    return
 
         hb_task = asyncio.create_task(
             _heartbeat(),

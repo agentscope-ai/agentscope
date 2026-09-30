@@ -296,6 +296,59 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             ["first-in", "first-out", "second-in"],
         )
 
+    async def test_heartbeat_survives_transient_renewal_error(self) -> None:
+        """One failed renewal must not kill the heartbeat: the loop
+        keeps ticking and a later renewal succeeds."""
+        flaky = _FlakyEvalClient(self.fr, fail_times=1)
+        self.bus._client = flaky
+
+        async with self.bus.acquire_lock("k", ttl_secs=2):
+            # With ttl_secs=2 the heartbeat ticks every 1s; wait past
+            # the failing tick and the retrying one.
+            await asyncio.sleep(2.3)
+
+        self.assertGreaterEqual(flaky.eval_calls, 2)
+        self.assertFalse(await self.bus.is_locked("k"))
+
+    async def test_heartbeat_never_renews_a_lapsed_lease(self) -> None:
+        """A renewal must not extend a lease that lapsed and was
+        re-acquired by another worker."""
+        async with self.bus.acquire_lock("k", ttl_secs=2):
+            # Simulate the lease lapsing and a successor acquiring it.
+            await self.fr.delete("k")
+            await self.fr.set("k", "successor-token", ex=100)
+
+            # Wait past one heartbeat tick.
+            await asyncio.sleep(1.2)
+
+            self.assertEqual(await self.fr.get("k"), "successor-token")
+            # An unconditional renew would have reset the TTL to 2s.
+            self.assertGreater(await self.fr.ttl("k"), 50)
+
+        # Exiting must not delete the successor's lock either.
+        self.assertEqual(await self.fr.get("k"), "successor-token")
+
+
+class _FlakyEvalClient:
+    """Proxy client whose ``eval`` fails a fixed number of times before
+    delegating to the real (fake) client."""
+
+    def __init__(self, inner: Any, fail_times: int) -> None:
+        self._inner = inner
+        self._fail_left = fail_times
+        self.eval_calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def eval(self, *args: Any, **kwargs: Any) -> Any:
+        """Fail the first ``fail_times`` calls, then delegate."""
+        self.eval_calls += 1
+        if self._fail_left > 0:
+            self._fail_left -= 1
+            raise ConnectionError("simulated transient redis failure")
+        return await self._inner.eval(*args, **kwargs)
+
 
 class TestSessionRunAutoTrimsLog(IsolatedAsyncioTestCase):
     """``session_run.__aexit__`` must trim the session's replay log
