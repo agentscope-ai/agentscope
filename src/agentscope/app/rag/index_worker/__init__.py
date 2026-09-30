@@ -136,7 +136,8 @@ async def run_worker(
             :class:`~agentscope.app._service.IndexTaskConsumer`.
         parser_executor (`ProcessPoolExecutor | None`, optional):
             Process pool for CPU-bound parses. ``None`` runs parses
-            inline (fine for text-only deployments).
+            in the default thread pool. Pass a process pool explicitly
+            when process-based parallelism is needed.
         **kwargs (`Any`):
             Deprecated arguments forwarded to :class:`IndexWorker`
             (e.g. the old ``chunker`` instance).
