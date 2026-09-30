@@ -7,6 +7,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 import anyio
+from mcp.types import ListToolsResult, Tool
 
 from agentscope.mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 
@@ -59,6 +60,32 @@ class _FakeSession:
     async def initialize(self) -> None:
         """Initialize the fake session."""
         return None
+
+
+class _ToolListingSession(_FakeSession):
+    """Expose a connection-specific catalog and count discovery requests."""
+
+    def __init__(
+        self,
+        read_stream: object,
+        write_stream: object,
+        tools: list[Tool],
+        fail_initialize: bool = False,
+    ) -> None:
+        super().__init__(read_stream, write_stream)
+        self.tools = tools
+        self.fail_initialize = fail_initialize
+        self.list_tools_calls = 0
+
+    async def initialize(self) -> None:
+        """Optionally fail this connection's initialization."""
+        if self.fail_initialize:
+            raise RuntimeError("initialization failed")
+
+    async def list_tools(self) -> ListToolsResult:
+        """Return this session's catalog."""
+        self.list_tools_calls += 1
+        return ListToolsResult(tools=self.tools)
 
 
 class MCPClientReconnectTest(IsolatedAsyncioTestCase):
@@ -288,3 +315,211 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(transports), 2)
         self.assertTrue(all(_.enter_count == 1 for _ in transports))
+
+
+class MCPClientToolCacheReconnectTest(IsolatedAsyncioTestCase):
+    """Tool discovery is lazy and cached only within one connection."""
+
+    # Session identity is part of the reconnect assertions below.
+    # pylint: disable=protected-access
+
+    def setUp(self) -> None:
+        """Give each connection its own session and tool catalog."""
+        self.catalogs = [
+            [
+                Tool(
+                    name="echo",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                        "required": ["text"],
+                    },
+                ),
+                Tool(name="removed_tool", inputSchema={"type": "object"}),
+            ],
+            [
+                Tool(
+                    name="echo",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                    },
+                ),
+                Tool(name="added_tool", inputSchema={"type": "object"}),
+            ],
+        ]
+        self.sessions: list[_ToolListingSession] = []
+        self.failed_connections: set[int] = set()
+
+        def create_session(
+            read_stream: object,
+            write_stream: object,
+        ) -> _ToolListingSession:
+            """Select the catalog and initialization outcome by connection."""
+            connection = len(self.sessions)
+            session = _ToolListingSession(
+                read_stream,
+                write_stream,
+                tools=self.catalogs[connection],
+                fail_initialize=connection in self.failed_connections,
+            )
+            self.sessions.append(session)
+            return session
+
+        transport_patch = patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            side_effect=lambda _parameters: _OneShotTransport(),
+        )
+        transport_patch.start()
+        self.addCleanup(transport_patch.stop)
+        session_patch = patch(
+            "agentscope.mcp._mcp_client.ClientSession",
+            side_effect=create_session,
+        )
+        session_patch.start()
+        self.addCleanup(session_patch.stop)
+        self.client = MCPClient(
+            name="reconnect_tool_cache",
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(command="unused"),
+        )
+
+    async def asyncTearDown(self) -> None:
+        """Close the live connection even when an assertion fails."""
+        if self.client.is_connected:
+            await self.client.close(ignore_errors=False)
+
+    async def test_reconnect_refreshes_tool_schema(self) -> None:
+        """Newly obtained tools use the new schema and the new session."""
+        await self.client.connect()
+        self.assertEqual(self.sessions[0].list_tools_calls, 0)
+        old_tool = await self.client.get_tool("echo")
+        self.assertIn("text", old_tool.input_schema["properties"])
+        self.assertIs(old_tool._session, self.sessions[0])
+
+        await self.client.close()
+        await self.client.connect()
+        self.assertEqual(self.sessions[1].list_tools_calls, 0)
+        new_tool = await self.client.get_tool("echo")
+        self.assertIn("message", new_tool.input_schema["properties"])
+        self.assertNotIn("text", new_tool.input_schema["properties"])
+        self.assertIs(new_tool._session, self.sessions[1])
+        self.assertIsNot(new_tool._session, old_tool._session)
+        self.assertEqual(self.sessions[1].list_tools_calls, 1)
+
+    async def test_reconnect_discovers_added_tool(self) -> None:
+        """A tool absent from the old catalog becomes available."""
+        await self.client.connect()
+        with self.assertRaisesRegex(ValueError, "Tool 'added_tool' not found"):
+            await self.client.get_tool("added_tool")
+
+        await self.client.close()
+        await self.client.connect()
+        tool = await self.client.get_tool("added_tool")
+        self.assertIs(tool._session, self.sessions[1])
+        self.assertEqual(self.sessions[1].list_tools_calls, 1)
+
+    async def test_reconnect_discards_removed_tool(self) -> None:
+        """Tools removed by the server cannot be obtained after reconnect."""
+        await self.client.connect()
+        await self.client.get_tool("removed_tool")
+
+        await self.client.close()
+        await self.client.connect()
+        with self.assertRaisesRegex(
+            ValueError,
+            "Tool 'removed_tool' not found",
+        ):
+            await self.client.get_tool("removed_tool")
+        self.assertEqual(self.sessions[1].list_tools_calls, 1)
+
+    async def test_empty_catalog_is_cached_until_reconnect(self) -> None:
+        """An empty catalog is queried once and invalidated on reconnect."""
+        self.catalogs.insert(1, [])
+        await self.client.connect()
+        await self.client.get_tool("echo")
+
+        await self.client.close()
+        await self.client.connect()
+        self.assertEqual(self.sessions[1].list_tools_calls, 0)
+        for _ in range(2):
+            with self.assertRaisesRegex(ValueError, "Tool 'echo' not found"):
+                await self.client.get_tool("echo")
+        self.assertEqual(self.sessions[1].list_tools_calls, 1)
+
+        await self.client.close()
+        await self.client.connect()
+        tool = await self.client.get_tool("echo")
+        self.assertIn("message", tool.input_schema["properties"])
+        self.assertEqual(self.sessions[2].list_tools_calls, 1)
+
+    async def test_failed_reconnect_then_success_refreshes_catalog(
+        self,
+    ) -> None:
+        """A failed initialization cannot prevent discovery on recovery."""
+        self.catalogs.insert(1, [])
+        self.failed_connections.add(1)
+        await self.client.connect()
+        await self.client.get_tool("echo")
+        await self.client.close()
+
+        with self.assertRaisesRegex(RuntimeError, "initialization failed"):
+            await self.client.connect()
+        self.assertFalse(self.client.is_connected)
+        self.assertEqual(self.sessions[1].list_tools_calls, 0)
+        with self.assertRaisesRegex(RuntimeError, "not connected"):
+            await self.client.get_tool("echo")
+
+        await self.client.connect()
+        self.assertEqual(self.sessions[2].list_tools_calls, 0)
+        tool = await self.client.get_tool("echo")
+        self.assertIn("message", tool.input_schema["properties"])
+        self.assertNotIn("text", tool.input_schema["properties"])
+        self.assertIs(tool._session, self.sessions[2])
+        self.assertEqual(self.sessions[2].list_tools_calls, 1)
+
+    async def test_same_connection_reuses_catalog(self) -> None:
+        """Repeated lookups within one connection list tools only once."""
+        await self.client.connect()
+        self.assertEqual(self.sessions[0].list_tools_calls, 0)
+        for _ in range(2):
+            tool = await self.client.get_tool("echo")
+            self.assertIs(tool._session, self.sessions[0])
+            self.assertIn("text", tool.input_schema["properties"])
+        self.assertEqual(self.sessions[0].list_tools_calls, 1)
+
+    async def _assert_filtered_catalogs(
+        self,
+        expected_names: list[list[str]],
+    ) -> None:
+        """Check filtering and direct lookup against both server versions."""
+        for connection, names in enumerate(expected_names):
+            await self.client.connect()
+            self.assertEqual(self.sessions[connection].list_tools_calls, 0)
+            tool = await self.client.get_tool("echo")
+            parameter = "text" if connection == 0 else "message"
+            self.assertIn(parameter, tool.input_schema["properties"])
+            self.assertEqual(self.sessions[connection].list_tools_calls, 1)
+
+            raw_tools = await self.client.list_raw_tools()
+            self.assertEqual([tool.name for tool in raw_tools], names)
+            # Filtering affects listing, but direct lookup still uses the
+            # complete catalog from the current connection.
+            for descriptor in self.catalogs[connection]:
+                tool = await self.client.get_tool(descriptor.name)
+                self.assertIs(tool._session, self.sessions[connection])
+            self.assertEqual(self.sessions[connection].list_tools_calls, 2)
+            await self.client.close()
+
+    async def test_enable_tools_filter_survives_reconnect(self) -> None:
+        """An allowlist filters the refreshed catalog after reconnect."""
+        self.client.enable_tools = ["echo", "added_tool"]
+        await self._assert_filtered_catalogs(
+            [["echo"], ["echo", "added_tool"]],
+        )
+
+    async def test_disable_tools_filter_survives_reconnect(self) -> None:
+        """A denylist filters old and newly added tools after reconnect."""
+        self.client.disable_tools = ["removed_tool", "added_tool"]
+        await self._assert_filtered_catalogs([["echo"], ["echo"]])
