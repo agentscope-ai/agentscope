@@ -27,17 +27,21 @@ from ..deps import (
     get_chat_service,
     get_current_user_id,
     get_message_bus,
+    get_session_service,
 )
 from ._schema import ChatRequest, ChatTriggerResponse
 from .._manager import ChatRunRegistry
 from .._service import (
     ChatService,
+    SessionService,
+    SessionStatus,
     SessionProjection,
     SubagentHitlProjector,
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from .._bus_ops import enqueue_run_trigger
 from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
+from ...message import Msg
 
 chat_router = APIRouter(
     prefix="/chat",
@@ -57,6 +61,7 @@ async def chat(
     chat_service: ChatService = Depends(get_chat_service),
     chat_run_registry: ChatRunRegistry = Depends(get_chat_run_registry),
     message_bus: MessageBus = Depends(get_message_bus),
+    session_service: SessionService = Depends(get_session_service),
 ) -> ChatTriggerResponse:
     """Trigger a chat run for the specified session.
 
@@ -125,6 +130,22 @@ async def chat(
             run_session_id = target["worker_session_id"]
             run_agent_id = target["worker_agent_id"]
 
+        session_status = await session_service.get_session_status(
+            user_id,
+            run_agent_id,
+            run_session_id,
+        )
+        expected_status = (
+            SessionStatus.AWAITING_PERMISSION
+            if isinstance(request.input, UserConfirmResultEvent)
+            else SessionStatus.AWAITING_EXTERNAL_RESULT
+        )
+        if session_status not in (SessionStatus.RUNNING, expected_status):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The pending tool call has already been resolved.",
+            )
+
         await enqueue_run_trigger(
             message_bus,
             user_id=user_id,
@@ -136,6 +157,24 @@ async def chat(
         return ChatTriggerResponse(status="started", session_id=run_session_id)
 
     # ------------------------------------------------------------------
+    if isinstance(request.input, (Msg, list)):
+        session_status = await session_service.get_session_status(
+            user_id,
+            request.agent_id,
+            request.session_id,
+        )
+        if session_status in (
+            SessionStatus.AWAITING_PERMISSION,
+            SessionStatus.AWAITING_EXTERNAL_RESULT,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "The session is awaiting tool confirmation or an "
+                    "external result. Resolve or interrupt the pending "
+                    "tool call before sending another message."
+                ),
+            )
     # New user message(s) / None — spawn directly. The registry's
     # single-run-per-session rule is the desired double-submit guard.
     # ------------------------------------------------------------------
