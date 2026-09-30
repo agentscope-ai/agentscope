@@ -219,6 +219,54 @@ class DashScopeParseTest(unittest.TestCase):
             {"type": "response.created", "response": {"id": "r1"}},
         )
 
+    def test_completed_tool_call_releases_its_name(self) -> None:
+        """A finished tool call must not leave a name mapping behind."""
+        self.model._parse(
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "get_weather",
+                },
+            },
+        )
+        self.assertIn("call_1", self.model._tool_names)
+
+        self.model._parse(
+            {
+                "type": "response.function_call_arguments.done",
+                "call_id": "call_1",
+                "name": "get_weather",
+                "arguments": '{"city":"Beijing"}',
+            },
+        )
+        self.assertEqual(self.model._tool_names, {})
+
+    def test_name_fallback_still_works_without_a_name_on_done(self) -> None:
+        """A ``done`` frame without ``name`` still resolves via the cache."""
+        self.model._parse(
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_2",
+                    "name": "get_time",
+                },
+            },
+        )
+
+        event = self.model._parse(
+            {
+                "type": "response.function_call_arguments.done",
+                "call_id": "call_2",
+                "arguments": '{"tz":"UTC"}',
+            },
+        )
+
+        self.assertEqual(event.tool_call.name, "get_time")
+        self.assertEqual(self.model._tool_names, {})
+
     def test_reply_frames(self) -> None:
         """Every reply-side frame maps to one model event."""
         frames = [
