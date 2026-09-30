@@ -43,6 +43,29 @@ if TYPE_CHECKING:
 _READ_CHUNK = 1 << 20  # 1 MiB
 
 
+def _normalize_media_type(media_type: str | None) -> str | None:
+    """Reduce a ``Content-Type`` to its bare, lowercased ``type/subtype``.
+
+    A caller-supplied media type routinely carries parameters
+    (``"text/markdown; charset=utf-8"``), and ``type``/``subtype`` are
+    case-insensitive. Per RFC 9110 the ``;``-separated parameters are not
+    part of the media type, so they must be dropped before the value is
+    matched against a parser's ``supported_media_types``.
+
+    Args:
+        media_type (`str | None`):
+            The raw header value, or `None` when nothing was supplied.
+
+    Returns:
+        `str | None`:
+            The bare lowercased media type, or `None` if *media_type* is
+            empty or contains only parameters.
+    """
+    if not media_type:
+        return None
+    return media_type.split(";", 1)[0].strip().lower() or None
+
+
 def _build_parser_registry(
     parsers: "list[ParserBase] | dict[str, ParserBase]",
 ) -> "dict[str, ParserBase]":
@@ -376,8 +399,8 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
-        media_type = (
-            data.content_type or mimetypes.guess_type(data.filename)[0]
+        media_type = _normalize_media_type(
+            data.content_type or mimetypes.guess_type(data.filename)[0],
         )
         if not media_type:
             raise ValueError(
