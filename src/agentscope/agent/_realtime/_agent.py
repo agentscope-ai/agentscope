@@ -2,8 +2,10 @@
 """The realtime voice agent."""
 import asyncio
 import base64
+import copy
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -44,7 +46,9 @@ from ...event import (
     UserInterruptEvent,
 )
 from ...message import (
+    ContentBlock,
     Msg,
+    SystemMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
@@ -56,9 +60,13 @@ from ...permission import PermissionBehavior, PermissionEngine
 from ...state import AgentState
 from ...tool import ToolChunk, ToolResponse, Toolkit
 from ...types import ReplyFinishedReason
+from ...workspace._offload_protocol import Offloader
+from ._config import RealtimeContextConfig
 
-# Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
-_BACKLOG_FRAMES = 100
+
+def _estimated_tokens(value: str) -> int:
+    """Approximate text tokens when the realtime provider omits usage."""
+    return (len(value.encode("utf-8")) + 3) // 4
 
 
 @dataclass
@@ -145,6 +153,8 @@ class RealtimeAgent:
         state: AgentState | None = None,
         vad: VADBase | None = None,
         aggregator: TurnAggregator | None = None,
+        context_config: RealtimeContextConfig | None = None,
+        offloader: Offloader | None = None,
     ) -> None:
         """Initialize the realtime agent.
 
@@ -179,6 +189,10 @@ class RealtimeAgent:
                 acknowledgements. Subclass it to change what counts as a
                 turn. A default with no backchannel list is used if
                 omitted.
+            context_config (`RealtimeContextConfig | None`, optional):
+                Background context compression and rollover settings.
+            offloader (`Offloader | None`, optional):
+                Stores context and tool results removed from the prompt.
         """
         self.name = name
         self.system_prompt = system_prompt
@@ -187,6 +201,8 @@ class RealtimeAgent:
         self.state = state or AgentState()
         self.vad = vad
         self.aggregator = aggregator or TurnAggregator()
+        self.context_config = context_config
+        self.offloader = offloader
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
@@ -200,18 +216,33 @@ class RealtimeAgent:
         # The user's turn in flight, reported as a reply of its own.
         self._user_turn = ""
         self._user_turn_open = False
+        self._awaiting_response = False
         self._metrics = TurnMetrics()
         self._pending_tools: dict[str, ToolCallBlock] = {}
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._barge_lock = asyncio.Lock()
 
-        # Model session: connected flag, the downlink pump that outlives
-        # any transport, and reconnect bookkeeping.
+        # Model session and reconnect bookkeeping. Each session gets a
+        # separate downlink pump, independent of the transport lifetime.
         self._connected = False
-        self._connected_event = asyncio.Event()
         self._downlink: asyncio.Task | None = None
-        self._backlog: list[bytes] = []
+        self._backlog: deque[
+            tuple[bytes | Msg, SpeechTransition | None]
+        ] = deque()
+        self._backlog_bytes = 0
+        self._session_lock = asyncio.Lock()
+        self._rotating = False
+        self._epoch = 0
+        self._compression_task: asyncio.Task | None = None
+        self._rollover_task: asyncio.Task | None = None
+        self._rollover_pending = False
+        self._last_usage_tokens = 0
+        self._audio_turns = 0
+        self._audio_seconds = 0.0
+        self._session_started_at = 0.0
+        self._last_audio_item = ""
+        self._last_audio_ms = 0.0
         self._retry_at = 0.0
         self._backoff = 1.0
 
@@ -231,8 +262,23 @@ class RealtimeAgent:
     async def connect(self) -> None:
         """Open the model session. Safe to call again after the provider
         closed it; a no-op while connected."""
-        if self._connected:
-            return
+        async with self._session_lock:
+            if not self._connected:
+                await self._open_session(
+                    wait_ready=(
+                        self.context_config is not None
+                        and self.model.supports_ready_ack
+                    ),
+                )
+            if self._backlog:
+                await self._replay_backlog()
+
+    async def _open_session(self, wait_ready: bool = False) -> None:
+        """Open one provider session while holding the lifecycle lock."""
+        if self._downlink is not None:
+            self._downlink.cancel()
+            await asyncio.gather(self._downlink, return_exceptions=True)
+            self._downlink = None
 
         instructions = self.system_prompt
         tools = None
@@ -260,6 +306,15 @@ class RealtimeAgent:
         # Providers differ in whether prior turns can be seeded, so the
         # transcript so far rides along in the instructions, which every
         # provider takes. Only matters on reconnect; first connect is empty.
+        summary = self.state.summary
+        if isinstance(summary, list):
+            summary = "\n".join(
+                block.text for block in summary if isinstance(block, TextBlock)
+            )
+        if summary:
+            instructions = (
+                f"{instructions}\n\n## Earlier conversation\n{summary}"
+            )
         history = "\n".join(
             f"{m.name}: {text}"
             for m in self.state.context
@@ -274,21 +329,41 @@ class RealtimeAgent:
             tools=tools,
             turn_detection_disabled=self.vad is not None,
         )
-        if self.vad is not None:
+        if wait_ready:
+            await self.model.wait_ready()
+        if self.vad is not None and not self._backlog:
             self.vad.reset()
         self.aggregator.reset()
         self._connected = True
-        self._connected_event.set()
+        self._awaiting_response = False
+        self._rollover_pending = False
+        self._epoch += 1
+        self._session_started_at = time.monotonic()
+        self._last_usage_tokens = 0
+        self._audio_turns = 0
+        self._audio_seconds = 0.0
         self._backoff = 1.0
-        if self._downlink is None:
-            self._downlink = asyncio.create_task(
-                self._pump_downlink(),
-                name="rt-downlink",
-            )
-            self._downlink.add_done_callback(self._on_downlink_done)
+        self._downlink = asyncio.create_task(
+            self._pump_downlink(self._epoch),
+            name="rt-downlink",
+        )
+        self._downlink.add_done_callback(self._on_downlink_done)
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""
+        for task in (self._compression_task, self._rollover_task):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(
+                task
+                for task in (self._compression_task, self._rollover_task)
+                if task is not None
+            ),
+            return_exceptions=True,
+        )
+        self._compression_task = None
+        self._rollover_task = None
         for future in self._confirmations.values():
             future.cancel()
         self._confirmations.clear()
@@ -300,16 +375,18 @@ class RealtimeAgent:
             self._downlink.cancel()
             await asyncio.gather(self._downlink, return_exceptions=True)
             self._downlink = None
-        self._connected = False
-        self._connected_event.clear()
-        await self.model.close()
+        async with self._session_lock:
+            self._connected = False
+            self._rotating = False
+            await self.model.close()
 
     def _on_downlink_done(self, task: asyncio.Task) -> None:
         """Surface a crashed downlink instead of a silently dead session."""
+        if task is not self._downlink:
+            return
         if task.cancelled() or task.exception() is None:
             return
         self._connected = False
-        self._connected_event.clear()
         logger.error(
             "RealtimeAgent: downlink pump crashed",
             exc_info=task.exception(),
@@ -321,8 +398,18 @@ class RealtimeAgent:
         if now < self._retry_at:
             return False
         try:
-            await self.connect()
+            async with self._session_lock:
+                if not self._connected:
+                    await self._open_session(
+                        wait_ready=(
+                            self.context_config is not None
+                            and self.model.supports_ready_ack
+                        ),
+                    )
+                if self._backlog:
+                    await self._replay_backlog()
         except Exception as exc:  # noqa: BLE001
+            self._mark_disconnected()
             self._retry_at = now + self._backoff
             self._backoff = min(self._backoff * 2, 30.0)
             logger.warning(
@@ -339,14 +426,258 @@ class RealtimeAgent:
 
         The one way back to a live session, whichever input asks for it.
         """
+        if self._rotating:
+            return False
         if self._connected:
+            if self._backlog:
+                async with self._session_lock:
+                    await self._replay_backlog()
             return True
         if not await self._try_connect():
             return False
-        for buffered in self._backlog:
-            await self.model.push_audio(buffered)
-        self._backlog.clear()
         return True
+
+    def _context_pressure(self) -> float:
+        """Return the highest available provider limit utilization."""
+        config = self.context_config
+        if config is None:
+            return 0.0
+        card = self.model.card
+        pressures: list[float] = []
+        token_limit = config.context_length or card.max_context_tokens
+        if token_limit:
+            estimated = _estimated_tokens(
+                str(self.state.summary)
+                + "\n".join(
+                    m.get_text_content() or "" for m in self.state.context
+                ),
+            )
+            pressures.append(
+                max(self._last_usage_tokens, estimated) / token_limit,
+            )
+        if turn_limit := self.model.effective_max_audio_turns:
+            pressures.append(self._audio_turns / turn_limit)
+        if card.max_audio_duration_s:
+            pressures.append(self._audio_seconds / card.max_audio_duration_s)
+        return max(pressures, default=0.0)
+
+    def _rollover_required(self) -> bool:
+        """Check the context and session lifetime hard rollover thresholds."""
+        config = self.context_config
+        if config is None:
+            return False
+        if self._context_pressure() >= config.rollover_ratio:
+            return True
+        duration = self.model.card.max_session_duration_s
+        return bool(
+            duration
+            and self._session_started_at
+            and (time.monotonic() - self._session_started_at) / duration
+            >= config.rollover_ratio,
+        )
+
+    def _maybe_start_compression(self) -> None:
+        """Start one summary when a completed turn crosses the limit."""
+        config = self.context_config
+        if (
+            config is None
+            or self._rollover_pending
+            or self._compression_task is not None
+            or self._context_pressure() < config.trigger_ratio
+        ):
+            return
+        if self._user_turn_open or self._reply_id:
+            return
+        if len(self.state.context) < 2:
+            return
+        snapshot = [msg.model_copy(deep=True) for msg in self.state.context]
+        old_summary = copy.deepcopy(self.state.summary)
+        task = asyncio.create_task(
+            self._compress_context(snapshot, old_summary),
+            name="rt-compress",
+        )
+        self._compression_task = task
+        task.add_done_callback(self._on_compression_done)
+
+    def _on_compression_done(self, task: asyncio.Task) -> None:
+        """Release the single-flight slot and log failed summaries."""
+        if self._compression_task is task:
+            self._compression_task = None
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "RealtimeAgent: context compression failed",
+                exc_info=task.exception(),
+            )
+        if not task.cancelled() and not self._rollover_pending:
+            self._maybe_schedule_limit_rollover()
+
+    def _maybe_schedule_limit_rollover(self) -> None:
+        """Use a raw-history reconnect if compression could not finish."""
+        config = self.context_config
+        if (
+            config is not None
+            and self._compression_task is None
+            and self._rollover_required()
+        ):
+            self._rollover_pending = True
+            self._maybe_schedule_rollover()
+
+    async def _compress_context(
+        self,
+        snapshot: list[Msg] | None = None,
+        old_summary: str | list | None = None,
+    ) -> None:
+        """Summarize a fixed prefix while live messages continue to append."""
+        config = self.context_config
+        assert config is not None
+        if snapshot is None:
+            snapshot = [
+                msg.model_copy(deep=True) for msg in self.state.context
+            ]
+        if old_summary is None:
+            old_summary = copy.deepcopy(self.state.summary)
+        local_tokens = sum(
+            _estimated_tokens(msg.get_text_content() or "") for msg in snapshot
+        )
+        reserve = max(1, int(local_tokens * config.reserve_ratio))
+        keep = 0
+        retained_tokens = 0
+        for msg in reversed(snapshot):
+            keep += 1
+            retained_tokens += _estimated_tokens(msg.get_text_content() or "")
+            if retained_tokens >= reserve:
+                break
+        cut = len(snapshot) - keep
+        if cut <= 0:
+            return
+
+        summary_text = old_summary
+        if isinstance(summary_text, list):
+            summary_text = "\n".join(
+                block.text
+                for block in summary_text
+                if isinstance(block, TextBlock)
+            )
+        messages: list[Msg] = [
+            SystemMsg(name="system", content=self.system_prompt),
+        ]
+        if summary_text:
+            messages.append(UserMsg(name="user", content=summary_text))
+        messages.extend(snapshot[:cut])
+        messages.append(
+            UserMsg(name="user", content=config.compression_prompt),
+        )
+        result = await config.compression_model.generate_structured_output(
+            messages=messages,
+            structured_model=config.summary_schema,
+        )
+        new_summary = config.summary_template.format(**result.content)
+        if not self._snapshot_matches(snapshot[:cut], old_summary):
+            logger.info("RealtimeAgent: stale context snapshot discarded")
+            return
+        if self.offloader is not None:
+            try:
+                path = await self.offloader.offload_context(
+                    self.state.session_id,
+                    snapshot[:cut],
+                )
+                new_summary += f"\nEarlier context: {path}"
+            except Exception:  # noqa: BLE001
+                logger.exception("RealtimeAgent: context offload failed")
+        if not self._snapshot_matches(snapshot[:cut], old_summary):
+            logger.info("RealtimeAgent: stale context snapshot discarded")
+            return
+        self.state.summary = new_summary
+        self.state.context = self.state.context[cut:]
+        self._rollover_pending = True
+        self._maybe_schedule_rollover()
+
+    def _snapshot_matches(
+        self,
+        prefix: list[Msg],
+        summary: str | list,
+    ) -> bool:
+        """Check that the compressed prefix was not edited or removed."""
+        return (
+            self.state.summary == summary
+            and len(self.state.context) >= len(prefix)
+            and self.state.context[: len(prefix)] == prefix
+        )
+
+    def _safe_to_rollover(self) -> bool:
+        """Require a settled turn, no tools, and completed audio playout."""
+        if (
+            not self._connected
+            or self._rotating
+            or self._user_turn_open
+            or self._awaiting_response
+            or self._reply_id
+        ):
+            return False
+        if self._pending_tools or self._confirmations:
+            return False
+        if any(not task.done() for task in self._tasks):
+            return False
+        if self._transport is not None and self._last_audio_item:
+            position = self._transport.playout()
+            if (
+                position.item_id == self._last_audio_item
+                and position.played_ms < self._last_audio_ms
+            ):
+                return False
+        return True
+
+    def _maybe_schedule_rollover(self) -> None:
+        """Schedule a rollover only for adapters with a ready contract."""
+        config = self.context_config
+        if (
+            config is None
+            or not self._rollover_pending
+            or self._rollover_task is not None
+        ):
+            return
+        task = asyncio.create_task(self._rollover(), name="rt-rollover")
+        self._rollover_task = task
+        task.add_done_callback(self._on_rollover_done)
+
+    def _on_rollover_done(self, task: asyncio.Task) -> None:
+        """Clear the rollover slot after the task exits."""
+        if self._rollover_task is task:
+            self._rollover_task = None
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "RealtimeAgent: session rollover failed",
+                exc_info=task.exception(),
+            )
+
+    async def _rollover(self) -> None:
+        """Replace a settled provider session and replay buffered audio."""
+        while self._rollover_pending and self._connected:
+            if self._safe_to_rollover():
+                break
+            await asyncio.sleep(0.05)
+        if not self._safe_to_rollover():
+            return
+        async with self._session_lock:
+            if not self._safe_to_rollover():
+                return
+            self._rotating = True
+            old_downlink = self._downlink
+            self._downlink = None
+            self._mark_disconnected()
+            try:
+                if old_downlink is not None:
+                    old_downlink.cancel()
+                    await asyncio.gather(old_downlink, return_exceptions=True)
+                await self.model.close()
+                await self._open_session(wait_ready=True)
+                await self._replay_backlog()
+                self._rollover_pending = False
+            except Exception:  # noqa: BLE001
+                self._mark_disconnected()
+                logger.exception("RealtimeAgent: proactive reconnect failed")
+            finally:
+                self._rotating = False
 
     # ------------------------------------------------------------------
     # Lifecycle: one transport
@@ -429,7 +760,7 @@ class RealtimeAgent:
 
     async def send(
         self,
-        inputs: (str | Msg | UserConfirmResultEvent | UserInterruptEvent),
+        inputs: str | Msg | UserConfirmResultEvent | UserInterruptEvent,
     ) -> None:
         """Feed the agent anything that is not audio.
 
@@ -465,6 +796,9 @@ class RealtimeAgent:
                 )
                 text = msg.get_text_content() or ""
                 await self._barge_in()
+                if self._rotating:
+                    self._backlog.append((msg, None))
+                    return
                 # A typed turn reconnects the session the way audio does,
                 # and takes the audio kept meanwhile along with it.
                 if not await self._ensure_connected():
@@ -472,6 +806,7 @@ class RealtimeAgent:
                         "Provider unreachable; the text turn was not sent.",
                     )
                 try:
+                    self._awaiting_response = True
                     await self.model.push_text(text)
                 except ModelDisconnectedError:
                     self._mark_disconnected()
@@ -509,7 +844,7 @@ class RealtimeAgent:
             # may not have noticed yet. Keep the frame and reconnect on
             # the next one — this is the idle-timeout path, not an error.
             self._mark_disconnected()
-            self._backlog.append(frame.pcm)
+            self._buffer_audio(frame.pcm, speech)
             logger.info(
                 "RealtimeAgent: model session closed (%s); keep talking "
                 "and it reconnects on the next audio.",
@@ -519,7 +854,7 @@ class RealtimeAgent:
     def _mark_disconnected(self) -> None:
         """Forget the model session so the next input reconnects."""
         self._connected = False
-        self._connected_event.clear()
+        self._awaiting_response = False
 
     async def _forward_audio(
         self,
@@ -527,19 +862,56 @@ class RealtimeAgent:
         speech: SpeechTransition | None,
     ) -> None:
         """Body of :meth:`_on_audio`; raises on a closed model session."""
-        pushed = False
-        if not self._connected:
-            self._backlog.append(pcm)
-            del self._backlog[:-_BACKLOG_FRAMES]
-            if not await self._ensure_connected():
-                return
-            pushed = True
+        if self._rotating or not self._connected:
+            self._buffer_audio(pcm, speech)
+            if not self._rotating:
+                await self._ensure_connected()
+            return
+
+        await self._deliver_audio(pcm, speech)
+
+    def _buffer_audio(
+        self,
+        pcm: bytes,
+        speech: SpeechTransition | None,
+    ) -> None:
+        """Keep audio in order and fail explicitly before backlog overflow."""
+        config = self.context_config
+        limit_s = config.max_audio_backlog_s if config else 10.0
+        limit_bytes = int(limit_s * self.model.input_sample_rate * 2)
+        if self._backlog_bytes + len(pcm) > limit_bytes:
+            raise BufferError("Realtime audio backlog is full.")
+        self._backlog.append((pcm, speech))
+        self._backlog_bytes += len(pcm)
+
+    async def _replay_backlog(self) -> None:
+        """Send buffered audio and text in their original order."""
+        while self._backlog:
+            item, speech = self._backlog[0]
+            if isinstance(item, Msg):
+                self._awaiting_response = True
+                await self.model.push_text(item.get_text_content() or "")
+                self.state.context.append(item)
+            else:
+                await self._deliver_audio(item, speech)
+                self._backlog_bytes -= len(item)
+            self._backlog.popleft()
+
+    async def _deliver_audio(
+        self,
+        pcm: bytes,
+        speech: SpeechTransition | None,
+    ) -> None:
+        """Send a live or replayed frame to the active session."""
 
         if speech is SpeechTransition.STARTED:
             self._start_user_turn()
             await self._barge_in()
-        elif speech is SpeechTransition.ENDED:
+        await self.model.push_audio(pcm)
+        self._audio_seconds += len(pcm) / (self.model.input_sample_rate * 2)
+        if speech is SpeechTransition.ENDED:
             self._end_user_turn()
+            self._awaiting_response = True
             now = time.monotonic()
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
@@ -547,9 +919,6 @@ class RealtimeAgent:
             # With turn detection off nothing answers a committed turn
             # by itself; providers that reply on commit make this a no-op.
             await self.model.request_response()
-
-        if not pushed:
-            await self.model.push_audio(pcm)
 
     async def _on_control(self, frame: ControlFrame) -> None:
         """Translate one upstream control frame into :meth:`send`."""
@@ -625,7 +994,7 @@ class RealtimeAgent:
         if tail.role != "assistant" or tail.name != self.name:
             return
 
-        others = (
+        others: list[ContentBlock] = (
             []
             if isinstance(tail.content, str)
             else [_ for _ in tail.content if not isinstance(_, TextBlock)]
@@ -641,23 +1010,20 @@ class RealtimeAgent:
     # Downlink: model -> transport + events (lives with the agent)
     # ------------------------------------------------------------------
 
-    async def _pump_downlink(self) -> None:
-        """Translate model events for as long as the agent is open.
-
-        When the provider closes the session the pump does not exit: it
-        marks the model disconnected and waits for :meth:`connect` to be
-        called again, which the uplink does on the next user audio.
-        """
-        while True:
-            await self._connected_event.wait()
-            async for event in self.model.events():
-                await self._on_model_event(event)
-            self._mark_disconnected()
-            self._finish_reply(ReplyFinishedReason.ERROR)
-            logger.info(
-                "RealtimeAgent: model session ended; keep talking and it "
-                "reconnects on the next audio.",
-            )
+    async def _pump_downlink(self, epoch: int) -> None:
+        """Translate events from exactly one provider session."""
+        async for event in self.model.events():
+            if epoch != self._epoch:
+                return
+            await self._on_model_event(event)
+        if epoch != self._epoch:
+            return
+        self._mark_disconnected()
+        self._finish_reply(ReplyFinishedReason.ERROR)
+        logger.info(
+            "RealtimeAgent: model session ended; keep talking and it "
+            "reconnects on the next audio.",
+        )
 
     async def _on_model_event(self, event: me.ModelEvent) -> None:
         """Handle one model event."""
@@ -669,6 +1035,7 @@ class RealtimeAgent:
 
             case me.SpeechEndedEvent():
                 self._end_user_turn()
+                self._awaiting_response = True
                 # With provider turn detection this is also its commit.
                 now = time.monotonic()
                 self._metrics.user_speech_end_at = now
@@ -708,8 +1075,18 @@ class RealtimeAgent:
                     self.state.append_context(self.name, [event.tool_call])
 
             case me.ResponseDoneEvent():
+                if (
+                    self._finished_item
+                    and event.item_id == self._finished_item
+                    and self._reply is None
+                ):
+                    return
                 self._metrics.input_tokens = event.input_tokens
                 self._metrics.output_tokens = event.output_tokens
+                if event.input_tokens or event.output_tokens:
+                    self._last_usage_tokens = (
+                        event.input_tokens + event.output_tokens
+                    )
                 tail = self.state.context[-1] if self.state.context else None
                 if tail is not None and tail.id == self._reply_id:
                     tail.append_usage(
@@ -726,6 +1103,8 @@ class RealtimeAgent:
                     self._schedule_tools()
                 else:
                     self._finish_reply(ReplyFinishedReason.COMPLETED)
+                    self._maybe_start_compression()
+                    self._maybe_schedule_limit_rollover()
 
             case me.ModelErrorEvent():
                 logger.error(
@@ -763,6 +1142,7 @@ class RealtimeAgent:
         if not self._user_turn_open:
             return
         self._user_turn_open = False
+        self._audio_turns += 1
         self._emit(
             ReplyEndEvent(
                 session_id=self.state.session_id,
@@ -836,6 +1216,7 @@ class RealtimeAgent:
             return None
         if self._reply is not None:
             self._finish_response()
+        self._awaiting_response = True
 
         if not self._continuing:
             # The agent takes the turn; the reply is named by its first
@@ -881,6 +1262,8 @@ class RealtimeAgent:
                 ),
             )
         if reply.audio_started:
+            self._last_audio_item = reply.item_id
+            self._last_audio_ms = reply.audio_ms
             self._emit(
                 DataBlockEndEvent(
                     reply_id=reply.reply_id,
@@ -900,6 +1283,10 @@ class RealtimeAgent:
     def _finish_reply(self, reason: ReplyFinishedReason) -> None:
         """Close the open reply, if any, response included."""
         self._finish_response()
+        self._awaiting_response = False
+        if reason is ReplyFinishedReason.INTERRUPTED:
+            self._last_audio_item = ""
+            self._last_audio_ms = 0.0
         if not self._reply_id:
             return
         self._emit(
@@ -1168,6 +1555,7 @@ class RealtimeAgent:
             output=output,
             state=state,
         )
+        block = await self._limit_tool_result(block)
         # The result belongs to the reply that made the call, which may no
         # longer be the current one if the user interrupted a slow tool.
         for msg in reversed(self.state.context):
@@ -1177,3 +1565,35 @@ class RealtimeAgent:
         else:
             self.state.append_context(self.name, [block])
         await self.model.push_tool_result(block)
+
+    async def _limit_tool_result(
+        self,
+        block: ToolResultBlock,
+    ) -> ToolResultBlock:
+        """Apply the same tool result limit to local and remote context."""
+        config = self.context_config
+        if config is None or not isinstance(block.output, str):
+            return block
+        if _estimated_tokens(block.output) <= config.tool_result_limit:
+            return block
+        path = ""
+        if self.offloader is not None:
+            try:
+                path = await self.offloader.offload_tool_result(
+                    self.state.session_id,
+                    block,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("RealtimeAgent: tool result offload failed")
+        reminder = f"[truncated: {path}]" if path else "[truncated]"
+        budget = config.tool_result_limit * 4
+        if len(reminder.encode("utf-8")) > budget:
+            reminder = "[truncated]"[:budget]
+        available = max(0, budget - len(reminder.encode("utf-8")))
+        prefix = block.output.encode("utf-8")[:available].decode(
+            "utf-8",
+            errors="ignore",
+        )
+        return block.model_copy(
+            update={"output": prefix + reminder},
+        )

@@ -41,7 +41,17 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
     type = "dashscope_audio_realtime"
     supports_text_input = True
 
-    parameters: "DashScopeAudioRealtimeModel.Parameters"
+    parameters: Parameters  # type: ignore[assignment]
+
+    @property
+    def effective_max_audio_turns(self) -> int | None:
+        """Respect the configured max_history_turns of this session."""
+        card_limit = self.card.max_audio_turns
+        return (
+            min(card_limit, self.parameters.max_history_turns)
+            if card_limit
+            else self.parameters.max_history_turns
+        )
 
     @classmethod
     def list_models(

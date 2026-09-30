@@ -67,6 +67,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
     type = "openai_realtime"
     truncation = TruncationSupport.EXPLICIT
     supports_text_input = True
+    supports_ready_ack = True
 
     def __init__(
         self,
@@ -92,6 +93,8 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
+        self._ready = asyncio.Event()
+        self._session_ready = False
         self._response_id = ""
         self._item_id = ""
 
@@ -112,6 +115,8 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         await self.close()
         while not self._queue.empty():
             self._queue.get_nowait()
+        self._ready.clear()
+        self._session_ready = False
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
@@ -135,6 +140,12 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         )
         self._reader = asyncio.create_task(self._read(), name="openai-rt")
         await self._send(self._session_update(instructions, tools))
+
+    async def wait_ready(self) -> None:
+        """Wait for the session.updated acknowledgement."""
+        await asyncio.wait_for(self._ready.wait(), timeout=10)
+        if not self._session_ready:
+            raise ModelDisconnectedError("Session closed before it was ready.")
 
     async def close(self) -> None:
         """Stop reading and close the WebSocket."""
@@ -322,7 +333,15 @@ class OpenAIRealtimeModel(RealtimeModelBase):
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
                 try:
-                    event = self._parse(json.loads(raw))
+                    data = json.loads(raw)
+                    if data.get("type") == "session.updated":
+                        self._session_ready = True
+                        self._ready.set()
+                    elif (
+                        data.get("type") == "error" and not self._session_ready
+                    ):
+                        self._ready.set()
+                    event = self._parse(data)
                 except Exception:  # noqa: BLE001
                     logger.exception("OpenAIRealtimeModel: bad frame")
                     continue
@@ -331,6 +350,8 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         except Exception as exc:  # noqa: BLE001
             logger.error("OpenAIRealtimeModel: connection lost: %s", exc)
         finally:
+            self._session_ready = False
+            self._ready.set()
             self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
             self._queue.put_nowait(None)
 
