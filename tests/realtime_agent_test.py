@@ -84,19 +84,27 @@ def _message_summary(message: Msg) -> dict[str, Any]:
 
 REPLY_R1 = [
     me.SpeechEndedEvent(item_id="u1"),
-    me.InputTranscriptionEvent(item_id="u1", text="讲个故事"),
+    me.InputTranscriptionEvent(item_id="u1", text="Tell me a story"),
     me.ResponseCreatedEvent(item_id="r1"),
 ]
-for _word in ["从前", "有座山", "山里", "有座庙", "庙里", "有个", "老和尚"]:
+for _word in [
+    "Once ",
+    "upon ",
+    "a time, ",
+    "there ",
+    "was ",
+    "an old ",
+    "monk.",
+]:
     REPLY_R1 += [
         me.TranscriptDeltaEvent(item_id="r1", delta=_word),
         me.AudioDeltaEvent(item_id="r1", pcm=PCM_100MS, sample_rate=24000),
     ]
 
 REPLY_R2 = [
-    me.InputTranscriptionEvent(item_id="u3", text="你好"),
+    me.InputTranscriptionEvent(item_id="u3", text="Hello"),
     me.ResponseCreatedEvent(item_id="r2"),
-    me.TranscriptDeltaEvent(item_id="r2", delta="你好呀"),
+    me.TranscriptDeltaEvent(item_id="r2", delta="Hi there."),
     me.AudioDeltaEvent(item_id="r2", pcm=PCM_100MS, sample_rate=24000),
     me.ResponseDoneEvent(item_id="r2", input_tokens=10, output_tokens=3),
 ]
@@ -268,20 +276,13 @@ class QueueSessionModel(ScriptedModel):
 
 
 class FakeTransport(TransportBase):
-    """Emits ``frames`` chunks of silence, reports 320 ms played."""
+    """Emit ``frames`` chunks of silence and record transport calls."""
 
     input_sample_rate = 16000
     output_sample_rate = 24000
 
-    def __init__(
-        self,
-        frames: int,
-        played_ms: int = 320,
-        reported_item: str | None = None,
-    ) -> None:
+    def __init__(self, frames: int) -> None:
         self.frames = frames
-        self.played_ms = played_ms
-        self.reported_item = reported_item
         self.item = ""
         self.cleared = 0
         self.started = 0
@@ -311,14 +312,9 @@ class FakeTransport(TransportBase):
         return self.playout()
 
     def playout(self) -> PlayoutPosition:
-        """Report the configured position in the current item."""
+        """Report a fixed position in the current item."""
         return PlayoutPosition(
-            item_id=(
-                self.reported_item
-                if self.reported_item is not None
-                else self.item
-            ),
-            played_ms=self.played_ms,
+            item_id=self.item,
             first_played_at=1.0,
         )
 
@@ -344,7 +340,6 @@ class BlockingClearTransport(GatedTransport):
 
     def __init__(self) -> None:
         super().__init__([])
-        self.played_ms = 0
         self.audio_sent = asyncio.Event()
         self.clear_started = asyncio.Event()
         self.clear_release = asyncio.Event()
@@ -381,7 +376,12 @@ async def _run_terminal_event_during_barge_in(
         stream_task = asyncio.create_task(_collect())
         queue = model.event_queues[0]
         queue.put_nowait(me.ResponseCreatedEvent(item_id="r1"))
-        queue.put_nowait(me.TranscriptDeltaEvent(item_id="r1", delta="没听到"))
+        queue.put_nowait(
+            me.TranscriptDeltaEvent(
+                item_id="r1",
+                delta="I did not hear that.",
+            ),
+        )
         queue.put_nowait(
             me.AudioDeltaEvent(
                 item_id="r1",
@@ -506,9 +506,8 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                         summary.append(("reply_end", event.finished_reason))
         return summary
 
-    async def test_barge_in_truncates_to_what_was_heard(self) -> None:
-        """A barge-in mid-reply cuts both contexts to the played prefix
-        and the duplicate speech_started is swallowed by the lock."""
+    async def test_barge_in_keeps_generated_text(self) -> None:
+        """A barge-in keeps generated text and closes the active reply."""
         script = REPLY_R1 + [
             me.SpeechStartedEvent(item_id="u2"),
             me.SpeechStartedEvent(item_id="u2"),
@@ -517,8 +516,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         agent = RealtimeAgent("Friday", "be brief", model)
         transport = FakeTransport(frames=3)
 
-        # Rebuild the agent's message from its events the way a client
-        # does; the text deltas ran ahead of what was heard.
+        # Rebuild the agent's message from its events the way a client does.
         summary = []
         rebuilt = Msg(id="r1", role="assistant", name="Friday", content=[])
         async with agent, transport:
@@ -537,20 +535,23 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             summary,
             [
                 ("user_start", "u1"),
-                "讲个故事",
+                "Tell me a story",
                 ("reply_end", "completed"),  # the user's turn
-                "从前",
-                "有座山",
-                "山里",
-                "有座庙",
-                "庙里",
-                "有个",
-                "老和尚",
+                "Once ",
+                "upon ",
+                "a time, ",
+                "there ",
+                "was ",
+                "an old ",
+                "monk.",
                 ("user_start", "u2"),
                 ("reply_end", "interrupted"),
             ],
         )
-        self.assertEqual(rebuilt.get_text_content(), "从前有座山山里有座庙")
+        self.assertEqual(
+            rebuilt.get_text_content(),
+            "Once upon a time, there was an old monk.",
+        )
         self.assertEqual(transport.cleared, 1)
         # Audio frames interleave with model events on the transport's
         # clock, so they are counted rather than positioned.
@@ -559,14 +560,16 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [
                 "connect(session=1,td_off=False)",
                 "cancel",
-                "truncate(r1,320ms,'从前有座山山里有座庙')",
                 "close",
             ],
         )
         self.assertEqual(model.calls.count("push_audio"), 3)
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
-            [("user", "讲个故事"), ("assistant", "从前有座山山里有座庙")],
+            [
+                ("user", "Tell me a story"),
+                ("assistant", "Once upon a time, there was an old monk."),
+            ],
         )
         self.assertEqual(agent.last_turn_metrics.first_audio_played_at, 1.0)
 
@@ -590,39 +593,20 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             name="Friday",
             content=[],
         )
-        correction_events = []
-
         async with agent, transport:
             async for event in agent.reply_stream(transport):
                 if getattr(event, "reply_id", None) == "r1":
                     rebuilt.append_event(event)
-                if (
-                    isinstance(event, TextBlockEndEvent)
-                    and event.text is not None
-                ):
-                    correction_events.append(
-                        event.model_dump(exclude={"id", "created_at"}),
-                    )
 
         self.assertEqual(
-            correction_events,
-            [
-                {
-                    "type": "TEXT_BLOCK_END",
-                    "metadata": {},
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "text": "从前有座山山里有座庙",
-                },
-            ],
+            rebuilt.get_text_content(),
+            "Once upon a time, there was an old monk.",
         )
-        self.assertEqual(rebuilt.get_text_content(), "从前有座山山里有座庙")
         self.assertEqual(transport.cleared, 1)
         self.assertListEqual(
             [call for call in model.calls if call != "push_audio"],
             [
                 "connect(session=1,td_off=False)",
-                "truncate(r1,320ms,'从前有座山山里有座庙')",
                 "close",
             ],
         )
@@ -636,121 +620,13 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 for message in agent.state.context
             ],
             [
-                ("user", "讲个故事", None),
+                ("user", "Tell me a story", None),
                 (
                     "assistant",
-                    "从前有座山山里有座庙",
+                    "Once upon a time, there was an old monk.",
                     ReplyFinishedReason.COMPLETED,
                 ),
             ],
-        )
-
-    async def test_barge_in_after_completed_playout_keeps_reply(self) -> None:
-        """Speaking after all queued audio played does not truncate it."""
-        script = REPLY_R1 + [
-            me.ResponseDoneEvent(
-                item_id="r1",
-                input_tokens=10,
-                output_tokens=20,
-            ),
-            me.SpeechStartedEvent(item_id="u2"),
-        ]
-        model = ScriptedModel([script])
-        agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(frames=3, played_ms=700)
-        correction_events = []
-
-        async with agent, transport:
-            async for event in agent.reply_stream(transport):
-                if (
-                    isinstance(event, TextBlockEndEvent)
-                    and event.text is not None
-                ):
-                    correction_events.append(event)
-
-        self.assertListEqual(correction_events, [])
-        self.assertEqual(transport.cleared, 0)
-        self.assertListEqual(
-            [call for call in model.calls if call != "push_audio"],
-            [
-                "connect(session=1,td_off=False)",
-                "close",
-            ],
-        )
-        self.assertListEqual(
-            [
-                (
-                    message.role,
-                    message.get_text_content(),
-                    message.finished_reason,
-                )
-                for message in agent.state.context
-            ],
-            [
-                ("user", "讲个故事", None),
-                (
-                    "assistant",
-                    "从前有座山山里有座庙庙里有个老和尚",
-                    ReplyFinishedReason.COMPLETED,
-                ),
-            ],
-        )
-
-    async def test_zero_playout_keeps_no_transcript_prefix(self) -> None:
-        """A response interrupted before playback retains no first word."""
-        script = REPLY_R1 + [
-            me.ResponseDoneEvent(
-                item_id="r1",
-                input_tokens=10,
-                output_tokens=20,
-            ),
-            me.SpeechStartedEvent(item_id="u2"),
-        ]
-        model = ScriptedModel([script])
-        agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(
-            frames=3,
-            played_ms=0,
-            reported_item="",
-        )
-        corrections = []
-
-        async with agent, transport:
-            async for event in agent.reply_stream(transport):
-                if (
-                    isinstance(event, TextBlockEndEvent)
-                    and event.text is not None
-                ):
-                    corrections.append(
-                        event.model_dump(exclude={"id", "created_at"}),
-                    )
-
-        self.assertEqual(
-            corrections,
-            [
-                {
-                    "type": "TEXT_BLOCK_END",
-                    "metadata": {},
-                    "reply_id": "r1",
-                    "block_id": AnyString(),
-                    "text": "",
-                },
-            ],
-        )
-        self.assertListEqual(
-            [call for call in model.calls if call != "push_audio"],
-            [
-                "connect(session=1,td_off=False)",
-                "truncate(r1,0ms,'')",
-                "close",
-            ],
-        )
-        self.assertListEqual(
-            [
-                (message.role, message.get_text_content())
-                for message in agent.state.context
-            ],
-            [("user", "讲个故事")],
         )
 
     async def test_stale_response_done_does_not_run_pending_tools(
@@ -782,7 +658,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        correction_events = [
+        terminal_events = [
             event.model_dump(
                 mode="json",
                 exclude={"id", "created_at"},
@@ -793,7 +669,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 "state_while_clearing": state_while_clearing,
-                "correction_events": correction_events,
+                "terminal_events": terminal_events,
                 "context": [
                     {
                         "id": message.id,
@@ -821,13 +697,13 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                     "input_tokens": 0,
                     "pending_tools": ["c1"],
                 },
-                "correction_events": [
+                "terminal_events": [
                     {
                         "type": "TEXT_BLOCK_END",
                         "metadata": {},
                         "reply_id": "r1",
                         "block_id": AnyString(),
-                        "text": "",
+                        "text": None,
                     },
                     {
                         "type": "REPLY_END",
@@ -844,6 +720,11 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                         "finished_reason": "interrupted",
                         "content": [
                             {
+                                "type": "text",
+                                "text": "I did not hear that.",
+                                "id": AnyString(),
+                            },
+                            {
                                 "type": "tool_call",
                                 "id": "c1",
                                 "name": "stream_tool",
@@ -859,54 +740,13 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "model_calls": [
                     "connect(session=1,td_off=False)",
                     "cancel",
-                    "truncate(r1,0ms,'')",
                     "close",
                 ],
             },
         )
 
-    async def test_mismatched_playout_still_cancels_active_reply(self) -> None:
-        """A stale previous item cannot make the current reply
-        uninterruptible."""
-        script = REPLY_R1 + [me.SpeechStartedEvent(item_id="u2")]
-        model = ScriptedModel([script])
-        agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(
-            frames=3,
-            played_ms=700,
-            reported_item="previous-item",
-        )
-
-        async with agent:
-            summary = await self._collect(agent, transport)
-
-        self.assertListEqual(
-            summary,
-            [
-                ("user", "讲个故事"),
-                ("reply_end", "interrupted"),
-            ],
-        )
-        self.assertEqual(transport.cleared, 1)
-        self.assertListEqual(
-            [call for call in model.calls if call != "push_audio"],
-            [
-                "connect(session=1,td_off=False)",
-                "cancel",
-                "truncate(r1,0ms,'')",
-                "close",
-            ],
-        )
-        self.assertListEqual(
-            [
-                (message.role, message.get_text_content())
-                for message in agent.state.context
-            ],
-            [("user", "讲个故事")],
-        )
-
     async def test_interrupt_stops_active_reply(self) -> None:
-        """``interrupt()`` cuts the reply in flight to what was heard."""
+        """``interrupt()`` stops generation but preserves its text."""
         model = ScriptedModel([REPLY_R1])
         agent = RealtimeAgent("Friday", "be brief", model)
         transport = GatedTransport([])
@@ -915,7 +755,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         async with agent, transport:
             async for event in agent.reply_stream(transport):
                 if isinstance(event, TextBlockDeltaEvent):
-                    if event.delta == "老和尚":
+                    if event.delta == "monk.":
                         await agent.interrupt()
                         transport.gate.set()
                 elif isinstance(event, ReplyEndEvent):
@@ -928,7 +768,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         self.assertEqual(transport.cleared, 1)
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
-            [("user", "讲个故事"), ("assistant", "从前有座山山里有座庙")],
+            [
+                ("user", "Tell me a story"),
+                ("assistant", "Once upon a time, there was an old monk."),
+            ],
         )
 
     async def test_interrupt_frame_stops_active_reply(self) -> None:
@@ -943,7 +786,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         async with agent, transport:
             async for event in agent.reply_stream(transport):
                 if isinstance(event, TextBlockDeltaEvent):
-                    if event.delta == "老和尚":
+                    if event.delta == "monk.":
                         transport.gate.set()
                 elif isinstance(event, ReplyEndEvent):
                     reply_ends.append((event.reply_id, event.finished_reason))
@@ -957,7 +800,6 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             [
                 "connect(session=1,td_off=False)",
                 "cancel",
-                "truncate(r1,320ms,'从前有座山山里有座庙')",
                 "close",
             ],
         )
@@ -988,27 +830,33 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             summary = await self._collect(agent, FakeTransport(frames=2))
 
         self.assertEqual(model.sessions, 2)
-        # The orphaned reply was dropped, so one message carried over,
-        # riding along in the instructions of the new session.
+        # Reconnection starts with the context available when the previous
+        # model session ended.
         self.assertIn("connect(session=2,td_off=False)", model.calls)
         self.assertEqual(
             model.instructions,
-            "be brief\n\n## Conversation so far\nuser: 讲个故事",
+            f"{agent.system_prompt}\n\n## Conversation so far\n"
+            f"user: Tell me a story\n{agent.name}: Once ",
         )
         # Events produced while no run was active are delivered first;
         # a reply streamed with nobody listening is cut off exactly once.
         self.assertListEqual(
             summary,
             [
-                ("user", "讲个故事"),
+                ("user", "Tell me a story"),
                 ("reply_end", "interrupted"),
-                ("user", "你好"),
+                ("user", "Hello"),
                 ("reply_end", "completed"),
             ],
         )
         self.assertListEqual(
             [(m.role, m.get_text_content()) for m in agent.state.context],
-            [("user", "讲个故事"), ("user", "你好"), ("assistant", "你好呀")],
+            [
+                ("user", "Tell me a story"),
+                ("assistant", "Once "),
+                ("user", "Hello"),
+                ("assistant", "Hi there."),
+            ],
         )
 
     async def test_structured_history_is_replayed_on_reconnect(self) -> None:
@@ -1034,6 +882,18 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 AssistantMsg(
                     name="Friday",
                     content="unfinished",
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
+                ),
+                AssistantMsg(
+                    name="Friday",
+                    content=[
+                        TextBlock(text="calling a tool"),
+                        ToolCallBlock(
+                            id="call-1",
+                            name="lookup",
+                            input="{}",
+                        ),
+                    ],
                     finished_reason=ReplyFinishedReason.INTERRUPTED,
                 ),
             ],
@@ -1068,6 +928,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             ("user", "user", "hello", None),
             ("assistant", "Friday", "hi", "completed"),
             ("assistant", "Friday", "legacy complete", None),
+            ("assistant", "Friday", "unfinished", "interrupted"),
         ]
         self.assertEqual(
             {
@@ -1097,7 +958,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 
     async def test_completed_chat_reply_is_replayed_in_realtime(self) -> None:
         """Switching modes preserves the complete preceding chat turn."""
-        story = "从前有一只小猫，它每天都在窗边等待朋友回来。"
+        story = (
+            "A small cat waited by the window every day for its friend "
+            "to return."
+        )
         chat_model = MockModel()
         chat_model.set_responses(
             [
@@ -1114,7 +978,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             injection_config=InjectionConfig(inject_runtime_state=False),
         )
         await chat_agent.reply(
-            UserMsg(name="user", content="讲一个一百字的故事"),
+            UserMsg(name="user", content="Tell me a short story"),
         )
 
         realtime_model = HistoryScriptedModel([[]])
@@ -1152,18 +1016,18 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 ],
                 "fallback_instructions": (
                     "be brief\n\n## Conversation so far\n"
-                    "user: 讲一个一百字的故事\n"
+                    "user: Tell me a short story\n"
                     f"Friday: {story}"
                 ),
             },
         )
 
-    def test_history_fallback_keeps_only_complete_recent_messages(
+    def test_history_fallback_keeps_only_recent_whole_messages(
         self,
     ) -> None:
         """Text fallback drops old messages instead of slicing one in half."""
-        old_text = "旧" * 20_000
-        recent_text = "新" * 20_000
+        old_text = "o" * 20_000
+        recent_text = "n" * 20_000
         fallback = RealtimeAgent._format_history_fallback(
             [
                 UserMsg(name="old", content=old_text),
@@ -1375,7 +1239,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 
         self.assertListEqual(
             summary,
-            [("user", "讲个故事"), ("reply_end", "interrupted")],
+            [("user", "Tell me a story"), ("reply_end", "interrupted")],
         )
         self.assertIn("cancel", model.calls)
 
@@ -1388,13 +1252,13 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
     async def test_backchannel_is_dropped(self) -> None:
         """A bare acknowledgement never becomes a turn."""
         model = ScriptedModel(
-            [[me.InputTranscriptionEvent(item_id="u1", text="嗯。")]],
+            [[me.InputTranscriptionEvent(item_id="u1", text="okay.")]],
         )
         agent = RealtimeAgent(
             "Friday",
             "be brief",
             model,
-            aggregator=TurnAggregator(backchannels=frozenset({"嗯"})),
+            aggregator=TurnAggregator(backchannels=frozenset({"okay"})),
         )
         async with agent:
             summary = await self._collect(agent, FakeTransport(frames=1))
@@ -1458,11 +1322,11 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
         )
 
 
-class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
-    """Verify playback retention and interruption reconciliation."""
+class RealtimeAgentLifecycleTest(IsolatedAsyncioTestCase):
+    """Verify interruption and terminal events are synchronized."""
 
     async def test_model_error_waits_for_barge_in_reconciliation(self) -> None:
-        """An error queued behind barge-in cannot hide its correction."""
+        """A terminal error waits for an in-progress interruption."""
         model = QueueSessionModel()
         agent = RealtimeAgent("Friday", "be brief", model)
         (
@@ -1477,7 +1341,7 @@ class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 "state_while_clearing": state_while_clearing,
-                "corrections": [
+                "terminal_events": [
                     (
                         event.type,
                         event.text
@@ -1487,7 +1351,10 @@ class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
                     for event in events
                     if isinstance(event, (TextBlockEndEvent, ReplyEndEvent))
                 ],
-                "context": agent.state.context,
+                "context": [
+                    _message_summary(message)
+                    for message in agent.state.context
+                ],
                 "model_calls": [
                     call for call in model.calls if call != "push_audio"
                 ],
@@ -1499,103 +1366,29 @@ class RealtimeAgentPlayoutRetentionTest(IsolatedAsyncioTestCase):
                     "input_tokens": 0,
                     "pending_tools": [],
                 },
-                "corrections": [
-                    ("TEXT_BLOCK_END", ""),
+                "terminal_events": [
+                    ("TEXT_BLOCK_END", None),
                     ("REPLY_END", ReplyFinishedReason.INTERRUPTED),
                 ],
-                "context": [],
+                "context": [
+                    {
+                        "role": "assistant",
+                        "id": "r1",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "I did not hear that.",
+                            },
+                        ],
+                        "usage": None,
+                        "finished_reason": "interrupted",
+                    },
+                ],
                 "model_calls": [
                     "connect(session=1,td_off=False)",
                     "cancel",
-                    "truncate(r1,0ms,'')",
                     "close",
                 ],
-            },
-        )
-
-    async def test_completed_playout_replies_are_pruned(self) -> None:
-        """Fully played responses do not accumulate alignment state."""
-        model = ScriptedModel([[]])
-        agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(frames=0, played_ms=100)
-        agent._transport = transport
-
-        for index in range(3):
-            item_id = f"r{index}"
-            await agent._on_model_event(
-                me.ResponseCreatedEvent(item_id=item_id),
-            )
-            await agent._on_model_event(
-                me.TranscriptDeltaEvent(item_id=item_id, delta="完成"),
-            )
-            await agent._on_model_event(
-                me.AudioDeltaEvent(
-                    item_id=item_id,
-                    pcm=PCM_100MS,
-                    sample_rate=24000,
-                ),
-            )
-            await agent._on_model_event(
-                me.ResponseDoneEvent(item_id=item_id),
-            )
-
-        self.assertEqual(
-            {
-                "retained_playout_replies": list(
-                    agent._playout_replies,
-                ),
-                "context_size": len(agent.state.context),
-                "completed_replies": sum(
-                    message.finished_reason is ReplyFinishedReason.COMPLETED
-                    for message in agent.state.context
-                ),
-            },
-            {
-                "retained_playout_replies": [],
-                "context_size": 3,
-                "completed_replies": 3,
-            },
-        )
-
-    async def test_zero_progress_keeps_queued_playout_replies(self) -> None:
-        """Starting a later media item is not an audible acknowledgment."""
-        model = ScriptedModel([[]])
-        agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(frames=0, played_ms=0)
-        agent._transport = transport
-
-        for item_id in ("r1", "r2"):
-            await agent._on_model_event(
-                me.ResponseCreatedEvent(item_id=item_id),
-            )
-            await agent._on_model_event(
-                me.TranscriptDeltaEvent(item_id=item_id, delta="排队"),
-            )
-            await agent._on_model_event(
-                me.AudioDeltaEvent(
-                    item_id=item_id,
-                    pcm=PCM_100MS,
-                    sample_rate=24000,
-                ),
-            )
-            await agent._on_model_event(
-                me.ResponseDoneEvent(item_id=item_id),
-            )
-
-        self.assertEqual(
-            {
-                "retained_playout_replies": list(
-                    agent._playout_replies,
-                ),
-                "reported_position": transport.playout().model_dump(),
-            },
-            {
-                "retained_playout_replies": ["r1", "r2"],
-                "reported_position": {
-                    "item_id": "r2",
-                    "played_ms": 0,
-                    "first_played_at": 1.0,
-                },
             },
         )
 
@@ -1887,9 +1680,15 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             [
                 [
                     me.SpeechEndedEvent(item_id="u1"),
-                    me.InputTranscriptionEvent(item_id="u1", text="查天气"),
+                    me.InputTranscriptionEvent(
+                        item_id="u1",
+                        text="What is the weather?",
+                    ),
                     me.ResponseCreatedEvent(item_id="r1"),
-                    me.TranscriptDeltaEvent(item_id="r1", delta="我查一下"),
+                    me.TranscriptDeltaEvent(
+                        item_id="r1",
+                        delta="Let me check.",
+                    ),
                     me.AudioDeltaEvent(
                         item_id="r1",
                         pcm=b"\x01\x00",
@@ -1910,7 +1709,10 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     ),
                     "WAIT",
                     me.ResponseCreatedEvent(item_id="r2"),
-                    me.TranscriptDeltaEvent(item_id="r2", delta="今天晴"),
+                    me.TranscriptDeltaEvent(
+                        item_id="r2",
+                        delta="It is sunny.",
+                    ),
                     me.AudioDeltaEvent(
                         item_id="r2",
                         pcm=b"\x01\x00",
@@ -1951,13 +1753,27 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             [
                 ("REPLY_START", "u1", "user", None, None, None),
                 ("TEXT_BLOCK_START", "u1", None, None, None, None),
-                ("TEXT_BLOCK_DELTA", "u1", None, "查天气", None, None),
+                (
+                    "TEXT_BLOCK_DELTA",
+                    "u1",
+                    None,
+                    "What is the weather?",
+                    None,
+                    None,
+                ),
                 ("TEXT_BLOCK_END", "u1", None, None, None, None),
                 ("REPLY_END", "u1", None, None, None, "completed"),
                 ("REPLY_START", "r1", "assistant", None, None, None),
                 ("MODEL_CALL_START", "r1", None, None, None, None),
                 ("TEXT_BLOCK_START", "r1", None, None, None, None),
-                ("TEXT_BLOCK_DELTA", "r1", None, "我查一下", None, None),
+                (
+                    "TEXT_BLOCK_DELTA",
+                    "r1",
+                    None,
+                    "Let me check.",
+                    None,
+                    None,
+                ),
                 ("DATA_BLOCK_START", "r1", None, None, None, None),
                 ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
                 ("TEXT_BLOCK_END", "r1", None, None, None, None),
@@ -1993,7 +1809,14 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 ("TOOL_RESULT_END", "r1", None, None, "c1", None),
                 ("MODEL_CALL_START", "r1", None, None, None, None),
                 ("TEXT_BLOCK_START", "r1", None, None, None, None),
-                ("TEXT_BLOCK_DELTA", "r1", None, "今天晴", None, None),
+                (
+                    "TEXT_BLOCK_DELTA",
+                    "r1",
+                    None,
+                    "It is sunny.",
+                    None,
+                    None,
+                ),
                 ("DATA_BLOCK_START", "r1", None, None, None, None),
                 ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
                 ("TEXT_BLOCK_END", "r1", None, None, None, None),
@@ -2010,7 +1833,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 {
                     "role": "user",
                     "id": "u1",
-                    "content": [{"type": "text", "text": "查天气"}],
+                    "content": [
+                        {"type": "text", "text": "What is the weather?"},
+                    ],
                     "usage": None,
                     "finished_reason": None,
                 },
@@ -2018,7 +1843,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "id": "r1",
                     "content": [
-                        {"type": "text", "text": "我查一下"},
+                        {"type": "text", "text": "Let me check."},
                         {
                             "type": "tool_call",
                             "name": "stream_tool",
@@ -2033,7 +1858,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             "state": "success",
                             "id": "c1",
                         },
-                        {"type": "text", "text": "今天晴"},
+                        {"type": "text", "text": "It is sunny."},
                     ],
                     "usage": {
                         "input_tokens": 14,
@@ -2055,22 +1880,22 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_barge_in_while_old_response_plays_discards_active(
+    async def test_barge_in_during_followup_keeps_generated_text(
         self,
     ) -> None:
-        """An unheard active response is removed on both sides."""
+        """Barge-in keeps text from every response in the reply."""
         model = ScriptedModel(
             [
                 [
                     me.SpeechEndedEvent(item_id="u1"),
                     me.InputTranscriptionEvent(
                         item_id="u1",
-                        text="查天气",
+                        text="What is the weather?",
                     ),
                     me.ResponseCreatedEvent(item_id="r1"),
                     me.TranscriptDeltaEvent(
                         item_id="r1",
-                        delta="我查一下",
+                        delta="Let me check.",
                     ),
                     me.AudioDeltaEvent(
                         item_id="r1",
@@ -2090,7 +1915,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     me.ResponseCreatedEvent(item_id="r2"),
                     me.TranscriptDeltaEvent(
                         item_id="r2",
-                        delta="今天晴",
+                        delta="It is sunny.",
                     ),
                     me.AudioDeltaEvent(
                         item_id="r2",
@@ -2108,11 +1933,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
         )
         audio_deltas = 0
         async with agent:
-            transport = FakeTransport(
-                frames=10,
-                played_ms=50,
-                reported_item="r1",
-            )
+            transport = FakeTransport(frames=10)
             async with transport:
                 async for event in agent.reply_stream(transport):
                     if isinstance(event, DataBlockDeltaEvent):
@@ -2131,7 +1952,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "id": "r1",
                 "content": [
-                    {"type": "text", "text": "我查一下"},
+                    {"type": "text", "text": "Let me check."},
                     {
                         "type": "tool_call",
                         "name": "stream_tool",
@@ -2146,6 +1967,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         "state": "success",
                         "id": "c1",
                     },
+                    {"type": "text", "text": "It is sunny."},
                 ],
                 "usage": {
                     "input_tokens": 0,
@@ -2162,24 +1984,22 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 "connect(session=1,td_off=False)",
                 "tool_result(c1,'x-final')",
                 "request_response",
-                "truncate(r1,50ms,'我查一下')",
                 "cancel",
-                "truncate(r2,0ms,'')",
                 "close",
             ],
         )
 
-    async def test_barge_in_discards_completed_response_behind_playout(
+    async def test_barge_in_after_completed_followup_keeps_reply(
         self,
     ) -> None:
-        """A completed response queued behind playout is wholly unheard."""
+        """Stopping queued audio does not alter a completed reply."""
         model = ScriptedModel(
             [
                 [
                     me.ResponseCreatedEvent(item_id="r1"),
                     me.TranscriptDeltaEvent(
                         item_id="r1",
-                        delta="我查一下",
+                        delta="Let me check.",
                     ),
                     me.AudioDeltaEvent(
                         item_id="r1",
@@ -2199,7 +2019,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     me.ResponseCreatedEvent(item_id="r2"),
                     me.TranscriptDeltaEvent(
                         item_id="r2",
-                        delta="今天晴",
+                        delta="It is sunny.",
                     ),
                     me.AudioDeltaEvent(
                         item_id="r2",
@@ -2217,11 +2037,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             model,
             toolkit=Toolkit(tools=[StreamTool()]),
         )
-        transport = FakeTransport(
-            frames=10,
-            played_ms=50,
-            reported_item="r1",
-        )
+        transport = FakeTransport(frames=10)
 
         async with agent, transport:
             async for _ in agent.reply_stream(transport):
@@ -2234,7 +2050,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "id": "r1",
                     "content": [
-                        {"type": "text", "text": "我查一下"},
+                        {"type": "text", "text": "Let me check."},
                         {
                             "type": "tool_call",
                             "name": "stream_tool",
@@ -2249,6 +2065,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             "state": "success",
                             "id": "c1",
                         },
+                        {"type": "text", "text": "It is sunny."},
                     ],
                     "usage": {
                         "input_tokens": 0,
@@ -2266,8 +2083,6 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 "connect(session=1,td_off=False)",
                 "tool_result(c1,'x-final')",
                 "request_response",
-                "truncate(r1,50ms,'我查一下')",
-                "truncate(r2,0ms,'')",
                 "close",
             ],
         )
@@ -2281,7 +2096,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     me.ResponseCreatedEvent(item_id="r1"),
                     me.TranscriptDeltaEvent(
                         item_id="r1",
-                        delta="我查一下",
+                        delta="Let me check.",
                     ),
                     me.AudioDeltaEvent(
                         item_id="r1",
@@ -2306,7 +2121,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
             model,
             toolkit=Toolkit(tools=[tool]),
         )
-        transport = FakeTransport(frames=10, played_ms=50)
+        transport = FakeTransport(frames=10)
 
         async with agent, transport:
             async for event in agent.reply_stream(transport):
@@ -2315,7 +2130,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     tool.release.set()
 
         self.assertEqual(transport.cleared, 1)
-        self.assertIn("truncate(r1,50ms,'我查一下')", model.calls)
+        self.assertNotIn("truncate", " ".join(model.calls))
         assistant_messages = [
             _message_summary(message)
             for message in agent.state.context
@@ -2328,7 +2143,7 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "id": "r1",
                     "content": [
-                        {"type": "text", "text": "我查一下"},
+                        {"type": "text", "text": "Let me check."},
                         {
                             "type": "tool_call",
                             "name": "stream_tool",

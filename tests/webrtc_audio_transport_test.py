@@ -142,7 +142,7 @@ class _FakeAgent:
                 RequireUserConfirmEvent,
                 ToolResultEndEvent,
             ),
-        ) or (isinstance(event, TextBlockEndEvent) and event.text is not None):
+        ):
             return self.state
         return None
 
@@ -1256,7 +1256,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_checkpoint_boundaries_persist_state(self) -> None:
-        """Persist tool boundaries and explicit transcript corrections."""
+        """Persist tool boundaries but not ordinary text block endings."""
         message = {"id": "message-1", "role": "assistant"}
         tool_call = ToolCallBlock(
             id="call-1",
@@ -1282,13 +1282,6 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 reply_id="message-1",
                 tool_call_id="call-1",
                 state=ToolResultState.SUCCESS,
-            ),
-            TextBlockEndEvent(
-                id="event-3",
-                created_at="2026-01-01T00:00:03",
-                reply_id="message-1",
-                block_id="block-1",
-                text="corrected",
             ),
         ]
         agent = _FakeAgent(message, events)
@@ -1334,9 +1327,9 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "upsert_message",
                     "update_session_state",
                 ]
-                * 4,
+                * 3,
                 "published_event_types": [event.type for event in events],
-                "cursor_values": ["1-0"] * 3,
+                "cursor_values": ["1-0"] * 2,
             },
         )
 

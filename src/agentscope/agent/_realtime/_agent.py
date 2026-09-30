@@ -10,7 +10,6 @@ from typing import Any, AsyncIterator
 from ...realtime import _events as me
 from ._aggregator import TurnAggregator
 from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
-from ...realtime._playout import PlayoutPosition
 from ._metrics import TurnMetrics
 from ...realtime._transport._base import (
     AudioFrame,
@@ -67,48 +66,18 @@ _HISTORY_MAX_TEXT_CHARS = 32_000
 
 @dataclass
 class _Reply:
-    """One in-flight assistant turn, plus the text/audio alignment needed
-    to work out what the user actually heard."""
+    """One in-flight model response."""
 
     item_id: str
-    """The provider's response item; what playout and truncation refer to."""
+    """The provider's response item identifier."""
     reply_id: str
     """The agent's reply this response belongs to, as seen in events and
     context. A reply spans every response up to the next user turn, so
     one that calls tools has several responses."""
     text_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     audio_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    text: str = ""
-    final_text: str | None = None
-    """Set on a barge-in: the text block is truncated to this."""
-    audio_ms: float = 0.0
     text_started: bool = False
     audio_started: bool = False
-    marks: list[tuple[float, int]] = field(default_factory=list)
-
-    def on_audio(self, pcm: bytes, sample_rate: int) -> None:
-        """Account for one chunk of generated audio."""
-        self.audio_ms += len(pcm) / (sample_rate * 2) * 1000
-
-    def on_text(self, delta: str) -> None:
-        """Record a transcript delta against the audio generated so far."""
-        self.text += delta
-        self.marks.append((self.audio_ms, len(self.text)))
-
-    def spoken_prefix(self, played_ms: int) -> str:
-        """The transcript prefix matching *played_ms* of playback.
-
-        Transcript deltas usually run slightly ahead of the audio they
-        describe, so this errs towards keeping one word too many.
-        """
-        if played_ms <= 0:
-            return ""
-        length = 0
-        for at_ms, text_len in self.marks:
-            if at_ms > played_ms:
-                break
-            length = text_len
-        return self.text[:length]
 
 
 @dataclass
@@ -207,10 +176,7 @@ class RealtimeAgent:
         self._out: asyncio.Queue[_QueuedEvent] = asyncio.Queue()
         self._yielded_checkpoint: tuple[str, AgentState] | None = None
         self._reply: _Reply | None = None
-        # A response can finish generating before its queued audio reaches
-        # the speaker. Keep its alignment until the next barge-in can decide
-        # whether the user heard it all.
-        self._playout_replies: dict[str, _Reply] = {}
+        self._audio_pending = False
         self._finished_item = ""
         # The agent's open reply, and whether the next response continues
         # it (after tool results) rather than starting a new one.
@@ -338,11 +304,12 @@ class RealtimeAgent:
         """Return whether a persisted message is safe to replay."""
         if message.role != "assistant":
             return True
-        if message.finished_reason in (
-            ReplyFinishedReason.ERROR,
-            ReplyFinishedReason.INTERRUPTED,
-        ):
+        if message.finished_reason is ReplyFinishedReason.ERROR:
             return False
+        if message.finished_reason is ReplyFinishedReason.INTERRUPTED:
+            return bool(message.content) and all(
+                isinstance(block, TextBlock) for block in message.content
+            )
         return (
             message.finished_reason
             in (
@@ -673,7 +640,7 @@ class RealtimeAgent:
     # ------------------------------------------------------------------
 
     async def _barge_in(self) -> None:
-        """Cut the reply short and correct both contexts to what was heard.
+        """Stop playback and any response that is still being generated.
 
         Whether a given overlap counts as an interruption is decided
         before this is called — by the provider when it owns turn
@@ -689,155 +656,15 @@ class RealtimeAgent:
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
         active_reply = self._reply
-        if active_reply is None and not self._playout_replies:
-            # A reply may be waiting on a tool without any queued audio.
-            if self._reply_id:
-                self._finish_reply(ReplyFinishedReason.INTERRUPTED)
-            return
-
-        spoken, played_ms = (
-            "",
-            0,
-        )  # nothing reaches the ear without a transport
-        position = None
-        if self._transport is not None:
-            position = await self._transport.clear_audio()
-            played_ms = position.played_ms
-
-        completed_replies = list(self._playout_replies.values())
-        reply = active_reply
-        later_replies: list[_Reply] = []
-        if position is not None:
-            if position.item_id:
-                if (
-                    active_reply is None
-                    or position.item_id != active_reply.item_id
-                ):
-                    reply_index = next(
-                        (
-                            index
-                            for index, candidate in enumerate(
-                                completed_replies,
-                            )
-                            if candidate.item_id == position.item_id
-                        ),
-                        None,
-                    )
-                    if reply_index is not None:
-                        reply = completed_replies[reply_index]
-                        later_replies = completed_replies[reply_index + 1 :]
-                        if active_reply is not None:
-                            later_replies.append(active_reply)
-                    elif active_reply is not None:
-                        logger.warning(
-                            "RealtimeAgent: playout reports %s but %s is "
-                            "open; treating the current item as unheard.",
-                            position.item_id,
-                            active_reply.item_id,
-                        )
-                        reply = active_reply
-                        played_ms = 0
-                    else:
-                        reply = None
-            else:
-                # Audio is queued, but the browser has not pulled its first
-                # frame yet. The oldest queued response is wholly unheard.
-                played_ms = 0
-                if completed_replies:
-                    reply = completed_replies[0]
-                    later_replies = completed_replies[1:]
-                    if active_reply is not None:
-                        later_replies.append(active_reply)
-
-        if reply is not None:
-            fully_played = reply is not active_reply and played_ms >= round(
-                reply.audio_ms,
-            )
-            if not fully_played:
-                spoken = reply.spoken_prefix(played_ms)
-                self._truncate_response(reply, spoken)
-                reply.final_text = spoken
-                if self._connected and reply is not active_reply:
-                    await self.model.truncate(
-                        reply.item_id,
-                        played_ms,
-                        spoken,
-                    )
-                if reply is not active_reply and reply.text_started:
-                    self._emit(
-                        TextBlockEndEvent(
-                            reply_id=reply.reply_id,
-                            block_id=reply.text_block_id,
-                            text=spoken,
-                        ),
-                    )
-
-        # Every response behind the playing one is wholly unheard. Correct
-        # completed responses immediately; the active response is cancelled
-        # before its provider-side truncation below.
-        active_unheard = False
-        for unheard_reply in later_replies:
-            self._truncate_response(unheard_reply, "")
-            unheard_reply.final_text = ""
-            if unheard_reply is active_reply:
-                active_unheard = True
-                continue
-            if self._connected:
-                await self.model.truncate(unheard_reply.item_id, 0, "")
-            if unheard_reply.text_started:
-                self._emit(
-                    TextBlockEndEvent(
-                        reply_id=unheard_reply.reply_id,
-                        block_id=unheard_reply.text_block_id,
-                        text="",
-                    ),
-                )
+        if self._transport is not None and self._audio_pending:
+            await self._transport.clear_audio()
+            self._audio_pending = False
 
         if active_reply is not None and self._connected:
             await self.model.cancel_response()
-            if active_unheard:
-                await self.model.truncate(active_reply.item_id, 0, "")
-            elif reply is active_reply:
-                await self.model.truncate(
-                    active_reply.item_id,
-                    played_ms,
-                    spoken,
-                )
 
-        self._playout_replies.clear()
         if self._reply_id:
             self._finish_reply(ReplyFinishedReason.INTERRUPTED)
-
-    def _truncate_response(self, response: _Reply, spoken: str) -> None:
-        """Truncate only the text block owned by one model response."""
-        reply = next(
-            (
-                message
-                for message in reversed(self.state.context)
-                if message.id == response.reply_id
-            ),
-            None,
-        )
-        if reply is None or reply.role != "assistant":
-            return
-
-        block = next(
-            (
-                item
-                for item in reply.content
-                if isinstance(item, TextBlock)
-                and item.id == response.text_block_id
-            ),
-            None,
-        )
-        if block is None:
-            return
-        if spoken:
-            block.text = spoken
-        else:
-            reply.content.remove(block)
-        if not reply.content:
-            self.state.context.remove(reply)
 
     # ------------------------------------------------------------------
     # Downlink: model -> transport + events (lives with the agent)
@@ -897,8 +724,8 @@ class RealtimeAgent:
                 reply = self._start_reply(event.item_id)
                 if reply is None:
                     return
-                reply.on_audio(event.pcm, rate)
                 await self._transport.send_audio(event.pcm, reply.item_id)
+                self._audio_pending = True
                 self._emit_audio(reply, event.pcm, rate)
                 self._metrics.backend_first_audio_at = (
                     self._metrics.backend_first_audio_at or time.monotonic()
@@ -908,7 +735,6 @@ class RealtimeAgent:
                 reply = self._start_reply(event.item_id)
                 if reply is None:
                     return
-                reply.on_text(event.delta)
                 self._emit_text(reply, event.delta)
 
             case me.ToolCallEvent():
@@ -1097,7 +923,6 @@ class RealtimeAgent:
                 TextBlockEndEvent(
                     reply_id=reply.reply_id,
                     block_id=reply.text_block_id,
-                    text=reply.final_text,
                 ),
             )
         if reply.audio_started:
@@ -1114,36 +939,13 @@ class RealtimeAgent:
                 output_tokens=self._metrics.output_tokens,
             ),
         )
-        if reply.audio_started:
-            self._playout_replies[reply.item_id] = reply
-            if position is not None:
-                self._prune_playout_replies(position)
         self._finished_item = reply.item_id
         self._reply = None
-
-    def _prune_playout_replies(self, position: PlayoutPosition) -> None:
-        """Forget responses confirmed to precede the playback cursor."""
-        if position.played_ms <= 0:
-            return
-        item_ids = list(self._playout_replies)
-        try:
-            current_index = item_ids.index(position.item_id)
-        except ValueError:
-            return
-        for item_id in item_ids[:current_index]:
-            self._playout_replies.pop(item_id, None)
-        current = self._playout_replies.get(position.item_id)
-        if current is not None and position.played_ms >= round(
-            current.audio_ms,
-        ):
-            self._playout_replies.pop(position.item_id, None)
 
     def _finish_reply(self, reason: ReplyFinishedReason) -> None:
         """Close the open reply, if any, response included."""
         self._finish_response()
         self._pending_tools.clear()
-        if reason != ReplyFinishedReason.COMPLETED:
-            self._playout_replies.clear()
         if not self._reply_id:
             return
         event = ReplyEndEvent(
@@ -1227,7 +1029,7 @@ class RealtimeAgent:
                 RequireUserConfirmEvent,
                 ToolResultEndEvent,
             ),
-        ) or (isinstance(event, TextBlockEndEvent) and event.text is not None):
+        ):
             checkpoint = self.state.model_copy(deep=True)
         self._out.put_nowait(_QueuedEvent(event, checkpoint))
 

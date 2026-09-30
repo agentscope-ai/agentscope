@@ -6,11 +6,10 @@ import type {
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
 	ReplyStartEvent,
-	TextBlockEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
-import type { Msg, ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
+import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
 
@@ -55,10 +54,6 @@ const hasPendingToolCall = (msg: Msg | undefined): boolean => {
 
 const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
 	`${e.worker_session_id}:${e.reply_id}`;
-
-type FinalTextBlockEndEvent = TextBlockEndEvent & {
-	text?: string | null;
-};
 
 /**
  * Lifecycle phase of the reply currently owned by this session.
@@ -266,21 +261,6 @@ export function useMessages(
 					? (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
 					: currentReplyRef.current;
 				if (reply && appendToMessage) {
-					// The Python event schema can correct a completed realtime
-					// transcript to the prefix that was actually played. The
-					// published TypeScript SDK does not expose that optional field
-					// yet, so apply it before its generic event reducer marks the
-					// block complete.
-					if (event.type === EventType.TEXT_BLOCK_END) {
-						const finalEvent = event as FinalTextBlockEndEvent;
-						if (finalEvent.text !== undefined && finalEvent.text !== null) {
-							const block = reply.content.find(
-								(content): content is TextBlock =>
-									content.type === 'text' && content.id === finalEvent.block_id,
-							);
-							if (block) block.text = finalEvent.text;
-						}
-					}
 					appendEvent(reply, event);
 					// ``appendEvent`` mutates in place, which would leave
 					// every Msg identical across renders and force the whole
