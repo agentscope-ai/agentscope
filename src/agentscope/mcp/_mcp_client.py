@@ -424,8 +424,10 @@ class MCPClient(BaseModel):
         :class:`mcp.types.Tool` form, applying ``enable_tools`` and
         ``disable_tools`` filtering.
 
-        The full (unfiltered) tool list is cached on ``_cached_tools`` so
-        :meth:`get_tool` can resolve names that were filtered out as well.
+        All pages are fetched in the same session. The full (unfiltered)
+        tool list is cached on ``_cached_tools`` only after every page
+        succeeds, so :meth:`get_tool` can resolve filtered-out names too.
+        A failed fetch leaves the previous cache unchanged.
 
         Returns:
             `list[mcp.types.Tool]`:
@@ -443,13 +445,11 @@ class MCPClient(BaseModel):
                     write_stream,
                 ) as session:
                     await session.initialize()
-                    res = await session.list_tools()
-                    self._cached_tools = res.tools
+                    self._cached_tools = await self._list_all_tools(session)
         else:
             # Stateful: use existing session
             self._validate_connection()
-            res = await self._session.list_tools()
-            self._cached_tools = res.tools
+            self._cached_tools = await self._list_all_tools(self._session)
 
         available_tools: list = self._cached_tools
         if self.enable_tools is not None:
@@ -463,6 +463,23 @@ class MCPClient(BaseModel):
                 _ for _ in available_tools if _.name not in self.disable_tools
             ]
         return available_tools
+
+    @staticmethod
+    async def _list_all_tools(session: ClientSession) -> list[mcp.types.Tool]:
+        """Fetch every tool page within one session.
+
+        Args:
+            session: The initialized MCP session to use for every page.
+
+        Returns:
+            The complete tool list in server order.
+        """
+        res = await session.list_tools()
+        tools = list(res.tools)
+        while res.nextCursor is not None:
+            res = await session.list_tools(cursor=res.nextCursor)
+            tools.extend(res.tools)
+        return tools
 
     async def list_tools(self) -> list[ToolBase]:
         """List available tools from the MCP server as wrapped
