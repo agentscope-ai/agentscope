@@ -92,6 +92,22 @@ def _normalize_local_path(path: str) -> str:
     return os.path.abspath(os.path.expanduser(path))
 
 
+def _has_dropped_keys(original: Any, repaired: Any) -> bool:
+    """Whether any dict in ``repaired`` lost a key it has in ``original``."""
+    if isinstance(original, dict) and isinstance(repaired, dict):
+        return bool(original.keys() - repaired.keys()) or any(
+            _has_dropped_keys(original[key], value)
+            for key, value in repaired.items()
+            if key in original
+        )
+    if isinstance(original, list) and isinstance(repaired, list):
+        return any(
+            _has_dropped_keys(item, fixed)
+            for item, fixed in zip(original, repaired)
+        )
+    return False
+
+
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,
@@ -160,7 +176,7 @@ def _json_loads_with_repair(
             res = parsed
 
         if isinstance(res, dict):
-            if isinstance(parsed, dict) and parsed.keys() - res.keys():
+            if isinstance(parsed, dict) and _has_dropped_keys(parsed, res):
                 # Dropping arguments, e.g. under `additionalProperties:
                 # false`, is a rewrite rather than a type repair.
                 res = parsed

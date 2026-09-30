@@ -113,6 +113,59 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             ),
             {"count": "42", "verbse": True},
         )
+        # ...also when the dropped argument sits in a nested object
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"opts": {"unit": "C", "verbse": true}}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "opts": {
+                            "type": "object",
+                            "properties": {"unit": {"type": "string"}},
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            ),
+            {"opts": {"unit": "C", "verbse": True}},
+        )
+        # ...or in an object inside an array
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"items": [{"unit": "C", "verbse": true}]}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"unit": {"type": "string"}},
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                },
+            ),
+            {"items": [{"unit": "C", "verbse": True}]},
+        )
+        # Type repairs inside a nested object still happen
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"opts": {"unit": 123}}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "opts": {
+                            "type": "object",
+                            "properties": {"unit": {"type": "string"}},
+                        },
+                    },
+                },
+            ),
+            {"opts": {"unit": "123"}},
+        )
 
     def test_reject_invalid_arguments(self) -> None:
         """Test the arguments that cannot be loaded into a valid dict."""
