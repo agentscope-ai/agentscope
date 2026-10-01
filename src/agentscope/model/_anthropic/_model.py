@@ -564,6 +564,14 @@ class AnthropicChatModel(ChatModelBase):
                 elif event.type == "message_delta":
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens
+                        # ``message_delta`` is the last usage-bearing event
+                        # of the stream. ``message_start`` is emitted at
+                        # time-to-first-token, so re-stamp the elapsed time
+                        # here to match the non-streaming path and keep
+                        # ``ChatUsage.time`` meaningful as generation grows
+                        usage.time = (
+                            datetime.now() - start_datetime
+                        ).total_seconds()
 
                 if delta_res.content:
                     delta_res.usage = usage
