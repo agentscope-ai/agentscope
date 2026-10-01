@@ -32,8 +32,15 @@ import socket
 from typing import TYPE_CHECKING
 from unittest import IsolatedAsyncioTestCase
 
-import boto3
-from moto.server import ThreadedMotoServer
+import unittest
+
+try:
+    import boto3
+    from moto.server import ThreadedMotoServer
+
+    HAS_MOTO = True
+except ImportError:
+    HAS_MOTO = False
 
 if TYPE_CHECKING:
     from agentscope.app.rag.blob_store import S3BlobStore
@@ -50,6 +57,7 @@ def _pick_port() -> int:
         return s.getsockname()[1]
 
 
+@unittest.skipIf(not HAS_MOTO, "moto and boto3 are required")
 class S3BlobStoreTest(IsolatedAsyncioTestCase):
     """Round-trip + URI parsing + streaming behaviour."""
 
