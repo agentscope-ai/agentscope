@@ -124,7 +124,7 @@ class LocalWorkspace(WorkspaceBase):
         )
 
         # ── runtime state ───────────────────────────────────────
-        self._backend = LocalBackend()
+        self._backend = LocalBackend(workdir=self.workdir)
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()

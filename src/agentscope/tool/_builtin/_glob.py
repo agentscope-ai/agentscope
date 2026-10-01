@@ -276,7 +276,10 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
                 is_last=True,
             )
 
-        base_dir = path if path else await self._backend.getcwd()
+        base_dir = self._backend.abspath(
+            path or ".",
+            cwd=await self._backend.getcwd(),
+        )
 
         # The base must be an existing directory; a regular file would
         # otherwise be accepted here and fail later with a confusing
