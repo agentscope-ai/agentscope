@@ -61,7 +61,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
             new_string="Hello Python",
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
         self.assertTrue(chunk.is_last)
 
         # Verify file content
@@ -109,7 +109,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
             replace_all=True,
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, "success")
 
         # Verify all occurrences replaced
         with open(self.temp_file.name, "r", encoding="utf-8") as f:

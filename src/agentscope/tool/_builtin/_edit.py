@@ -418,7 +418,7 @@ Usage:
                     f"in {file_path}",
                 ),
             ],
-            state=ToolResultState.RUNNING,
+            state=ToolResultState.SUCCESS,
             is_last=True,
             metadata={
                 "diff": diff_text,
