@@ -21,7 +21,7 @@ import unittest
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import ExecResult, LocalBackend
+from agentscope.tool import ExecResult, LocalBackend, BackendBase
 from agentscope.tool._builtin._backend import _normalize_newlines
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -342,6 +342,49 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
         path = os.path.join(self.temp_dir.name, "empty.txt")
         await self.backend.write_file(path, b"")
         self.assertEqual([c async for c in self.backend.read_stream(path)], [])
+
+    async def test_read_stream_rejects_nonpositive_chunk_size(self) -> None:
+        """A nonpositive chunk size is a configuration error, not a silent
+        empty read (chunk_size=0) or an unbounded one (chunk_size<0)."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"abcdef")
+
+        for bad_size in (0, -1):
+            with self.subTest(chunk_size=bad_size):
+                with self.assertRaises(ValueError):
+                    _ = [
+                        c
+                        async for c in self.backend.read_stream(
+                            path,
+                            bad_size,
+                        )
+                    ]
+
+    async def test_read_stream_rejects_nonpositive_chunk_size_base(
+        self,
+    ) -> None:
+        """The BackendBase fallback rejects nonpositive chunk sizes the
+        same way, before reading the file."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"abcdef")
+
+        class _SlicingBackend(BackendBase):
+            """Minimal backend using the base ``read_stream`` default."""
+
+            async def exec_shell(self, argv, cwd=None, timeout=None):
+                raise NotImplementedError()
+
+            async def read_file(self, path, max_bytes=None):
+                return b"abcdef"
+
+            async def write_file(self, path, data):
+                return None
+
+        backend = _SlicingBackend()
+        for bad_size in (0, -1):
+            with self.subTest(chunk_size=bad_size):
+                with self.assertRaises(ValueError):
+                    _ = [c async for c in backend.read_stream(path, bad_size)]
 
     async def test_delete_path_file(self) -> None:
         """``delete_path`` removes a single file."""
