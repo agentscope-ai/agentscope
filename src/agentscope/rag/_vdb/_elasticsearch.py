@@ -345,6 +345,7 @@ class ElasticsearchStore(VectorStoreBase):
                 if search_after is not None:
                     body["search_after"] = search_after
                 response = await client.search(**body)
+                pit_id = response.get("pit_id", pit_id)
                 hits = response["hits"]["hits"]
                 if not hits:
                     break
@@ -361,7 +362,6 @@ class ElasticsearchStore(VectorStoreBase):
                         index,
                         Chunk.model_validate(payload),
                     )
-                pit_id = response.get("pit_id", pit_id)
                 search_after = hits[-1]["sort"]
         finally:
             await client.close_point_in_time(id=pit_id)

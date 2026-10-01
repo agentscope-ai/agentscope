@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Moonshot AI formatter for agentscope."""
+
 import asyncio
 import base64
 from fnmatch import fnmatch
@@ -390,20 +391,19 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
 
         is_first_agent_message = True
         async for typ, group in self._group_messages(msgs[start_index:]):
-            if typ == "tool_sequence":
-                formatted_msgs.extend(
-                    await MoonshotChatFormatter(
-                        input_types=self.input_types,
-                    ).format(group),
-                )
-            elif typ == "agent_message":
-                formatted_group = await self._format_agent_message(
-                    group,
-                    is_first_agent_message,
-                )
-                formatted_msgs.extend(formatted_group)
-                if formatted_group:
-                    is_first_agent_message = False
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_tool_sequence(group),
+                    )
+                case "agent_message":
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
+                    )
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 
