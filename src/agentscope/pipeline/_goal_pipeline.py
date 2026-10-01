@@ -88,6 +88,11 @@ class GoalPipeline:
         # Rounds already judged. On the instance rather than in
         # ``reply_stream``, so a HITL resume does not restart the budget.
         self._iters = 0
+        # Replies of each participant that ended without the structured
+        # output, charged against ``max_retries``. On the instance for the
+        # same reason as ``_iters``.
+        self._executor_retries = 0
+        self._verifier_retries = 0
         self._goal: None | list[TextBlock | DataBlock] = None
 
     async def reply_stream(
@@ -123,6 +128,8 @@ class GoalPipeline:
             executor_inputs = deepcopy(inputs)
             # A fresh run, so the iteration budget starts over.
             self._iters = 0
+            self._executor_retries = 0
+            self._verifier_retries = 0
 
             hint = (
                 "<system-reminder>When you finish the goal, you should "
@@ -205,6 +212,16 @@ class GoalPipeline:
                         break
 
                     if execution_report is None:
+                        # The reply is one structured-output retry; give up
+                        # once the budget is spent instead of prompting the
+                        # executor forever.
+                        self._executor_retries += 1
+                        if self._executor_retries > self.max_retries:
+                            raise RuntimeError(
+                                "The executor failed to generate a valid "
+                                "execution report after "
+                                f"{self.max_retries} retries.",
+                            )
                         # Update the instruction
                         executor_inputs = UserMsg(
                             name="system",
@@ -272,8 +289,28 @@ class GoalPipeline:
                     # Escape the loop for hitl events
                     break
                 if final_msg is None:
+                    # A reply that ended without a final message is one
+                    # structured-output retry too; the instruction keeps
+                    # whatever it was, e.g. a resumed confirmation.
+                    self._verifier_retries += 1
+                    if self._verifier_retries > self.max_retries:
+                        raise RuntimeError(
+                            "The verifier failed to generate a valid "
+                            "verification result after "
+                            f"{self.max_retries} retries.",
+                        )
                     continue
                 if final_msg.structured_output is None:
+                    # The reply is one structured-output retry; give up
+                    # once the budget is spent instead of prompting the
+                    # verifier forever.
+                    self._verifier_retries += 1
+                    if self._verifier_retries > self.max_retries:
+                        raise RuntimeError(
+                            "The verifier failed to generate a valid "
+                            "verification result after "
+                            f"{self.max_retries} retries.",
+                        )
                     # Update the instruction for valid verification result
                     final_msg = None
                     instruction = UserMsg(
