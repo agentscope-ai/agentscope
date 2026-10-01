@@ -296,6 +296,20 @@ class OpenAIResponseModel(ChatModelBase):
         async with response as stream:
             async for event in stream:
                 event_type = event.type
+                if event_type in ("response.failed", "error"):
+                    import openai
+
+                    error = (
+                        event.response.error
+                        if event_type == "response.failed"
+                        else event
+                    )
+                    raise openai.APIError(
+                        message=error.message if error else "Response failed",
+                        request=stream.response.request,
+                        body=error.model_dump() if error else None,
+                    )
+
                 delta_res = ChatResponse(
                     content=[],
                     is_last=False,
