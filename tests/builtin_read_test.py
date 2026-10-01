@@ -5,7 +5,6 @@ import io
 import os
 import tempfile
 import uuid
-from contextlib import nullcontext
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from utils import AnyString
@@ -427,37 +426,33 @@ class ReadToolTest(IsolatedAsyncioTestCase):
     async def test_read_pdf_deferred_errors(self) -> None:
         """Late extraction and PDF-writing errors become final error chunks."""
         from pypdf import PdfWriter
-        from pypdf.generic import DecodedStreamObject, NameObject
 
         writer = PdfWriter()
-        page = writer.add_blank_page(width=72, height=72)
         writer.add_blank_page(width=72, height=72)
-        content = DecodedStreamObject()
-        content.set_data(b"BT (unterminated")
-        page[NameObject("/Contents")] = content
+        writer.add_blank_page(width=72, height=72)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as fp:
             writer.write(fp)
         self.addCleanup(os.unlink, fp.name)
 
-        for method, message in (
-            (None, "Stream has ended unexpectedly"),
-            ("add_page", "cannot copy page"),
-            ("write", "cannot write PDF"),
+        # Malformed streams may be tolerated by different pypdf versions.
+        # Inject failures at the actual deferred operations instead.
+        for method, message, native_pdf in (
+            ("PageObject.extract_text", "cannot extract text", False),
+            ("PdfWriter.add_page", "cannot copy page", True),
+            ("PdfWriter.write", "cannot write PDF", True),
         ):
             with self.subTest(method=method):
                 tool = Read(
-                    model_input_types=["application/pdf"] if method else [],
+                    model_input_types=["application/pdf"]
+                    if native_pdf
+                    else [],
                 )
-                failure = (
-                    patch(
-                        f"pypdf.PdfWriter.{method}",
-                        side_effect=ValueError(message),
-                    )
-                    if method
-                    else nullcontext()
-                )
-                with failure:
+                with patch(
+                    f"pypdf.{method}",
+                    side_effect=ValueError(message),
+                ) as failure:
                     chunk = await tool(file_path=fp.name, pages="1")
+                failure.assert_called_once()
                 self.assertDictEqual(
                     chunk.model_dump(mode="json"),
                     {
