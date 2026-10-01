@@ -20,6 +20,11 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """The async setup method."""
+        import shutil
+        import pytest
+        if not shutil.which("rg"):
+            pytest.skip("ripgrep (rg) is not installed")
+            
         self.grep_tool = Grep()
         # Create a temporary directory with test files
         self.temp_dir = tempfile.mkdtemp()
