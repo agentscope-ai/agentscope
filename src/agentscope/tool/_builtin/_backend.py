@@ -397,6 +397,10 @@ class BackendBase(ABC):
             `bytes`:
                 Successive chunks of the file, in order.
         """
+        if chunk_size <= 0:
+            raise ValueError(
+                f"chunk_size must be a positive integer, got {chunk_size}",
+            )
         data = await self.read_file(path)
         for start in range(0, len(data), chunk_size):
             yield data[start : start + chunk_size]
@@ -902,6 +906,10 @@ class LocalBackend(BackendBase):
             `bytes`:
                 Successive chunks of the file, in order.
         """
+        if chunk_size <= 0:
+            raise ValueError(
+                f"chunk_size must be a positive integer, got {chunk_size}",
+            )
         async with aiofiles.open(path, mode="rb") as f:
             while chunk := await f.read(chunk_size):
                 yield chunk
