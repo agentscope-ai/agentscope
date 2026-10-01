@@ -1,0 +1,29 @@
+# The aimlapi.com catalog reports this model as text-only. That is wrong: it
+# accepts images, verified by a live call before this card was written. The
+# image input types below are deliberately not derived from the catalog.
+name: anthropic/claude-opus-5
+label: Claude Opus 5
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+
+context_size: 1000000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000
+  thinking_enable:
+    hidden: true
+  reasoning_effort:
+    hidden: true
+  voice:
+    hidden: true
