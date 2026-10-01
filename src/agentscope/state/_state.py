@@ -235,7 +235,7 @@ class AgentState(BaseModel):
     ] | None = PrivateAttr(default=None)
 
     # =================================================================
-    # For backword compatibility
+    # For backward compatibility
     # =================================================================
     @model_validator(mode="before")
     @classmethod

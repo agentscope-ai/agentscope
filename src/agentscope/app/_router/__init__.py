@@ -12,6 +12,7 @@ from ._mcp import mcp_router
 from ._schedule import schedule_router
 from ._session import session_router
 from ._skill import skill_router
+from ._sop import sop_router
 from ._model import model_router
 from ._tts_model import tts_model_router
 from ._workspace import workspace_router
@@ -31,5 +32,6 @@ __all__ = [
     "schedule_router",
     "session_router",
     "skill_router",
+    "sop_router",
     "workspace_router",
 ]

@@ -90,10 +90,11 @@ class ModelRouterMiddleware(MiddlewareBase):
         """Swap ``agent.model`` for the selected candidate during the reply."""
         key = await self.get_middleware_key()
         original_model = agent.model
-        # A resumed reply keeps its route, a new one is routed on its start
+        # Before ReplyStartEvent, reply_id still names the previous reply
+        new_reply = isinstance(input_kwargs["inputs"], (Msg, list))
         routed = agent.state.middle_context.get(key, {})
         agent.model = self._models.get(
-            routed.get(agent.state.reply_id),
+            None if new_reply else routed.get(agent.state.reply_id),
             original_model,
         )
         try:

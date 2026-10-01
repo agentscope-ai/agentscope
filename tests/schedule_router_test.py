@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for schedule validation before persistence and registration."""
 from datetime import datetime
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from fastapi import HTTPException
 
@@ -119,6 +119,34 @@ def _record() -> ScheduleRecord:
             permission_mode=PermissionMode.DONT_ASK,
         ),
     )
+
+
+class ScheduleWeekdayTest(TestCase):
+    """Standard cron weekdays are translated for APScheduler."""
+
+    def test_standard_weekdays(self) -> None:
+        """Numeric weekdays count from Sunday; names pass through."""
+        record = _record()
+        actual = {}
+        for expression in ("1", "0", "7", "1-5", "0-7/3", "mon-fri"):
+            record.data.cron_expression = f"0 9 * * {expression}"
+            trigger = SchedulerManager.validate_schedule(record)
+            actual[expression] = str(trigger.fields[4])
+        self.assertDictEqual(
+            actual,
+            {
+                "1": "mon",
+                "0": "sun",
+                "7": "sun",
+                "1-5": "mon,tue,wed,thu,fri",
+                "0-7/3": "sun,wed,sat",
+                "mon-fri": "mon-fri",
+            },
+        )
+
+        record.data.cron_expression = "0 9 * * 8"
+        with self.assertRaises(ValueError):
+            SchedulerManager.validate_schedule(record)
 
 
 class ScheduleValidationTest(IsolatedAsyncioTestCase):
