@@ -32,8 +32,20 @@ import socket
 from typing import TYPE_CHECKING
 from unittest import IsolatedAsyncioTestCase
 
-import boto3
-from moto.server import ThreadedMotoServer
+import pytest
+
+# ``boto3`` and ``moto[server]`` are dev-only dependencies; skip this
+# module cleanly instead of aborting the whole test suite's collection
+# when they are not installed.
+boto3 = pytest.importorskip(
+    "boto3",
+    reason="S3 blob store tests require the boto3 dev dependency",
+)
+moto_server = pytest.importorskip(
+    "moto.server",
+    reason="S3 blob store tests require the moto[server] dev dependency",
+)
+ThreadedMotoServer = moto_server.ThreadedMotoServer
 
 if TYPE_CHECKING:
     from agentscope.app.rag.blob_store import S3BlobStore
