@@ -306,6 +306,11 @@ class Grep(ToolBase):
                 "utf-8",
                 errors="ignore",
             ).strip()
+            if result.exit_code == 127 or "WinError 2" in error_msg or "No such file or directory" in error_msg:
+                raise RuntimeError(
+                    "Ripgrep (rg) is not installed or not found in PATH. "
+                    "Please install ripgrep to use the Grep tool."
+                )
             raise RuntimeError(
                 f"ripgrep error (code {result.exit_code}): {error_msg}",
             )
