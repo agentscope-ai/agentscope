@@ -23,6 +23,7 @@ from agentscope.event import (
     ToolResultStartEvent,
     UserInterruptEvent,
 )
+from agentscope.exception import DeveloperOrientedException
 from agentscope.message import (
     TextBlock,
     ToolCallBlock,
@@ -139,6 +140,21 @@ class _ExternalConcurrentTool(_TimeoutConcurrentTool):
 
     name: str = "external_concurrent"
     is_external_tool: bool = True
+
+
+class _FatalTool(_TimeoutConcurrentTool):
+    """Tool that raises a fatal, developer-oriented error."""
+
+    name: str = "fatal_tool"
+
+    async def __call__(
+        self,
+        timeout: float = 0.0,
+        input: str = "",
+        **kwargs: Any,
+    ) -> AsyncGenerator[ToolChunk, None]:
+        raise DeveloperOrientedException("boom: fatal tool failure")
+        yield  # pylint: disable=unreachable
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +307,66 @@ def _assert_interrupted_end(
             "finished_reason": "interrupted",
         },
     )
+
+
+class AgentFatalToolExceptionTest(IsolatedAsyncioTestCase):
+    """A DeveloperOrientedException raised inside a tool must close the
+    tool call with an INTERRUPTED result and terminate the reply with a
+    sanitized internal error — never a dangling tool call or a silent
+    empty success."""
+
+    def _make_agent(self, tools: list[ToolBase]) -> tuple[Agent, MockModel]:
+        model = MockModel(model="mock-model", stream=True)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a test agent.",
+            model=model,
+            toolkit=Toolkit(tools=tools),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        return agent, model
+
+    async def test_fatal_tool_exception_closes_call_and_ends_with_error(
+        self,
+    ) -> None:
+        """A fatal tool exception must close the tool call with an
+        INTERRUPTED result and end the reply with ERROR/INTERNAL."""
+        agent, model = self._make_agent([_FatalTool()])
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            TextBlock(text="Calling."),
+                            ToolCallBlock(
+                                id="tc-fatal",
+                                name="fatal_tool",
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events: list[Any] = []
+        with self.assertRaises((DeveloperOrientedException, ExceptionGroup)):
+            async for evt in agent.reply_stream(
+                UserMsg(name="user", content="Hi"),
+            ):
+                events.append(evt)
+
+        self.assertIsInstance(events[-1], ReplyEndEvent)
+        self.assertEqual(events[-1].finished_reason, "error")
+        self.assertIsNotNone(events[-1].error)
+        self.assertEqual(events[-1].error.type, "internal")
+
+        last_msg = agent.state.context[-1]
+        tool_results = last_msg.get_content_blocks("tool_result")
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(tool_results[0].id, "tc-fatal")
+        self.assertEqual(tool_results[0].state, "interrupted")
 
 
 class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
