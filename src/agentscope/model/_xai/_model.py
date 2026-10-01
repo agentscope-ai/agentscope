@@ -101,6 +101,8 @@ class XAIChatModel(ChatModelBase):
         context_size: int = 131072,
         formatter: XAIChatFormatter | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        stream_first_chunk_timeout: float | None = 120.0,
+        stream_idle_timeout: float | None = 30.0,
     ) -> None:
         """Initialize the xAI chat model.
 
@@ -131,6 +133,11 @@ class XAIChatModel(ChatModelBase):
                 that overlap with credential-derived arguments (such as
                 ``api_key`` or ``api_host``) take precedence over the
                 credential values.
+            stream_first_chunk_timeout (`float | None`, defaults to `120.0`):
+                Maximum seconds from call start to initial meaningful stream
+                content. Delay before first iteration counts toward it.
+            stream_idle_timeout (`float | None`, defaults to `30.0`):
+                Maximum seconds between meaningful chunks and stream end.
         """
         super().__init__(
             credential=credential,
@@ -140,6 +147,8 @@ class XAIChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            stream_first_chunk_timeout=stream_first_chunk_timeout,
+            stream_idle_timeout=stream_idle_timeout,
         )
         self.formatter = formatter or XAIChatFormatter()
         self.client_kwargs = client_kwargs or {}
