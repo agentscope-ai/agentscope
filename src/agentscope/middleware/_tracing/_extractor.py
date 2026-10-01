@@ -582,14 +582,23 @@ def _get_tool_request_attributes(
         attributes[SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS] = tool_call.input
 
         if tool_name:
-            registered = getattr(instance, "tools", {}).get(tool_name)
-            if registered is not None:
-                tool_obj = getattr(registered, "tool", None)
-                description = getattr(tool_obj, "description", None)
+            # ``Toolkit`` registers its tools inside ``tool_groups`` (each
+            # group holding a ``tools`` list), not in a ``tools`` mapping.
+            # MCP tools are only revealed by an awaited listing, which a
+            # synchronous extractor cannot perform, so only Python-registered
+            # tools contribute a description here.
+            description = None
+            for group in getattr(instance, "tool_groups", None) or []:
+                for tool_obj in getattr(group, "tools", None) or []:
+                    if getattr(tool_obj, "name", None) == tool_name:
+                        description = getattr(tool_obj, "description", None)
+                        break
                 if description:
-                    attributes[
-                        SpanAttributes.GEN_AI_TOOL_DESCRIPTION
-                    ] = description
+                    break
+            if description:
+                attributes[
+                    SpanAttributes.GEN_AI_TOOL_DESCRIPTION
+                ] = description
 
     return attributes
 
