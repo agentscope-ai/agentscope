@@ -39,6 +39,7 @@ import os
 import posixpath
 import shlex
 import shutil
+import signal
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
@@ -738,6 +739,48 @@ def _subprocess_creation_kwargs() -> dict[str, Any]:
     }
 
 
+async def _terminate_process_tree(
+    process: asyncio.subprocess.Process,
+    *,
+    grace: float = 1.0,
+) -> None:
+    """Stop a subprocess and everything it started.
+
+    On POSIX the process leads its own process group, so the whole group
+    gets ``SIGTERM``, then ``SIGKILL`` after ``grace`` seconds. On Windows
+    only the process itself is killed.
+
+    Args:
+        process (`asyncio.subprocess.Process`):
+            The process to stop.
+        grace (`float`, defaults to ``1.0``):
+            Seconds between ``SIGTERM`` and ``SIGKILL``.
+    """
+    if os.name == "nt":
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        await process.wait()
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=grace)
+    except asyncio.TimeoutError:
+        pass
+    # The shell may be gone while a program it started still runs in the
+    # group, so the group is killed either way.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    await process.wait()
+
+
 class LocalBackend(BackendBase):
     """Host-local :class:`BackendBase` implementation.
 
@@ -794,6 +837,10 @@ class LocalBackend(BackendBase):
         kwargs = _subprocess_creation_kwargs()
         if cwd is not None:
             kwargs["cwd"] = cwd
+        if os.name != "nt":
+            # Its own session, so a timeout or a cancel also stops what the
+            # command started
+            kwargs["start_new_session"] = True
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -826,9 +873,13 @@ class LocalBackend(BackendBase):
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
+            await _terminate_process_tree(process)
             return ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
+        except BaseException:
+            # Cancelled (the reply was stopped) or failed: don't leave the
+            # command running
+            await asyncio.shield(_terminate_process_tree(process))
+            raise
 
         return ExecResult(
             exit_code=process.returncode or 0,
