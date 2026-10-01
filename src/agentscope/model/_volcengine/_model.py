@@ -210,9 +210,13 @@ class VolcengineChatModel(ChatModelBase):
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
-            kwargs.setdefault("extra_body", {})
-            kwargs["extra_body"].setdefault("thinking", {})
-            kwargs["extra_body"]["thinking"].setdefault(
+            # Copy the caller's ``extra_body`` (and its nested ``thinking``
+            # dict) before filling in defaults, so a reused dict is neither
+            # mutated nor pinned to the first call's ``thinking.type``
+            extra_body = dict(kwargs.get("extra_body") or {})
+            extra_body["thinking"] = dict(extra_body.get("thinking") or {})
+            kwargs["extra_body"] = extra_body
+            extra_body["thinking"].setdefault(
                 "type",
                 thinking_type,
             )
