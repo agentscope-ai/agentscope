@@ -148,6 +148,11 @@ class SOPEngine:
                     return
                 if record.phase is SOPPhase.COMPLETED:
                     break
+                if record.phase is SOPPhase.FAILED:
+                    # The step gave up on itself; do not resurrect it,
+                    # or a step whose run vanished mid-turn would be
+                    # retried forever.
+                    return
                 if len(record.verifications) >= step.max_attempts:
                     record.phase = SOPPhase.FAILED
                     return

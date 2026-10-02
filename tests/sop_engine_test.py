@@ -604,3 +604,66 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                 ("SOP_STEP_ENDED", {"step": "A", "phase": "pending"}),
             ],
         )
+
+
+class _SelfFailing(SOPStepBase):
+    """A step that gives up on itself without filing a verdict."""
+
+    async def reply_stream(  # pylint: disable=invalid-overridden-method
+        self,
+        inputs: Any,
+        state: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Mark the step failed and end the attempt."""
+        yield _finished("self-failing", {})
+        state.phase = SOPPhase.FAILED
+
+
+class SOPEngineStepContractTest(IsolatedAsyncioTestCase):
+    """Test the engine against a step that refuses to go on."""
+
+    async def _drive_bounded(
+        self,
+        engine: SOPEngine,
+        inputs: Any = None,
+        cap: int = 100,
+    ) -> list:
+        """Consume one ``reply_stream`` call with an event cap, so a bug
+        that never ends the stream fails the test rather than hanging."""
+        events = []
+        async for event in engine.reply_stream(inputs):
+            events.append(event)
+            if len(events) >= cap:
+                self.fail(
+                    "The engine did not end the stream within "
+                    f"{cap} events.",
+                )
+        return events
+
+    async def test_a_self_failed_step_is_not_resurrected(self) -> None:
+        """A step that marks itself failed ends the run.
+
+        The engine would otherwise restart the attempt on the spot, and
+        a step whose run was deleted mid-turn -- which ends every pass
+        with ``FAILED`` -- would be retried forever.
+        """
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[_SelfFailing("A", "do a")],
+        )
+        engine = SOPEngine(sop)
+
+        events = await self._drive_bounded(
+            engine,
+            UserMsg(name="user", content="go"),
+        )
+
+        started = [
+            event
+            for event in events
+            if isinstance(event, CustomEvent)
+            and event.name == "SOP_STEP_STARTED"
+        ]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(engine.phase, SOPPhase.FAILED)
