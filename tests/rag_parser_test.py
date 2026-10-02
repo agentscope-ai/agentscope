@@ -2112,3 +2112,22 @@ class HtmlParserTest(IsolatedAsyncioTestCase):
             sections[0].content.text,
             "Header Hello world. Next line. Content"
         )
+
+    async def test_omitted_head_closing(self) -> None:
+        """Body text is extracted even if </head> is omitted."""
+        html_bytes = b"<html><head><title>Title</title><body><p>Visible body</p></body></html>"
+        parser = HtmlParser()
+        sections = await parser.parse(html_bytes, "test.html")
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].content.text, "Visible body")
+
+    async def test_inline_tags_spacing(self) -> None:
+        """Inline tags do not introduce spaces, while block boundaries do."""
+        html_bytes = b"<p>Agent<b>Scope</b> framework.</p><p>\xe6\x99\xba\xe8\x83\xbd<strong>\xe4\xbd\x93</strong>\xe6\xa1\x86\xe6\x9e\xb6</p>"
+        parser = HtmlParser()
+        sections = await parser.parse(html_bytes, "test.html")
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "AgentScope framework. 智能体框架"
+        )

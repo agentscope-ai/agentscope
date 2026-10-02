@@ -30,6 +30,13 @@ class _HTMLTextExtractor(BaseHTMLParser):
             "area", "base", "br", "col", "embed", "hr", "img", "input",
             "link", "meta", "source", "track", "wbr",
         }
+        self._block_elements = {
+            "address", "article", "aside", "blockquote", "br", "canvas",
+            "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure",
+            "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+            "hr", "li", "main", "nav", "noscript", "ol", "p", "pre",
+            "section", "table", "tfoot", "ul", "video", "tr", "td", "th",
+        }
 
     def handle_starttag(
         self,
@@ -37,11 +44,25 @@ class _HTMLTextExtractor(BaseHTMLParser):
         attrs: list[tuple[str, str | None]],
     ) -> None:
         tag_lower = tag.lower()
+
+        # If body starts, we implicitly close head if it's still open
+        if tag_lower == "body" and "head" in self._current_tags:
+            while self._current_tags:
+                if self._current_tags.pop() == "head":
+                    break
+
+        if tag_lower in self._block_elements:
+            self._text_parts.append(" ")
+
         if tag_lower not in self._void_elements:
             self._current_tags.append(tag_lower)
 
     def handle_endtag(self, tag: str) -> None:
-        if self._current_tags and self._current_tags[-1] == tag.lower():
+        tag_lower = tag.lower()
+        if tag_lower in self._block_elements:
+            self._text_parts.append(" ")
+
+        if self._current_tags and self._current_tags[-1] == tag_lower:
             self._current_tags.pop()
 
     def handle_data(self, data: str) -> None:
@@ -49,14 +70,14 @@ class _HTMLTextExtractor(BaseHTMLParser):
         if set(self._current_tags) & self._ignore_tags:
             return
 
-        stripped = data.strip()
-        if stripped:
-            self._text_parts.append(stripped)
+        # Keep original data (including whitespace) to preserve inline spacing
+        self._text_parts.append(data)
 
     def get_text(self) -> str:
         """Get the cleaned, extracted text."""
-        # Join with a single space and clean up multiple spaces
-        text = " ".join(self._text_parts)
+        # Join without space (block elements injected their own spaces)
+        text = "".join(self._text_parts)
+        # Clean up multiple spaces and trim
         return re.sub(r"\s+", " ", text).strip()
 
 
