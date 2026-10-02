@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from ..._utils._common import _generate_id
 from ..access import ResourceKind
@@ -555,12 +556,24 @@ async def update_session(
             "auto": False,
         }
 
+    # ``exclude_unset`` means an explicit null reaches the merged shape, and
+    # not every column can hold one — ``name`` never can. Refuse with a 422
+    # instead of letting the ValidationError escape as a 500, the way
+    # ``update_agent`` already handles its own merged shape.
+    try:
+        updated_config = SessionConfig.model_validate(
+            {**existing.config.model_dump(mode="json"), **config_updates},
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
+
     return await storage.upsert_session(
         user_id=user_id,
         agent_id=agent_id,
-        config=SessionConfig.model_validate(
-            {**existing.config.model_dump(mode="json"), **config_updates},
-        ),
+        config=updated_config,
         state=updated_state,
         session_id=session_id,
     )
