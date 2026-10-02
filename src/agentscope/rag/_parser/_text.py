@@ -24,7 +24,6 @@ class TextParser(ParserBase):
         "text/plain",
         "text/markdown",
         "text/csv",
-        "text/html",
         "text/x-rst",
         "application/json",
         "application/xml",
@@ -45,8 +44,6 @@ class TextParser(ParserBase):
         """
         return [
             ".csv",
-            ".htm",
-            ".html",
             ".json",
             ".markdown",
             ".md",
