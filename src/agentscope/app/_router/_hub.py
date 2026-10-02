@@ -8,9 +8,10 @@ never merged across hubs, which keeps ranking a per-hub concern.
 Installing is user-level for both kinds — nothing here touches a
 workspace. See ``_mcp.py`` / ``_skill.py`` for the libraries it writes.
 """
+import tempfile
 from typing import TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..deps import (
     get_current_user_id,
@@ -236,6 +237,7 @@ async def list_skill_cards(
     status_code=status.HTTP_201_CREATED,
 )
 async def install_skill(
+    request: Request,
     hub_id: str,
     card_id: str,
     *,
@@ -275,6 +277,21 @@ async def install_skill(
         card_id=card.id,
         version=card.version,
     )
+
+    blob_store = getattr(request.app.state, "blob_store", None)
+    if blob_store is not None:
+        archive = await hub.download(user_id, card_id, version=card.version)
+        record.archive_format = archive.format
+        with tempfile.SpooledTemporaryFile() as tmp:
+            async for chunk in archive.stream:
+                tmp.write(chunk)
+            tmp.seek(0)
+
+            blob_uri = await blob_store.write_stream(
+                key=f"skills/{user_id}/{hub_id}/{card_id}",
+                stream=tmp,
+            )
+            record.archive_uri = blob_uri
     try:
         await storage.upsert_skill(user_id, record)
     except ValueError as e:
