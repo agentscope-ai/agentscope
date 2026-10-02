@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from opensandbox.models.sandboxes import (
         NetworkPolicy,
         SandboxInfo,
+        Volume,
     )
 
 
@@ -66,6 +67,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        use_server_proxy: bool = False,
+        volumes: list[Volume] | None = None,
     ) -> None:
         """Construct an :class:`OpenSandboxWorkspace`.
 
@@ -114,6 +117,12 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 ``.mcp`` exists.
             skill_paths (`list[str] | None`, optional):
                 Local skill dirs seeded into ``skills/`` on first init.
+            use_server_proxy (`bool`, defaults to `False`):
+                Route sandbox traffic through the OpenSandbox API server
+                instead of connecting to sandbox dynamic ports directly.
+            volumes (`list[Volume] | None`, optional):
+                Volume declarations passed to ``Sandbox.create`` for
+                persistent workspace storage.
         """
         super().__init__(
             workspace_id=workspace_id,
@@ -135,6 +144,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self.network_policy = network_policy
         self.extra_pip = list(extra_pip or [])
         self.instructions = instructions
+        self.use_server_proxy = use_server_proxy
+        self.volumes = list(volumes or [])
 
         self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
@@ -202,7 +213,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         """Build OpenSandbox connection config on demand."""
         from opensandbox.config.connection import ConnectionConfig
 
-        kwargs: dict = {"protocol": self.protocol}
+        kwargs: dict = {
+            "protocol": self.protocol,
+            "use_server_proxy": self.use_server_proxy,
+        }
         if self.api_key:
             kwargs["api_key"] = self.api_key
         if self.domain:
@@ -270,6 +284,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             kwargs["entrypoint"] = self.entrypoint
         if self.network_policy is not None:
             kwargs["network_policy"] = self.network_policy
+        if self.volumes:
+            kwargs["volumes"] = self.volumes
         return await Sandbox.create(**kwargs)
 
     async def _attach_existing_sandbox(self, info: SandboxInfo) -> Sandbox:
