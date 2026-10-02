@@ -320,16 +320,20 @@ class TeamPipeline:
                     if not isinstance(evt, Msg):
                         await queue.put(evt)
                     elif evt.finished_reason is not None:
+                        if evt.finished_reason == ReplyFinishedReason.ERROR and evt.error:
+                            output = [TextBlock(text=f"The member failed with error: {evt.error.message}")]
+                        else:
+                            output = [
+                                _
+                                for _ in evt.content
+                                if isinstance(_, (TextBlock, DataBlock))
+                            ] or "The member finished without a reply."
+                        
                         round_results.append(
                             ToolResultBlock(
                                 id=tool_call.id,
                                 name=_TeamAssign.name,
-                                output=[
-                                    _
-                                    for _ in evt.content
-                                    if isinstance(_, (TextBlock, DataBlock))
-                                ]
-                                or "The member finished without a reply.",
+                                output=output,
                                 state=_RESULT_STATES[evt.finished_reason],
                             ),
                         )

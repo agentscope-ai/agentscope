@@ -157,14 +157,28 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
             ):
                 # Interrupted / already-failed endings cannot be continued
                 # by swallowing their ReplyEndEvent.  Forward unchanged.
-                # TODO: When the subagent fails, the leader should be aware
-                #  of that.
                 yield evt
                 continue
 
             if nudges >= self._max_nudges:
-                # Out of patience: end the reply as an error so it stops
-                # holding the session, and let the error path report it.
+                # Escalation Protocol: Out of patience. Send a distress signal
+                # to the leader to dynamically assign someone else,
+                # then error out.
+                team_say_tool = await agent.toolkit.get_tool("TeamSay")
+                if team_say_tool is not None:
+                    try:
+                        message = (
+                            "ESCALATION PROTOCOL: I have failed to "
+                            f"complete my task properly after {nudges} "
+                            "attempts. I require assistance or reassignment."
+                        )
+                        await team_say_tool(
+                            content=message,
+                            to=self._leader_name,
+                        )
+                    except Exception:
+                        pass
+
                 yield ReplyEndEvent(
                     session_id=evt.session_id,
                     reply_id=evt.reply_id,
@@ -172,13 +186,14 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
                     error=ErrorInfo(
                         type=ErrorType.INTERNAL,
                         message=(
-                            f"{agent.name} ended {nudges} replies in a row "
-                            f"without reporting to {self._leader_name} via "
-                            f"TeamSay; giving up on this turn."
+                            f"ESCALATION PROTOCOL INITIATED: {agent.name} "
+                            f"ended {nudges} replies in a row without "
+                            f"reporting to {self._leader_name}. Fallback "
+                            "triggered and leader notified."
                         ),
                     ),
                 )
-                continue
+                return
 
             nudges += 1
             if evt.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
