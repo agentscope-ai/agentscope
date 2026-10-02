@@ -8,6 +8,7 @@ from ._ppt import PPTParser
 from ._text import TextParser
 from ._word import WordParser
 from ._excel import ExcelParser
+from ._html import HtmlParser
 
 __all__ = [
     "ParserBase",
@@ -17,4 +18,5 @@ __all__ = [
     "TextParser",
     "WordParser",
     "ExcelParser",
+    "HtmlParser",
 ]
