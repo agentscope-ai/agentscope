@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
+import asyncio
 import os
 import shutil
 import tempfile
@@ -585,10 +586,31 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         )
         model.set_responses([_tool_response(), _text_response("done")])
         middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+
+        class _RetrievalBarrierTool(_DummyTool):
+            """Complete retrieval before the next reasoning iteration."""
+
+            async def __call__(self, **kwargs: Any) -> ToolChunk:
+                """Wait for pending retrieval, then return the dummy result.
+
+                Args:
+                    **kwargs (`Any`):
+                        Dummy tool arguments.
+
+                Returns:
+                    `ToolChunk`:
+                        The fixed dummy tool output.
+                """
+                # pylint: disable-next=protected-access
+                task = middleware._retrieval_task
+                if task is not None:
+                    await asyncio.wait_for(task, timeout=10)
+                return await super().__call__(**kwargs)
+
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_RetrievalBarrierTool()]),
         )
 
         await agent.reply(UserMsg("user", "recall my project"))
