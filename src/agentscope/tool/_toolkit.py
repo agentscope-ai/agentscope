@@ -387,9 +387,10 @@ class Toolkit:
             yield chunk
             tool_response.append_chunk(chunk)
 
-        finally:
-            # Finally, yield the complete tool response
-            yield tool_response
+        # Emit the complete response only after normal completion or a handled
+        # tool error. An unhandled developer-oriented exception must propagate
+        # without first producing an empty successful response.
+        yield tool_response
 
     async def _get_available_skills(
         self,
