@@ -21,6 +21,7 @@ from agentscope.rag import (
     TextParser,
     WordParser,
     ExcelParser,
+    HtmlParser,
 )
 
 
@@ -2079,3 +2080,35 @@ class WordParserTest(IsolatedAsyncioTestCase):
         """Unknown ``table_format`` raises :class:`ValueError`."""
         with self.assertRaises(ValueError):
             WordParser(table_format="csv")  # type: ignore[arg-type]
+
+
+class HtmlParserTest(IsolatedAsyncioTestCase):
+    """Behavioural coverage for :class:`HtmlParser`."""
+
+    async def test_extracts_body_text_and_ignores_void_tags(self) -> None:
+        """HTMLParser successfully extracts text and doesn't get stuck on void tags."""
+        html_bytes = b'''
+        <html>
+            <head>
+                <meta charset="utf-8">
+                <link rel="stylesheet" href="style.css">
+                <title>Test Title</title>
+                <script>alert("hidden");</script>
+                <style>body { color: red; }</style>
+            </head>
+            <body>
+                <h1>Header</h1>
+                <p>Hello world. <br> Next line.</p>
+                <img src="test.jpg" alt="image">
+                <div>Content</div>
+            </body>
+        </html>
+        '''
+        parser = HtmlParser()
+        sections = await parser.parse(html_bytes, "test.html")
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "Header Hello world. Next line. Content"
+        )

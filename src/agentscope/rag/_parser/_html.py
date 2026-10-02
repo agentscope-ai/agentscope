@@ -26,13 +26,19 @@ class _HTMLTextExtractor(BaseHTMLParser):
             "svg",
         }
         self._current_tags: list[str] = []
+        self._void_elements = {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "source", "track", "wbr",
+        }
 
     def handle_starttag(
         self,
         tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
-        self._current_tags.append(tag.lower())
+        tag_lower = tag.lower()
+        if tag_lower not in self._void_elements:
+            self._current_tags.append(tag_lower)
 
     def handle_endtag(self, tag: str) -> None:
         if self._current_tags and self._current_tags[-1] == tag.lower():
