@@ -54,6 +54,11 @@ class _HTMLTextExtractor(BaseHTMLParser):
         if tag_lower in self._block_elements:
             self._text_parts.append(" ")
 
+        if tag_lower == "img":
+            alt_text = next((val for name, val in attrs if name.lower() == "alt" and val), None)
+            if alt_text:
+                self._text_parts.append(f"[Image: {alt_text}]")
+
         if tag_lower not in self._void_elements:
             self._current_tags.append(tag_lower)
 

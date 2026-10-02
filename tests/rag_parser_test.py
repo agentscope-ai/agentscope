@@ -2110,7 +2110,7 @@ class HtmlParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sections), 1)
         self.assertEqual(
             sections[0].content.text,
-            "Header Hello world. Next line. Content"
+            "Header Hello world. Next line. [Image: image] Content"
         )
 
     async def test_omitted_head_closing(self) -> None:
@@ -2131,3 +2131,11 @@ class HtmlParserTest(IsolatedAsyncioTestCase):
             sections[0].content.text,
             "AgentScope framework. 智能体框架"
         )
+
+    async def test_image_alt_text_extracted(self) -> None:
+        """Image alt text is extracted and formatted."""
+        html_bytes = b'<html><body><p>Look at this:</p><img src="test.jpg" alt="A beautiful sunrise"></body></html>'
+        parser = HtmlParser()
+        sections = await parser.parse(html_bytes, "test.html")
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].content.text, "Look at this: [Image: A beautiful sunrise]")
