@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Ollama formatter module."""
+
 import base64
 import fnmatch
 from abc import ABC
@@ -108,8 +109,7 @@ class OllamaChatFormatter(_OllamaFormatterBase):
     input_types: list[str] = Field(
         default_factory=lambda: ["text/plain", "image/*"],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``.'
+            'The supported input types. Defaults to ``["text/plain", "image/*"]``.'
         ),
     )
 
@@ -173,6 +173,12 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                                 )
                                 if formatted_sub:
                                     hint_images.append(formatted_sub)
+                                else:
+                                    hint_text_parts.append(
+                                        f"[{sub.source.media_type} "
+                                        "attached, not supported "
+                                        "by this provider]",
+                                    )
                         if hint_text_parts or hint_images:
                             hint_msg: dict[str, Any] = {
                                 "role": "user",
@@ -186,6 +192,15 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     formatted_image = self._format_ollama_data_block(block)
                     if formatted_image:
                         images.append(formatted_image)
+                    else:
+                        # Keep the turn visible: a media block Ollama cannot
+                        # ingest must not silently vanish, otherwise a
+                        # media-only message disappears entirely.
+                        content_parts.append(
+                            f"[{block.source.media_type} "
+                            "attached, not supported "
+                            "by this provider]",
+                        )
 
                 elif isinstance(block, ThinkingBlock):
                     # Ollama does not use reasoning content in the context
@@ -242,10 +257,8 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         user_content_parts = []
                         for data_block in multimodal_data:
                             if isinstance(data_block, DataBlock):
-                                formatted_image = (
-                                    self._format_ollama_data_block(
-                                        data_block,
-                                    )
+                                formatted_image = self._format_ollama_data_block(
+                                    data_block,
                                 )
                                 if formatted_image:
                                     user_images.append(formatted_image)
@@ -274,9 +287,7 @@ class OllamaChatFormatter(_OllamaFormatterBase):
             if content_parts or images:
                 msg_ollama: dict[str, Any] = {
                     "role": msg.role,
-                    "content": "\n".join(content_parts)
-                    if content_parts
-                    else "",
+                    "content": "\n".join(content_parts) if content_parts else "",
                 }
                 if images:
                     msg_ollama["images"] = images
@@ -356,8 +367,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     input_types: list[str] = Field(
         default_factory=lambda: ["text/plain", "image/*"],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*"]``.'
+            'The supported input types. Defaults to ``["text/plain", "image/*"]``.'
         ),
     )
 
@@ -423,6 +433,15 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                     formatted_image = self._format_ollama_data_block(block)
                     if formatted_image:
                         images.append(formatted_image)
+                    else:
+                        # Keep the turn traceable in the rendered history: a
+                        # media block Ollama cannot ingest must not vanish
+                        # silently.
+                        msg_text_parts.append(
+                            f"[{block.source.media_type} "
+                            "attached, not supported "
+                            "by this provider]",
+                        )
                 elif isinstance(block, (HintBlock, ThinkingBlock)):
                     pass  # Ollama does not use hint/thinking blocks
                 else:
@@ -451,8 +470,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                 conversation_blocks.insert(
                     0,
                     {
-                        "text": self.conversation_history_prompt
-                        + "<history>\n",
+                        "text": self.conversation_history_prompt + "<history>\n",
                     },
                 )
 

@@ -2,6 +2,7 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
@@ -157,9 +158,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             {"role": "system", "content": "You're a helpful assistant."},
             {
                 "role": "user",
-                "content": (
-                    _hist_prompt + "<history>\n" + _conv_text + "\n</history>"
-                ),
+                "content": (_hist_prompt + "<history>\n" + _conv_text + "\n</history>"),
             },
             self._gt_tool_call,
             self._gt_tool_result,
@@ -779,3 +778,99 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(tool_messages[0]["tool_name"], "get_capital")
         # The OpenAI-style tool_call_id must NOT be emitted for Ollama.
         self.assertNotIn("tool_call_id", tool_messages[0])
+
+
+class TestOllamaUnsupportedMedia(IsolatedAsyncioTestCase):
+    """A media block Ollama cannot ingest must not silently vanish.
+
+    Before the placeholder existed, an unsupported DataBlock (e.g. audio)
+    was dropped, so a media-only user message disappeared entirely and the
+    model lost the turn.
+    """
+
+    async def test_chat_formatter_unsupported_media_only(self) -> None:
+        """A media-only user message keeps the turn with a placeholder."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "[audio/wav attached, not supported by this provider]",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_keeps_text(self) -> None:
+        """Text survives alongside the placeholder for mixed messages."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="listen:"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "listen:\n[audio/wav attached, not supported by this provider]",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_in_hint(self) -> None:
+        """A hint block carrying unsupported media keeps a placeholder."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="background:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="aGVsbG8=",
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "background:\n[audio/wav attached, not supported by this provider]",
+                },
+            ],
+            res,
+        )
