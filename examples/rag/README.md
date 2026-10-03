@@ -7,7 +7,7 @@ Two library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no ma
 | [`index_and_search.py`](./index_and_search.py) | The minimal pipeline: parse → chunk → embed → insert, then `KnowledgeBase.search`. Start here. |
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
 
-Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
+Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Chroma, Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
 
 ## Install
 
@@ -18,6 +18,37 @@ uv pip install "agentscope[rag]"
 # Or from source (repo root)
 uv pip install -e ".[rag]"
 ```
+
+### Chroma
+
+To use Chroma as a local persistent or remote HTTP vector backend, install
+the optional extra:
+
+```bash
+uv pip install "agentscope[vdb-chroma]"
+# Or from source (repo root)
+uv pip install -e ".[vdb-chroma]"
+```
+
+For local persistence, replace the vector store construction in
+`index_and_search.py` and/or `integrate_with_agent.py`:
+
+```python
+from agentscope.rag import ChromaStore
+
+store = ChromaStore(path="./rag_chroma")
+```
+
+For a Chroma server, use `host` instead:
+
+```python
+store = ChromaStore(host="localhost", port=8000)
+```
+
+`ChromaStore` uses the same async context-manager and `VectorStoreBase`
+contract as the other AgentScope backends.  Chroma calls are dispatched to a
+worker thread because the Python client is synchronous.  The default metric
+is cosine; `distance="l2"` and `distance="ip"` are also supported.
 
 ### Milvus Lite (local persistence)
 
@@ -228,12 +259,12 @@ store = ElasticsearchStore(
 
 ### Choosing a vector backend
 
-| | Qdrant (default) | Milvus Lite | MongoDB | Elasticsearch |
-| --- | --- | --- | --- | --- |
-| Install extra | `agentscope[rag]` | `agentscope[vdb-milvus]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
-| External service | No | No | Yes | Yes |
-| Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (server) | Yes (server) |
-| Best for | Quick start / tests | Local dev with persistence | Teams already on MongoDB | Teams already on Elastic or needing distributed kNN search |
+| | Qdrant (default) | Chroma | Milvus Lite | MongoDB | Elasticsearch |
+| --- | --- | --- | --- | --- | --- |
+| Install extra | `agentscope[rag]` | `agentscope[vdb-chroma]` | `agentscope[vdb-milvus]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
+| External service | No | Optional | No | Yes | Yes |
+| Persistence | No (`:memory:`) | Local directory or server | Yes (local `.db`) | Yes (server) | Yes (server) |
+| Best for | Quick start / tests | Local persistence or Chroma deployments | Local dev with persistence | Teams already on MongoDB | Teams already on Elastic or needing distributed kNN search |
 
 `integrate_with_agent.py` additionally uses `DashScopeChatModel`, which is already in the base `agentscope` dependencies.
 
