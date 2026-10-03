@@ -231,7 +231,19 @@ class DockerWorkspaceManager(
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            try:
+                await ws.close()
+            except BaseException:
+                logger.warning(
+                    "DockerWorkspaceManager: failed to clean up workspace %s "
+                    "after initialization failed",
+                    ws.workspace_id,
+                    exc_info=True,
+                )
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────
