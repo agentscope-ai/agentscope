@@ -1,12 +1,13 @@
 import type { Task, TaskContext } from '@agentscope-ai/agentscope/state';
 import { Ellipsis, ListX, Loader2, Square, SquareCheck } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 
 import { PanelEmpty } from '@/components/panel/PanelEmpty';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
+import { tasksContextEqual } from '@/utils/tasksContextEqual';
 
 interface TaskPanelProps {
 	/**
@@ -16,6 +17,15 @@ interface TaskPanelProps {
 	tasksContext: TaskContext | null;
 	className?: string;
 }
+
+/**
+ * Keep the in-progress spinner mounted across parent re-renders so
+ * `animate-spin` is not restarted (which looks like plan-panel flicker
+ * during streaming replies).
+ */
+const InProgressIcon = memo(function InProgressIcon() {
+	return <Loader2 className="size-3 animate-spin shrink-0" />;
+});
 
 /**
  * State icon for a single task row.
@@ -28,7 +38,7 @@ function StateIcon({ state }: { state: Task['state'] }) {
 		case 'completed':
 			return <SquareCheck className="size-3 shrink-0" />;
 		case 'in_progress':
-			return <Loader2 className="size-3 animate-spin shrink-0" />;
+			return <InProgressIcon />;
 		default:
 			return <Square className="size-3 shrink-0" />;
 	}
@@ -83,7 +93,7 @@ function filterTasksWithEllipsis(tasks: Task[]): {
  * @param className - The className
  * @returns A panel element, or ``null`` when there are no tasks.
  */
-export function TaskPanel({ tasksContext, className }: TaskPanelProps) {
+function TaskPanelImpl({ tasksContext, className }: TaskPanelProps) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
 
@@ -161,3 +171,12 @@ export function TaskPanel({ tasksContext, className }: TaskPanelProps) {
 		</div>
 	);
 }
+
+/**
+ * Memoize against streaming parent re-renders when task rows are unchanged.
+ */
+export const TaskPanel = memo(TaskPanelImpl, (prev, next) => {
+	if (prev.className !== next.className) return false;
+	return tasksContextEqual(prev.tasksContext, next.tasksContext);
+});
+TaskPanel.displayName = 'TaskPanel';
