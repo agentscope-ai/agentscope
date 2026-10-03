@@ -20,7 +20,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Write(ToolBase):
@@ -303,6 +303,14 @@ Usage:
             file_path,
             content.encode("utf-8"),
         )
+
+        # Refresh the read cache so a later Edit doesn't require a re-read
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(content).splitlines(keepends=True),
+                mtime=await self._backend.stat_mtime(file_path),
+            )
 
         # Count lines the way the ``Read`` tool numbers them
         line_count = len(content.splitlines())

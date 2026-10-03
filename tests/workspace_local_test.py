@@ -1624,13 +1624,15 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
     async def test_add_and_remove_are_scoped(self) -> None:
         """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""
         ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        extra = self._make_mcp("extra")
 
-        await ws.add_mcp(
-            self._make_mcp("extra"),
+        registered = await ws.add_mcp(
+            extra,
             agent_id="agent-A",
             session_id="sess-1",
         )
 
+        self.assertIs(registered, extra)
         self.assertEqual(
             [
                 m.name

@@ -31,6 +31,7 @@ _CLASS_NAME_MAP = {
     "deepseek": ProviderNameValues.DEEPSEEK,
     "xai": ProviderNameValues.XAI,
     "moonshot": ProviderNameValues.MOONSHOT,
+    "minimax": ProviderNameValues.MINIMAX,
     "volcengine": ProviderNameValues.VOLCENGINE,
 }
 

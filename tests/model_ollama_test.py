@@ -11,11 +11,13 @@ import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.agent import Agent
+from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
 from agentscope.model import OllamaChatModel
-from agentscope.tool import ToolChoice
+from agentscope.tool import FunctionTool, ToolChoice, ToolChunk, Toolkit
 
 A = AnyString()
 
@@ -158,7 +160,7 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
                 True,
                 [
                     ToolCallBlock.model_construct(
-                        id="0_get_weather",
+                        id=A,
                         created_at=A,
                         name="get_weather",
                         input=json.dumps({"city": "SH"}),
@@ -330,7 +332,7 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
         responses = [r async for r in gen]
 
         tool_block = ToolCallBlock.model_construct(
-            id="0_search",
+            id=A,
             created_at=A,
             name="search",
             input=json.dumps({"q": "hello"}),
@@ -399,3 +401,147 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0]["function"]["name"], "get_weather")
         self.assertIsNone(fmt_choice)
+
+
+def _api_chat_transport(
+    messages: list[dict | list[dict]],
+    stream: bool,
+) -> httpx.MockTransport:
+    """Fake ``/api/chat``; a list streams as chunks."""
+    replies = iter(messages)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        message = next(replies)
+        body = {
+            "model": "qwen3:8b",
+            "created_at": "2026-09-28T00:00:00Z",
+            "message": message,
+            "done": True,
+            "done_reason": "stop",
+            "prompt_eval_count": 10,
+            "eval_count": 5,
+        }
+        if not stream:
+            return httpx.Response(200, json=body)
+        chunks = [
+            {**body, "message": _, "done": False, "done_reason": None}
+            for _ in (message if isinstance(message, list) else [message])
+        ]
+        chunks.append(
+            {**body, "message": {"role": "assistant", "content": ""}},
+        )
+        return httpx.Response(
+            200,
+            content="".join(json.dumps(_) + "\n" for _ in chunks),
+            headers={"content-type": "application/x-ndjson"},
+        )
+
+    return httpx.MockTransport(handler)
+
+
+def _weather_call(city: str, index: int = 0) -> dict:
+    """A ``get_weather`` call as Ollama sends it."""
+    return {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": f"call_{city.lower()}",
+                "function": {
+                    "index": index,
+                    "name": "get_weather",
+                    "arguments": {"city": city},
+                },
+            },
+        ],
+    }
+
+
+class TestOllamaRepeatedToolCall(IsolatedAsyncioTestCase):
+    """Repeated tool calls within one reply."""
+
+    async def _reply(
+        self,
+        stream: bool,
+        messages: list[dict | list[dict]],
+    ) -> tuple[list[str], Any]:
+        """Run one reply."""
+        cities: list[str] = []
+
+        async def get_weather(city: str) -> ToolChunk:
+            """Get the weather."""
+            cities.append(city)
+            return ToolChunk(content=[TextBlock(text=f"sunny in {city}")])
+
+        model = OllamaChatModel(
+            model="qwen3:8b",
+            stream=stream,
+            client_kwargs={
+                "transport": _api_chat_transport(messages, stream),
+            },
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(
+                tools=[FunctionTool(get_weather, is_read_only=True)],
+            ),
+        )
+        await agent.reply(UserMsg("user", "Paris, then London?"))
+        return cities, agent.state.context[-1]
+
+    async def test_same_tool_in_two_rounds(self) -> None:
+        """Both calls run and pair with their results."""
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                cities, msg = await self._reply(
+                    stream,
+                    [
+                        _weather_call("Paris"),
+                        _weather_call("London"),
+                        {"role": "assistant", "content": "Sunny."},
+                    ],
+                )
+
+                calls = msg.get_content_blocks("tool_call")
+                results = msg.get_content_blocks("tool_result")
+                self.assertListEqual(cities, ["Paris", "London"])
+                self.assertListEqual(
+                    [(_.name, json.loads(_.input)) for _ in calls],
+                    [
+                        ("get_weather", {"city": "Paris"}),
+                        ("get_weather", {"city": "London"}),
+                    ],
+                )
+                self.assertNotEqual(calls[0].id, calls[1].id)
+                self.assertListEqual(
+                    [_.id for _ in results],
+                    [_.id for _ in calls],
+                )
+
+    async def test_same_tool_in_two_chunks(self) -> None:
+        """Parallel calls in two chunks both run."""
+        cities, msg = await self._reply(
+            True,
+            [
+                [_weather_call("Paris", 0), _weather_call("London", 1)],
+                {"role": "assistant", "content": "Sunny."},
+            ],
+        )
+
+        calls = msg.get_content_blocks("tool_call")
+        results = msg.get_content_blocks("tool_result")
+        self.assertCountEqual(cities, ["Paris", "London"])
+        self.assertListEqual(
+            [(_.name, json.loads(_.input)) for _ in calls],
+            [
+                ("get_weather", {"city": "Paris"}),
+                ("get_weather", {"city": "London"}),
+            ],
+        )
+        self.assertNotEqual(calls[0].id, calls[1].id)
+        self.assertCountEqual(
+            [_.id for _ in results],
+            [_.id for _ in calls],
+        )
