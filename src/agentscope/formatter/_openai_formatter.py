@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OpenAI formatter for agentscope."""
+
 import base64
 from abc import ABC
 from fnmatch import fnmatch
@@ -286,6 +287,18 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     )
                     if formatted is not None:
                         content_blocks.append(formatted)
+                    else:
+                        # Keep the turn visible: a media block the endpoint
+                        # cannot ingest must not silently vanish, otherwise
+                        # a media-only message disappears entirely.
+                        content_blocks.append(
+                            {
+                                "type": "text",
+                                "text": f"[{block.source.media_type} "
+                                "attached, not supported by this "
+                                "provider]",
+                            },
+                        )
 
                 elif isinstance(block, HintBlock):
                     if content_blocks or tool_calls:
@@ -322,6 +335,15 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
+                                else:
+                                    hint_parts.append(
+                                        {
+                                            "type": "text",
+                                            "text": f"[{sub.source.media_type} "
+                                            "attached, not supported by this "
+                                            "provider]",
+                                        },
+                                    )
                         if hint_parts:
                             messages.append(
                                 {"role": "user", "content": hint_parts},

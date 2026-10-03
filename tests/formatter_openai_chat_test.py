@@ -3,6 +3,7 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -263,10 +264,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "text": (
-                            _hist_prompt
-                            + "<history>\n"
-                            + _conv_text
-                            + "\n</history>"
+                            _hist_prompt + "<history>\n" + _conv_text + "\n</history>"
                         ),
                     },
                     {
@@ -1029,6 +1027,119 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "text",
                             "text": "The page is Example Domain.",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+
+class TestOpenAIUnsupportedMedia(IsolatedAsyncioTestCase):
+    """A media block the OpenAI endpoint cannot ingest must not silently
+    vanish. OpenAI supports image/audio/pdf but not video, so a video-only
+    user message previously disappeared entirely.
+    """
+
+    async def test_chat_formatter_unsupported_media_only(self) -> None:
+        """A media-only user message keeps the turn with a placeholder."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="video/mp4",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[video/mp4 attached, not supported by this provider]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_keeps_text(self) -> None:
+        """Text survives alongside the placeholder for mixed messages."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="watch:"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="video/mp4",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "watch:"},
+                        {
+                            "type": "text",
+                            "text": "[video/mp4 attached, not supported by this provider]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_in_hint(self) -> None:
+        """A hint block carrying unsupported media keeps a placeholder."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="bg:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="aGVsbG8=",
+                                    media_type="video/mp4",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "bg:"},
+                        {
+                            "type": "text",
+                            "text": "[video/mp4 attached, not supported by this provider]",
                         },
                     ],
                 },
