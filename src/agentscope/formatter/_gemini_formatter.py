@@ -128,6 +128,30 @@ class GeminiChatFormatter(_GeminiFormatterBase):
         ),
     )
 
+    @staticmethod
+    def _flush_tool_results(
+        messages: list[dict],
+        tool_result_parts: list,
+        promoted_parts: list,
+    ) -> None:
+        """Append the gathered tool results as one `user` content, followed
+        by one content holding the media promoted out of them.
+
+        Args:
+            messages (`list[dict]`):
+                The formatted messages, appended to in place.
+            tool_result_parts (`list`):
+                The `function_response` parts gathered so far.
+            promoted_parts (`list`):
+                The media parts promoted out of those tool results.
+        """
+        if not tool_result_parts:
+            return
+
+        messages.append({"role": "user", "parts": tool_result_parts})
+        if promoted_parts:
+            messages.append({"role": "user", "parts": promoted_parts})
+
     async def format(
         self,
         msgs: list[Msg],
@@ -149,8 +173,30 @@ class GeminiChatFormatter(_GeminiFormatterBase):
         while i < len(msgs):
             msg = msgs[i]
             parts: list = []
+            # Gemini requires the function responses that answer one model
+            # turn to live in a single `user` content: when the counts
+            # differ it rejects the request with 400 ("Please ensure that
+            # the number of function response parts is equal to the number
+            # of function call parts of the function call turn"). So
+            # accumulate a run of tool results instead of emitting one
+            # `user` turn each, and keep the media promoted out of those
+            # results in a single turn after them.
+            tool_result_parts: list = []
+            promoted_parts: list = []
 
             for block in msg.get_content_blocks():
+                if tool_result_parts and not isinstance(
+                    block,
+                    ToolResultBlock,
+                ):
+                    self._flush_tool_results(
+                        messages,
+                        tool_result_parts,
+                        promoted_parts,
+                    )
+                    tool_result_parts = []
+                    promoted_parts = []
+
                 if isinstance(block, TextBlock):
                     if block.text:
                         parts.append({"text": block.text})
@@ -230,38 +276,28 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         multimodal_data,
                     ) = self.convert_tool_result_to_string(block.output)
 
-                    messages.append(
+                    tool_result_parts.append(
                         {
-                            "role": "user",
-                            "parts": [
-                                {
-                                    "function_response": {
-                                        "id": block.id,
-                                        "name": block.name,
-                                        "response": {
-                                            "output": textual_output,
-                                        },
-                                    },
+                            "function_response": {
+                                "id": block.id,
+                                "name": block.name,
+                                "response": {
+                                    "output": textual_output,
                                 },
-                            ],
+                            },
                         },
                     )
 
                     if multimodal_data:
-                        promo_parts = []
                         for item in multimodal_data:
                             if isinstance(item, TextBlock):
-                                promo_parts.append({"text": item.text})
+                                promoted_parts.append({"text": item.text})
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_gemini_data_block(
                                     item,
                                 )
                                 if fmt_item is not None:
-                                    promo_parts.append(fmt_item)
-                        if promo_parts:
-                            messages.append(
-                                {"role": "user", "parts": promo_parts},
-                            )
+                                    promoted_parts.append(fmt_item)
 
                 else:
                     logger.warning(
@@ -279,6 +315,12 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         "parts": parts,
                     },
                 )
+
+            self._flush_tool_results(
+                messages,
+                tool_result_parts,
+                promoted_parts,
+            )
 
             i += 1
 
