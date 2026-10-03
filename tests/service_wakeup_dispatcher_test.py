@@ -520,6 +520,71 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         self.assertEqual(chat.calls[0]["session_id"], "w2")
         self.assertIsNone(chat.calls[0]["input_msg"])
 
+    async def test_dispatch_error_does_not_end_the_loop(self) -> None:
+        """A storage error while dispatching one entry is contained.
+
+        The failing trigger is re-queued rather than lost, the rest of
+        the drained batch still dispatches, and the loop keeps serving
+        later signals instead of ending on the first exception.
+        """
+
+        class _FlakyStorage(_FakeStorage):
+            """Fails the first lookup of one session."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.failures = 1
+
+            async def get_session(
+                self,
+                _user_id: str,
+                _agent_id: str,
+                session_id: str,
+            ) -> object | None:
+                if session_id == "flaky" and self.failures:
+                    self.failures -= 1
+                    raise ConnectionError("storage is unavailable")
+                return await super().get_session(
+                    _user_id,
+                    _agent_id,
+                    session_id,
+                )
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FlakyStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        )
+        async with dispatcher:
+            for session_id in ("flaky", "same-batch"):
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {
+                        "user_id": "u",
+                        "session_id": session_id,
+                        "agent_id": "a",
+                    },
+                )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.sleep(0.25)
+
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {"user_id": "u", "session_id": "later", "agent_id": "a"},
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.sleep(0.05)
+
+            self.assertFalse(dispatcher._task.done())
+
+        self.assertEqual(
+            sorted(call["session_id"] for call in chat.calls),
+            ["flaky", "later", "same-batch"],
+        )
+
 
 class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
     """Tests covering the ``__aenter__`` / ``__aexit__`` ACM behaviour."""
