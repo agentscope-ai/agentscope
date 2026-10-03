@@ -2,9 +2,9 @@
 """The bash tool in agentscope."""
 import os
 from typing import AsyncGenerator, Any, List
-import re
 
 from ._bash_parser import BashCommandParser
+from ._wildcard_match import match_wildcard_pattern
 from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
@@ -421,74 +421,7 @@ easier to review tool calls and give permission.
             return True
 
         command = tool_input.get("command", "")
-
-        # Check if pattern is a prefix pattern (ends with :*)
-        if rule_content.endswith(":*"):
-            prefix = rule_content[:-2].strip()
-            return command.startswith(prefix + " ") or command == prefix
-
-        # Check if pattern has unescaped wildcards
-        def has_wildcards(pattern: str) -> bool:
-            """Check if pattern contains unescaped * wildcards."""
-            i = 0
-            while i < len(pattern):
-                if pattern[i] == "\\":
-                    i += 2  # Skip escaped character
-                elif pattern[i] == "*":
-                    return True
-                else:
-                    i += 1
-            return False
-
-        if not has_wildcards(rule_content):
-            # No wildcards, but may have escape sequences
-            # Convert escape sequences for matching
-            pattern = rule_content
-            pattern = pattern.replace("\\\\", "\x00BACKSLASH\x00")
-            pattern = pattern.replace("\\*", "*")
-            pattern = pattern.replace("\x00BACKSLASH\x00", "\\")
-            # Use substring matching with converted pattern
-            return pattern in command
-
-        # Convert wildcard pattern to regex with escape handling
-        # Use placeholders for escaped sequences
-        ESCAPED_STAR = "\x00ESCAPED_STAR\x00"
-        ESCAPED_BACKSLASH = "\x00ESCAPED_BACKSLASH\x00"
-
-        pattern = rule_content
-        # Replace \\ with placeholder
-        pattern = pattern.replace("\\\\", ESCAPED_BACKSLASH)
-        # Replace \* with placeholder
-        pattern = pattern.replace("\\*", ESCAPED_STAR)
-
-        # Manually escape regex special characters (except *)
-        # Don't use re.escape() as it escapes spaces too
-        special_chars = r".^$+?{}[]|()"
-        for char in special_chars:
-            pattern = pattern.replace(char, "\\" + char)
-
-        # Convert * to regex .* (match any characters)
-        pattern = pattern.replace("*", ".*")
-
-        # Restore escaped sequences
-        pattern = pattern.replace(ESCAPED_STAR, r"\*")
-        pattern = pattern.replace(ESCAPED_BACKSLASH, r"\\")
-
-        # Special optimization: "git *" should match both "git" and "git add"
-        # Pattern: if ends with .*, make it optional
-        if pattern.endswith(".*"):
-            base_pattern = pattern[:-2]  # Remove .*
-            # Try exact match first (handles trailing space)
-            base_pattern = base_pattern.rstrip()
-            if re.fullmatch(base_pattern, command):
-                return True
-
-        # Full regex match
-        try:
-            return bool(re.fullmatch(pattern, command))
-        except re.error:
-            # Invalid regex, fall back to substring matching
-            return rule_content.replace("*", "") in command
+        return match_wildcard_pattern(rule_content, command)
 
     async def generate_suggestions(
         self,

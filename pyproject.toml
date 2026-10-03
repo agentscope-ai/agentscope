@@ -43,6 +43,7 @@ dependencies = [
     "aiofiles",
     "tree_sitter",
     "tree_sitter_bash",
+    "tree_sitter_pwsh",
     "jsonschema",
     "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
