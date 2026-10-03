@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The DeepSeek formatter module."""
+
 from typing import Any
 
 from pydantic import Field
@@ -78,16 +79,24 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
                     formatted = self._format_openai_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
+                    else:
+                        # Keep the turn visible: a media block DeepSeek
+                        # cannot ingest must not silently vanish, otherwise
+                        # a media-only message disappears entirely.
+                        content_blocks.append(
+                            {
+                                "type": "text",
+                                "text": f"[{block.source.media_type} "
+                                "attached, not supported by this "
+                                "provider]",
+                            },
+                        )
 
                 elif isinstance(block, ThinkingBlock):
                     reasoning_content_blocks.append(block.thinking)
 
                 elif isinstance(block, HintBlock):
-                    if (
-                        content_blocks
-                        or tool_calls
-                        or reasoning_content_blocks
-                    ):
+                    if content_blocks or tool_calls or reasoning_content_blocks:
                         content = self._content_from_blocks(content_blocks)
                         msg_flush_hint: dict[str, Any] = {
                             "role": msg.role,
@@ -150,11 +159,7 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
-                    if (
-                        content_blocks
-                        or tool_calls
-                        or reasoning_content_blocks
-                    ):
+                    if content_blocks or tool_calls or reasoning_content_blocks:
                         content = self._content_from_blocks(content_blocks)
                         msg_flush: dict[str, Any] = {
                             "role": msg.role,
@@ -351,6 +356,15 @@ class DeepSeekMultiAgentFormatter(_OpenAIFormatterBase):
                         )
                         has_history = True
                         has_image = True
+                    else:
+                        # Keep the turn traceable in the rendered history: a
+                        # media block DeepSeek cannot ingest must not vanish
+                        # silently.
+                        content_blocks[-1]["text"] += (
+                            f"{msg.name}: [{block.source.media_type} "
+                            "attached, not supported by this provider]\n"
+                        )
+                        has_history = True
 
         if has_history:
             content_blocks[-1]["text"] += "</history>"
@@ -358,9 +372,7 @@ class DeepSeekMultiAgentFormatter(_OpenAIFormatterBase):
                 {
                     "role": "user",
                     "content": (
-                        content_blocks
-                        if has_image
-                        else content_blocks[0]["text"]
+                        content_blocks if has_image else content_blocks[0]["text"]
                     ),
                 },
             )
