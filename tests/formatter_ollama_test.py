@@ -2,6 +2,9 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
@@ -15,6 +18,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -295,6 +299,43 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_formatter_local_image_uri(self) -> None:
+        """Both formatters read percent-encoded local image paths."""
+        with tempfile.TemporaryDirectory() as directory:
+            for filename in (
+                "image.png",
+                "image with spaces.png",
+                "图片.png",
+                "image#1.png",
+                "image%20.png",
+                "image+1.png",
+            ):
+                path = Path(directory) / filename
+                path.write_bytes(base64.b64decode(self.image_b64))
+                msgs = [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ]
+                for formatter in (
+                    OllamaChatFormatter(),
+                    OllamaMultiAgentFormatter(),
+                ):
+                    with self.subTest(
+                        filename=filename,
+                        formatter=type(formatter).__name__,
+                    ):
+                        result = await formatter.format(msgs)
+                        self.assertEqual(result[0]["images"], [self.image_b64])
 
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
