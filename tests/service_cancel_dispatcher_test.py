@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Tests for :class:`CancelDispatcher` — one-per-process consumer of the
-shared session-cancel broadcast channel.
+"""Tests for :class:`CancelDispatcher` and its cancel subscriptions.
 
 Verifies that on each incoming ``session_id`` the dispatcher:
 
@@ -11,11 +10,14 @@ Verifies that on each incoming ``session_id`` the dispatcher:
   same session.
 - Silently does nothing for sessions whose state lives on other
   processes.
+
+Also covers task-cancel and interrupt signals, including reconnects
+after subscription failures.
 """
 import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Callable
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, mock
 
 from agentscope.app._manager import (
     BackgroundTaskManager,
@@ -23,7 +25,7 @@ from agentscope.app._manager import (
     ChatRunRegistry,
 )
 from agentscope.app._manager._background_task_manager import ToolStop
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.message import ToolResultState
 
 
@@ -177,6 +179,52 @@ class _FakeBus(MessageBus):
         self._registries.pop(namespace, None)
 
 
+class _FlakyBus(_FakeBus):
+    """Drop selected subscriptions once, then use the regular fake bus."""
+
+    def __init__(
+        self,
+        fail_keys: set[str] | None = None,
+        end_keys: set[str] | None = None,
+        fail_before_ready: set[str] | None = None,
+        fail_after_payload: set[str] | None = None,
+    ) -> None:
+        super().__init__()
+        self.fail_keys = fail_keys or set()
+        self.end_keys = end_keys or set()
+        self.fail_before_ready = fail_before_ready or set()
+        self.fail_after_payload = fail_after_payload or set()
+        self.attempts: dict[str, int] = {}
+        self.resubscribed = {
+            key: asyncio.Event()
+            for key in self.fail_keys | self.end_keys | self.fail_after_payload
+        }
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        attempt = self.attempts.get(key, 0) + 1
+        self.attempts[key] = attempt
+        if attempt == 1 and key in self.fail_keys | self.end_keys:
+            if on_ready is not None and key not in self.fail_before_ready:
+                on_ready()
+            if key in self.fail_keys:
+                raise ConnectionError("simulated Pub/Sub disconnect")
+            return
+        if key in self.fail_after_payload and attempt == 1:
+            async for payload in super().subscribe(key, on_ready=on_ready):
+                yield payload
+                raise ConnectionError("simulated mid-stream disconnect")
+            return
+        if key in self.resubscribed:
+            self.resubscribed[key].set()
+        async for payload in super().subscribe(key, on_ready=on_ready):
+            yield payload
+
+
 async def _yield_a_few_times(ticks: int = 8) -> None:
     """Yield the event loop a few times so spawned tasks make progress."""
     for _ in range(ticks):
@@ -194,6 +242,190 @@ class _NeverEndingCoro:
 
 class TestCancelDispatcher(IsolatedAsyncioTestCase):
     """Verifies the cross-process cancel fan-out."""
+
+    async def test_session_cancel_reconnects_after_disconnect(self) -> None:
+        """A later session signal still cancels a local run after drop."""
+        key = MessageBusKeys.session_cancel_channel()
+        bus = _FlakyBus(fail_keys={key})
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+        ):
+            await asyncio.wait_for(bus.resubscribed[key].wait(), timeout=2)
+            chat_task = registry.spawn(
+                _NeverEndingCoro.run(),
+                session_id="sess-recovered",
+            )
+            cancelled = asyncio.Event()
+            chat_task.add_done_callback(lambda _: cancelled.set())
+            await bus.publish(key, {"session_id": "sess-recovered"})
+            await asyncio.wait_for(cancelled.wait(), timeout=1)
+            self.assertTrue(chat_task.cancelled())
+            self.assertEqual(bus.attempts[key], 2)
+
+    async def test_task_cancel_reconnects_after_disconnect(self) -> None:
+        """A later task signal still cancels a local background tool."""
+        key = MessageBusKeys.task_cancel_channel()
+        bus = _FlakyBus(fail_keys={key})
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+        ):
+            await asyncio.wait_for(bus.resubscribed[key].wait(), timeout=2)
+            bg_task = asyncio.create_task(_NeverEndingCoro.run())
+            task_id = await bg_manager.register_task(
+                bg_task,
+                session_id="sess-recovered",
+                agent_id="agent",
+                user_id="user",
+            )
+            cancelled = asyncio.Event()
+            bg_task.add_done_callback(lambda _: cancelled.set())
+            await bus.publish(key, {"task_id": task_id})
+            await asyncio.wait_for(cancelled.wait(), timeout=1)
+            self.assertTrue(bg_task.cancelled())
+            self.assertEqual(bus.attempts[key], 2)
+
+    async def test_interrupt_reconnects_after_disconnect(self) -> None:
+        """A later interrupt still cancels its local chat run."""
+        key = MessageBusKeys.session_interrupt_channel()
+        bus = _FlakyBus(fail_keys={key})
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+        ):
+            await asyncio.wait_for(bus.resubscribed[key].wait(), timeout=2)
+            chat_task = registry.spawn(
+                _NeverEndingCoro.run(),
+                session_id="sess-recovered",
+            )
+            cancelled = asyncio.Event()
+            chat_task.add_done_callback(lambda _: cancelled.set())
+            await bus.publish(key, {"session_id": "sess-recovered"})
+            await asyncio.wait_for(cancelled.wait(), timeout=1)
+            self.assertTrue(chat_task.cancelled())
+            self.assertEqual(bus.attempts[key], 2)
+
+    async def test_subscribe_failure_before_ready_does_not_block_startup(
+        self,
+    ) -> None:
+        """A failed initial subscribe is retried without hanging entry."""
+        key = MessageBusKeys.session_cancel_channel()
+        bus = _FlakyBus(fail_keys={key}, fail_before_ready={key})
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+        dispatcher = CancelDispatcher(bus, registry, bg_manager)
+
+        async with bg_manager, registry:
+            async with asyncio.timeout(0.5):
+                async with dispatcher:
+                    self.assertEqual(bus.attempts[key], 1)
+
+    async def test_subscription_normal_end_reconnects(self) -> None:
+        """A closed stream is retried rather than ending the loop."""
+        key = MessageBusKeys.session_cancel_channel()
+        bus = _FlakyBus(end_keys={key})
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+        ) as dispatcher:
+            await asyncio.wait_for(bus.resubscribed[key].wait(), timeout=2)
+            self.assertEqual(bus.attempts[key], 2)
+            self.assertFalse(dispatcher._session_task.done())
+
+    async def test_mid_stream_disconnect_reconnects(self) -> None:
+        """A channel that drops after a signal handles later signals."""
+        key = MessageBusKeys.session_interrupt_channel()
+        bus = _FlakyBus(fail_after_payload={key})
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+        ):
+            first = registry.spawn(
+                _NeverEndingCoro.run(),
+                session_id="before-drop",
+            )
+            first_done = asyncio.Event()
+            first.add_done_callback(lambda _: first_done.set())
+            await bus.publish(key, {"session_id": "before-drop"})
+            await asyncio.wait_for(first_done.wait(), timeout=1)
+            self.assertTrue(first.cancelled())
+
+            await asyncio.wait_for(bus.resubscribed[key].wait(), timeout=2)
+            second = registry.spawn(
+                _NeverEndingCoro.run(),
+                session_id="after-drop",
+            )
+            second_done = asyncio.Event()
+            second.add_done_callback(lambda _: second_done.set())
+            await bus.publish(key, {"session_id": "after-drop"})
+            await asyncio.wait_for(second_done.wait(), timeout=1)
+            self.assertTrue(second.cancelled())
+            self.assertEqual(bus.attempts[key], 2)
+
+    async def test_handler_failure_keeps_task_cancel_subscription(
+        self,
+    ) -> None:
+        """A broken signal does not drop the healthy Pub/Sub stream."""
+        key = MessageBusKeys.task_cancel_channel()
+        bus = _FlakyBus()
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+        ):
+            bg_task = asyncio.create_task(_NeverEndingCoro.run())
+            task_id = await bg_manager.register_task(
+                bg_task,
+                session_id="sess-handler",
+                agent_id="agent",
+                user_id="user",
+            )
+            cancelled = asyncio.Event()
+            bg_task.add_done_callback(lambda _: cancelled.set())
+            first_handled = asyncio.Event()
+            original_cancel = bg_manager.cancel_task
+
+            def cancel_once_faulty(target_id: str) -> bool:
+                if not first_handled.is_set():
+                    first_handled.set()
+                    raise RuntimeError("simulated handler failure")
+                return original_cancel(target_id)
+
+            with mock.patch.object(
+                bg_manager,
+                "cancel_task",
+                side_effect=cancel_once_faulty,
+            ):
+                await bus.publish(key, {"task_id": "bad-signal"})
+                await asyncio.wait_for(first_handled.wait(), timeout=1)
+                await bus.publish(key, {"task_id": task_id})
+                await asyncio.wait_for(cancelled.wait(), timeout=0.5)
+                self.assertTrue(bg_task.cancelled())
+                self.assertEqual(bus.attempts[key], 1)
 
     async def test_cancel_signal_cancels_local_chat_run(self) -> None:
         """Broadcast for a session whose chat run is registered locally
