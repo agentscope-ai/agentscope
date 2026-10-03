@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { formatApiErrorForAlert } from '@/lib/api-error.ts';
 import { cn } from '@/lib/utils.ts';
+import { normalizeServerUrl } from '@/utils/url.ts';
 
 interface Props {
 	onComplete: () => void;
@@ -66,7 +67,8 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		const trimmedUrl = url.trim().replace(/\/+$/, '');
+		const normalizedUrl = normalizeServerUrl(url);
+		setUrl(normalizedUrl);
 		const trimmedName = username.trim();
 
 		setChecking(true);
@@ -76,7 +78,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 			// the username work, so a failed attempt cannot leave the app
 			// holding a config that sends every later page into errors.
 			const health = (await healthApi.check(
-				trimmedUrl,
+				normalizedUrl,
 				trimmedName,
 			)) as Partial<HealthResponse>;
 			// Valid JSON that is not a health report means the address points
@@ -85,7 +87,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 				setErrorMsg(t('setup.errorNotAgentScope'));
 				return;
 			}
-			localStorage.setItem('server_url', trimmedUrl);
+			localStorage.setItem('server_url', normalizedUrl);
 			localStorage.setItem('username', trimmedName);
 			onComplete();
 		} catch (err) {
@@ -112,7 +114,10 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 									</FieldLabel>
 									<Input
 										id="server-url-input"
-										type="url"
+										type="text"
+										inputMode="url"
+										autoCapitalize="none"
+										autoCorrect="off"
 										placeholder={t('setup.serverUrlPlaceholder')}
 										value={url}
 										onChange={(e) => setUrl(e.target.value)}
