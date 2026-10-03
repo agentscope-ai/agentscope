@@ -3,6 +3,7 @@
 AnthropicMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import (
@@ -19,6 +20,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -190,9 +192,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         #     <history>...</history>.
         #   - Agent messages (is_first=False): no wrapping at all.
         # ---------------------------------------------------------------
-        _hist_prompt = (
-            AnthropicMultiAgentFormatter().conversation_history_prompt
-        )
+        _hist_prompt = AnthropicMultiAgentFormatter().conversation_history_prompt
 
         _conv_text = (
             "user: What is the capital of France?\n"
@@ -252,10 +252,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "text": (
-                            _hist_prompt
-                            + "<history>\n"
-                            + _conv_text
-                            + "\n</history>"
+                            _hist_prompt + "<history>\n" + _conv_text + "\n</history>"
                         ),
                     },
                 ],
@@ -507,10 +504,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         tool_result_roles = [
             m["role"]
             for m in res
-            if any(
-                b.get("type") == "tool_result"
-                for b in (m.get("content") or [])
-            )
+            if any(b.get("type") == "tool_result" for b in (m.get("content") or []))
         ]
         self.assertListEqual(tool_result_roles, ["user"])
 
@@ -1080,8 +1074,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
-                            "text": "Get weather for Beijing, Shanghai, "
-                            "and Guangzhou.",
+                            "text": "Get weather for Beijing, Shanghai, and Guangzhou.",
                         },
                     ],
                 },
@@ -1168,9 +1161,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
 
         res = await fmt.format(msgs)
 
-        tool_use = [
-            b for b in res[0]["content"] if b.get("type") == "tool_use"
-        ][0]
+        tool_use = [b for b in res[0]["content"] if b.get("type") == "tool_use"][0]
         # Repaired to a dict rather than crashing.
         self.assertIsInstance(tool_use["input"], dict)
 
@@ -1342,6 +1333,244 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                                 {
                                     "type": "text",
                                     "text": "(empty tool output)",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+
+class TestAnthropicUnsupportedMedia(IsolatedAsyncioTestCase):
+    """A media block the endpoint cannot ingest must not silently vanish.
+
+    Before the placeholder existed, an unsupported DataBlock was dropped, so
+    a media-only user message disappeared entirely and the model lost the
+    turn; the tool_result path already kept a text placeholder for the same
+    situation.
+    """
+
+    async def test_chat_formatter_unsupported_media_only(self) -> None:
+        """A media-only user message keeps the turn with a placeholder."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, type: audio/wav]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_keeps_text(self) -> None:
+        """Text survives alongside the placeholder for mixed messages."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="listen:"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "listen:"},
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, type: audio/wav]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_in_hint(self) -> None:
+        """A hint block carrying unsupported media keeps a placeholder."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="background:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data="aGVsbG8=",
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "background:"},
+                        {
+                            "type": "text",
+                            "text": "[audio file returned, type: audio/wav]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_tool_result_unsupported_media(self) -> None:
+        """Tool-result media the endpoint cannot ingest still keeps the
+        existing text placeholder wording."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_a",
+                        name="record",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_a",
+                        name="record",
+                        output=[
+                            DataBlock(
+                                source=Base64Source(
+                                    data="aGVsbG8=",
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_a",
+                            "name": "record",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_a",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "[audio file returned, type: audio/wav]",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_tool_result_unsupported_url_media(self) -> None:
+        """URL-sourced media uses the URL variant of the placeholder."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_b",
+                        name="record",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_b",
+                        name="record",
+                        output=[
+                            DataBlock(
+                                source=URLSource(
+                                    url="https://example.com/clip.wav",
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_b",
+                            "name": "record",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_b",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "[audio file returned, "
+                                    "URL: https://example.com/clip.wav]",
                                 },
                             ],
                         },

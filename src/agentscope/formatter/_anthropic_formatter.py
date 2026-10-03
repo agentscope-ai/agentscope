@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Anthropic formatter module."""
+
 import base64
 import fnmatch
 from abc import ABC
@@ -124,9 +125,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 elif isinstance(block, HintBlock):
                     if isinstance(block.hint, str):
                         hint_parts = (
-                            [{"type": "text", "text": block.hint}]
-                            if block.hint
-                            else []
+                            [{"type": "text", "text": block.hint}] if block.hint else []
                         )
                     else:
                         hint_parts = []
@@ -137,11 +136,15 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                         {"type": "text", "text": sub.text},
                                     )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = (
-                                    self._format_anthropic_data_block(sub)
-                                )
+                                formatted_sub = self._format_anthropic_data_block(sub)
                                 if formatted_sub:
                                     hint_parts.append(formatted_sub)
+                                else:
+                                    hint_parts.append(
+                                        self._unsupported_media_placeholder(
+                                            sub.source,
+                                        ),
+                                    )
 
                     if hint_parts:
                         if content_blocks:
@@ -159,6 +162,13 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     formatted_block = self._format_anthropic_data_block(block)
                     if formatted_block:
                         content_blocks.append(formatted_block)
+                    else:
+                        # Keep the turn visible: a media block the endpoint
+                        # cannot ingest must not silently vanish, otherwise
+                        # a media-only message disappears entirely.
+                        content_blocks.append(
+                            self._unsupported_media_placeholder(block.source),
+                        )
 
                 elif isinstance(block, ToolCallBlock):
                     content_blocks.append(
@@ -218,20 +228,10 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                 if fmt_block:
                                     tool_result_content.append(fmt_block)
                                 else:
-                                    source = out_block.source
-                                    main_type = source.media_type.split("/")[0]
-                                    if isinstance(source, URLSource):
-                                        fallback = (
-                                            f"[{main_type} file returned, "
-                                            f"URL: {source.url}]"
-                                        )
-                                    else:
-                                        fallback = (
-                                            f"[{main_type} file returned, "
-                                            f"type: {source.media_type}]"
-                                        )
                                     tool_result_content.append(
-                                        {"type": "text", "text": fallback},
+                                        self._unsupported_media_placeholder(
+                                            out_block.source,
+                                        ),
                                     )
 
                     # Anthropic rejects a tool_result whose content list is
@@ -271,6 +271,20 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 )
 
         return messages
+
+    @staticmethod
+    def _unsupported_media_placeholder(
+        source: Base64Source | URLSource,
+    ) -> dict[str, Any]:
+        """Build a text placeholder standing in for a media block the
+        endpoint cannot ingest, so the surrounding turn stays visible to
+        the model."""
+        main_type = source.media_type.split("/")[0]
+        if isinstance(source, URLSource):
+            text = f"[{main_type} file returned, URL: {source.url}]"
+        else:
+            text = f"[{main_type} file returned, type: {source.media_type}]"
+        return {"type": "text", "text": text}
 
     def _format_anthropic_data_block(
         self,
@@ -499,8 +513,7 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                     0,
                     {
                         "type": "text",
-                        "text": self.conversation_history_prompt
-                        + "<history>\n",
+                        "text": self.conversation_history_prompt + "<history>\n",
                     },
                 )
 
