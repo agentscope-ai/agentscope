@@ -127,14 +127,16 @@ class DashScopeTTSModel(TTSModelBase):
 
         import dashscope
 
-        response = dashscope.MultiModalConversation.call(
-            model=self.model,
-            api_key=self.credential.api_key.get_secret_value(),
-            text=text,
-            voice=self.parameters.voice,
-            stream=True,
-            **kwargs,
-        )
+        request_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "text": text,
+            "voice": self.parameters.voice,
+        }
+        request_kwargs.update(kwargs)
+        request_kwargs["api_key"] = self.credential.api_key.get_secret_value()
+        request_kwargs["stream"] = True
+
+        response = dashscope.MultiModalConversation.call(**request_kwargs)
 
         if self.stream:
             return self._parse_into_async_generator(response)
@@ -150,6 +152,8 @@ class DashScopeTTSModel(TTSModelBase):
         audio_bytes = bytearray()
         usage = None
         for chunk in response:
+            if chunk.status_code != 200:
+                raise RuntimeError(f"DashScope TTS API error: {chunk}")
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.output is not None:
@@ -205,6 +209,8 @@ class DashScopeTTSModel(TTSModelBase):
             chunk = next(it, _SENTINEL)
             if chunk is _SENTINEL:
                 break
+            if chunk.status_code != 200:
+                raise RuntimeError(f"DashScope TTS API error: {chunk}")
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.output is None:

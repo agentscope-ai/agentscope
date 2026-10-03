@@ -188,6 +188,52 @@ class SessionRow(_JsonRecordMixin):
     }
 
 
+class SOPRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.SOPRecord`."""
+
+    __tablename__ = "sops"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+
+    _indexed_fields = ("user_id",)
+
+
+class SOPRunRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.SOPRunRecord`."""
+
+    __tablename__ = "sop_runs"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    sop_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+    phase: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        index=True,
+    )
+
+    __table_args__ = (
+        Index("ix_sop_runs_user_sop", "user_id", "sop_id"),
+        Index("ix_sop_runs_user_phase", "user_id", "phase"),
+    )
+
+    _indexed_fields = ("user_id", "sop_id")
+
+    # A copy of the run state's derived phase, for filtering.
+    _index_paths: ClassVar[dict[str, str]] = {"phase": "state.phase"}
+
+
 class ScheduleRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.ScheduleRecord`."""
 

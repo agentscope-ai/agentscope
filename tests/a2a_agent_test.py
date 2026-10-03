@@ -735,6 +735,83 @@ class A2AAgentTaskContinuationTest(IsolatedAsyncioTestCase):
         self.assertListEqual(client.requests, [])
         await agent.aclose()
 
+    async def test_rejected_reply_keeps_observed_messages(self) -> None:
+        """A reply rejected by the running-Task check must not consume
+        the observed messages — the retry still sends them."""
+        client = _FakeClient(
+            [
+                [
+                    types.StreamResponse(
+                        message=types.Message(
+                            message_id="msg-1",
+                            context_id="context-1",
+                            role=types.Role.ROLE_AGENT,
+                            parts=[types.Part(text="ok")],
+                        ),
+                    ),
+                ],
+            ],
+            get_tasks=[
+                types.Task(
+                    id="task-1",
+                    context_id="context-1",
+                    status=types.TaskStatus(
+                        state=types.TaskState.TASK_STATE_WORKING,
+                    ),
+                ),
+                # The retry finds the Task forgotten and starts a new one.
+                TaskNotFoundError(),
+            ],
+        )
+        agent = A2AAgent(
+            self.card,
+            client=client,
+            state=A2AAgentState(context_id="context-1", task_id="task-1"),
+        )
+
+        await agent.observe(UserMsg(name="user", content="earlier"))
+
+        with self.assertRaises(RuntimeError):
+            await agent.reply(UserMsg(name="user", content="hi"))
+
+        # Nothing was sent and the observation survived the rejection.
+        self.assertListEqual(client.requests, [])
+        self.assertEqual(
+            [_.get_text_content() for _ in agent.state.observed_context],
+            ["earlier"],
+        )
+
+        await agent.reply(UserMsg(name="user", content="later"))
+
+        self.assertEqual(
+            [_.text for _ in client.requests[0].message.parts],
+            ["earlier", "later"],
+        )
+        self.assertListEqual(agent.state.observed_context, [])
+        await agent.aclose()
+
+    async def test_pre_flight_failure_keeps_observed_messages(self) -> None:
+        """A client error before the send (the task lookup here) must
+        not consume the observed messages."""
+        client = _FakeClient(get_tasks=[RuntimeError("server down")])
+        agent = A2AAgent(
+            self.card,
+            client=client,
+            state=A2AAgentState(context_id="context-1", task_id="task-1"),
+        )
+
+        await agent.observe(UserMsg(name="user", content="earlier"))
+
+        with self.assertRaises(RuntimeError):
+            await agent.reply(UserMsg(name="user", content="hi"))
+
+        self.assertListEqual(client.requests, [])
+        self.assertEqual(
+            [_.get_text_content() for _ in agent.state.observed_context],
+            ["earlier"],
+        )
+        await agent.aclose()
+
     async def test_forgotten_task_starts_a_new_one(self) -> None:
         """A Task the server dropped degrades into a new one."""
         client = _FakeClient(
