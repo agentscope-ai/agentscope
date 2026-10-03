@@ -30,6 +30,11 @@ from typing import TYPE_CHECKING, Any, Self
 from ..message_bus import MessageBusKeys
 from ..._logging import logger
 
+# Keep reconnect attempts responsive during a short Redis interruption while
+# avoiding a hot loop when the broker is unavailable for longer.
+_RECONNECT_INITIAL_BACKOFF_SECS = 1.0
+_RECONNECT_MAX_BACKOFF_SECS = 30.0
+
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ._index_worker import IndexWorker
@@ -70,6 +75,9 @@ class IndexTaskConsumer:
         # can cancel + drain them; otherwise the event-loop teardown
         # would swallow exceptions raised inside the worker.
         self._inflight: set[asyncio.Task[Any]] = set()
+        # Drains scheduled by a successful re-subscription. They are
+        # tracked separately because they are not worker.process calls.
+        self._reconnect_drains: set[asyncio.Task[Any]] = set()
 
     async def __aenter__(self) -> Self:
         """Start the consumer loop and wait until its subscription
@@ -116,6 +124,15 @@ class IndexTaskConsumer:
             await asyncio.gather(*self._inflight, return_exceptions=True)
         self._inflight.clear()
 
+        for task in list(self._reconnect_drains):
+            task.cancel()
+        if self._reconnect_drains:
+            await asyncio.gather(
+                *self._reconnect_drains,
+                return_exceptions=True,
+            )
+        self._reconnect_drains.clear()
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -131,22 +148,66 @@ class IndexTaskConsumer:
                 can publish a signal immediately after start-up
                 without racing.
         """
-        try:
-            async for _signal in self._bus.subscribe(
-                MessageBusKeys.index_tasks_signal(),
-                on_ready=ready.set,
-            ):
-                await self._drain_and_dispatch()
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "IndexTaskConsumer loop crashed; subscription ended.",
-            )
-        finally:
-            # If ``subscribe`` raises before ``on_ready`` fires, the
-            # ``__aenter__`` coroutine would deadlock on ``ready.wait()``.
-            # Set the event unconditionally on the way out so startup
-            # cannot stall on a transient bus failure.
+        backoff = _RECONNECT_INITIAL_BACKOFF_SECS
+
+        def on_ready() -> None:
+            """Mark readiness and catch up after a re-subscription."""
+            nonlocal backoff
+            if ready.is_set():
+                self._schedule_reconnect_drain()
             ready.set()
+            backoff = _RECONNECT_INITIAL_BACKOFF_SECS
+
+        while True:
+            try:
+                async for _signal in self._bus.subscribe(
+                    MessageBusKeys.index_tasks_signal(),
+                    on_ready=on_ready,
+                ):
+                    backoff = _RECONNECT_INITIAL_BACKOFF_SECS
+                    await self._drain_and_dispatch()
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "IndexTaskConsumer subscription lost; retrying in %.1fs",
+                    backoff,
+                )
+            else:
+                logger.warning(
+                    "IndexTaskConsumer subscription ended; retrying in %.1fs",
+                    backoff,
+                )
+            finally:
+                # If ``subscribe`` raises before ``on_ready`` fires, the
+                # ``__aenter__`` coroutine would deadlock on ``ready.wait()``.
+                # Set the event unconditionally so startup can proceed while
+                # this loop retries the transient bus failure.
+                ready.set()
+
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, _RECONNECT_MAX_BACKOFF_SECS)
+
+    def _schedule_reconnect_drain(self) -> None:
+        """Catch up durable work after a subscription is re-established."""
+        task = asyncio.create_task(
+            self._drain_and_dispatch(),
+            name="index-task-reconnect-drain",
+        )
+        self._reconnect_drains.add(task)
+        task.add_done_callback(self._on_reconnect_drain_done)
+
+    def _on_reconnect_drain_done(self, task: asyncio.Task[Any]) -> None:
+        """Forget a reconnect drain and surface unexpected failures."""
+        self._reconnect_drains.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.exception(
+                "IndexTaskConsumer: reconnect drain raised",
+                exc_info=exc,
+            )
 
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of task entries and dispatch each one."""
