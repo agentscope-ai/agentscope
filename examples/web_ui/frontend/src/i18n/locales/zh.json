@@ -471,6 +471,29 @@
 					"description": "相邻分块之间共享的近似 Token 数量。"
 				}
 			}
+		},
+		"recursive_token": {
+			"label": "递归 Token 分块",
+			"params": {
+				"chunk_size": {
+					"label": "块大小",
+					"description": "每个分块的最大近似 Token 数量。"
+				},
+				"overlap": {
+					"label": "重叠大小",
+					"description": "相邻分块之间共享的近似 Token 数量。"
+				},
+				"separators": {
+					"label": "分隔符优先级",
+					"description": "按从粗到细的顺序切分；换行符使用 \\n 表示。"
+				}
+			}
+		}
+	},
+	"schema-form": {
+		"array": {
+			"add": "添加一项",
+			"remove": "删除第 {{index}} 项"
 		}
 	},
 	"dimension-select": {

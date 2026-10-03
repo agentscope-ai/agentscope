@@ -379,6 +379,7 @@ export interface SessionView {
  */
 export interface JSONSchemaProperty {
 	type?: string;
+	items?: JSONSchemaProperty;
 	format?: string;
 	description?: string;
 	default?: unknown;
@@ -391,6 +392,8 @@ export interface JSONSchemaProperty {
 	maximum?: number;
 	exclusiveMinimum?: number;
 	exclusiveMaximum?: number;
+	minItems?: number;
+	maxItems?: number;
 }
 
 export interface JSONSchema {

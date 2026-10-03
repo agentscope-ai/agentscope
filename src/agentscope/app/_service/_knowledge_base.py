@@ -35,7 +35,7 @@ from ..storage import (
     KnowledgeDocumentRecord,
 )
 from ..._logging import logger
-from ...rag import ApproxTokenChunker, Chunk
+from ...rag import ApproxTokenChunker, Chunk, RecursiveTokenChunker
 from .._bus_ops import enqueue_index_task
 from ._access import (
     KnowledgeBaseStatusCounts,
@@ -102,7 +102,8 @@ class KnowledgeBaseService:
             chunkers (`list[type[ChunkerBase]] | None`, optional):
                 The chunker classes users can choose from when creating
                 a knowledge base; used to validate ``chunker_config``.
-                Defaults to ``[ApproxTokenChunker]``.
+                Defaults to
+                ``[ApproxTokenChunker, RecursiveTokenChunker]``.
         """
         self._storage = storage
         self._manager = knowledge_base_manager
@@ -110,7 +111,10 @@ class KnowledgeBaseService:
         self._bus = message_bus
         self._access = resource_access_service
         self._chunkers_by_type = {
-            cls.chunker_type: cls for cls in (chunkers or [ApproxTokenChunker])
+            cls.chunker_type: cls
+            for cls in (
+                chunkers or [ApproxTokenChunker, RecursiveTokenChunker]
+            )
         }
 
     # ------------------------------------------------------------------

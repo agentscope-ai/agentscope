@@ -471,6 +471,29 @@
 					"description": "Number of approximate tokens shared between consecutive chunks."
 				}
 			}
+		},
+		"recursive_token": {
+			"label": "Recursive Token",
+			"params": {
+				"chunk_size": {
+					"label": "Chunk Size",
+					"description": "Maximum number of approximate tokens per chunk."
+				},
+				"overlap": {
+					"label": "Overlap",
+					"description": "Number of approximate tokens shared between consecutive chunks."
+				},
+				"separators": {
+					"label": "Separator Priority",
+					"description": "Applied from coarse to fine; use \\n for newline separators."
+				}
+			}
+		}
+	},
+	"schema-form": {
+		"array": {
+			"add": "Add item",
+			"remove": "Remove item {{index}}"
 		}
 	},
 	"dimension-select": {
