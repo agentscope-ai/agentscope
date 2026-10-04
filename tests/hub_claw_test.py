@@ -1,8 +1,84 @@
 # -*- coding: utf-8 -*-
 """ClawHub card-building test case, without any network."""
 from unittest import TestCase
+from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
+
+import httpx
 
 from agentscope.app.hub import ClawSkillHub
+
+
+class ClawSkillContentTest(IsolatedAsyncioTestCase):
+    """Parsing skill content returned by the ClawHub file endpoint."""
+
+    async def test_skill_frontmatter_with_utf8_bom(self) -> None:
+        """Accept a leading BOM while preserving the body and catalog."""
+        body = "# Demo\nKeep \ufeff inside the body."
+        skill_md = (
+            "---\nname: demo\ndescription: Frontmatter description\n---\n\n"
+            + body
+        )
+        for prefix, summary in (
+            ("", None),
+            ("\ufeff", None),
+            ("", "Catalog description"),
+            ("\ufeff", "Catalog description"),
+        ):
+            with self.subTest(bom=bool(prefix), summary=summary):
+
+                def respond(
+                    request: httpx.Request,
+                    skill_prefix: str = prefix,
+                    catalog_summary: str | None = summary,
+                ) -> httpx.Response:
+                    if request.url.path.endswith("/file"):
+                        return httpx.Response(
+                            200,
+                            content=(skill_prefix + skill_md).encode("utf-8"),
+                            headers={
+                                "Content-Type": "text/plain; charset=utf-8",
+                            },
+                        )
+                    return httpx.Response(
+                        200,
+                        json={
+                            "skill": {
+                                "slug": "demo",
+                                "summary": catalog_summary,
+                            },
+                            "owner": {"handle": "alice"},
+                            "latestVersion": {"version": "1.2.3"},
+                        },
+                    )
+
+                client = httpx.AsyncClient(
+                    transport=httpx.MockTransport(respond),
+                )
+                with patch("httpx.AsyncClient", return_value=client):
+                    async with ClawSkillHub() as hub:
+                        card = await hub.get_skill("user", "alice/demo")
+
+                self.assertEqual(
+                    card.model_dump(),
+                    {
+                        "hub_id": "clawhub",
+                        "id": "alice/demo",
+                        "name": "demo",
+                        "description": summary or "Frontmatter description",
+                        "display_name": None,
+                        "tags": [],
+                        "version": "1.2.3",
+                        "updated_at": None,
+                        "author": "alice",
+                        "icon_url": None,
+                        "installs": None,
+                        "downloads": None,
+                        "url": "https://clawhub.ai/skills/demo",
+                        "markdown": body,
+                        "metadata": {},
+                    },
+                )
 
 
 class ClawCardTest(TestCase):
