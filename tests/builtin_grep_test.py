@@ -260,6 +260,72 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Should not find .txt files
         self.assertNotIn("test.txt", content)
 
+    async def test_complete_glob_pattern(self) -> None:
+        """Pass one complete glob without splitting filename characters."""
+        filenames = (
+            "my notes.txt",
+            "report,final.txt",
+            "final.txt",
+            "normal.py",
+            "normal.txt",
+            "normal.js",
+        )
+        for filename in filenames:
+            with open(
+                os.path.join(self.temp_dir, filename),
+                "w",
+                encoding="utf-8",
+            ) as stream:
+                stream.write("needle\n")
+
+        cases = (
+            ("my notes.txt", ("my notes.txt",)),
+            ("report,final.txt", ("report,final.txt",)),
+            ("*.py", ("normal.py",)),
+            (
+                "*.{py,txt}",
+                tuple(name for name in filenames if not name.endswith(".js")),
+            ),
+            ("{my notes,final}.txt", ("my notes.txt", "final.txt")),
+            ("missing*.txt", ()),
+            (None, filenames),
+            ("", filenames),
+        )
+        for glob, expected_names in cases:
+            with self.subTest(glob=glob):
+                chunk = await self.grep_tool(
+                    pattern="needle",
+                    path=self.temp_dir,
+                    glob=glob,
+                )
+                expected_text = (
+                    "\n".join(
+                        os.path.join(self.temp_dir, name)
+                        for name in sorted(expected_names)
+                    )
+                    or "No matches found for pattern: needle"
+                )
+                self.assertEqual(
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    ),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": expected_text,
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": ToolResultState.SUCCESS,
+                        "is_last": True,
+                        "metadata": {},
+                    },
+                )
+
     async def test_match_rule_path(self) -> None:
         """Test match_rule with search path patterns."""
         # Test matching explicit path
