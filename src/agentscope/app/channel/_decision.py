@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Validate and atomically resume a tool approval.
 
-The awaiting confirmation is always read from session state. A short-lived
-server-side approval record may pin the expected reply, but never replaces
-the session as the source of truth for the tool call itself.
+The awaiting confirmation is always read from session state. A server-side
+approval record pins the expected reply, but never replaces the session as
+the source of truth for the tool call itself.
 """
+import asyncio
+
 from ...event import ConfirmResult, UserConfirmResultEvent
 from ...message import ToolCallBlock, ToolCallState
 from .._bus_ops import enqueue_run_trigger
@@ -91,14 +93,11 @@ async def resume_after_decision(
     if tool_call is None:
         return False
     claim_key = MessageBusKeys.channel_approval_claim(
-        session_id,
-        reply_id,
-        tool_call_id,
         approval_id,
     )
     if not await bus.try_lock(
         claim_key,
-        ttl_secs=MessageBusKeys.CHANNEL_APPROVAL_TTL_SECS,
+        ttl_secs=MessageBusKeys.CHANNEL_APPROVAL_CLAIM_TTL_SECS,
     ):
         return False
     try:
@@ -116,6 +115,13 @@ async def resume_after_decision(
             ),
         )
         return True
+    except asyncio.CancelledError:
+        # The claim was introduced by the channel approval flow, so task
+        # cancellation must not strand it until its lease expires. Shield
+        # the cleanup from the cancellation already being propagated, then
+        # preserve the caller's cancellation semantics.
+        await asyncio.shield(bus.unlock(claim_key))
+        raise
     except Exception:
         await bus.unlock(claim_key)
         raise

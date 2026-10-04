@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """Channel-owned state for pending tool approvals."""
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from ...event import RequireUserConfirmEvent
 from ..message_bus import MessageBus, MessageBusKeys
 
 _APPROVAL_FIELD = "record"
 _REQUESTER_FIELD = "requester"
-_APPROVAL_TTL_SECS = MessageBusKeys.CHANNEL_APPROVAL_TTL_SECS
-_REPLY_REQUESTER_TTL_SECS = MessageBusKeys.CHANNEL_APPROVAL_TTL_SECS
+_APPROVAL_IDS_KEY = "channel_approval_ids"
 
 
 class ChannelApprovalRecord(BaseModel):
@@ -29,6 +30,31 @@ def new_approval_id() -> str:
     return uuid4().hex
 
 
+def with_approval_ids(
+    raw: dict[str, Any],
+    approval_ids: dict[str, str],
+) -> dict[str, Any]:
+    """Return an event payload carrying tool-call approval ids."""
+    enriched = dict(raw)
+    enriched["metadata"] = {
+        **dict(raw.get("metadata") or {}),
+        _APPROVAL_IDS_KEY: approval_ids,
+    }
+    return enriched
+
+
+def approval_id_for(
+    request: RequireUserConfirmEvent,
+    tool_call_id: str,
+) -> str:
+    """Read one tool call's opaque approval id from event metadata."""
+    approval_ids = request.metadata.get(_APPROVAL_IDS_KEY)
+    if not isinstance(approval_ids, dict):
+        return ""
+    approval_id = approval_ids.get(tool_call_id)
+    return approval_id if isinstance(approval_id, str) else ""
+
+
 async def remember_reply_requester(
     bus: MessageBus,
     *,
@@ -43,7 +69,6 @@ async def remember_reply_requester(
         MessageBusKeys.channel_reply_requester(session_id, reply_id),
         _REQUESTER_FIELD,
         requester_id,
-        ttl_secs=_REPLY_REQUESTER_TTL_SECS,
     )
 
 
@@ -73,7 +98,6 @@ async def store_approval(
         MessageBusKeys.channel_approval(approval_id),
         _APPROVAL_FIELD,
         record.model_dump_json(),
-        ttl_secs=_APPROVAL_TTL_SECS,
     )
 
 

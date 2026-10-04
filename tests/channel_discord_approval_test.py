@@ -9,7 +9,7 @@ from agentscope.app.channel._base import (
     ChannelConfirmationResultEvent,
     ChannelDecisionStatus,
 )
-from agentscope.app.channel._discord._approval import (
+from agentscope.app.channel._discord._channel import (
     _approval_custom_id,
     _parse_approval_custom_id,
 )
@@ -78,15 +78,27 @@ class DiscordApprovalTest(IsolatedAsyncioTestCase):
         channel._emit = emit
         interaction = _interaction()
 
-        await channel._on_approval_interaction(
-            interaction,
+        approval_id, approved = _parse_approval_custom_id(
             _approval_custom_id("opaque-1", False),
+        )
+        await channel._decide(
+            interaction,
+            approved=approved,
+            approval_id=approval_id,
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].approval_id, "opaque-1")
-        self.assertEqual(received[0].actor, "456")
-        self.assertFalse(received[0].approved)
+        self.assertDictEqual(
+            received[0].model_dump(),
+            {
+                "channel_id": "discord-1",
+                "chat_id": "123",
+                "channel_user_id": "456",
+                "approved": False,
+                "actor": "456",
+                "approval_id": "opaque-1",
+            },
+        )
         self.assertTrue(interaction.response.deferred)
         self.assertEqual(interaction.message.edits[0]["content"], "🚫 Denied")
 
@@ -104,9 +116,10 @@ class DiscordApprovalTest(IsolatedAsyncioTestCase):
         channel._emit = emit
         interaction = _interaction()
 
-        await channel._on_approval_interaction(
+        await channel._decide(
             interaction,
-            _approval_custom_id("opaque-1", True),
+            approved=True,
+            approval_id="opaque-1",
         )
 
         self.assertTrue(interaction.response.deferred)

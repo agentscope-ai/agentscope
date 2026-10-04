@@ -327,10 +327,18 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
         self.assertRegex(approval_id, r"^[0-9a-f]{32}$")
         approval = await load_approval(bus, approval_id)
         self.assertIsNotNone(approval)
-        self.assertEqual(approval.requester_id, "requester-1")
-        self.assertEqual(approval.session_id, "s-1")
-        self.assertEqual(approval.reply_id, "reply-1")
-        self.assertEqual(approval.tool_call_id, "tool-1")
+        self.assertDictEqual(
+            approval.model_dump(),
+            {
+                "channel_id": "chan-1",
+                "chat_id": "chat-1",
+                "agent_id": "agent-x",
+                "session_id": "s-1",
+                "reply_id": "reply-1",
+                "tool_call_id": "tool-1",
+                "requester_id": "requester-1",
+            },
+        )
 
         continued = [
             raw
@@ -347,7 +355,19 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             "tool-1"
         ]
         continued_approval = await load_approval(bus, continued_id)
-        self.assertEqual(continued_approval.requester_id, "requester-1")
+        self.assertIsNotNone(continued_approval)
+        self.assertDictEqual(
+            continued_approval.model_dump(),
+            {
+                "channel_id": "chan-1",
+                "chat_id": "chat-1",
+                "agent_id": "agent-x",
+                "session_id": "s-1",
+                "reply_id": "reply-1",
+                "tool_call_id": "tool-1",
+                "requester_id": "requester-1",
+            },
+        )
 
     async def test_requester_is_resolved_from_run_input(self) -> None:
         """Fresh messages name the requester; resume events recover it."""

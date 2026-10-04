@@ -10,6 +10,7 @@ reconciled with storage.
 """
 from ._base import (
     ChannelBase,
+    ChannelAuthConfirmationResultEvent,
     ChannelCapability,
     ChannelConfirmationResultEvent,
     ChannelDecisionStatus,
@@ -34,6 +35,7 @@ from ._feishu import FeishuChannel
 
 __all__ = [
     "ChannelBase",
+    "ChannelAuthConfirmationResultEvent",
     "ChannelClients",
     "ChannelCapability",
     "ChannelConfirmationResultEvent",

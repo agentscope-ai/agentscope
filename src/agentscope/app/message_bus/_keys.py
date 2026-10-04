@@ -327,8 +327,8 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
 
-    CHANNEL_APPROVAL_TTL_SECS = 86400
-    """Lifetime of a pending approval and its one-shot decision claim."""
+    CHANNEL_APPROVAL_CLAIM_TTL_SECS = 86400
+    """Maximum lifetime of a one-shot approval decision claim."""
 
     @classmethod
     def channel_lifecycle(cls) -> str:
@@ -373,13 +373,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     @classmethod
     def channel_approval_claim(
         cls,
-        session_id: str,
-        reply_id: str,
-        tool_call_id: str,
         approval_id: str,
     ) -> str:
-        """Atomic decision claim for one tool call in one reply."""
-        return (
-            f"agentscope:channel:approval-claim:{session_id}:{reply_id}:"
-            f"{tool_call_id}:{approval_id}"
-        )
+        """Atomic decision claim for one opaque approval id."""
+        return f"agentscope:channel:approval-claim:{approval_id}"

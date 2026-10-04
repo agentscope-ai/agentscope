@@ -35,10 +35,15 @@ has instead.
 import asyncio
 from contextlib import aclosing
 from types import TracebackType
-from typing import AsyncIterator
+from typing import AsyncIterator, TypeAlias
 
 from ..._logging import logger
-from ...event import ReplyStartEvent, RequireUserConfirmEvent
+from ...event import (
+    EventType,
+    ExternalExecutionResultEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
 from ...message import Msg
 from ..message_bus import MessageBus
 from ..storage import StorageBase
@@ -48,10 +53,20 @@ from ._approval import (
     new_approval_id,
     remember_reply_requester,
     store_approval,
+    with_approval_ids,
 )
-from ._base import ChannelBase, ChannelEvent, _EVENT_ADAPTER
+from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
 from ._stream import open_reply_stream
+
+ChannelRunInput: TypeAlias = (
+    Msg
+    | list[Msg]
+    | UserConfirmResultEvent
+    | ExternalExecutionResultEvent
+    | UserInterruptEvent
+    | None
+)
 
 
 class ChannelClients:
@@ -171,7 +186,7 @@ class ChannelClients:
         channel_id: str,
         chat_id: str,
         agent_id: str,
-        input_msg: object = None,
+        input_msg: ChannelRunInput = None,
     ) -> None:
         """Start streaming a run's reply back to its platform chat.
 
@@ -186,8 +201,9 @@ class ChannelClients:
             chat_id (`str`): The platform chat to deliver into.
             agent_id (`str`): The agent that owns the session; pinned on
                 a confirmation card so a click resumes this exact run.
-            input_msg (`object`): Input that triggered the run. Used to obtain
-                the original platform requester for approval authorization.
+            input_msg (`ChannelRunInput`): Input that triggered the run. Used
+                to obtain the original platform requester for approval
+                authorization.
         """
         channel = await self.get(channel_id)
         if channel is None:
@@ -259,7 +275,7 @@ class ChannelClients:
     async def _requester_for_input(
         self,
         session_id: str,
-        input_msg: object,
+        input_msg: ChannelRunInput,
     ) -> str:
         """Resolve the original platform requester from one run input.
 
@@ -269,7 +285,8 @@ class ChannelClients:
 
         Args:
             session_id (`str`): Session being delivered.
-            input_msg (`object`): Message or event that triggered the run.
+            input_msg (`ChannelRunInput`): Message or event that triggered the
+                run.
 
         Returns:
             `str`: Platform requester id, or an empty string when the run has
@@ -280,13 +297,19 @@ class ChannelClients:
         if isinstance(input_msg, list) and input_msg:
             first = input_msg[0]
             return first.name if isinstance(first, Msg) else ""
-        reply_id = getattr(input_msg, "reply_id", "")
-        if not isinstance(reply_id, str) or not reply_id:
+        if not isinstance(
+            input_msg,
+            (
+                UserConfirmResultEvent,
+                ExternalExecutionResultEvent,
+                UserInterruptEvent,
+            ),
+        ):
             return ""
         return await load_reply_requester(
             self._bus,
             session_id=session_id,
-            reply_id=reply_id,
+            reply_id=input_msg.reply_id,
         )
 
     async def _approval_events(
@@ -323,30 +346,33 @@ class ChannelClients:
         """
         current_requester = requester_id
         async for raw in events:
-            event = _EVENT_ADAPTER.validate_python(raw)
-            if isinstance(event, ReplyStartEvent):
+            event_type = raw.get("type")
+            if event_type == EventType.REPLY_START:
+                reply_id = raw["reply_id"]
                 if current_requester:
                     await remember_reply_requester(
                         self._bus,
                         session_id=session_id,
-                        reply_id=event.reply_id,
+                        reply_id=reply_id,
                         requester_id=current_requester,
                     )
                 else:
                     current_requester = await load_reply_requester(
                         self._bus,
                         session_id=session_id,
-                        reply_id=event.reply_id,
+                        reply_id=reply_id,
                     )
-            if isinstance(event, RequireUserConfirmEvent):
+            elif event_type == EventType.REQUIRE_USER_CONFIRM:
+                reply_id = raw["reply_id"]
                 if not current_requester:
                     current_requester = await load_reply_requester(
                         self._bus,
                         session_id=session_id,
-                        reply_id=event.reply_id,
+                        reply_id=reply_id,
                     )
                 approval_ids: dict[str, str] = {}
-                for tool_call in event.tool_calls:
+                for tool_call in raw["tool_calls"]:
+                    tool_call_id = tool_call["id"]
                     approval_id = new_approval_id()
                     await store_approval(
                         self._bus,
@@ -356,15 +382,11 @@ class ChannelClients:
                             chat_id=chat_id,
                             agent_id=agent_id,
                             session_id=session_id,
-                            reply_id=event.reply_id,
-                            tool_call_id=tool_call.id,
+                            reply_id=reply_id,
+                            tool_call_id=tool_call_id,
                             requester_id=current_requester,
                         ),
                     )
-                    approval_ids[tool_call.id] = approval_id
-                raw = dict(raw)
-                raw["metadata"] = {
-                    **dict(raw.get("metadata") or {}),
-                    "channel_approval_ids": approval_ids,
-                }
+                    approval_ids[tool_call_id] = approval_id
+                raw = with_approval_ids(raw, approval_ids)
             yield raw

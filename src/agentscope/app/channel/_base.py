@@ -108,28 +108,17 @@ class ChannelConfirmationResultEvent(BaseModel):
     """A user's decision on a pending tool-approval, delivered inbound.
 
     Enters through the *same* gateway entry point as messages. The opaque
-    ``approval_id`` selects server-side routing and authorization data; the
-    other lookup fields remain for platform/backward compatibility and are
-    not trusted by the gateway.
+    ``approval_id`` selects all server-side routing and authorization data.
     """
 
     channel_id: str
     """Source channel instance identifier."""
 
     chat_id: str
-    """Platform chat the decision came from; routes to the session."""
+    """Platform chat the decision came from; validates card origin."""
 
     channel_user_id: str
-    """Platform user who decided; routes to the session."""
-
-    agent_id: str = ""
-    """Legacy round-tripped target; server-side approval state is trusted."""
-
-    session_id: str = ""
-    """Legacy round-tripped target; server-side approval state is trusted."""
-
-    tool_call_id: str
-    """Legacy round-tripped id; server-side approval state is trusted."""
+    """Platform user who decided; used for authorization and audit."""
 
     approved: bool
     """The user's decision."""
@@ -141,8 +130,19 @@ class ChannelConfirmationResultEvent(BaseModel):
     """Opaque id of the server-side approval record; empty is stale."""
 
 
+class ChannelAuthConfirmationResultEvent(ChannelConfirmationResultEvent):
+    """Read-only authorization probe for a confirmation-card decision.
+
+    The gateway validates the approval, its origin, and its requester, but
+    does not claim the approval or enqueue a resumed run.
+    """
+
+
 class ChannelDecisionStatus(str, Enum):
     """Outcome returned to a platform after a confirmation-card click."""
+
+    AUTHORIZED = "authorized"
+    """The decision identity was verified without claiming or resuming it."""
 
     ACCEPTED = "accepted"
     """The decision passed validation and a resume request was enqueued.

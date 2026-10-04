@@ -33,8 +33,13 @@ from ..storage import (
     StorageBase,
 )
 from ..workspace_manager import WorkspaceManagerBase
-from ._approval import forget_approval, load_approval
+from ._approval import (
+    ChannelApprovalRecord,
+    forget_approval,
+    load_approval,
+)
 from ._base import (
+    ChannelAuthConfirmationResultEvent,
     ChannelDecisionStatus,
     ChannelEvent,
     ChannelConfirmationResultEvent,
@@ -85,6 +90,8 @@ class ChannelGateway:
             authorization/staleness error; ``None`` for normal messages.
         """
         try:
+            if isinstance(event, ChannelAuthConfirmationResultEvent):
+                return await self._authorize_decision(event)
             if isinstance(event, ChannelConfirmationResultEvent):
                 return await self._handle_decision(event)
             await self._handle_message(event)
@@ -113,25 +120,10 @@ class ChannelGateway:
         Args:
             event (`ChannelConfirmationResultEvent`): The click decision.
         """
-        record = await self._storage.get_channel(event.channel_id)
-        if record is None or not record.enabled or not event.approval_id:
-            return ChannelDecisionStatus.STALE
-        approval = await load_approval(self._bus, event.approval_id)
-        if approval is None:
-            return ChannelDecisionStatus.STALE
-        wrong_channel = approval.channel_id != event.channel_id
-        wrong_chat = approval.chat_id != event.chat_id
-        if wrong_channel or wrong_chat:
-            return ChannelDecisionStatus.STALE
-        actor = event.actor or event.channel_user_id
-        if approval.requester_id and actor != approval.requester_id:
-            logger.warning(
-                "channel '%s': decision by '%s' ignored; requester is '%s'",
-                event.channel_id,
-                actor,
-                approval.requester_id,
-            )
-            return ChannelDecisionStatus.UNAUTHORIZED
+        validation = await self._validate_decision(event)
+        if isinstance(validation, ChannelDecisionStatus):
+            return validation
+        record, approval = validation
         accepted = await resume_after_decision(
             self._bus,
             self._storage,
@@ -154,6 +146,49 @@ class ChannelGateway:
                 event.approval_id,
             )
         return ChannelDecisionStatus.ACCEPTED
+
+    async def _authorize_decision(
+        self,
+        event: ChannelAuthConfirmationResultEvent,
+    ) -> ChannelDecisionStatus:
+        """Validate a decision without claiming or resuming its run."""
+        validation = await self._validate_decision(event)
+        if isinstance(validation, ChannelDecisionStatus):
+            return validation
+        return ChannelDecisionStatus.AUTHORIZED
+
+    async def _validate_decision(
+        self,
+        event: ChannelConfirmationResultEvent,
+    ) -> tuple[ChannelRecord, ChannelApprovalRecord] | ChannelDecisionStatus:
+        """Load and authorize a decision from server-side approval state."""
+        record = await self._storage.get_channel(event.channel_id)
+        if record is None or not record.enabled or not event.approval_id:
+            return ChannelDecisionStatus.STALE
+        approval = await load_approval(self._bus, event.approval_id)
+        if approval is None:
+            return ChannelDecisionStatus.STALE
+        if not approval.requester_id:
+            logger.warning(
+                "channel '%s': approval '%s' has no recorded requester",
+                event.channel_id,
+                event.approval_id,
+            )
+            return ChannelDecisionStatus.STALE
+        wrong_channel = approval.channel_id != event.channel_id
+        wrong_chat = approval.chat_id != event.chat_id
+        if wrong_channel or wrong_chat:
+            return ChannelDecisionStatus.STALE
+        actor = event.actor or event.channel_user_id
+        if actor != approval.requester_id:
+            logger.warning(
+                "channel '%s': decision by '%s' ignored; requester is '%s'",
+                event.channel_id,
+                actor,
+                approval.requester_id,
+            )
+            return ChannelDecisionStatus.UNAUTHORIZED
+        return record, approval
 
     # -- Message path --
 
