@@ -1060,8 +1060,17 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].chat_id, "user:user-7")
-        self.assertFalse(received[0].approved)
+        self.assertDictEqual(
+            received[0].model_dump(),
+            {
+                "channel_id": "ding-1",
+                "chat_id": "user:user-7",
+                "channel_user_id": "user-7",
+                "approved": False,
+                "actor": "user-7",
+                "approval_id": "approval-1",
+            },
+        )
 
     async def test_approval_callback_emits_resume_event_and_updates_card(
         self,

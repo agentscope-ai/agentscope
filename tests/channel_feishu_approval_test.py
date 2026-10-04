@@ -83,8 +83,17 @@ class FeishuApprovalTest(IsolatedAsyncioTestCase):
         self.assertNotIn("card", body)
         self.assertEqual(body["toast"]["type"], "warning")
         self.assertIn("requester", body["toast"]["content"])
-        self.assertEqual(received[0].actor, "other-user")
-        self.assertEqual(received[0].approval_id, "approval-1")
+        self.assertDictEqual(
+            received[0].model_dump(),
+            {
+                "channel_id": "feishu-1",
+                "chat_id": "chat-1",
+                "channel_user_id": "other-user",
+                "approved": True,
+                "actor": "other-user",
+                "approval_id": "approval-1",
+            },
+        )
         self.assertIsInstance(
             received[0],
             ChannelAuthConfirmationResultEvent,

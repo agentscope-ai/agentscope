@@ -819,7 +819,6 @@ class DingTalkChannel(ChannelBase):
                                 task.add_done_callback(
                                     self._worker_tasks.discard,
                                 )
-                    # pylint: disable-next=try-except-raise
                     except asyncio.CancelledError:
                         raise
                     except (
@@ -903,18 +902,18 @@ class DingTalkChannel(ChannelBase):
         class _CardHandler(dingtalk_stream.CallbackHandler):
             """Forward an advanced-card callback into the channel."""
 
-            async def process(self, message: Any) -> tuple[int, str]:
+            async def process(self, callback: Any) -> tuple[int, str]:
                 """Process one approval-card action callback.
 
                 Args:
-                    message (`Any`): The Stream SDK callback message.
+                    callback (`Any`): The Stream SDK callback message.
 
                 Returns:
                     `tuple[int, str]`: DingTalk acknowledgement status and
                     message.
                 """
                 try:
-                    await on_card_callback(message.data)
+                    await on_card_callback(callback.data)
                 except Exception:  # pylint: disable=broad-except
                     logger.exception(
                         "DingTalk '%s' card callback failed",
