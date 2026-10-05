@@ -2,6 +2,9 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+import base64
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
@@ -15,6 +18,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -294,6 +298,55 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_formatters_read_percent_encoded_file_urls(self) -> None:
+        """Local file URLs are decoded before their paths are opened."""
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "image #1.png"
+            image_path.write_bytes(base64.b64decode(self.image_b64))
+            msgs = [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        DataBlock(
+                            source=URLSource(
+                                url=image_path.as_uri(),
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            ]
+
+            chat_result = await OllamaChatFormatter().format(msgs)
+            multiagent_result = await OllamaMultiAgentFormatter().format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [self.image_b64],
+                },
+            ],
+            chat_result,
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\nWhat is this?\n</history>"
+                    ),
+                    "images": [self.image_b64],
+                },
+            ],
+            multiagent_result,
         )
 
     async def test_chat_formatter_base64_image_in_tool_result(

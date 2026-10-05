@@ -4,6 +4,7 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
+from urllib.parse import unquote
 
 import requests
 from pydantic import Field
@@ -85,7 +86,7 @@ class _OllamaFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
-                file_path = url.removeprefix("file://")
+                file_path = unquote(url.removeprefix("file://"))
                 with open(file_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
                 return data
