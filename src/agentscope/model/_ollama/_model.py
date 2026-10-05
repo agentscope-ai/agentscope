@@ -109,6 +109,9 @@ class OllamaChatModel(ChatModelBase):
         self.formatter = formatter or OllamaChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        # Models that rejected the ``tools`` field, so later calls skip it
+        self._models_without_tools: set[str] = set()
+
         import ollama
 
         self.client: ollama.AsyncClient = ollama.AsyncClient(
@@ -179,16 +182,63 @@ class OllamaChatModel(ChatModelBase):
 
         fmt_tools, _ = self._format_tools(tools, tool_choice)
 
-        if fmt_tools:
+        if fmt_tools and model_name not in self._models_without_tools:
             kwargs["tools"] = fmt_tools
 
+        import ollama
+
         start_datetime = datetime.now()
-        response = await self.client.chat(**kwargs)
+        try:
+            response = await self._chat(kwargs)
+        except ollama.ResponseError as e:
+            if "tools" not in kwargs or not _is_tools_unsupported_error(e):
+                raise
+            logger.warning(
+                "Ollama model %s does not support tools, retrying without "
+                "tools. Tool schemas will not be sent to this model again.",
+                model_name,
+            )
+            self._models_without_tools.add(model_name)
+            kwargs.pop("tools")
+            response = await self._chat(kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)
 
         return await self._parse_completion_response(start_datetime, response)
+
+    async def _chat(self, kwargs: dict[str, Any]) -> Any:
+        """Send a chat request to Ollama.
+
+        In streaming mode the Ollama client only raises request errors
+        (e.g. HTTP 400) once the stream is iterated, so the first chunk is
+        fetched here to surface them before the stream is handed back.
+
+        Args:
+            kwargs (`dict[str, Any]`):
+                The keyword arguments forwarded to ``ollama.AsyncClient.chat``.
+
+        Returns:
+            `Any`:
+                The Ollama response object, or an async iterator over the
+                stream chunks when streaming is enabled.
+        """
+        response = await self.client.chat(**kwargs)
+        if not self.stream:
+            return response
+
+        try:
+            first_chunk = await anext(response)
+        except StopAsyncIteration:
+            first_chunk = None
+
+        async def _replay() -> AsyncGenerator[Any, None]:
+            if first_chunk is not None:
+                yield first_chunk
+            async for chunk in response:
+                yield chunk
+
+        return _replay()
 
     def _format_tools(
         self,
@@ -346,3 +396,12 @@ class OllamaChatModel(ChatModelBase):
             is_last=True,
             usage=usage,
         )
+
+
+def _is_tools_unsupported_error(error: Exception) -> bool:
+    """Whether an Ollama error says the model does not support tools, e.g.
+    ``registry.ollama.ai/library/deepseek-r1:1.5b does not support tools``.
+    """
+    status_code = getattr(error, "status_code", None)
+    message = str(getattr(error, "error", error))
+    return status_code == 400 and "does not support tools" in message

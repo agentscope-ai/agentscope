@@ -399,3 +399,140 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0]["function"]["name"], "get_weather")
         self.assertIsNone(fmt_choice)
+
+
+# ---------------------------------------------------------------------------
+# Fallback for models without tool support
+# ---------------------------------------------------------------------------
+
+
+class _FailingAsyncStream:
+    """Mock Ollama stream that raises on the first iteration, like the
+    real client does for HTTP errors."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def __aiter__(self) -> "_FailingAsyncStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        raise self._error
+
+
+def _tools_unsupported_error() -> Exception:
+    from ollama import ResponseError
+
+    return ResponseError(
+        '{"error":"registry.ollama.ai/library/deepseek-r1:1.5b does not '
+        'support tools"}',
+        400,
+    )
+
+
+class TestOllamaToolsFallback(IsolatedAsyncioTestCase):
+    """Tests for retrying without tools when the model rejects them."""
+
+    async def test_non_stream_retries_without_tools(self) -> None:
+        """A tools-unsupported error is retried once without tools, and
+        later calls skip the tools field."""
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.chat = AsyncMock(
+            side_effect=[
+                _tools_unsupported_error(),
+                _mock_completion(content="Hello!"),
+                _mock_completion(content="Again"),
+            ],
+        )
+
+        result = await model([], tools=_FT_TOOLS)
+        await model([], tools=_FT_TOOLS)
+
+        calls = model.client.chat.call_args_list
+        self.assertEqual(
+            (
+                result.content,
+                ["tools" in c.kwargs for c in calls],
+            ),
+            (
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+                [True, False, False],
+            ),
+        )
+
+    async def test_stream_retries_without_tools(self) -> None:
+        """A tools-unsupported error raised while iterating the stream is
+        retried without tools."""
+        model = _make_model(stream=True)
+        model.client = MagicMock()
+        model.client.chat = AsyncMock(
+            side_effect=[
+                _FailingAsyncStream(_tools_unsupported_error()),
+                _MockAsyncStream([_make_stream_chunk(content="Hi")]),
+            ],
+        )
+
+        gen = await model([], tools=_FT_TOOLS)
+        responses = [r async for r in gen]
+
+        calls = model.client.chat.call_args_list
+        self.assertEqual(
+            (
+                [(r.is_last, r.content) for r in responses],
+                ["tools" in c.kwargs for c in calls],
+            ),
+            (
+                [
+                    (
+                        False,
+                        [
+                            TextBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                text="Hi",
+                            ),
+                        ],
+                    ),
+                    (
+                        True,
+                        [
+                            TextBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                text="Hi",
+                            ),
+                        ],
+                    ),
+                ],
+                [True, False],
+            ),
+        )
+
+    async def test_other_errors_are_raised(self) -> None:
+        """Errors unrelated to tool support are not swallowed."""
+        from ollama import ResponseError
+
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.chat = AsyncMock(
+            side_effect=ResponseError("model not found", 404),
+        )
+
+        with self.assertRaises(ResponseError):
+            await model([], tools=_FT_TOOLS)
+        self.assertEqual(model.client.chat.await_count, 1)
+
+    async def test_no_retry_without_tools(self) -> None:
+        """A tools-unsupported error is raised when no tools were sent."""
+        from ollama import ResponseError
+
+        model = _make_model(stream=False)
+        model.client = MagicMock()
+        model.client.chat = AsyncMock(
+            side_effect=_tools_unsupported_error(),
+        )
+
+        with self.assertRaises(ResponseError):
+            await model([])
+        self.assertEqual(model.client.chat.await_count, 1)
