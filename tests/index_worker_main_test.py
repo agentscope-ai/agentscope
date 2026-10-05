@@ -29,6 +29,7 @@ class IndexWorkerMainTest(unittest.TestCase):
         # startup path, and put them back afterwards.
         self._saved_handlers = list(logging.root.handlers)
         self._saved_level = logging.root.level
+        self.warning_lines: list[str] = []
         logging.root.handlers.clear()
 
     def tearDown(self) -> None:
@@ -38,9 +39,11 @@ class IndexWorkerMainTest(unittest.TestCase):
         logging.root.handlers[:] = self._saved_handlers
         logging.root.setLevel(self._saved_level)
 
-    def _run_main(self, raw: str, expect_warning: bool = False) -> tuple[
-        int, io.StringIO
-    ]:
+    def _run_main(
+        self,
+        raw: str,
+        expect_warning: bool = False,
+    ) -> tuple[str | int | None, io.StringIO]:
         """Start the worker with ``LOG_LEVEL`` set to ``raw``.
 
         Args:
@@ -54,11 +57,13 @@ class IndexWorkerMainTest(unittest.TestCase):
                 rather than by being understood.
 
         Returns:
-            `tuple[int, io.StringIO]`:
+            `tuple[str | int | None, io.StringIO]`:
                 The exit code the worker asked for, and what it wrote to
                 stderr.  Reaching an exit code at all is the point: an
-                unresolved level raises instead, so the assertion below
-                fails on its own rather than swallowing the crash.
+                unresolved level raises instead, so the assertion in the
+                caller fails on its own rather than swallowing the crash.
+                Any line logged at ``WARNING`` is left on
+                ``self.warning_lines``.
 
         Side effects:
             Root handlers are cleared first — ``basicConfig`` is a no-op
@@ -67,17 +72,21 @@ class IndexWorkerMainTest(unittest.TestCase):
         """
         logging.root.handlers.clear()
         stderr = io.StringIO()
+        code: str | int | None
         with patch.dict(os.environ, {"LOG_LEVEL": raw}, clear=True):
             with patch.object(sys, "stderr", stderr):
                 if expect_warning:
-                    ctx = self.assertLogs("as", level="WARNING")
+                    with self.assertLogs("as", level="WARNING") as logs:
+                        with self.assertRaises(SystemExit) as caught:
+                            main()
+                        self.warning_lines = list(logs.output)
+                    code = caught.exception.code
                 else:
-                    ctx = self.assertNoLogs("as", level="WARNING")
-                with ctx as captured:
-                    with self.assertRaises(SystemExit) as caught:
-                        main()
-        self.captured = captured
-        return caught.exception.code, stderr
+                    with self.assertNoLogs("as", level="WARNING"):
+                        with self.assertRaises(SystemExit) as caught:
+                            main()
+                    code = caught.exception.code
+        return code, stderr
 
     def test_lowercase_level_starts_and_configures_info(self) -> None:
         """``LOG_LEVEL=info`` is the commonest typo and must not crash."""
@@ -114,11 +123,10 @@ class IndexWorkerMainTest(unittest.TestCase):
     def test_unusable_level_falls_back_to_info_and_says_so(self) -> None:
         """A level nobody can read still starts the worker, with a warning."""
         code, _ = self._run_main("chatty", expect_warning=True)
-
         self.assertEqual(code, 2)
         self.assertEqual(logging.root.level, logging.INFO)
-        self.assertEqual(len(self.captured.output), 1)
-        self.assertIn("chatty", self.captured.output[0])
+        self.assertEqual(len(self.warning_lines), 1)
+        self.assertIn("chatty", self.warning_lines[0])
 
     def test_uppercase_level_still_works(self) -> None:
         """The spelling that already worked is unchanged."""
