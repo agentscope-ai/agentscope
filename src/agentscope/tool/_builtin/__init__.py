@@ -16,6 +16,7 @@ from ._meta import ResetTools
 from ._powershell import PowerShell
 from ._read import Read
 from ._skill import SkillViewer
+from ._sql import SQLQuery, SQLSchema
 from ._write import Write
 
 __all__ = [
@@ -32,6 +33,8 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    "SQLQuery",
+    "SQLSchema",
     "BackendBase",
     "DirEntry",
     "LocalBackend",
