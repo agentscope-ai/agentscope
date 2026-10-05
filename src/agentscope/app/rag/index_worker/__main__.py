@@ -47,7 +47,43 @@ import os
 import sys
 from typing import Any, Callable
 
+from ...._logging import logger
 from . import run_worker
+
+_DEFAULT_LOG_LEVEL = logging.INFO
+
+
+def _resolve_log_level(raw: str | None) -> int:
+    """Turn a deployment-supplied ``LOG_LEVEL`` into a numeric level.
+
+    Args:
+        raw (`str | None`):
+            The verbatim value of ``LOG_LEVEL``.  Deployments write it
+            in the shapes operators use rather than the spellings
+            ``logging`` accepts: ``"info"``, ``"20"``, an empty string,
+            or a name padded with whitespace by a YAML scalar.
+
+    Returns:
+        `int`:
+            The level to configure.  An unset or empty value means "not
+            configured" and yields ``INFO``; a value that cannot be
+            read yields ``INFO`` too, after warning, so a typo in a log
+            setting cannot stop the worker from starting.
+    """
+    text = (raw or "").strip().upper()
+    if not text:
+        return _DEFAULT_LOG_LEVEL
+    level = logging.getLevelName(text)
+    if isinstance(level, int):
+        return level
+    if text.isdigit():
+        return int(text)
+    logger.warning(
+        "Ignoring unusable LOG_LEVEL %r; starting at %s instead.",
+        raw,
+        logging.getLevelName(_DEFAULT_LOG_LEVEL),
+    )
+    return _DEFAULT_LOG_LEVEL
 
 
 def _resolve(dotted: str) -> Callable[[], dict[str, Any]]:
@@ -87,7 +123,7 @@ def main() -> None:
     because backend selection is a deployment concern.
     """
     logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
+        level=_resolve_log_level(os.environ.get("LOG_LEVEL")),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     bootstrap_path = os.environ.get("AGENTSCOPE_WORKER_BOOTSTRAP")
