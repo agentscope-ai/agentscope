@@ -378,7 +378,7 @@ class TestExtractQueryText(IsolatedAsyncioTestCase):
         self.assertEqual(_extract_query_text(msgs), "first\nsecond")
 
     def test_resumption_events_return_none(self) -> None:
-        """HITL resumption events should not trigger memory IO."""
+        """HITL resumption events do not supply a new retrieval query."""
         self.assertIsNone(
             _extract_query_text(
                 UserConfirmResultEvent(
