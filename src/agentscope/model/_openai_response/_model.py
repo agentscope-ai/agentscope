@@ -315,7 +315,10 @@ class OpenAIResponseModel(ChatModelBase):
                         ),
                     )
 
-                elif event_type == "response.output_text.delta":
+                elif event_type in (
+                    "response.output_text.delta",
+                    "response.refusal.delta",
+                ):
                     delta_res.append_text(event.delta, block_id=text_id)
 
                 elif event_type == "response.output_item.added":
@@ -440,6 +443,10 @@ class OpenAIResponseModel(ChatModelBase):
                     if getattr(part, "type", None) == "output_text":
                         content_blocks.append(
                             TextBlock(type="text", text=part.text),
+                        )
+                    elif getattr(part, "type", None) == "refusal":
+                        content_blocks.append(
+                            TextBlock(type="text", text=part.refusal),
                         )
 
             elif item_type == "function_call":
