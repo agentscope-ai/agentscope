@@ -371,13 +371,19 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
         class _SlicingBackend(BackendBase):
             """Minimal backend using the base ``read_stream`` default."""
 
-            async def exec_shell(self, argv, cwd=None, timeout=None):
+            async def exec_shell(
+                self,
+                command: list[str],
+                *,
+                cwd: str | None = None,
+                timeout: float | None = None,
+            ) -> ExecResult:
                 raise NotImplementedError()
 
-            async def read_file(self, path, max_bytes=None):
+            async def read_file(self, path: str) -> bytes:
                 return b"abcdef"
 
-            async def write_file(self, path, data):
+            async def write_file(self, path: str, data: bytes) -> None:
                 return None
 
         backend = _SlicingBackend()
