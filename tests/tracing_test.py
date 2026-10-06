@@ -245,6 +245,10 @@ class TracingTest(IsolatedAsyncioTestCase):
     setUp only creates fresh model/agent and clears the exporter.
     """
 
+    # One span-attribute test per contract: the class grows past pylint's
+    # 20-public-method limit by design, same as tests/agent_injection_test.py.
+    # pylint: disable=too-many-public-methods
+
     exporter: InMemorySpanExporter
 
     @classmethod
