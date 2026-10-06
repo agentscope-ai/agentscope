@@ -2,12 +2,14 @@
 """The local workspace class."""
 
 import asyncio
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
 import sys
+import tempfile
 from typing import AsyncIterator, Literal, TypedDict
 
 import frontmatter
@@ -60,6 +62,30 @@ def _sanitize_dir_name(name: str) -> str:
             macOS, and Linux.
     """
     return re.sub(r"[^\w一-鿿-]", "_", name)
+
+
+def _copy_skill(source: str, destination: str, workdir: str) -> None:
+    """Stage a complete skill outside the scan path before publishing it.
+
+    Keep the temporary directory in the workspace, on the same filesystem
+    as its skill partitions. Cleanup owns only this temporary directory,
+    including when copying or renaming fails.
+    """
+    with tempfile.TemporaryDirectory(
+        prefix=".skill-install-",
+        dir=workdir,
+    ) as staging:
+        staged_skill = os.path.join(staging, "skill")
+        shutil.copytree(source, staged_skill, dirs_exist_ok=False)
+        # POSIX rename can replace an empty directory. Preserve the existing
+        # copytree contract instead, including for unindexed destinations.
+        if os.path.lexists(destination):
+            raise FileExistsError(
+                errno.EEXIST,
+                os.strerror(errno.EEXIST),
+                destination,
+            )
+        os.rename(staged_skill, destination)
 
 
 class LocalWorkspace(WorkspaceBase):
@@ -848,10 +874,10 @@ class LocalWorkspace(WorkspaceBase):
                 )
 
             await asyncio.to_thread(
-                shutil.copytree,
+                _copy_skill,
                 skill_path,
                 dest_path,
-                dirs_exist_ok=False,
+                self.workdir,
             )
 
             logger.info(
