@@ -22,6 +22,8 @@ from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, Mock, patch
 
+from utils import AnyString, AnyValue
+
 from agentscope.app._service._tts_model import _resolve_tts_class
 from agentscope.credential import DashScopeCredential
 from agentscope.tts import (
@@ -40,6 +42,31 @@ _TTS_SAMPLE_RATE = 24000
 _TTS_CHANNELS = 1
 _TTS_SAMPLE_WIDTH = 2  # bytes (= 16 bit)
 _WAV_HEADER_LEN = 44
+_EXPECTED_SINGLE_AUDIO_RESPONSE = {
+    "content": {
+        "type": "data",
+        "id": AnyString(),
+        "source": {
+            "type": "base64",
+            "data": AnyString(),
+            "media_type": _MEDIA_TYPE,
+        },
+        "name": None,
+        "created_at": AnyString(),
+        "finished_at": None,
+    },
+    "id": AnyString(),
+    "created_at": AnyString(),
+    "type": "tts",
+    "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "time": AnyValue(),
+        "type": "tts",
+    },
+    "metadata": None,
+    "is_last": True,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +81,7 @@ def _make_api_chunk(
     """Build a chunk shaped like what dashscope.MultiModalConversation
     yields. ``data_bytes=None`` represents a chunk with no output."""
     chunk = MagicMock()
+    chunk.status_code = 200
     chunk.usage = usage
     if data_bytes is None:
         chunk.output = None
@@ -104,6 +132,7 @@ class _DummyTTS(TTSModelBase):
         text: str | None = None,
         **kwargs: Any,
     ) -> TTSResponse | AsyncGenerator[TTSResponse, None]:
+        """Return an empty TTS response."""
         del text, kwargs
         return TTSResponse(content=None)
 
@@ -120,9 +149,11 @@ class _RealtimeDummyTTS(_DummyTTS):
         self.close_calls = 0
 
     async def connect(self) -> None:
+        """Record a mock connection."""
         self.connect_calls += 1
 
     async def close(self) -> None:
+        """Record a mock disconnection."""
         self.close_calls += 1
 
 
@@ -201,6 +232,137 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
         )
 
     # -- non-streaming --
+
+    async def test_api_errors_are_not_successful_audio(self) -> None:
+        """Provider errors must propagate, including after partial audio."""
+        from dashscope.api_entities.dashscope_response import (
+            MultiModalConversationResponse,
+        )
+
+        for stream in (False, True):
+            for status, code in ((401, "InvalidApiKey"), (429, "Throttling")):
+                for partial in (False, True):
+                    with self.subTest(
+                        stream=stream,
+                        status=status,
+                        partial=partial,
+                    ):
+                        error = MultiModalConversationResponse(
+                            status_code=status,
+                            code=code,
+                            message="Request rejected",
+                            request_id="test-request",
+                        )
+                        chunks = (
+                            [
+                                _make_api_chunk(b"AAAA"),
+                                _make_api_chunk(b"BBBB"),
+                            ]
+                            if partial
+                            else []
+                        )
+                        chunks.append(error)
+                        self.mock_mmc.call.return_value = iter(chunks)
+                        model = self._make_model(stream=stream)
+                        with self.assertRaisesRegex(RuntimeError, code):
+                            result = await model.synthesize("Hello")
+                            if stream:
+                                async for chunk in result:
+                                    self.assertFalse(chunk.is_last)
+
+    async def test_per_call_voice_override(self) -> None:
+        """A temporary voice reaches the SDK without changing the default."""
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                model = self._make_model(stream=stream)
+                for kwargs, expected in (
+                    ({"voice": "Serena"}, "Serena"),
+                    ({}, "Cherry"),
+                ):
+                    self.mock_mmc.call.return_value = _make_api_generator(
+                        [b"AAAA"],
+                    )
+                    result = await model.synthesize("Hello", **kwargs)
+                    responses = (
+                        [chunk async for chunk in result]
+                        if stream
+                        else [result]
+                    )
+                    self.assertEqual(
+                        self.mock_mmc.call.call_args.kwargs,
+                        {
+                            "model": "qwen3-tts-flash",
+                            "api_key": "test",
+                            "text": "Hello",
+                            "voice": expected,
+                            "stream": True,
+                        },
+                    )
+                    self.assertEqual(
+                        model.parameters.model_dump(),
+                        {"voice": "Cherry"},
+                    )
+                    self.assertEqual(
+                        [
+                            {
+                                **response,
+                                "content": response.content.model_dump(),
+                                "usage": dict(response.usage),
+                            }
+                            for response in responses
+                        ],
+                        [_EXPECTED_SINGLE_AUDIO_RESPONSE],
+                    )
+
+    async def test_request_options_keep_credentials_and_transport(
+        self,
+    ) -> None:
+        """Request options preserve configured credentials and transport."""
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                model = self._make_model(stream=stream)
+                self.mock_mmc.call.return_value = _make_api_generator(
+                    [b"AAAA"],
+                )
+                result = await model.synthesize(
+                    "Hello",
+                    model="qwen-tts",
+                    voice="Serena",
+                    language_type="English",
+                    api_key="ignored",
+                    stream=False,
+                )
+                responses = (
+                    [chunk async for chunk in result] if stream else [result]
+                )
+                self.assertEqual(
+                    self.mock_mmc.call.call_args.kwargs,
+                    {
+                        "model": "qwen-tts",
+                        "api_key": "test",
+                        "text": "Hello",
+                        "voice": "Serena",
+                        "language_type": "English",
+                        "stream": True,
+                    },
+                )
+                self.assertEqual(
+                    model.parameters.model_dump(),
+                    {"voice": "Cherry"},
+                )
+                self.assertEqual(model.model, "qwen3-tts-flash")
+                self.assertEqual(model.stream, stream)
+                self.assertEqual(
+                    [
+                        {
+                            **response,
+                            "content": response.content.model_dump(),
+                            "usage": dict(response.usage),
+                        }
+                        for response in responses
+                    ],
+                    [_EXPECTED_SINGLE_AUDIO_RESPONSE],
+                )
 
     async def test_aggregates_chunks(self) -> None:
         """All API chunks are aggregated into one self-contained WAV."""

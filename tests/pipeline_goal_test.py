@@ -4,12 +4,21 @@ from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.event import (
     ConfirmResult,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import Msg, ToolCallBlock, UserMsg
+from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 from agentscope.pipeline import GoalPipeline
 from agentscope.types import ReplyFinishedReason
 
@@ -226,6 +235,72 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         )
         # A malfunction is not charged to the executor.
         self.assertEqual(len(executor.received), 1)
+
+    async def test_retry_keeps_a_multimodal_goal(self) -> None:
+        """The retry reminder carries a multimodal goal as blocks."""
+        query = UserMsg(
+            name="user",
+            content=[
+                TextBlock(text="Check this chart"),
+                DataBlock(
+                    source=Base64Source(
+                        data="aGVsbG8=",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+        )
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_no_output("verifier")], [_verdict("pass")]],
+        )
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, query)
+
+        self.assertListEqual(
+            [block.model_dump() for block in verifier.received[1].content],
+            [
+                {
+                    "type": "text",
+                    "text": "<system-reminder>You have failed to generate "
+                    "valid verification result. You should call the "
+                    "'GenerateStructuredOutput' tool with a valid structured "
+                    "output that matches the schema. Recall the verification "
+                    "requirements as follows:\n<goal>",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "text",
+                    "text": "Check this chart",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG8=",
+                        "media_type": "image/png",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "text",
+                    "text": "</goal></system-reminder>",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
 
     async def test_reprompts_an_executor_that_skips_the_tool(self) -> None:
         """The same for the executor: a missing report is asked for again

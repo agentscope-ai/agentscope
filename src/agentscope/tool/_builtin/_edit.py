@@ -56,8 +56,9 @@ Usage:
             },
             "old_string": {
                 "type": "string",
+                "minLength": 1,
                 "description": (
-                    "The exact string to replace. Must match exactly "
+                    "The nonempty string to replace. Must match exactly "
                     "including whitespace and indentation."
                 ),
             },
@@ -259,6 +260,18 @@ Usage:
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Execute the edit and return the result."""
+        if not old_string:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Error: old_string must not be empty. "
+                        "Use the Write tool to populate an empty file.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         # Validate file_path is absolute
         if not self._backend.isabs(file_path):
             return ToolChunk(
@@ -390,6 +403,16 @@ Usage:
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
                 state=ToolResultState.ERROR,
                 is_last=True,
+            )
+
+        # Refresh the read cache so consecutive edits don't require a re-read
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(updated_content).splitlines(
+                    keepends=True,
+                ),
+                mtime=await self._backend.stat_mtime(file_path),
             )
 
         # Return success message

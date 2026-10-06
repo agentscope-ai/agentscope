@@ -146,6 +146,41 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._SESSION_LOCK.format(sid=session_id)
 
     # ------------------------------------------------------------------
+    # SOP run lock
+    # ------------------------------------------------------------------
+
+    _SOP_LOCK = "agentscope:sop:lock:{sid}"
+
+    @classmethod
+    def sop_lock(cls, sop_id: str) -> str:
+        """Per-procedure lock, held while a run is opened or the procedure
+        deleted. Outermost of the three: procedure, run, session."""
+        return cls._SOP_LOCK.format(sid=sop_id)
+
+    _SOP_RUN_LOCK = "agentscope:sop_run:lock:{rid}"
+
+    SOP_RUN_TTL_SECS = 600
+    """Lock lease for a SOP run (10 minutes), renewed while held."""
+
+    _SOP_DISPATCH_NS = "agentscope:sop:dispatch:{sid}"
+
+    SOP_DISPATCH_FIELD = "step"
+    """The only field a dispatch namespace holds."""
+
+    @classmethod
+    def sop_dispatch(cls, session_id: str) -> str:
+        """Registry namespace holding ``"<run id>:<step index>"`` while a
+        step's turn is parked in this session. Per session and unleased,
+        since a park can wait on a person indefinitely."""
+        return cls._SOP_DISPATCH_NS.format(sid=session_id)
+
+    @classmethod
+    def sop_run_lock(cls, sop_run_id: str) -> str:
+        """Per-run lock, taken after the procedure's and before any
+        session's."""
+        return cls._SOP_RUN_LOCK.format(rid=sop_run_id)
+
+    # ------------------------------------------------------------------
     # Session inbox
     # ------------------------------------------------------------------
 
