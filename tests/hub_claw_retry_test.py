@@ -1,1 +1,92 @@
-IyAtKi0gY29kaW5nOiB1dGYtOCAtKi0KIiIiQ2xhd0h1YiByZXRyeS1kZWxheSB0ZXN0IGNhc2UsIHdpdGhvdXQgYW55IG5ldHdvcmsuIiIiCmltcG9ydCB0aW1lCmZyb20gZGF0ZXRpbWUgaW1wb3J0IGRhdGV0aW1lLCB0aW1lZGVsdGEsIHRpbWV6b25lCmZyb20gZW1haWwudXRpbHMgaW1wb3J0IGZvcm1hdF9kYXRldGltZQpmcm9tIHVuaXR0ZXN0IGltcG9ydCBUZXN0Q2FzZQoKZnJvbSBhZ2VudHNjb3BlLmFwcC5odWIgaW1wb3J0IENsYXdTa2lsbEh1YgoKCmNsYXNzIENsYXdSZXRyeURlbGF5VGVzdChUZXN0Q2FzZSk6CiAgICAiIiJUdXJuaW5nIENsYXdIdWIncyByYXRlLWxpbWl0IGhlYWRlcnMgaW50byBhIHNsZWVwIGR1cmF0aW9uLiIiIgoKICAgIGRlZiB0ZXN0X3JldHJ5X2FmdGVyX3NlY29uZHNfYXJlX3RoZV9kZWxheShzZWxmKSAtPiBOb25lOgogICAgICAgICIiIlRoZSBkb2N1bWVudGVkIGRlbGF5IGZvcm0gcGFzc2VzIHN0cmFpZ2h0IHRocm91Z2guIiIiCiAgICAgICAgIyBweWxpbnQ6IGRpc2FibGU9cHJvdGVjdGVkLWFjY2VzcwogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoCiAgICAgICAgICAgIENsYXdTa2lsbEh1Yi5fcmV0cnlfZGVsYXkoeyJSZXRyeS1BZnRlciI6ICIzNjAwIn0pLAogICAgICAgICAgICAzNjAwLjAsCiAgICAgICAgKQoKICAgIGRlZiB0ZXN0X3JldHJ5X2FmdGVyX21hdGNoZXNfYV9sb3dlcmNhc2VfaGVhZGVyKHNlbGYpIC0+IE5vbmU6CiAgICAgICAgIiIiTG93ZXItY2FzZWQgaGVhZGVycyBhcmUgcmVhZCBhcyB3ZWxsIGFzIGNhbm9uaWNhbCBvbmVzLiIiIgogICAgICAgICMgcHlsaW50OiBkaXNhYmxlPXByb3RlY3RlZC1hY2Nlc3MKICAgICAgICBzZWxmLmFzc2VydEVxdWFsKAogICAgICAgICAgICBDbGF3U2tpbGxIdWIuX3JldHJ5X2RlbGF5KHsicmV0cnktYWZ0ZXIiOiAiMTIifSksCiAgICAgICAgICAgIDEyLjAsCiAgICAgICAgKQoKICAgIGRlZiB0ZXN0X3JldHJ5X2FmdGVyX2h0dHBfZGF0ZV9pc19zZWNvbmRzX3JlbWFpbmluZyhzZWxmKSAtPiBOb25lOgogICAgICAgICIiIkEgZGF0ZSBmb3JtIG5hbWVzIHRoZSBpbnN0YW50IHRvIHJldHJ5IGF0LCBub3QgYSBkdXJhdGlvbi4iIiIKICAgICAgICAjIHB5bGludDogZGlzYWJsZT1wcm90ZWN0ZWQtYWNjZXNzCiAgICAgICAgd2hlbiA9IGRhdGV0aW1lLm5vdyh0aW1lem9uZS51dGMpICsgdGltZWRlbHRhKHNlY29uZHM9MTgwMCkKICAgICAgICBkZWxheSA9IENsYXdTa2lsbEh1Yi5fcmV0cnlfZGVsYXkoCiAgICAgICAgICAgIHsiUmV0cnktQWZ0ZXIiOiBmb3JtYXRfZGF0ZXRpbWUod2hlbiwgdXNlZ210PVRydWUpfSwKICAgICAgICApCgogICAgICAgIHNlbGYuYXNzZXJ0QWxtb3N0RXF1YWwoZGVsYXksIDE4MDAuMCwgZGVsdGE9NS4wKQoKICAgIGRlZiB0ZXN0X3JldHJ5X2FmdGVyX2h0dHBfZGF0ZV93aXRob3V0X2FuX29mZnNldF9pc19nbXQoc2VsZikgLT4gTm9uZToKICAgICAgICAiIiJBIHpvbmUtbGVzcyBkYXRlIG11c3Qgbm90IHNsaWRlIGJ5IHRoZSBtYWNoaW5lJ3MgVVRDIG9mZnNldC4iIiIKICAgICAgICAjIHB5bGludDogZGlzYWJsZT1wcm90ZWN0ZWQtYWNjZXNzCiAgICAgICAgd2hlbiA9IGRhdGV0aW1lLm5vdyh0aW1lem9uZS51dGMpICsgdGltZWRlbHRhKHNlY29uZHM9MTgwKQogICAgICAgIGRlbGF5ID0gQ2xhd1NraWxsSHViLl9yZXRyeV9kZWxheSgKICAgICAgICAgICAgeyJSZXRyeS1BZnRlciI6IGZvcm1hdF9kYXRldGltZSh3aGVuLnJlcGxhY2UodHppbmZvPU5vbmUpKX0sCiAgICAgICAgKQoKICAgICAgICBzZWxmLmFzc2VydEFsbW9zdEVxdWFsKGRlbGF5LCAxODAuMCwgZGVsdGE9NS4wKQoKICAgIGRlZiB0ZXN0X3JldHJ5X2FmdGVyX2h0dHBfZGF0ZV9hbHJlYWR5X3Bhc3Rfd2FpdHNfbm90aGluZyhzZWxmKSAtPiBOb25lOgogICAgICAgICIiIkEgZGVhZGxpbmUgYmVoaW5kIHVzIGlzIGEgcmV0cnkgbm93LCBub3QgYSBuZWdhdGl2ZSBzbGVlcC4iIiIKICAgICAgICAjIHB5bGludDogZGlzYWJsZT1wcm90ZWN0ZWQtYWNjZXNzCiAgICAgICAgd2hlbiA9IGRhdGV0aW1lLm5vdyh0aW1lem9uZS51dGMpIC0gdGltZWRlbHRhKHNlY29uZHM9NjApCiAgICAgICAgZGVsYXkgPSBDbGF3U2tpbGxIdWIuX3JldHJ5X2RlbGF5KAogICAgICAgICAgICB7IlJldHJ5LUFmdGVyIjogZm9ybWF0X2RhdGV0aW1lKHdoZW4sIHVzZWdtdD1UcnVlKX0sCiAgICAgICAgKQoKICAgICAgICBzZWxmLmFzc2VydEVxdWFsKGRlbGF5LCAwLjApCgogICAgZGVmIHRlc3RfdW5yZWFkYWJsZV9yZXRyeV9hZnRlcl9mYWxsc19iYWNrX3RvX3RoZV9uZXh0X2hlYWRlcigKICAgICAgICBzZWxmLAogICAgKSAtPiBOb25lOgogICAgICAgICIiIkEgdmFsdWUgdGhhdCBpcyBuZWl0aGVyIHNlY29uZHMgbm9yIGEgZGF0ZSBpcyBub3QgYSBkZWFkIGVuZC4iIiIKICAgICAgICAjIHB5bGludDogZGlzYWJsZT1wcm90ZWN0ZWQtYWNjZXNzCiAgICAgICAgc2VsZi5hc3NlcnRFcXVhbCgKICAgICAgICAgICAgQ2xhd1NraWxsSHViLl9yZXRyeV9kZWxheSgKICAgICAgICAgICAgICAgIHsiUmV0cnktQWZ0ZXIiOiAic29vbiIsICJSYXRlTGltaXQtUmVzZXQiOiAiNDUifSwKICAgICAgICAgICAgKSwKICAgICAgICAgICAgNDUuMCwKICAgICAgICApCgogICAgZGVmIHRlc3RfcmF0ZV9saW1pdF9yZXNldF9pc19hX2RlbGF5KHNlbGYpIC0+IE5vbmU6CiAgICAgICAgIiIiYGBSYXRlTGltaXQtUmVzZXRgYCBjb3VudHMgZG93biBmcm9tIG5vdywgaXQgaXMgbm90IGFuIGluc3RhbnQuIiIiCiAgICAgICAgIyBweWxpbnQ6IGRpc2FibGU9cHJvdGVjdGVkLWFjY2VzcwogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoCiAgICAgICAgICAgIENsYXdTa2lsbEh1Yi5fcmV0cnlfZGVsYXkoeyJSYXRlTGltaXQtUmVzZXQiOiAiNDUifSksCiAgICAgICAgICAgIDQ1LjAsCiAgICAgICAgKQoKICAgIGRlZiB0ZXN0X3hfcmF0ZV9saW1pdF9yZXNldF9pc19hbl9lcG9jaChzZWxmKSAtPiBOb25lOgogICAgICAgICIiIlRoZSBsZWdhY3kgYGBYLVJhdGVMaW1pdC1SZXNldGBgIGlzIGFuIGFic29sdXRlIFVuaXggdGltZS4iIiIKICAgICAgICAjIHB5bGludDogZGlzYWJsZT1wcm90ZWN0ZWQtYWNjZXNzCiAgICAgICAgZGVsYXkgPSBDbGF3U2tpbGxIdWIuX3JldHJ5X2RlbGF5KAogICAgICAgICAgICB7IlgtUmF0ZUxpbWl0LVJlc2V0Ijogc3RyKHRpbWUudGltZSgpICsgNjApfSwKICAgICAgICApCgogICAgICAgIHNlbGYuYXNzZXJ0QWxtb3N0RXF1YWwoZGVsYXksIDYwLjAsIGRlbHRhPTUuMCkKCiAgICBkZWYgdGVzdF9ub19yYXRlX2xpbWl0X2hlYWRlcl9rZWVwc190aGVfZmxvb3Ioc2VsZikgLT4gTm9uZToKICAgICAgICAiIiJXaXRob3V0IGEgaGludCwgYSBzaG9ydCBwYXVzZSBzdGlsbCBhdm9pZHMgYSBidXN5IGxvb3AuIiIiCiAgICAgICAgIyBweWxpbnQ6IGRpc2FibGU9cHJvdGVjdGVkLWFjY2VzcwogICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoQ2xhd1NraWxsSHViLl9yZXRyeV9kZWxheSh7fSksIDEuMCkK
+# -*- coding: utf-8 -*-
+"""ClawHub retry-delay test case, without any network."""
+import time
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
+from unittest import TestCase
+
+from agentscope.app.hub import ClawSkillHub
+
+
+class ClawRetryDelayTest(TestCase):
+    """Turning ClawHub's rate-limit headers into a sleep duration."""
+
+    def test_retry_after_seconds_are_the_delay(self) -> None:
+        """The documented delay form passes straight through."""
+        # pylint: disable=protected-access
+        self.assertEqual(
+            ClawSkillHub._retry_delay({"Retry-After": "3600"}),
+            3600.0,
+        )
+
+    def test_retry_after_matches_a_lowercase_header(self) -> None:
+        """Lower-cased headers are read as well as canonical ones."""
+        # pylint: disable=protected-access
+        self.assertEqual(
+            ClawSkillHub._retry_delay({"retry-after": "12"}),
+            12.0,
+        )
+
+    def test_retry_after_http_date_is_seconds_remaining(self) -> None:
+        """A date form names the instant to retry at, not a duration."""
+        # pylint: disable=protected-access
+        when = datetime.now(timezone.utc) + timedelta(seconds=1800)
+        delay = ClawSkillHub._retry_delay(
+            {"Retry-After": format_datetime(when, usegmt=True)},
+        )
+
+        self.assertAlmostEqual(delay, 1800.0, delta=5.0)
+
+    def test_retry_after_http_date_without_an_offset_is_gmt(self) -> None:
+        """A zone-less date must not slide by the machine's UTC offset."""
+        # pylint: disable=protected-access
+        when = datetime.now(timezone.utc) + timedelta(seconds=180)
+        delay = ClawSkillHub._retry_delay(
+            {"Retry-After": format_datetime(when.replace(tzinfo=None))},
+        )
+
+        self.assertAlmostEqual(delay, 180.0, delta=5.0)
+
+    def test_retry_after_http_date_already_past_waits_nothing(self) -> None:
+        """A deadline behind us is a retry now, not a negative sleep."""
+        # pylint: disable=protected-access
+        when = datetime.now(timezone.utc) - timedelta(seconds=60)
+        delay = ClawSkillHub._retry_delay(
+            {"Retry-After": format_datetime(when, usegmt=True)},
+        )
+
+        self.assertEqual(delay, 0.0)
+
+    def test_unreadable_retry_after_falls_back_to_the_next_header(
+        self,
+    ) -> None:
+        """A value that is neither seconds nor a date is not a dead end."""
+        # pylint: disable=protected-access
+        self.assertEqual(
+            ClawSkillHub._retry_delay(
+                {"Retry-After": "soon", "RateLimit-Reset": "45"},
+            ),
+            45.0,
+        )
+
+    def test_rate_limit_reset_is_a_delay(self) -> None:
+        """``RateLimit-Reset`` counts down from now, it is not an instant."""
+        # pylint: disable=protected-access
+        self.assertEqual(
+            ClawSkillHub._retry_delay({"RateLimit-Reset": "45"}),
+            45.0,
+        )
+
+    def test_x_rate_limit_reset_is_an_epoch(self) -> None:
+        """The legacy ``X-RateLimit-Reset`` is an absolute Unix time."""
+        # pylint: disable=protected-access
+        delay = ClawSkillHub._retry_delay(
+            {"X-RateLimit-Reset": str(time.time() + 60)},
+        )
+
+        self.assertAlmostEqual(delay, 60.0, delta=5.0)
+
+    def test_no_rate_limit_header_keeps_the_floor(self) -> None:
+        """Without a hint, a short pause still avoids a busy loop."""
+        # pylint: disable=protected-access
+        self.assertEqual(ClawSkillHub._retry_delay({}), 1.0)
