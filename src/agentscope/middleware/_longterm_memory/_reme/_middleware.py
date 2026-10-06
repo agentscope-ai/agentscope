@@ -12,10 +12,14 @@ lifecycle (write-back, dream consolidation and search) plus only the
 indexing/file jobs required by those paths.
 
 ReMe records memory by **listening to the conversation through the
-``on_reply`` hook** — after every reply the new exchange is written back
-via ReMe's ``auto_memory`` job, in *all* modes. The agent never writes
-memory itself; there is no manual add tool. The ``mode`` parameter only
-controls **retrieval**:
+``on_reply`` hook**. Automatic write-back uses ReMe's ``auto_memory`` job
+in *all* modes. It requires an original input with nonempty user text,
+a session ID, unseen content and nonempty assistant text in the logical
+exchange. A pause/resume keeps the original exchange: normal completion
+writes the full exchange if no prefix was acknowledged, or only unseen
+content after an acknowledged prefix. The agent never writes memory
+itself; there is no manual add tool. The ``mode`` parameter only controls
+**retrieval**:
 
 - ``"static_control"`` — search ReMe when a reply starts and inject the
   retrieved memories into context before a later reasoning step (plus the
@@ -25,10 +29,10 @@ controls **retrieval**:
   on demand (plus the automatic write-back); no auto-retrieval.
 - ``"both"`` — auto-retrieve/inject *and* expose ``memory_search``.
 
-ReMe scopes writes by ``session_id``, which is read from
-``agent.state.session_id`` at hook time (not configured on the
-middleware), so it always matches the agent's own session; search runs
-over the whole workspace.
+ReMe reads ``session_id`` from ``agent.state.session_id`` and captures it
+for a pending logical reply. Resume checkpoints are isolated by live
+agent, session and reply ID; they do not survive rebuilding the agent or
+middleware. Search runs over the whole workspace.
 """
 from __future__ import annotations
 
