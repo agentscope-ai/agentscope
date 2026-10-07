@@ -339,6 +339,16 @@
 		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
 		"realtime": "实时",
+		"endpointCheck": {
+			"title": "端点检测",
+			"action": "测试连接",
+			"checking": "正在检测端点…",
+			"okSummary": "端点共提供 {{count}} 个模型",
+			"usable": "立即可用（端点 ∩ 目录）：{{count}}",
+			"endpointOnly": "端点有但目录没有（可添加自定义模型卡）：{{count}}",
+			"catalogOnly": "目录有但端点没有（可能是死条目）：{{count}}",
+			"unsupported": "该凭证类型不支持端点检测。"
+		},
 		"table": {
 			"model": "模型",
 			"context": "上下文",

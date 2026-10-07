@@ -339,6 +339,16 @@
 		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
 		"realtime": "Realtime",
+		"endpointCheck": {
+			"title": "Endpoint check",
+			"action": "Test connection",
+			"checking": "Checking the endpoint…",
+			"okSummary": "{{count}} models served by the endpoint",
+			"usable": "Usable now (endpoint ∩ catalog): {{count}}",
+			"endpointOnly": "Served but missing from the catalog (add a custom model card): {{count}}",
+			"catalogOnly": "Listed in the catalog but not served (likely dead entries): {{count}}",
+			"unsupported": "This credential type does not support endpoint checks."
+		},
 		"table": {
 			"model": "Model",
 			"context": "Context",
