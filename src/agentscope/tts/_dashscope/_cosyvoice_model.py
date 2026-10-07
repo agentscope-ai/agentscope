@@ -4,7 +4,8 @@ import asyncio
 import base64
 import io
 import os
-from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
+from pathlib import Path
+from typing import Any, AsyncGenerator, Literal, Sequence, TYPE_CHECKING
 import wave
 
 from pydantic import BaseModel, Field
@@ -107,10 +108,12 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
     def list_models(
         cls,
         custom_yaml_dir: str | None = None,
+        extra_yaml_dirs: Sequence[str | Path] | None = None,
     ) -> list[TTSModelCard]:
         """List CosyVoice model cards from the dedicated card directory."""
         return super().list_models(
             custom_yaml_dir=custom_yaml_dir or cls._MODELS_DIR,
+            extra_yaml_dirs=extra_yaml_dirs,
         )
 
     async def synthesize(
