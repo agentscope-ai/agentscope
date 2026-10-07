@@ -15,7 +15,8 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from pathlib import Path
+from typing import Literal, Mapping, TYPE_CHECKING
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -160,6 +161,7 @@ class ChatService:
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
+        model_card_dirs: Mapping[str, Path] | None = None,
         extra_projectors: list[EventProjector] | None = None,
         channel_clients: "ChannelClients | None" = None,
     ) -> None:
@@ -258,6 +260,7 @@ class ChatService:
         Set by the lifespan, since a SOP service is built on this one."""
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+        self._model_card_dirs = model_card_dirs
         self._projection = SessionProjection(message_bus)
         self._projectors: list[EventProjector] = [
             SubagentHitlProjector(storage),
@@ -1103,11 +1106,21 @@ class ChatService:
                             f"{agent_id}"
                         ),
                     )
-                model = await get_model(user_id, model_cfg, self._access)
+                model = await get_model(
+                    user_id,
+                    model_cfg,
+                    self._access,
+                    model_card_dirs=self._model_card_dirs,
+                )
 
                 fallback_cfg = session_record.config.fallback_chat_model_config
                 fallback_model = (
-                    await get_model(user_id, fallback_cfg, self._access)
+                    await get_model(
+                        user_id,
+                        fallback_cfg,
+                        self._access,
+                        model_card_dirs=self._model_card_dirs,
+                    )
                     if fallback_cfg is not None
                     else None
                 )

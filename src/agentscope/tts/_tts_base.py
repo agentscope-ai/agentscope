@@ -3,7 +3,7 @@
 import inspect
 from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Sequence
 
 from pydantic import BaseModel
 
@@ -141,6 +141,7 @@ class TTSModelBase:
     def list_models(
         cls,
         custom_yaml_dir: str | None = None,
+        extra_yaml_dirs: Sequence[str | Path] | None = None,
     ) -> list["TTSModelCard"]:
         """List candidate TTS models by scanning YAML model cards.
 
@@ -148,6 +149,10 @@ class TTSModelBase:
             custom_yaml_dir (`str | None`):
                 The custom YAML directory. If ``None``, uses the ``_models``
                 directory next to the concrete subclass's source file.
+            extra_yaml_dirs (`Sequence[str | Path] | None`):
+                Additional YAML directories merged on top of the built-in
+                ones (ignored when ``custom_yaml_dir`` is set). Cards whose
+                ``name`` collides with an already-loaded card override it.
 
         Returns:
             `list[TTSModelCard]`:
@@ -155,32 +160,41 @@ class TTSModelBase:
         """
         from ._tts_model_card import TTSModelCard
 
+        def _load_dir(yaml_dir: Path, cards: list["TTSModelCard"]) -> None:
+            """Load every YAML file in ``yaml_dir`` into ``cards``."""
+            seen = {card.name: i for i, card in enumerate(cards)}
+            for yaml_file in yaml_dir.glob("*.yaml"):
+                try:
+                    card = TTSModelCard.from_yaml(
+                        yaml_path=str(yaml_file),
+                        parameter_class=cls.Parameters,
+                    )
+                    if card.realtime != cls.realtime:
+                        continue
+                except Exception as e:
+                    logger.warning(
+                        "Warning: Failed to load %s: %s",
+                        yaml_file,
+                        str(e),
+                    )
+                    continue
+                if card.name in seen:
+                    cards[seen[card.name]] = card
+                else:
+                    seen[card.name] = len(cards)
+                    cards.append(card)
+
         if custom_yaml_dir is None:
             subclass_file = Path(inspect.getfile(cls))
-            yaml_dir = subclass_file.parent / "_models"
-        else:
-            yaml_dir = Path(custom_yaml_dir)
+            model_cards: list["TTSModelCard"] = []
+            _load_dir(subclass_file.parent / "_models", model_cards)
+            for extra_dir in extra_yaml_dirs or ():
+                _load_dir(Path(extra_dir), model_cards)
+            return model_cards
 
-        yaml_files = list(yaml_dir.glob("*.yaml"))
-
+        yaml_dir = Path(custom_yaml_dir)
         model_cards = []
-        for yaml_file in yaml_files:
-            try:
-                card = TTSModelCard.from_yaml(
-                    yaml_path=str(yaml_file),
-                    parameter_class=cls.Parameters,
-                )
-                if card.realtime != cls.realtime:
-                    continue
-                model_cards.append(card)
-            except Exception as e:
-                logger.warning(
-                    "Warning: Failed to load %s: %s",
-                    yaml_file,
-                    str(e),
-                )
-                continue
-
+        _load_dir(yaml_dir, model_cards)
         return model_cards
 
     @abstractmethod

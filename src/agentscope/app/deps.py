@@ -239,6 +239,20 @@ async def get_extra_agent_tools(
     return request.app.state.extra_agent_tools
 
 
+async def get_model_card_dirs(request: Request) -> dict:
+    """Return the extra model-card directories keyed by credential type.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `dict[str, Path]`: The mapping passed to
+        :func:`~agentscope.app.create_app` as ``model_card_dirs`` —
+        empty when not configured.
+    """
+    return request.app.state.model_card_dirs
+
+
 async def get_knowledge_base_service(
     request: Request,
 ) -> KnowledgeBaseService:

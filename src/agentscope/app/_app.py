@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
 import secrets
-from typing import Type, TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Mapping, Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
@@ -96,6 +97,7 @@ def create_app(
     extra_agent_tools: AgentToolFactory | None = None,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
+    model_card_dirs: Mapping[str, str | Path] | None = None,
     resource_access_policy: ResourceAccessPolicyBase | None = None,
     channels: list[Type[ChannelBase]] | None = None,
     download_secret: str | None = None,
@@ -252,6 +254,16 @@ def create_app(
             A custom :class:`~agentscope.agent.Agent` subclass to use
             when assembling agents.  When ``None`` (default), the
             built-in :class:`~agentscope.agent.Agent` is used.
+        model_card_dirs (`Mapping[str, str | Path] | None`, optional):
+            Additional YAML model-card directories, keyed by credential
+            type (e.g. ``{"dashscope_credential": "./cards/dashscope"}``).
+            Each directory may contain ``chat/``, ``embedding/`` and
+            ``tts/`` subdirectories; the YAML files inside are merged
+            into the built-in catalogs shown by ``GET /model``,
+            ``GET /embedding-model`` and ``GET /tts-model`` (and honored
+            when constructing session models). A card whose ``name``
+            matches a built-in card overrides it. When ``None``
+            (default), only the built-in catalogs are used.
         resource_access_policy (`ResourceAccessPolicyBase | None`, optional):
             Policy deciding whether a viewer may access
             credentials / agents / knowledge bases owned by another
@@ -384,6 +396,15 @@ def create_app(
             f"Duplicate sub_agent_template type(s): {duplicates}",
         )
     app.state.custom_subagent_templates = {t.type: t for t in templates}
+
+    # Extra model-card directories, keyed by credential type. Each value is
+    # a directory whose optional ``chat/``, ``embedding/`` and ``tts/``
+    # subdirectories hold additional YAML model cards that are merged into
+    # the built-in catalogs (same-name cards override the built-in ones).
+    app.state.model_card_dirs = {
+        credential_type: Path(directory)
+        for credential_type, directory in (model_card_dirs or {}).items()
+    }
 
     # Built-in routers
     for router in (

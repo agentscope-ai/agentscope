@@ -3,6 +3,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ..deps import get_model_card_dirs
 from ._schema import ListEmbeddingModelsResponse, ListEmbeddingModelsRequest
 from ...credential import CredentialFactory
 
@@ -22,8 +23,12 @@ embedding_model_router = APIRouter(
 )
 async def list_embedding_models(
     body: ListEmbeddingModelsRequest = Depends(),
+    model_card_dirs: dict = Depends(get_model_card_dirs),
 ) -> ListEmbeddingModelsResponse:
     """Return all candidate embedding models under the credential type.
+
+    Includes the built-in YAML cards plus any cards configured through
+    ``create_app(model_card_dirs=...)`` for this credential type.
 
     Unlike ``/knowledge_bases/embedding_models``, which narrows the
     list to what the knowledge base's dimension policy accepts, this
@@ -43,8 +48,19 @@ async def list_embedding_models(
             detail=f"Provider '{body.provider}' not found.",
         )
 
+    from .._service import card_subdirs
+
     embedding_cls = credential_cls.get_embedding_model_class()
     # Providers without embedding support report an empty catalogue
     # rather than 404 — "none available" is a valid answer here.
-    models = [] if embedding_cls is None else embedding_cls.list_models()
+    extra_dirs = (
+        None
+        if embedding_cls is None
+        else card_subdirs(model_card_dirs, body.provider).get("embedding")
+    )
+    models = (
+        [] if embedding_cls is None else embedding_cls.list_models(
+            extra_yaml_dirs=extra_dirs,
+        )
+    )
     return ListEmbeddingModelsResponse(models=models, total=len(models))

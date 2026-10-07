@@ -56,8 +56,16 @@ class CredentialBase(BaseModel):
         return []
 
     @classmethod
-    def list_tts_models(cls) -> list["TTSModelCard"]:
+    def list_tts_models(
+        cls,
+        extra_yaml_dirs: list[str] | None = None,
+    ) -> list["TTSModelCard"]:
         """List the candidate TTS models available under this credential.
+
+        Args:
+            extra_yaml_dirs (`list[str] | None`):
+                Additional YAML directories merged on top of the built-in
+                cards; same-name cards override the built-in ones.
 
         Returns:
             `list[TTSModelCard]`:
@@ -65,7 +73,7 @@ class CredentialBase(BaseModel):
         """
         cards: list["TTSModelCard"] = []
         for tts_cls in cls.get_tts_model_classes():
-            cards.extend(tts_cls.list_models())
+            cards.extend(tts_cls.list_models(extra_yaml_dirs=extra_yaml_dirs))
         return cards
 
     @classmethod

@@ -19,7 +19,7 @@ from ._index_task_consumer import IndexTaskConsumer
 from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._mcp_render import MCPRenderError, render_mcp
-from ._model import get_model
+from ._model import card_subdirs, get_model
 from ._tts_model import get_tts_model
 from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
@@ -55,6 +55,7 @@ __all__ = [
     "sign_download_token",
     "verify_download_token",
     "WorkspaceStatus",
+    "card_subdirs",
     "get_embedding_model",
     "get_model",
     "get_tts_model",
