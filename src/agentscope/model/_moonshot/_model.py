@@ -212,11 +212,15 @@ class MoonshotChatModel(ChatModelBase):
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
-            extra_body = dict(kwargs.get("extra_body") or {})
-            thinking = dict(extra_body.get("thinking") or {})
-            thinking.setdefault("type", thinking_type)
-            extra_body["thinking"] = thinking
-            kwargs["extra_body"] = extra_body
+            # Build a new dict so the caller's extra_body is never mutated
+            extra_body = kwargs.get("extra_body") or {}
+            kwargs["extra_body"] = {
+                **extra_body,
+                "thinking": {
+                    "type": thinking_type,
+                    **extra_body.get("thinking", {}),
+                },
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

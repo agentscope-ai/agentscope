@@ -144,10 +144,9 @@ class FunctionTool(ToolBase):
             `ToolChunk` or `AsyncGenerator[ToolChunk, None]`:
                 The normalized result of the function execution.
         """
-        if inspect.iscoroutinefunction(self._func):
-            result = await self._func(**kwargs)
-        else:
-            result = self._func(**kwargs)
+        result = self._func(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
 
         if isinstance(result, AsyncGenerator):
 

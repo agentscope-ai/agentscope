@@ -6,7 +6,7 @@ import asyncio
 import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agentscope.app.workspace_manager import (
     PrewarmConfig,
@@ -168,6 +168,22 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
         # One replacement build, and nothing built for the request itself.
         await asyncio.sleep(0.05)
         self.assertEqual(len(_FakeWorkspace.created), 2)
+
+    async def test_failed_initialize_closes_the_workspace(self) -> None:
+        """A workspace whose ``initialize`` fails is closed, not leaked."""
+        manager = DockerWorkspaceManager(self.basedir)
+        with patch.object(
+            _FakeWorkspace,
+            "initialize",
+            AsyncMock(side_effect=RuntimeError("gateway failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "gateway failed"):
+                await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        self.assertListEqual(
+            [ws.closed for ws in _FakeWorkspace.created],
+            [True],
+        )
 
     async def test_aexit_closes_buffered_and_cached_workspaces(self) -> None:
         """Neither the buffer nor the cache survives shutdown."""

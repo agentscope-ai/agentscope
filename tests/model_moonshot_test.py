@@ -170,6 +170,28 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "kimi-1")
 
+    async def test_extra_body_is_not_mutated(self) -> None:
+        """Defaulting thinking.type leaves the caller's extra_body intact."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
+
+        await self.model([], extra_body=extra_body)
+
+        self.assertDictEqual(
+            extra_body,
+            {"custom": "value", "thinking": {"budget_tokens": 1024}},
+        )
+        self.assertDictEqual(
+            mock_create.await_args.kwargs["extra_body"],
+            {
+                "custom": "value",
+                "thinking": {"budget_tokens": 1024, "type": "disabled"},
+            },
+        )
+
     async def test_tool_call_response(
         self,
     ) -> None:
@@ -231,44 +253,6 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
                     TextBlock.model_construct(id=A, created_at=A, text="42"),
                 ],
             ),
-        )
-
-    async def test_extra_body_is_not_mutated(self) -> None:
-        """Nested thinking defaults must not mutate caller state."""
-        self.mock_client.chat.completions.create = AsyncMock(
-            return_value=_mock_completion(text="Hello!"),
-        )
-        extra_body = {"thinking": {"budget_tokens": 1024}}
-
-        self.model.parameters.thinking_enable = False
-        await self.model([], extra_body=extra_body)
-        first_request = self.mock_client.chat.completions.create.call_args
-
-        self.model.parameters.thinking_enable = True
-        await self.model([], extra_body=extra_body)
-        second_request = self.mock_client.chat.completions.create.call_args
-
-        self.assertEqual(
-            extra_body,
-            {"thinking": {"budget_tokens": 1024}},
-        )
-        self.assertEqual(
-            first_request.kwargs["extra_body"],
-            {
-                "thinking": {
-                    "budget_tokens": 1024,
-                    "type": "disabled",
-                },
-            },
-        )
-        self.assertEqual(
-            second_request.kwargs["extra_body"],
-            {
-                "thinking": {
-                    "budget_tokens": 1024,
-                    "type": "enabled",
-                },
-            },
         )
 
 

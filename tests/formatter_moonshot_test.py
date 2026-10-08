@@ -359,6 +359,13 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_empty_thinking_only_yields_no_message(self) -> None:
+        """An empty ThinkingBlock alone must not be sent."""
+        res = await MoonshotChatFormatter().format(
+            [AssistantMsg("a", [ThinkingBlock(thinking="")])],
+        )
+        self.assertListEqual(res, [])
+
     async def test_chat_formatter_assistant_always_has_reasoning_content(
         self,
     ) -> None:

@@ -223,7 +223,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 
@@ -834,7 +836,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 

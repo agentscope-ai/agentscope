@@ -7,6 +7,7 @@ run anywhere ``agentscope[rag]`` is installed.
 """
 import base64
 import io
+import json
 import os
 import zipfile
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -464,6 +465,74 @@ class PDFParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await parser.parse(b"not a pdf", "broken.pdf")
 
+    async def test_password_protected_pdf_raises_value_error(self) -> None:
+        """Errors deferred until page iteration retain filename context."""
+        from pypdf import PdfWriter
+        from pypdf.errors import FileNotDecryptedError
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt("secret")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Failed to parse 'locked\.pdf' as PDF:",
+        ) as context:
+            await PDFParser().parse(buffer.getvalue(), "locked.pdf")
+        self.assertIsInstance(
+            context.exception.__cause__,
+            FileNotDecryptedError,
+        )
+
+    async def test_empty_user_password_pdf_remains_readable(self) -> None:
+        """An encrypted PDF that opens without a password is still parsed."""
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt(user_password="", owner_password="owner")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        sections = await PDFParser().parse(buffer.getvalue(), "open.pdf")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "open.pdf",
+                    "metadata": {"page": 1},
+                },
+            ],
+        )
+
+    async def test_text_extraction_read_error_raises_value_error(self) -> None:
+        """Read errors raised after page enumeration are wrapped as well."""
+        from unittest.mock import patch
+        from pypdf import PageObject
+        from pypdf.errors import PdfReadError
+
+        error = PdfReadError("broken content stream")
+        with patch.object(PageObject, "extract_text", side_effect=error):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"Failed to parse 'broken-stream\.pdf' as PDF:",
+            ) as context:
+                await PDFParser().parse(
+                    _make_pdf(["Hello"]),
+                    "broken-stream.pdf",
+                )
+        self.assertIs(context.exception.__cause__, error)
+
     async def test_supported_extensions(self) -> None:
         """``.pdf`` is the only extension exposed to the file picker."""
         self.assertEqual(PDFParser.supported_extensions(), [".pdf"])
@@ -554,6 +623,95 @@ class ImageParserTest(IsolatedAsyncioTestCase):
 
 class PPTParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`PPTParser`."""
+
+    @staticmethod
+    def _deck_with_soft_break() -> bytes:
+        """Build a deck whose text frame has one soft line break."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        paragraph = box.text_frame.paragraphs[0]
+        paragraph.add_run().text = "one"
+        paragraph.add_line_break()
+        paragraph.add_run().text = "two"
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        return buffer.getvalue()
+
+    async def test_soft_line_break_becomes_a_newline(self) -> None:
+        """``add_line_break()`` shows up as ``\n``, not a control char."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            self._deck_with_soft_break(),
+            "soft_break.pptx",
+        )
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "<slide index=1>\none\ntwo\n</slide>",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "soft_break.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
+    async def test_ordinary_newlines_are_preserved(self) -> None:
+        """A paragraph per line still yields newline-separated text."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        frame = box.text_frame
+        frame.text = "one"
+        for line in ("two", "three"):
+            paragraph = frame.add_paragraph()
+            paragraph.text = line
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(buffer.getvalue(), "paras.pptx")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": ("<slide index=1>\none\ntwo\nthree\n</slide>"),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "paras.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
 
     async def test_simple_deck_text_only(self) -> None:
         """A simple text-only deck round-trips through wrapping tags."""
@@ -1108,6 +1266,59 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
+
+    async def test_duplicate_and_blank_headers(self) -> None:
+        """Headers remain cell values, without pandas-generated labels."""
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        workbook.active.append(["Name", "Name", None])
+        workbook.active.append(["a", "b", "c"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+
+        for table_format in ("markdown", "json"):
+            for coordinates in (False, True):
+                with self.subTest(
+                    table_format=table_format,
+                    coordinates=coordinates,
+                ):
+                    parser = ExcelParser(
+                        table_format=table_format,
+                        include_cell_coordinates=coordinates,
+                        include_sheet_names=False,
+                    )
+                    sections = await parser.parse(
+                        buffer.getvalue(),
+                        "headers.xlsx",
+                    )
+                    self.assertEqual(len(sections), 1)
+                    text = sections[0].content.text
+                    if table_format == "markdown":
+                        expected = (
+                            "| [A1] Name | [B1] Name | [C1]  |\n"
+                            "| --- | --- | --- |\n"
+                            "| [A2] a | [B2] b | [C2] c |\n"
+                            if coordinates
+                            else "| Name | Name |  |\n"
+                            "| --- | --- | --- |\n"
+                            "| a | b | c |\n"
+                        )
+                        self.assertEqual(text, expected)
+                    else:
+                        rows = [
+                            json.loads(line) for line in text.splitlines()[1:]
+                        ]
+                        self.assertEqual(
+                            rows,
+                            [
+                                {"A1": "Name", "B1": "Name", "C1": ""},
+                                {"A2": "a", "B2": "b", "C2": "c"},
+                            ]
+                            if coordinates
+                            else [["Name", "Name", ""], ["a", "b", "c"]],
+                        )
 
     async def test_invalid_input_errors(self) -> None:
         """Missing paths and invalid workbooks use documented errors."""
@@ -1702,6 +1913,71 @@ class WordParserTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_omitted_table_cells_keep_column_alignment(self) -> None:
+        """Omitted cells must not shift columns or truncate later rows."""
+        # python-docx has no public setter for omitted grid positions.
+        # pylint: disable=protected-access
+        from docx import Document
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = Document()
+        table = doc.add_table(rows=4, cols=4)
+        values = [
+            ["unused", "B", "C", "unused"],
+            ["a", "b", "c", "d"],
+            ["unused", "wide", "unused", "last"],
+            ["unused", "unused", "tail", "unused"],
+        ]
+        for row, cells in zip(table.rows, values):
+            for cell, text in zip(row.cells, cells):
+                cell.text = text
+        table.cell(2, 1).merge(table.cell(2, 2)).text = "wide"
+        for row, (before, after) in zip(
+            table.rows,
+            [(1, 1), (0, 0), (1, 0), (2, 1)],
+        ):
+            for tag, count, index in (
+                ("w:gridBefore", before, 0),
+                ("w:gridAfter", after, -1),
+            ):
+                if count:
+                    for _ in range(count):
+                        row._tr.remove(row._tr.tc_lst[index])
+                    omitted = OxmlElement(tag)
+                    omitted.set(qn("w:val"), str(count))
+                    row._tr.get_or_add_trPr().append(omitted)
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        for table_format in ("markdown", "json"):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    table_format=table_format,
+                    separate_table=True,
+                ).parse(buffer.getvalue(), "omitted.docx")
+                self.assertEqual(len(sections), 1)
+                text = sections[0].content.text
+                if table_format == "markdown":
+                    self.assertEqual(
+                        text,
+                        "|  | B | C |  |\n"
+                        "| --- | --- | --- | --- |\n"
+                        "| a | b | c | d |\n"
+                        "|  | wide |  | last |\n"
+                        "|  |  | tail |  |\n",
+                    )
+                else:
+                    self.assertEqual(
+                        json.loads(text.split("\n", 1)[1]),
+                        [
+                            ["", "B", "C", ""],
+                            ["a", "b", "c", "d"],
+                            ["", "wide", "", "last"],
+                            ["", "", "tail", ""],
+                        ],
+                    )
 
     async def test_nested_table_text_is_kept(self) -> None:
         """Text inside a table nested in another cell must survive parsing."""

@@ -114,6 +114,12 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             {"count": "42", "verbse": True},
         )
 
+    def test_empty_arguments_are_an_empty_object(self) -> None:
+        """Test that an empty argument payload is parsed as no arguments."""
+        for json_str in ["", "   "]:
+            with self.subTest(json_str=json_str):
+                self.assertDictEqual(_json_loads_with_repair(json_str), {})
+
     def test_reject_invalid_arguments(self) -> None:
         """Test the arguments that cannot be loaded into a valid dict."""
         for json_str in ['"hello"', "[1, 2]"]:
