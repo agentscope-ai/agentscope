@@ -370,6 +370,10 @@ class WordParser(ParserBase):
                 if self.include_image:
                     image_blocks: list[DataBlock] = []
                     for p_elem in element.findall(".//" + qn("w:p")):
+                        # The outer paragraph scan already covers images in
+                        # nested text-box paragraphs.
+                        if p_elem.xpath("ancestor::w:p"):
+                            continue
                         image_blocks.extend(
                             _extract_image_blocks(
                                 Paragraph(p_elem, doc),
