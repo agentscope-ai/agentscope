@@ -1461,7 +1461,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     async def test_close_cancels_agent_assembly_after_lock_acquisition(
         self,
     ) -> None:
-        """Owning the run lock does not make an unfinished startup drainable."""
+        """Owning the run lock does not make unfinished startup drainable."""
         entered = asyncio.Event()
         cancelled = asyncio.Event()
         transport = _FakeTransport()
