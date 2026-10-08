@@ -1046,13 +1046,7 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 )
 
     async def test_separated_backup_suffix(self) -> None:
-        """A separated dotted -i suffix is a backup suffix, not a script.
-
-        On BSD/macOS sed the backup suffix is always a separate argument,
-        and it is usually dotted. Before the fix, ``sed -i .bak 's/x/y/'
-        notes.txt`` was judged as the script ``.bak`` and rejected, while
-        the actual substitution and file arguments were never analyzed.
-        """
+        """A separated dotted -i suffix is a backup suffix, not a script."""
         cases = [
             (
                 "sed -i .bak 's/x/y/' notes.txt",

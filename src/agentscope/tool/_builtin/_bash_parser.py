@@ -788,11 +788,7 @@ class BashCommandParser:
                 # consumed as the remainder above.
                 if flag_chars.endswith("i") and i + 1 < len(args):
                     next_arg = args[i + 1]
-                    # A dotted suffix such as ".bak" (the BSD/macOS
-                    # spelling) starts with a dot, which a sed script
-                    # never does -- consume it as the suffix. A dot
-                    # elsewhere can still belong to a script such as
-                    # "/example.com/d", so leave those tokens alone.
+                    # A sed script never starts with a dot, e.g. BSD ".bak"
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
