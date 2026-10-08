@@ -267,6 +267,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			icon: LucideIcon;
 			tooltip: string;
 			disabled: boolean;
+			variant: 'default' | 'ghost';
 			onClick: (() => void) | undefined;
 		} = (() => {
 			if (voiceState === 'connecting') {
@@ -274,6 +275,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					icon: Loader2,
 					tooltip: t('realtime.stop'),
 					disabled: false,
+					variant: 'default',
 					onClick: onVoiceToggle,
 				};
 			}
@@ -282,6 +284,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					icon: Square,
 					tooltip: t('realtime.stop'),
 					disabled: false,
+					variant: 'default',
 					onClick: onVoiceToggle,
 				};
 			}
@@ -290,6 +293,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					icon: Square,
 					tooltip: t('textInput.stop'),
 					disabled: false,
+					variant: 'default',
 					onClick: onInterrupt,
 				};
 			}
@@ -298,6 +302,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					icon: Square,
 					tooltip: t('textInput.stopping'),
 					disabled: true,
+					variant: 'default',
 					onClick: onInterrupt,
 				};
 			}
@@ -306,6 +311,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					icon: ArrowUp,
 					tooltip: t('textInput.send'),
 					disabled: disabled || hasProcessing,
+					variant: 'default',
 					onClick: handleSend,
 				};
 			}
@@ -313,6 +319,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				icon: AudioLines,
 				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
 				disabled: voiceDisabled,
+				variant: 'ghost',
 				onClick: onVoiceToggle,
 			};
 		})();
@@ -542,13 +549,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								<TooltipTrigger asChild>
 									<Button
 										type="button"
-										variant={
-											voiceState === 'idle' &&
-											phase === 'idle' &&
-											!value.trim()
-												? 'ghost'
-												: 'default'
-										}
+										variant={actionButton.variant}
 										onClick={actionButton.onClick}
 										disabled={actionButton.disabled}
 										size="icon-lg"

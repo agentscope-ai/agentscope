@@ -439,6 +439,8 @@ class AnthropicChatModel(ChatModelBase):
         block_id_mapping: dict[int, str] = {}
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        # The indexes of the tool calls that received argument text
+        tool_call_with_input: set[int] = set()
 
         async with response as stream:
             async for event in stream:
@@ -537,15 +539,39 @@ class AnthropicChatModel(ChatModelBase):
                         and block_index in tool_call_mapping
                     ):
                         block_id, name = tool_call_mapping[block_index]
+                        if delta.partial_json:
+                            tool_call_with_input.add(block_index)
                         delta_res.append_tool_call(
                             block_id=block_id,
                             name=name,
                             input=delta.partial_json or "",
                         )
 
+                # A call without arguments streams no JSON text, so close it
+                # with the empty object the non-streaming response carries
+                elif (
+                    event.type == "content_block_stop"
+                    and event.index in tool_call_mapping
+                    and event.index not in tool_call_with_input
+                ):
+                    block_id, name = tool_call_mapping[event.index]
+                    delta_res.append_tool_call(
+                        block_id=block_id,
+                        name=name,
+                        input="{}",
+                    )
+
                 elif event.type == "message_delta":
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens
+                        # ``usage`` was stamped when ``message_start``
+                        # arrived, i.e. at time-to-first-token. Refresh it
+                        # here so ``time`` spans the whole generation, as
+                        # every other provider (and this model's
+                        # non-streaming path) already does.
+                        usage.time = (
+                            datetime.now() - start_datetime
+                        ).total_seconds()
 
                 if delta_res.content:
                     delta_res.usage = usage

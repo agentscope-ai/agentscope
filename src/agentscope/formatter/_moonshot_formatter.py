@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Moonshot AI formatter for agentscope."""
+
 import base64
 from fnmatch import fnmatch
 from typing import Any
@@ -138,8 +139,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
                 if isinstance(block, ThinkingBlock):
                     # Preserve reasoning_content for multi-turn
-                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
-                    reasoning_parts.append(block.thinking)
+                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking).
+                    # Skip empty thinking: a redacted ThinkingBlock is
+                    # stored with ``thinking=""``, and emitting it
+                    # alone yields an assistant turn whose content is
+                    # null and which the API rejects.
+                    if block.thinking:
+                        reasoning_parts.append(block.thinking)
 
                 elif isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
@@ -384,20 +390,19 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
 
         is_first_agent_message = True
         async for typ, group in self._group_messages(msgs[start_index:]):
-            if typ == "tool_sequence":
-                formatted_msgs.extend(
-                    await MoonshotChatFormatter(
-                        input_types=self.input_types,
-                    ).format(group),
-                )
-            elif typ == "agent_message":
-                formatted_group = await self._format_agent_message(
-                    group,
-                    is_first_agent_message,
-                )
-                formatted_msgs.extend(formatted_group)
-                if formatted_group:
-                    is_first_agent_message = False
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_tool_sequence(group),
+                    )
+                case "agent_message":
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
+                    )
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

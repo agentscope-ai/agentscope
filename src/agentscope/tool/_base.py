@@ -467,8 +467,8 @@ class ToolBase(ABC):
             False
         """
 
-        # Normalize path
-        abs_path = os.path.abspath(os.path.expanduser(file_path))
+        # Resolve symlinks so an alias is judged by its target
+        abs_path = os.path.realpath(os.path.expanduser(file_path))
 
         # Split path into segments
         path_parts = Path(abs_path).parts

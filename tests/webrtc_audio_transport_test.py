@@ -310,9 +310,19 @@ class _FakeMessageBus:
         """Record one live SSE publication."""
         self.calls.append({"method": "publish", "key": key, "event": event})
 
-    async def log_trim(self, key: str) -> None:
+    async def log_trim(
+        self,
+        key: str,
+        before_id: str | None = None,
+    ) -> None:
         """Record replay-log cleanup."""
-        self.calls.append({"method": "log_trim", "key": key})
+        self.calls.append(
+            {
+                "method": "log_trim",
+                "key": key,
+                "before_id": before_id,
+            },
+        )
 
     async def registry_set(
         self,
@@ -1079,7 +1089,11 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "value": "1-0",
                     "ttl_secs": None,
                 },
-                {"method": "log_trim", "key": events_key},
+                {
+                    "method": "log_trim",
+                    "key": events_key,
+                    "before_id": "1-0",
+                },
                 {
                     "method": "acquire_lock",
                     "key": MessageBusKeys.session_event_checkpoint_lock(

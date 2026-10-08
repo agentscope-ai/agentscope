@@ -255,6 +255,7 @@ class WebRTCSession:
         self._checkpoint_entry_id = entry_id
         await self.message_bus.log_trim(
             MessageBusKeys.session_events(self.session_id),
+            before_id=entry_id,
         )
 
     async def _persist_state(self, state: AgentState | None = None) -> None:

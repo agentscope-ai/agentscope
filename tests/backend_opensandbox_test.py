@@ -19,7 +19,9 @@ which avoids duplicating the sandbox bring-up logic here.
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import OpenSandboxWorkspace
@@ -153,3 +155,22 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{SANDBOX_WORKDIR}/missing")
+
+
+class TestOpenSandboxBackendExitCode(IsolatedAsyncioTestCase):
+    """Exit-code mapping, without a live sandbox."""
+
+    async def test_unset_exit_code_is_not_success(self) -> None:
+        """An execution the SDK leaves without an exit code reports -1."""
+        execution = SimpleNamespace(exit_code=None, stdout=b"", stderr=b"")
+        sandbox = SimpleNamespace(
+            commands=SimpleNamespace(run=AsyncMock(return_value=execution)),
+        )
+        backend = OpenSandboxBackend(sandbox, workdir="/workspace")
+
+        result = await backend.exec_shell(["python", "-c", "pass"])
+
+        self.assertEqual(
+            result,
+            ExecResult(exit_code=-1, stdout=b"", stderr=b""),
+        )

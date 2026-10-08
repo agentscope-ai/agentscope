@@ -231,7 +231,12 @@ class DockerWorkspaceManager(
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The container may already be running and nothing holds it.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────

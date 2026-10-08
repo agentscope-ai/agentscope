@@ -1013,6 +1013,70 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [{"role": "assistant", "content": content}],
                 )
 
+    async def test_stream_tool_call_without_arguments(self) -> None:
+        """A tool call without arguments streams as ``{}``, as without
+        streaming."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-no-args",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "list_tasks",
+                        "input": {},
+                    },
+                ],
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            },
+        )
+        events = _completion_events(completion)
+        tool_delta = next(_ for _ in events if _.type == "content_block_delta")
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = self.mock_client
+
+        cases = {
+            "no_delta": [_ for _ in events if _ is not tool_delta],
+            "empty_delta": [
+                (
+                    _.model_copy(
+                        update={
+                            "delta": _.delta.model_copy(
+                                update={"partial_json": ""},
+                            ),
+                        },
+                    )
+                    if _ is tool_delta
+                    else _
+                )
+                for _ in events
+            ],
+        }
+        for name, case_events in cases.items():
+            with self.subTest(name=name):
+                self.mock_client.messages.create = AsyncMock(
+                    side_effect=[
+                        _MockAsyncEventStream(case_events),
+                        completion,
+                    ],
+                )
+
+                final = [r async for r in await self.model([])][-1]
+                non_stream = await non_stream_model([])
+
+                self.assertListEqual(
+                    [
+                        (_.id, _.name, _.input)
+                        for _ in (final.content[0], non_stream.content[0])
+                    ],
+                    [("toolu_1", "list_tasks", "{}")] * 2,
+                )
+
 
 # ---------------------------------------------------------------------------
 # _format_tools tests

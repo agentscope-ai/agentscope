@@ -1508,6 +1508,7 @@ class ChatService:
                                 )
                                 await self._message_bus.log_trim(
                                     MessageBusKeys.session_events(session_id),
+                                    before_id=checkpoint_cursor,
                                 )
                     finally:
                         # A worker whose turn died never reached

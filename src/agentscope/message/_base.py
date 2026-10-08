@@ -519,12 +519,15 @@ class Msg(BaseModel):
     def append_usage(self, usage: Usage) -> Self:
         """Accumulate the token usage of one model call into this message.
 
+        The message keeps a copy of ``usage``, so the object handed over by
+        the caller is never adopted and keeps its own value.
+
         Args:
             usage (`Usage`):
                 The token usage to be accumulated.
         """
         if self.usage is None:
-            self.usage = usage
+            self.usage = usage.model_copy()
         else:
             self.usage.input_tokens += usage.input_tokens
             self.usage.output_tokens += usage.output_tokens

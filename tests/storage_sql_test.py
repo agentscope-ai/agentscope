@@ -21,7 +21,7 @@ from sqlalchemy.dialects import mysql
 from utils import AnyString
 
 from agentscope.app.storage._sql._mappers import _to_record
-from agentscope.app.storage._sql._tables import SessionRow
+from agentscope.app.storage._sql._tables import AgentRow, SessionRow
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -266,33 +266,55 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
     # ------------------------------------------------------------------
 
     async def test_agents_round_trip_and_source_filter(self) -> None:
-        """``list_agents`` filters out ``source='team'`` workers."""
-        user_agent = AgentRecord.model_validate(
-            {
-                "user_id": "user-1",
-                "data": {
-                    "name": "usr",
-                    "context_config": {"max_image_num": 3},
-                    "react_config": {"max_iters": 7},
-                },
-            },
-        )
+        """Legacy agent rows load grouped and team workers stay hidden."""
+        record_id = "agent-legacy"
+        data_id = "agent-data-legacy"
+        now = datetime.now()
+        # Insert at the row layer so AgentData cannot normalize the legacy
+        # payload before it reaches SQL storage.
+        # pylint: disable=protected-access
+        async with self.storage._session() as sess:
+            sess.add(
+                AgentRow(
+                    id=record_id,
+                    created_at=now,
+                    updated_at=now,
+                    user_id="user-1",
+                    source="user",
+                    payload={
+                        "data": {
+                            "id": data_id,
+                            "name": "usr",
+                            "system_prompt": "You are usr.",
+                            "context_config": {"max_image_num": 3},
+                            "react_config": {"max_iters": 7},
+                        },
+                    },
+                ),
+            )
+            await sess.commit()
+
         team_agent = _agent_record("user-1", "team-worker")
         team_agent.source = "team"
-
-        await self.storage.upsert_agent("user-1", user_agent)
         await self.storage.upsert_agent("user-1", team_agent)
 
         listed = await self.storage.list_agents("user-1")
-        self.assertEqual([a.id for a in listed], [user_agent.id])
+        self.assertEqual([agent.id for agent in listed], [record_id])
         self.assertDictEqual(
-            listed[0].data.model_dump(mode="json", exclude_defaults=True),
+            listed[0].model_dump(mode="json", exclude_defaults=True),
             {
-                "id": user_agent.data.id,
-                "name": "usr",
-                "chat_config": {
-                    "context_config": {"max_image_num": 3},
-                    "react_config": {"max_iters": 7},
+                "id": record_id,
+                "updated_at": now.isoformat(),
+                "created_at": now.isoformat(),
+                "user_id": "user-1",
+                "data": {
+                    "id": data_id,
+                    "name": "usr",
+                    "system_prompt": "You are usr.",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 7},
+                    },
                 },
             },
         )

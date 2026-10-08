@@ -286,7 +286,7 @@ class Grep(ToolBase):
         a shell), so the same code path works for local, Docker, and E2B
         backends and needs no platform-specific argument quoting.
         """
-        command = ["rg", *args, search_path]
+        command = ["rg", *args, "--", search_path]
 
         result = await self._backend.exec_shell(
             command,
