@@ -359,6 +359,13 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_empty_thinking_only_yields_no_message(self) -> None:
+        """An empty ThinkingBlock alone must not be sent."""
+        res = await MoonshotChatFormatter().format(
+            [AssistantMsg("a", [ThinkingBlock(thinking="")])],
+        )
+        self.assertListEqual(res, [])
+
     async def test_chat_formatter_assistant_always_has_reasoning_content(
         self,
     ) -> None:
@@ -992,27 +999,3 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
-
-
-class MoonshotEmptyThinkingTest(IsolatedAsyncioTestCase):
-    """An empty ThinkingBlock must not become an empty assistant turn."""
-
-    async def test_redacted_thinking_only_yields_no_message(self) -> None:
-        """A redacted (empty) ThinkingBlock alone must not be sent."""
-        res = await MoonshotChatFormatter().format(
-            [AssistantMsg("a", [ThinkingBlock(thinking="")])],
-        )
-        self.assertListEqual(res, [])
-
-    async def test_real_thinking_is_still_preserved(self) -> None:
-        """Non-empty ``reasoning_content`` keeps working."""
-        res = await MoonshotChatFormatter().format(
-            [
-                AssistantMsg(
-                    "a",
-                    [ThinkingBlock(thinking="r"), TextBlock(text="x")],
-                ),
-            ],
-        )
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0]["reasoning_content"], "r")
