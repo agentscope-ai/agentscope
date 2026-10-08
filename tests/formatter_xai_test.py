@@ -417,8 +417,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             name="recording",
                             output=[
                                 DataBlock(
-                                    source=Base64Source(
-                                        data="AAAA",
+                                    source=URLSource(
+                                        url="https://example.com/a.wav",
                                         media_type="audio/wav",
                                     ),
                                 ),
@@ -429,10 +429,92 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 ),
             ],
         )
-        # No promoted user message: only the tool result survives.
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].role, "tool")
-        self.assertIn("system-reminder", res[0].args[0])
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "<system-reminder>A(n) audio file is returned and "
+                    "can be accessed at the URL: "
+                    "https://example.com/a.wav.</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Promoted media does not split parallel tool-result messages."""
+        fmt = XAIChatFormatter()
+        picture = DataBlock(
+            id="image_1",
+            source=URLSource(
+                url="https://example.com/shot.png",
+                media_type="image/png",
+            ),
+        )
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_shot",
+                            name="screenshot",
+                            input="{}",
+                        ),
+                        ToolCallBlock(
+                            id="call_title",
+                            name="get_title",
+                            input="{}",
+                        ),
+                        ToolResultBlock(
+                            id="call_shot",
+                            name="screenshot",
+                            output=[
+                                TextBlock(text="Screenshot taken."),
+                                picture,
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                        ToolResultBlock(
+                            id="call_title",
+                            name="get_title",
+                            output=[TextBlock(text="Example Domain")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertEqual(len(res), 4)
+        self.assertEqual(len(res[0].tool_calls), 2)
+        self.assertEqual(res[0].tool_calls[0].id, "call_shot")
+        self.assertEqual(res[0].tool_calls[1].id, "call_title")
+        self.assertListEqual(
+            res[1:],
+            [
+                tool_result(
+                    "Screenshot taken.\n"
+                    "<system-reminder>A(n) image file is returned and "
+                    "will be presented to you with the identifier "
+                    "[image_1].</system-reminder>",
+                    tool_call_id="call_shot",
+                ),
+                tool_result(
+                    "Example Domain",
+                    tool_call_id="call_title",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    "- image_1 (image file): ",
+                    image("https://example.com/shot.png"),
+                    "</system-reminder>",
+                ),
+            ],
+        )
 
     async def test_chat_formatter_thinking_dropped(self) -> None:
         """ThinkingBlock is silently ignored in user/assistant xAI

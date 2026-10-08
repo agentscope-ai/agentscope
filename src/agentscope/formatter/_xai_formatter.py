@@ -200,8 +200,16 @@ class XAIChatFormatter(FormatterBase):
             elif msg.role == "assistant":
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
+                pending_media: list[Any] = []
 
                 for block in blocks:
+                    if pending_media and not isinstance(
+                        block,
+                        ToolResultBlock,
+                    ):
+                        xai_messages.extend(pending_media)
+                        pending_media = []
+
                     if isinstance(block, ToolResultBlock):
                         # Convert each ToolResultBlock to a tool_result
                         # message.
@@ -258,7 +266,7 @@ class XAIChatFormatter(FormatterBase):
                                 self.supported_input_media_types,
                             )
                             if promo_args:
-                                xai_messages.append(user(*promo_args))
+                                pending_media.append(user(*promo_args))
 
                     elif isinstance(block, ToolCallBlock):
                         pending_tool_calls.append(block)
@@ -309,6 +317,8 @@ class XAIChatFormatter(FormatterBase):
                             )
                             if hint_args:
                                 xai_messages.append(user(*hint_args))
+
+                xai_messages.extend(pending_media)
 
                 if pending_tool_calls:
                     # Assistant turn that triggered tool calls (history).
