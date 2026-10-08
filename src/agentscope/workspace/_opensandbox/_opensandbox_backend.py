@@ -97,12 +97,10 @@ class OpenSandboxBackend(BackendBase):
         opts = self._make_run_opts(cwd=cwd or self._workdir, timeout=timeout)
         try:
             res = await self._sandbox.commands.run(command_line, opts=opts)
-            # The SDK leaves ``exit_code`` as ``None`` when a foreground run
-            # ends in a non-numeric error or without a terminal event; like
-            # the Docker backend, treat an unknown code as -1, never as 0.
-            exit_code = getattr(res, "exit_code", None)
+            # The SDK leaves ``exit_code`` unset when the run's outcome is
+            # unknown (e.g. killed); report it as -1 rather than success.
             return ExecResult(
-                exit_code=-1 if exit_code is None else int(exit_code),
+                exit_code=-1 if res.exit_code is None else res.exit_code,
                 stdout=self._execution_stream_bytes(res, "stdout"),
                 stderr=self._execution_stream_bytes(res, "stderr"),
             )
