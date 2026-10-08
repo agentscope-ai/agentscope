@@ -291,11 +291,7 @@ Usage:
                 # render a best-effort "add" diff in the UI.
                 previous_content = ""
 
-        # The backend creates the parent directories itself (every
-        # implementation does, and with the path semantics of the
-        # environment it writes into), so no shell round trip is needed
-        # here — and deriving the parent with the host's ``Path`` would
-        # produce a wrong path when a Windows host drives a POSIX sandbox.
+        # Write content to file (backend handles parent dir creation)
         await self._backend.write_file(
             file_path,
             content.encode("utf-8"),
