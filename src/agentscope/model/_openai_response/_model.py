@@ -4,6 +4,7 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, List, TYPE_CHECKING, Type
 
+import openai
 from pydantic import BaseModel, Field
 
 from ..._utils._common import _generate_id
@@ -153,8 +154,6 @@ class OpenAIResponseModel(ChatModelBase):
         self.formatter = formatter or OpenAIResponseFormatter()
         self.client_kwargs = client_kwargs or {}
 
-        import openai
-
         self.client: openai.AsyncClient = openai.AsyncClient(
             api_key=self.credential.api_key.get_secret_value(),
             organization=self.credential.organization,
@@ -164,8 +163,6 @@ class OpenAIResponseModel(ChatModelBase):
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
-        import openai
-
         return (
             openai.APIConnectionError,
             openai.APITimeoutError,
@@ -177,8 +174,6 @@ class OpenAIResponseModel(ChatModelBase):
     def _get_structured_output_fallback_exceptions(
         cls,
     ) -> tuple[Type[Exception], ...]:
-        import openai
-
         return (openai.BadRequestError,)
 
     async def _call_api(
@@ -296,6 +291,19 @@ class OpenAIResponseModel(ChatModelBase):
         async with response as stream:
             async for event in stream:
                 event_type = event.type
+                # The SDK doesn't raise on these events, so surface them here
+                if event_type in ("response.failed", "error"):
+                    error = (
+                        event.response.error
+                        if event_type == "response.failed"
+                        else event
+                    )
+                    raise openai.APIError(
+                        message=error.message if error else "Response failed",
+                        request=stream.response.request,
+                        body=error.model_dump() if error else None,
+                    )
+
                 delta_res = ChatResponse(
                     content=[],
                     is_last=False,

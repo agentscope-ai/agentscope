@@ -10,6 +10,7 @@ import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+from openai import APIError
 from pydantic import BaseModel
 
 from utils import AnyString
@@ -143,6 +144,7 @@ class _MockAsyncEventStream:
         self._events = events
         self._index = 0
         self.exited = False
+        self.response = MagicMock()
 
     async def __aenter__(self) -> "_MockAsyncEventStream":
         return self
@@ -525,6 +527,39 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         self.model = _make_model(stream=True)
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_stream_errors_propagate(self) -> None:
+        """Failed stream events raise APIError instead of a partial reply."""
+        body = {"code": "server_error", "message": "Generation failed."}
+        error = _make_event("error", message="Generation failed.")
+        error.model_dump.return_value = body
+        for failure in (
+            error,
+            _make_event("response.failed", response=MagicMock(error=error)),
+        ):
+            with self.subTest(event_type=failure.type):
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(
+                        [
+                            _make_event(
+                                "response.output_text.delta",
+                                delta="Partial",
+                            ),
+                            failure,
+                        ],
+                    ),
+                )
+                gen = await self.model([])
+                await anext(gen)
+                with self.assertRaises(APIError) as ctx:
+                    await anext(gen)
+                self.assertDictEqual(
+                    {
+                        "message": ctx.exception.message,
+                        "body": ctx.exception.body,
+                    },
+                    {"message": "Generation failed.", "body": body},
+                )
 
     async def test_stream_text(self) -> None:
         """Stream text yields deltas then final with full content."""
