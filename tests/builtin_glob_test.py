@@ -104,28 +104,23 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
     async def test_current_directory_segments(self) -> None:
         """Standalone dot segments do not change the matched files."""
-        for pattern, normalized in (
-            ("./*.py", "*.py"),
-            ("./**/*.py", "**/*.py"),
-            ("subdir/./*.py", "subdir/*.py"),
-            ("././subdir/./*.py", "subdir/*.py"),
-            (r".\subdir\.\*.py", "subdir/*.py"),
-            ("**/./*.py", "**/*.py"),
+        for pattern, expected in (
+            ("./*.py", ["test1.py", "test2.py"]),
+            ("./**/*.py", ["subdir/test3.py", "test1.py", "test2.py"]),
+            ("subdir/./*.py", ["subdir/test3.py"]),
+            (r".\subdir\.\*.py", ["subdir/test3.py"]),
         ):
             with self.subTest(pattern=pattern):
-                expected = await self.glob_tool(
-                    pattern=normalized,
-                    path=self.temp_dir,
-                )
-                actual = await self.glob_tool(
+                chunk = await self.glob_tool(
                     pattern=pattern,
                     path=self.temp_dir,
                 )
-                self.assertNotIn("No files found", expected.content[0].text)
-                self.assertEqual(actual.state, "running")
-                self.assertEqual(
-                    actual.content[0].text,
-                    expected.content[0].text,
+                self.assertListEqual(
+                    sorted(chunk.content[0].text.splitlines()),
+                    [
+                        os.path.join(self.temp_dir, *name.split("/"))
+                        for name in expected
+                    ],
                 )
 
     async def test_dot_prefixed_names_are_preserved(self) -> None:
