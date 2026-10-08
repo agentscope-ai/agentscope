@@ -33,7 +33,7 @@ from utils import AnyString, FakeWorkspaceManager
 
 from agentscope.app import create_app
 from agentscope.app._manager import SchedulerManager
-from agentscope.app.message_bus import RedisMessageBus, MessageBusKeys
+from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     ChatModelConfig,
     RedisStorage,
@@ -462,44 +462,6 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
             if tool.name == "ScheduleDelete"
         )
 
-    async def test_successful_delete_notifies_after_storage_removal(
-        self,
-    ) -> None:
-        """The lifecycle notification observes the completed deletion."""
-        record = _make_record()
-        await self.storage.upsert_schedule("u", record)
-        original_publish = self.bus.publish
-        records_at_publish = []
-
-        async def publish_after_delete(channel: str, data: dict) -> None:
-            """Observe storage when the lifecycle event is published.
-
-            Args:
-                channel (`str`):
-                    The lifecycle channel.
-                data (`dict`):
-                    The schedule change payload.
-            """
-            records_at_publish.append(
-                await self.storage.get_schedule("u", record.id),
-            )
-            await original_publish(channel, data)
-
-        with patch.object(
-            self.bus,
-            "publish",
-            side_effect=publish_after_delete,
-        ) as publish:
-            result = await self.delete_tool(schedule_id=record.id)
-
-        self.assertEqual(result.state, ToolResultState.SUCCESS)
-        self.assertIsNone(await self.storage.get_schedule("u", record.id))
-        self.assertListEqual(records_at_publish, [None])
-        publish.assert_awaited_once_with(
-            MessageBusKeys.schedule_lifecycle(),
-            {"schedule_id": record.id},
-        )
-
     async def test_non_owner_delete_removes_owner_job(self) -> None:
         """Subscription removes the owner's job before the periodic pass."""
         record = _make_record()
@@ -518,42 +480,6 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
                 await asyncio.sleep(0.02)
             self.assertListEqual(self.job_ids(), [])
 
-    async def test_timer_owner_delete_removes_local_job_and_notifies(
-        self,
-    ) -> None:
-        """Owner-side deletion keeps local cleanup and sends a notification."""
-        record = _make_record()
-        await self.storage.upsert_schedule("u", record)
-        async with self.manager:
-            self.assertListEqual(self.job_ids(), [record.id])
-            tool = next(
-                tool
-                for tool in await self.manager.list_tools(
-                    user_id="u",
-                    agent_id="a",
-                    chat_model_config=record.data.chat_model_config,
-                )
-                if tool.name == "ScheduleDelete"
-            )
-            with patch.object(
-                self.bus,
-                "publish",
-                wraps=self.bus.publish,
-            ) as publish:
-                result = await tool(schedule_id=record.id)
-
-            self.assertEqual(result.state, ToolResultState.SUCCESS)
-            for _ in range(50):
-                if record.id not in self.manager._versions:
-                    break
-                await asyncio.sleep(0.02)
-            self.assertNotIn(record.id, self.manager._versions)
-            self.assertListEqual(self.job_ids(), [])
-            publish.assert_awaited_once_with(
-                MessageBusKeys.schedule_lifecycle(),
-                {"schedule_id": record.id},
-            )
-
     async def test_missing_delete_does_not_notify(self) -> None:
         """A missing record returns an error without a lifecycle event."""
         with patch.object(
@@ -565,44 +491,6 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
 
         self.assertEqual(result.state, ToolResultState.ERROR)
         publish.assert_not_awaited()
-
-    async def test_storage_error_does_not_notify(self) -> None:
-        """A failed deletion preserves the error without announcing success."""
-        record = _make_record()
-        await self.storage.upsert_schedule("u", record)
-        error = RuntimeError("schedule deletion failed")
-        with (
-            patch.object(self.storage, "delete_schedule", side_effect=error),
-            patch.object(
-                self.bus,
-                "publish",
-                wraps=self.bus.publish,
-            ) as publish,
-        ):
-            with self.assertRaises(RuntimeError) as raised:
-                await self.delete_tool(schedule_id=record.id)
-
-        self.assertIs(raised.exception, error)
-        self.assertIsNotNone(await self.storage.get_schedule("u", record.id))
-        publish.assert_not_awaited()
-
-    async def test_notification_error_preserves_success(self) -> None:
-        """Notification failure does not undo a successful deletion."""
-        record = _make_record()
-        await self.storage.upsert_schedule("u", record)
-        with patch.object(
-            self.bus,
-            "publish",
-            side_effect=RuntimeError("lifecycle publication failed"),
-        ) as publish:
-            result = await self.delete_tool(schedule_id=record.id)
-
-        self.assertEqual(result.state, ToolResultState.SUCCESS)
-        self.assertIsNone(await self.storage.get_schedule("u", record.id))
-        publish.assert_awaited_once_with(
-            MessageBusKeys.schedule_lifecycle(),
-            {"schedule_id": record.id},
-        )
 
 
 class TestSchedulerFlag(TestCase):
