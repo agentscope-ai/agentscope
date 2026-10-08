@@ -614,11 +614,9 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     continue
                 yield json.loads(data)
         finally:
-            try:
-                await pubsub.unsubscribe(key)
-            finally:
-                # Return the connection to the pool even if cancelled.
-                await asyncio.shield(pubsub.aclose())
+            # Closing drops the subscription and returns the connection to
+            # the pool; shield it so a cancelled consumer cannot leak it.
+            await asyncio.shield(pubsub.aclose())
 
     # ------------------------------------------------------------------
     # Mode E — distributed lock
