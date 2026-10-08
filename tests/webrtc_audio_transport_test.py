@@ -9,8 +9,8 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from fractions import Fraction
 from types import SimpleNamespace
-from typing import Any, AsyncIterator
-from unittest.mock import AsyncMock, patch
+from typing import Any, AsyncIterator, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 from aiortc import MediaStreamTrack
@@ -19,7 +19,10 @@ from av import AudioFrame as AVAudioFrame
 from fastapi import HTTPException
 
 from agentscope.app._router._realtime import _create_realtime_offer
-from agentscope.app._router._schema import RealtimeOfferRequest
+from agentscope.app._router._schema import (
+    RealtimeOfferRequest,
+    RealtimeOfferResponse,
+)
 from agentscope.app._service import get_realtime_model
 from agentscope.app._service._webrtc_audio_transport import (
     WebRTCAudioTransport,
@@ -742,56 +745,204 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             "credential-1",
         )
 
-    async def test_browser_rejects_manual_turn_detection(self) -> None:
-        """Browser voice requires provider-owned turn detection."""
-        session = SimpleNamespace(
-            config=SimpleNamespace(
-                realtime_model_config=SimpleNamespace(
-                    parameters={"turn_detection": "none"},
+
+class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
+    """Verify browser offer validation and resource ownership."""
+
+    def setUp(self) -> None:
+        self.config = SimpleNamespace(
+            parameters={"turn_detection": "server_vad"},
+        )
+        self.session = SimpleNamespace(
+            config=SimpleNamespace(realtime_model_config=self.config),
+        )
+        self.storage = SimpleNamespace(
+            get_session=AsyncMock(return_value=self.session),
+        )
+        self.access = SimpleNamespace(resolve_agent=AsyncMock())
+        self.connections: dict[tuple[str, str], object] = {}
+        self.request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    realtime_connections=self.connections,
+                    realtime_ice_servers=[],
                 ),
             ),
         )
-        storage = SimpleNamespace(get_session=AsyncMock(return_value=session))
-        access = SimpleNamespace(resolve_agent=AsyncMock())
-        request = SimpleNamespace(
-            app=SimpleNamespace(
-                state=SimpleNamespace(realtime_connections={}),
-            ),
+        self.message_bus = SimpleNamespace(
+            is_locked=AsyncMock(return_value=False),
         )
+        self.realtime_service = SimpleNamespace(create_agent=AsyncMock())
+        self.model = SimpleNamespace(
+            input_sample_rate=16_000,
+            output_sample_rate=24_000,
+        )
+        self.peer = MagicMock()
+        self.peer.connectionState = "new"
+        self.peer.on.side_effect = lambda _: lambda callback: callback
+        self.peer.setRemoteDescription = AsyncMock()
+        self.peer.createAnswer = AsyncMock(
+            return_value=SimpleNamespace(sdp="answer", type="answer"),
+        )
+        self.peer.setLocalDescription = AsyncMock()
+        self.peer.localDescription = SimpleNamespace(
+            sdp="answer",
+            type="answer",
+        )
+        self.peer.close = AsyncMock()
+        self.transport = MagicMock()
+        self.transport.output_track = object()
+        self.transport.close = AsyncMock()
+        self.runner = MagicMock()
+        self.runner.wait_until_lock_acquired = AsyncMock(return_value=True)
+        self.runner.close = AsyncMock()
 
-        with (
-            patch(
-                "agentscope.app._router._realtime.get_realtime_model",
-                new=AsyncMock(),
-            ) as get_model_mock,
-            self.assertRaises(HTTPException) as raised,
-        ):
-            await _create_realtime_offer(
-                session_id="session-1",
-                body=RealtimeOfferRequest(agent_id="agent-1", sdp="v=0"),
-                request=request,
-                user_id="alice",
-                storage=storage,
-                message_bus=object(),
-                access=access,
-                realtime_service=object(),
+        def _create_runner(**kwargs: object) -> MagicMock:
+            on_closed = cast(
+                Callable[[object], None],
+                kwargs["on_closed"],
             )
 
-        self.assertEqual(
-            (
-                raised.exception.status_code,
-                raised.exception.detail,
-                get_model_mock.await_count,
+            async def _close() -> None:
+                on_closed(self.runner)
+
+            self.runner.close.side_effect = _close
+            return self.runner
+
+        self.runner_factory = MagicMock(side_effect=_create_runner)
+        self.patchers = [
+            patch(
+                "agentscope.app._router._realtime.get_realtime_model",
+                new=AsyncMock(return_value=self.model),
             ),
-            (
-                409,
-                (
+            patch("aiortc.RTCPeerConnection", return_value=self.peer),
+            patch(
+                "agentscope.app._service._webrtc_audio_transport."
+                "WebRTCAudioTransport",
+                return_value=self.transport,
+            ),
+            patch(
+                "agentscope.app._service._webrtc_session.WebRTCSession",
+                self.runner_factory,
+            ),
+        ]
+        self.get_model = self.patchers[0].start()
+        for patcher in self.patchers[1:]:
+            patcher.start()
+
+        def _stop_patchers() -> None:
+            for patcher in reversed(self.patchers):
+                patcher.stop()
+
+        self.addCleanup(_stop_patchers)
+
+    async def _offer(self) -> RealtimeOfferResponse:
+        """Create an offer using the shared browser fixtures."""
+        return await _create_realtime_offer(
+            session_id="session-1",
+            body=RealtimeOfferRequest(agent_id="agent-1", sdp="v=0"),
+            request=self.request,
+            user_id="alice",
+            storage=self.storage,
+            message_bus=self.message_bus,
+            access=self.access,
+            realtime_service=self.realtime_service,
+        )
+
+    async def test_browser_rejects_manual_turn_detection(self) -> None:
+        """Browser voice requires provider-owned turn detection."""
+        self.config.parameters["turn_detection"] = "none"
+
+        with self.assertRaises(HTTPException) as raised:
+            await self._offer()
+
+        self.assertDictEqual(
+            {
+                "status_code": raised.exception.status_code,
+                "detail": raised.exception.detail,
+                "model_calls": self.get_model.await_count,
+            },
+            {
+                "status_code": 409,
+                "detail": (
                     "Browser voice mode does not support "
                     "turn_detection='none'. Select provider turn detection."
                 ),
-                0,
-            ),
+                "model_calls": 0,
+            },
         )
+
+    async def test_offer_replaces_the_previous_connection(self) -> None:
+        """A reconnect closes the previous local runner before reload."""
+        previous = SimpleNamespace(close=AsyncMock())
+        self.connections[("alice", "session-1")] = previous
+
+        response = await self._offer()
+
+        self.assertDictEqual(
+            {
+                "response": response.model_dump(),
+                "session_loads": self.storage.get_session.await_count,
+                "connection_is_new": (
+                    self.connections[("alice", "session-1")] is self.runner
+                ),
+                "runner_started": self.runner.start.call_count,
+            },
+            {
+                "response": {"sdp": "answer", "type": "answer"},
+                "session_loads": 2,
+                "connection_is_new": True,
+                "runner_started": 1,
+            },
+        )
+        previous.close.assert_awaited_once_with()
+
+    async def test_negotiation_failure_closes_created_resources(self) -> None:
+        """A failed SDP negotiation closes both created resources."""
+        self.peer.createAnswer.side_effect = RuntimeError("bad offer")
+
+        with self.assertRaises(HTTPException) as raised:
+            await self._offer()
+
+        self.assertDictEqual(
+            {
+                "status_code": raised.exception.status_code,
+                "detail": raised.exception.detail,
+                "runner_created": self.runner_factory.call_count,
+                "connections": self.connections,
+            },
+            {
+                "status_code": 400,
+                "detail": "WebRTC negotiation failed: bad offer",
+                "runner_created": 0,
+                "connections": {},
+            },
+        )
+        self.transport.close.assert_awaited_once_with()
+        self.peer.close.assert_awaited_once_with()
+
+    async def test_lock_timeout_closes_runner_and_resources(self) -> None:
+        """A lost session-lock race returns 409 without leaking resources."""
+        self.runner.wait_until_lock_acquired.return_value = False
+
+        with self.assertRaises(HTTPException) as raised:
+            await self._offer()
+
+        self.assertDictEqual(
+            {
+                "status_code": raised.exception.status_code,
+                "detail": raised.exception.detail,
+                "connections": self.connections,
+            },
+            {
+                "status_code": 409,
+                "detail": "Session 'session-1' is already running.",
+                "connections": {},
+            },
+        )
+        self.runner.close.assert_awaited_once_with()
+        self.transport.close.assert_awaited_once_with()
+        self.peer.close.assert_awaited_once_with()
 
 
 class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):

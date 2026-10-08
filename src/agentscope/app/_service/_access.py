@@ -13,7 +13,6 @@ from pydantic import (
     model_validator,
 )
 
-from ...agent import ContextConfig, ReActConfig
 from ..access import (
     ResourceAccessPolicyBase,
     ResourceKind,
@@ -21,43 +20,13 @@ from ..access import (
     ResourceRef,
 )
 from ..storage import (
-    AgentChatConfig,
-    AgentData,
     AgentRecord,
     ChunkerConfig,
     CredentialRecord,
     EmbeddingModelConfig,
-    InviteConfig,
     KnowledgeBaseRecord,
     StorageBase,
 )
-
-
-class AgentDataView(BaseModel):
-    """Agent data with deprecated flat response fields."""
-
-    id: str
-    name: str
-    system_prompt: str
-    chat_config: AgentChatConfig
-    context_config: ContextConfig
-    react_config: ReActConfig
-    invite_config: InviteConfig
-
-    @model_validator(mode="before")
-    @classmethod
-    def _add_legacy_configs(cls, data: Any) -> Any:
-        """Populate deprecated fields from the grouped configuration."""
-        if isinstance(data, AgentData):
-            data = data.model_dump()
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
-        chat_config = AgentChatConfig.model_validate(data["chat_config"])
-        data.setdefault("context_config", chat_config.context_config)
-        data.setdefault("react_config", chat_config.react_config)
-        data.setdefault("invite_config", chat_config.invite_config)
-        return data
 
 
 # ---------------------------------------------------------------------
@@ -68,9 +37,8 @@ class AgentDataView(BaseModel):
 class AgentView(AgentRecord):
     """Agent record + viewer-relative ``editable``.
 
-    Subclasses :class:`AgentRecord` so the wire format is a strict
-    superset of the historical response (one extra top-level field);
-    old clients ignore ``editable`` transparently.
+    Subclasses :class:`AgentRecord` so the stored agent data keeps its
+    declared response schema, with one extra top-level field.
     """
 
     editable: bool = Field(
@@ -78,8 +46,6 @@ class AgentView(AgentRecord):
             "Whether the current viewer may PATCH/DELETE this agent."
         ),
     )
-
-    data: AgentDataView
 
 
 class CredentialView(CredentialRecord):

@@ -76,12 +76,6 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
 
     async def replay_history(self, messages: Sequence[Msg]) -> None:
         """Insert completed history without asking the model to respond."""
-        for payload in self._history_payloads(messages):
-            await self._send(payload)
-
-    @staticmethod
-    def _history_payloads(messages: Sequence[Msg]) -> list[dict]:
-        """Convert AgentScope messages to ordered DashScope items."""
         call_ids = {
             block.id
             for message in messages
@@ -95,7 +89,6 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
             if isinstance(block, ToolResultBlock) and block.state != "running"
         }
         paired_ids = call_ids & result_ids
-        payloads: list[dict] = []
 
         for message in messages:
             text_parts: list[str] = []
@@ -106,15 +99,32 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
                         text_parts.append(block.text)
                     continue
 
-                DashScopeAudioRealtimeModel._flush_history_text(
-                    payloads,
-                    message.role,
-                    text_parts,
-                )
+                if text_parts:
+                    content_type = (
+                        "output_text"
+                        if message.role == "assistant"
+                        else "input_text"
+                    )
+                    await self._send(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "message",
+                                "role": message.role,
+                                "content": [
+                                    {
+                                        "type": content_type,
+                                        "text": "\n".join(text_parts),
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    text_parts.clear()
                 if isinstance(block, ToolCallBlock):
                     if block.id not in paired_ids:
                         continue
-                    payloads.append(
+                    await self._send(
                         {
                             "type": "conversation.item.create",
                             "item": {
@@ -137,7 +147,7 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
                             if isinstance(part, TextBlock)
                         )
                     )
-                    payloads.append(
+                    await self._send(
                         {
                             "type": "conversation.item.create",
                             "item": {
@@ -148,40 +158,27 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
                         },
                     )
 
-            DashScopeAudioRealtimeModel._flush_history_text(
-                payloads,
-                message.role,
-                text_parts,
-            )
-
-        return payloads
-
-    @staticmethod
-    def _flush_history_text(
-        payloads: list[dict],
-        role: str,
-        text_parts: list[str],
-    ) -> None:
-        """Append buffered history text as one conversation item."""
-        if not text_parts:
-            return
-        content_type = "output_text" if role == "assistant" else "input_text"
-        payloads.append(
-            {
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": role,
-                    "content": [
-                        {
-                            "type": content_type,
-                            "text": "\n".join(text_parts),
+            if text_parts:
+                content_type = (
+                    "output_text"
+                    if message.role == "assistant"
+                    else "input_text"
+                )
+                await self._send(
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": message.role,
+                            "content": [
+                                {
+                                    "type": content_type,
+                                    "text": "\n".join(text_parts),
+                                },
+                            ],
                         },
-                    ],
-                },
-            },
-        )
-        text_parts.clear()
+                    },
+                )
 
     def _session_update(
         self,

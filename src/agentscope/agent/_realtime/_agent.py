@@ -239,9 +239,9 @@ class RealtimeAgent:
                 tools = await self.toolkit.get_tool_schemas(groups)
 
         # TODO(realtime): tools and instructions are sent once, here.
-        # Activating a tool group or installing a skill mid-session —
-        # ResetTools, the meta tool — therefore has no effect until the
-        # next connect, even though the model is told it can do it.
+        #  Activating a tool group or installing a skill mid-session —
+        #  ResetTools, the meta tool — therefore has no effect until the
+        #  next connect, even though the model is told it can do it.
         #
         # Fix: a `RealtimeModelBase.update_session(instructions, tools)`
         # re-sent whenever `state.tool_context.activated_groups` changes.
@@ -251,9 +251,45 @@ class RealtimeAgent:
         # context. No provider documents whether the update applies
         # retroactively, so treat it as affecting future turns only. Do
         # not let it change `voice`: OpenAI locks it after first audio.
-        history = self._replayable_history()
+        history = [
+            message
+            for message in self.state.context
+            if message.id != self._reply_id
+            and (
+                message.role != "assistant"
+                or message.finished_reason is not ReplyFinishedReason.ERROR
+            )
+        ][-_HISTORY_MAX_MESSAGES:]
+        summary = self.state.summary
+        if isinstance(summary, str):
+            summary_text = summary
+        else:
+            summary_text = "\n".join(
+                block.text for block in summary if isinstance(block, TextBlock)
+            )
+        if summary_text.strip():
+            history.insert(
+                0,
+                SystemMsg(name="summary", content=summary_text),
+            )
         if history and not self.model.supports_history_replay:
-            fallback = self._format_history_fallback(history)
+            lines = [
+                f"{message.name}: {text}"
+                for message in history
+                if (text := message.get_text_content())
+            ]
+            kept: list[str] = []
+            kept_chars = 0
+            for line in reversed(lines):
+                separator_chars = 1 if kept else 0
+                if (
+                    kept_chars + separator_chars + len(line)
+                    > _HISTORY_MAX_TEXT_CHARS
+                ):
+                    break
+                kept.append(line)
+                kept_chars += separator_chars + len(line)
+            fallback = "\n".join(reversed(kept))
             if fallback:
                 instructions = (
                     f"{instructions}\n\n## Conversation so far\n{fallback}"
@@ -281,57 +317,6 @@ class RealtimeAgent:
                 name="rt-downlink",
             )
             self._downlink.add_done_callback(self._on_downlink_done)
-
-    def _replayable_history(self) -> list[Msg]:
-        """Return bounded, settled messages for a fresh model session."""
-        messages = [
-            message
-            for message in self.state.context
-            if message.id != self._reply_id
-            and self._is_replayable_message(message)
-        ][-_HISTORY_MAX_MESSAGES:]
-
-        summary = self.state.summary
-        if isinstance(summary, str):
-            summary_text = summary
-        else:
-            summary_text = "\n".join(
-                block.text for block in summary if isinstance(block, TextBlock)
-            )
-        if summary_text.strip():
-            messages.insert(
-                0,
-                SystemMsg(name="summary", content=summary_text),
-            )
-        return messages
-
-    @staticmethod
-    def _is_replayable_message(message: Msg) -> bool:
-        """Return whether a persisted message is safe to replay."""
-        if message.role != "assistant":
-            return True
-        return message.finished_reason is not ReplyFinishedReason.ERROR
-
-    @staticmethod
-    def _format_history_fallback(messages: list[Msg]) -> str:
-        """Render a bounded text fallback for providers without replay."""
-        lines = [
-            f"{message.name}: {text}"
-            for message in messages
-            if (text := message.get_text_content())
-        ]
-        kept: list[str] = []
-        kept_chars = 0
-        for line in reversed(lines):
-            separator_chars = 1 if kept else 0
-            if (
-                kept_chars + separator_chars + len(line)
-                > _HISTORY_MAX_TEXT_CHARS
-            ):
-                break
-            kept.append(line)
-            kept_chars += separator_chars + len(line)
-        return "\n".join(reversed(kept))
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""

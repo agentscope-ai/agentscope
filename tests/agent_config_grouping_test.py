@@ -142,35 +142,14 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
                 },
             ).chat_config.model_dump(mode="json"),
         )
-        expected_chat_config = by_name["legacy"]["chat_config"]
         self.assertListEqual(
             sorted(by_name["legacy"]),
             [
                 "chat_config",
-                "context_config",
                 "id",
-                "invite_config",
                 "name",
-                "react_config",
                 "system_prompt",
             ],
-        )
-        self.assertEqual(
-            {
-                key: by_name["legacy"][key]
-                for key in (
-                    "chat_config",
-                    "context_config",
-                    "react_config",
-                    "invite_config",
-                )
-            },
-            {
-                "chat_config": expected_chat_config,
-                "context_config": expected_chat_config["context_config"],
-                "react_config": expected_chat_config["react_config"],
-                "invite_config": expected_chat_config["invite_config"],
-            },
         )
 
     def test_update_keeps_untouched_sub_configs(self) -> None:

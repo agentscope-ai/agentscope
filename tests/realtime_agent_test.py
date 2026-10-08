@@ -1018,17 +1018,29 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             },
         )
 
-    def test_history_fallback_keeps_only_recent_whole_messages(
+    async def test_history_fallback_keeps_only_recent_whole_messages(
         self,
     ) -> None:
         """Text fallback drops old messages instead of slicing one in half."""
         old_text = "o" * 20_000
         recent_text = "n" * 20_000
-        fallback = RealtimeAgent._format_history_fallback(
-            [
-                UserMsg(name="old", content=old_text),
-                UserMsg(name="recent", content=recent_text),
-            ],
+        model = ScriptedModel([[]])
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            state=AgentState(
+                context=[
+                    UserMsg(name="old", content=old_text),
+                    UserMsg(name="recent", content=recent_text),
+                ],
+            ),
+        )
+        async with agent:
+            instructions = model.instructions
+
+        fallback = instructions.removeprefix(
+            "be brief\n\n## Conversation so far\n",
         )
 
         self.assertDictEqual(
