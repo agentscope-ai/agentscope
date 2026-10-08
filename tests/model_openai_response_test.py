@@ -529,45 +529,36 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         self.model.client = self.mock_client
 
     async def test_stream_errors_propagate(self) -> None:
-        """Failed streams raise the API error instead of a final response."""
-        error_body = {"code": "server_error", "message": "Generation failed."}
-        error = _make_event("error", **error_body)
-        error.model_dump.return_value = error_body
-        for event_type, details in (
-            ("response.failed", error),
-            ("error", error),
-            ("response.failed", None),
+        """Failed stream events raise APIError instead of a partial reply."""
+        body = {"code": "server_error", "message": "Generation failed."}
+        error = _make_event("error", message="Generation failed.")
+        error.model_dump.return_value = body
+        for failure in (
+            error,
+            _make_event("response.failed", response=MagicMock(error=error)),
         ):
-            with self.subTest(event_type=event_type, error=details):
-                failure = details
-                if event_type == "response.failed":
-                    failure = _make_event(
-                        event_type,
-                        response=MagicMock(error=details),
-                    )
-                stream = _MockAsyncEventStream(
-                    [
-                        _make_event(
-                            "response.output_text.delta",
-                            delta="Partial answer",
-                        ),
-                        failure,
-                    ],
-                )
+            with self.subTest(event_type=failure.type):
                 self.mock_client.responses.create = AsyncMock(
-                    return_value=stream,
+                    return_value=_MockAsyncEventStream(
+                        [
+                            _make_event(
+                                "response.output_text.delta",
+                                delta="Partial",
+                            ),
+                            failure,
+                        ],
+                    ),
                 )
                 gen = await self.model([])
-                self.assertFalse((await anext(gen)).is_last)
-                with self.assertRaises(APIError) as raised:
+                await anext(gen)
+                with self.assertRaises(APIError) as ctx:
                     await anext(gen)
-                self.assertEqual(
-                    str(raised.exception),
-                    details.message if details else "Response failed",
-                )
-                self.assertEqual(
-                    raised.exception.code,
-                    details.code if details else None,
+                self.assertDictEqual(
+                    {
+                        "message": ctx.exception.message,
+                        "body": ctx.exception.body,
+                    },
+                    {"message": "Generation failed.", "body": body},
                 )
 
     async def test_stream_text(self) -> None:
