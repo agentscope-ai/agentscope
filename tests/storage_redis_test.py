@@ -3,6 +3,7 @@
 """Unit tests for RedisStorage using fakeredis."""
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 
@@ -276,17 +277,41 @@ class TestSession(IsolatedAsyncioTestCase):
             make_session_config(self.workspace_id),
         )
         records = await self.storage.list_sessions(self.user_id, self.agent_id)
+        session_id = records[0].id
+        message_key = self.storage._message_key(self.user_id, session_id)
+        message_index_key = self.storage._message_index_key(
+            self.user_id,
+            session_id,
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            session_id,
+            UserMsg(name="alice", content="hello"),
+        )
         result = await self.storage.delete_session(
             self.user_id,
             self.agent_id,
-            records[0].id,
+            session_id,
         )
-        self.assertTrue(result)
         remaining = await self.storage.list_sessions(
             self.user_id,
             self.agent_id,
         )
-        self.assertEqual(remaining, [])
+        self.assertDictEqual(
+            {
+                "deleted": result,
+                "remaining": remaining,
+                "message_key_count": await self.storage._client.exists(
+                    message_key,
+                    message_index_key,
+                ),
+            },
+            {
+                "deleted": True,
+                "remaining": [],
+                "message_key_count": 0,
+            },
+        )
 
     async def test_delete_cascades_lookup_key(self) -> None:
         """Deleting a session must remove the lookup key so a subsequent upsert
@@ -358,17 +383,61 @@ class TestMessage(IsolatedAsyncioTestCase):
             [msg.model_dump()],
         )
 
-    async def test_upsert_refreshes_message_list_ttl(self) -> None:
-        """Message list keys expire with the session storage TTL."""
+    async def test_upsert_refreshes_message_keys_ttl(self) -> None:
+        """Message list and index expire with the session storage TTL."""
         self.storage.key_ttl = 60
         msg = UserMsg(name="alice", content="hello")
 
         await self.storage.upsert_message(self.user_id, self.session_id, msg)
 
-        ttl = await self.storage._client.ttl(
+        list_ttl = await self.storage._client.ttl(
             self.storage._message_key(self.user_id, self.session_id),
         )
-        self.assertGreater(ttl, 0)
+        index_ttl = await self.storage._client.ttl(
+            self.storage._message_index_key(self.user_id, self.session_id),
+        )
+        self.assertGreater(list_ttl, 0)
+        self.assertGreater(index_ttl, 0)
+
+    async def test_upsert_lazily_indexes_legacy_messages(self) -> None:
+        """A legacy list gains an ID index without scanning for a new ID."""
+        legacy = UserMsg(name="alice", content="legacy")
+        new = AssistantMsg(name="bot", content="new")
+        key = self.storage._message_key(self.user_id, self.session_id)
+        index_key = self.storage._message_index_key(
+            self.user_id,
+            self.session_id,
+        )
+        await self.storage._client.rpush(key, legacy.model_dump_json())
+
+        with patch.object(
+            self.storage,
+            "_find_message_index",
+        ) as find_index:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                new,
+            )
+            find_index.assert_not_awaited()
+
+        messages, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        indexed_ids = await self.storage._client.smembers(index_key)
+        self.assertDictEqual(
+            {
+                "messages": [message.model_dump() for message in messages],
+                "has_more": has_more,
+                "indexed_ids": indexed_ids,
+            },
+            {
+                "messages": [legacy.model_dump(), new.model_dump()],
+                "has_more": False,
+                "indexed_ids": {legacy.id, new.id},
+            },
+        )
 
     async def test_upsert_replaces_last_message_with_same_id(self) -> None:
         """Upserting a message whose id matches the last entry replaces it
@@ -507,6 +576,12 @@ class TestMessage(IsolatedAsyncioTestCase):
             self.user_id,
             self.session_id,
         )
+        indexed_ids = await self.storage._client.smembers(
+            self.storage._message_index_key(
+                self.user_id,
+                self.session_id,
+            ),
+        )
 
         self.assertDictEqual(
             {
@@ -514,12 +589,14 @@ class TestMessage(IsolatedAsyncioTestCase):
                 "deleted_again": deleted_again,
                 "messages": [message.model_dump() for message in messages],
                 "has_more": has_more,
+                "indexed_ids": indexed_ids,
             },
             {
                 "deleted": True,
                 "deleted_again": False,
                 "messages": [second.model_dump()],
                 "has_more": False,
+                "indexed_ids": {second.id},
             },
         )
 
