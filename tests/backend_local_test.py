@@ -369,6 +369,40 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
             os.path.join(self.temp_dir.name, "missing"),
         )
 
+    async def test_delete_path_symlinks_preserves_targets(self) -> None:
+        """Remove links, including dangling ones, without touching targets."""
+        for kind in ("file", "directory", "broken-file", "broken-directory"):
+            with self.subTest(kind=kind):
+                target = os.path.join(self.temp_dir.name, kind + "-target")
+                link = os.path.join(self.temp_dir.name, kind + "-link")
+                payload_path = target
+                if kind == "directory":
+                    os.makedirs(target)
+                    payload_path = os.path.join(target, "child.txt")
+                if not kind.startswith("broken"):
+                    await self.backend.write_file(payload_path, b"preserve me")
+                try:
+                    os.symlink(
+                        target,
+                        link,
+                        target_is_directory="directory" in kind,
+                    )
+                except OSError as exc:
+                    if _IS_WINDOWS and exc.winerror == 1314:
+                        self.skipTest("Creating symlinks requires permission")
+                    raise
+
+                await self.backend.delete_path(link)
+                self.assertFalse(os.path.lexists(link))
+                if not kind.startswith("broken"):
+                    self.assertEqual(
+                        await self.backend.read_file(payload_path),
+                        b"preserve me",
+                    )
+                else:
+                    self.assertFalse(os.path.exists(target))
+                await self.backend.delete_path(link)
+
 
 @unittest.skipIf(
     _IS_WINDOWS,
