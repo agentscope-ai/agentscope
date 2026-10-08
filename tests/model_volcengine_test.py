@@ -185,33 +185,26 @@ class TestVolcengineNonStream(IsolatedAsyncioTestCase):
         self.assertEqual(result.id, "volcengine-1")
 
     async def test_extra_body_is_not_mutated(self) -> None:
-        """Model defaults do not mutate the caller-owned extra body."""
+        """Defaulting thinking.type leaves the caller's extra_body intact."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
         self.mock_client.chat.completions.create = mock_create
-        self.model.parameters.thinking_enable = True
-        extra_body = {"custom": "value", "thinking": {"type": "enabled"}}
+        self.model.parameters.thinking_enable = False
+        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
 
         await self.model([], extra_body=extra_body)
 
-        self.assertEqual(
+        self.assertDictEqual(
             extra_body,
-            {"custom": "value", "thinking": {"type": "enabled"}},
-            "The caller-owned extra_body dict must be left untouched",
+            {"custom": "value", "thinking": {"budget_tokens": 1024}},
         )
-        sent_body = mock_create.await_args.kwargs["extra_body"]
-        self.assertEqual(
-            sent_body,
+        self.assertDictEqual(
+            mock_create.await_args.kwargs["extra_body"],
             {
                 "custom": "value",
-                "thinking": {"type": "enabled"},
+                "thinking": {"budget_tokens": 1024, "type": "disabled"},
             },
-        )
-        self.assertIsNot(
-            sent_body,
-            extra_body,
-            "The request must carry a copy, not the caller's dict",
         )
 
     async def test_tool_call_response(
