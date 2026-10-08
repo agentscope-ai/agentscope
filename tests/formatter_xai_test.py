@@ -488,13 +488,43 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             ],
         )
 
-        self.assertEqual(len(res), 4)
-        self.assertEqual(len(res[0].tool_calls), 2)
-        self.assertEqual(res[0].tool_calls[0].id, "call_shot")
-        self.assertEqual(res[0].tool_calls[1].id, "call_title")
+        normalized_res = [
+            (
+                res[0].role,
+                [part.text for part in res[0].content],
+                [
+                    (
+                        tool_call.id,
+                        tool_call.type,
+                        tool_call.function.name,
+                        tool_call.function.arguments,
+                    )
+                    for tool_call in res[0].tool_calls
+                ],
+            ),
+            *res[1:],
+        ]
         self.assertListEqual(
-            res[1:],
+            normalized_res,
             [
+                (
+                    2,
+                    [],
+                    [
+                        (
+                            "call_shot",
+                            1,
+                            "screenshot",
+                            "{}",
+                        ),
+                        (
+                            "call_title",
+                            1,
+                            "get_title",
+                            "{}",
+                        ),
+                    ],
+                ),
                 tool_result(
                     "Screenshot taken.\n"
                     "<system-reminder>A(n) image file is returned and "
