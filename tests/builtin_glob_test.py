@@ -88,6 +88,24 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test2.py", content)
         self.assertNotIn("test.txt", content)
 
+    async def test_dash_prefixed_patterns(self) -> None:
+        """The helper must receive option-like patterns as literal values."""
+        for name, pattern in (
+            ("-report.txt", "-report*.txt"),
+            ("--help", "--help"),
+            ("-report=one.txt", "-report=*.txt"),
+        ):
+            with self.subTest(pattern=pattern):
+                target = os.path.join(self.temp_dir, name)
+                with open(target, "w", encoding="utf-8"):
+                    pass
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(chunk.content[0].text, target)
+
     async def test_recursive_pattern(self) -> None:
         """Test recursive glob pattern."""
         chunk = await self.glob_tool(
