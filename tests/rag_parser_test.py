@@ -624,6 +624,95 @@ class ImageParserTest(IsolatedAsyncioTestCase):
 class PPTParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`PPTParser`."""
 
+    @staticmethod
+    def _deck_with_soft_break() -> bytes:
+        """Build a deck whose text frame has one soft line break."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        paragraph = box.text_frame.paragraphs[0]
+        paragraph.add_run().text = "one"
+        paragraph.add_line_break()
+        paragraph.add_run().text = "two"
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        return buffer.getvalue()
+
+    async def test_soft_line_break_becomes_a_newline(self) -> None:
+        """``add_line_break()`` shows up as ``\n``, not a control char."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            self._deck_with_soft_break(),
+            "soft_break.pptx",
+        )
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "<slide index=1>\none\ntwo\n</slide>",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "soft_break.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
+    async def test_ordinary_newlines_are_preserved(self) -> None:
+        """A paragraph per line still yields newline-separated text."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        frame = box.text_frame
+        frame.text = "one"
+        for line in ("two", "three"):
+            paragraph = frame.add_paragraph()
+            paragraph.text = line
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(buffer.getvalue(), "paras.pptx")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": ("<slide index=1>\none\ntwo\nthree\n</slide>"),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "paras.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
     async def test_simple_deck_text_only(self) -> None:
         """A simple text-only deck round-trips through wrapping tags."""
         pptx_bytes = _make_pptx_simple(["Alpha", "Beta"])
