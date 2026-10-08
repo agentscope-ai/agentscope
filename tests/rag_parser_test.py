@@ -306,6 +306,71 @@ def _make_docx_with_image() -> bytes:
     return buffer.getvalue()
 
 
+def _make_docx_with_image_in_table_cell() -> bytes:
+    """Build a DOCX whose 1x1 table cell contains text and an embedded
+    PNG image."""
+    from docx import Document as DocxDocument
+    from docx.shared import Inches
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before table")
+    table = doc.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)
+    cell.text = "see screenshot"
+    cell.add_paragraph().add_run().add_picture(
+        io.BytesIO(_PNG_PIXEL),
+        width=Inches(1),
+    )
+    doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_docx_with_image_in_table_text_box() -> bytes:
+    """Build a DOCX with an image nested in a table-cell text box."""
+    from docx import Document as DocxDocument
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls, qn
+    from docx.shared import Inches
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before table")
+    cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+    outer_paragraph = cell.paragraphs[0]
+
+    image_paragraph = cell.add_paragraph()
+    image_paragraph.add_run().add_picture(
+        io.BytesIO(_PNG_PIXEL),
+        width=Inches(1),
+    )
+    image_element = image_paragraph._p  # pylint: disable=protected-access
+    image_element.getparent().remove(image_element)
+
+    text_box_run = parse_xml(
+        f"<w:r {nsdecls('w')} "
+        f'xmlns:v="urn:schemas-microsoft-com:vml">'
+        f"<w:pict><v:shape><v:textbox>"
+        f"<w:txbxContent/>"
+        f"</v:textbox></v:shape></w:pict>"
+        f"</w:r>",
+    )
+    text_box_content = text_box_run.find(
+        ".//" + qn("w:txbxContent"),
+    )
+    assert text_box_content is not None
+    text_box_content.append(image_element)
+    outer_paragraph._p.append(  # pylint: disable=protected-access
+        text_box_run,
+    )
+    doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -2118,6 +2183,90 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(ds.source, "rich.docx")
         self.assertEqual(ds.content.name, "rich.docx")
         self.assertIn("media_type", ds.metadata)
+
+    async def test_image_inside_table_cell_emits_data_block(self) -> None:
+        """Images pasted into table cells are not dropped."""
+        docx_bytes = _make_docx_with_image_in_table_cell()
+        parser = WordParser(include_image=True)
+        sections = await parser.parse(docx_bytes, "table.docx")
+
+        data_sections = [s for s in sections if s.content.type == "data"]
+        self.assertEqual(len(data_sections), 1)
+        ds = data_sections[0]
+        self.assertEqual(ds.source, "table.docx")
+        self.assertEqual(ds.metadata["media_type"], "image/png")
+
+        texts = [s.content.text for s in sections if s.content.type == "text"]
+        joined = "\n".join(texts)
+        self.assertIn("Before table", joined)
+        self.assertIn("see screenshot", joined)
+        self.assertIn("After table", joined)
+
+    async def test_image_in_table_text_box_emitted_once(self) -> None:
+        """An image in a nested text-box paragraph is emitted once."""
+        docx_bytes = _make_docx_with_image_in_table_text_box()
+        sections = await WordParser(include_image=True).parse(
+            docx_bytes,
+            "text-box.docx",
+        )
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before table\n|  |\n| --- |\n",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "text-box.docx",
+                    "metadata": {},
+                },
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "text-box.docx",
+                    },
+                    "source": "text-box.docx",
+                    "metadata": {"media_type": "image/png"},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "After table",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "text-box.docx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_image_inside_table_cell_excluded_when_disabled(
+        self,
+    ) -> None:
+        """``include_image=False`` keeps only text sections."""
+        docx_bytes = _make_docx_with_image_in_table_cell()
+        parser = WordParser(include_image=False)
+        sections = await parser.parse(docx_bytes, "table.docx")
+
+        self.assertEqual([s.content.type for s in sections], ["text"])
+        self.assertIn(
+            "see screenshot",
+            "\n".join(s.content.text for s in sections),
+        )
 
     async def test_image_excluded_when_disabled(self) -> None:
         """``include_image=False`` keeps only text sections."""
