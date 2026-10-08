@@ -9,6 +9,7 @@ import warnings
 
 from asyncio import Queue
 from copy import deepcopy
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
@@ -18,6 +19,7 @@ from typing import (
     List,
     TYPE_CHECKING,
     Type,
+    Iterator,
 )
 
 import jsonschema
@@ -95,6 +97,8 @@ from ..tool import (
     ToolChoice,
     ToolResponse,
     FunctionTool,
+    ToolSelection,
+    ToolSelectorBase,
 )
 from ..permission import (
     PermissionBehavior,
@@ -131,6 +135,9 @@ class Agent:
         context_config: ContextConfig | None = None,
         react_config: ReActConfig | None = None,
         injection_config: InjectionConfig | None = None,
+        tool_selector: ToolSelectorBase | None = None,
+        max_tool_schema_tokens: int | None = None,
+        required_tools: Sequence[str] = (),
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -167,11 +174,37 @@ class Agent:
                 The runtime state injection config, which controls how the
                 time, (plan) tasks and context usage are injected into the
                 context to help the agent better reason and act.
+            tool_selector (`ToolSelectorBase | None`, optional):
+                Select eligible tool schemas before input accounting and
+                inference. None preserves the existing full tool set.
+            max_tool_schema_tokens (`int | None`, optional):
+                Nonnegative incremental schema budget for the selector.
+                Retrieval fallback may exceed it, depending on the selector.
+            required_tools (`Sequence[str]`, optional):
+                Additional eligible tool names that selection must preserve.
+                Built-in control tools are preserved automatically.
         """
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
         self.state = state or AgentState()
+        if max_tool_schema_tokens is not None and (
+            isinstance(max_tool_schema_tokens, bool)
+            or not isinstance(max_tool_schema_tokens, int)
+            or max_tool_schema_tokens < 0
+        ):
+            raise ValueError("max_tool_schema_tokens must be nonnegative.")
+        if isinstance(required_tools, str) or any(
+            not isinstance(name, str) or not name for name in required_tools
+        ):
+            raise ValueError("required_tools must contain nonempty names.")
+        self.tool_selector = tool_selector
+        self.max_tool_schema_tokens = max_tool_schema_tokens
+        self.required_tools = tuple(required_tools)
+        self.last_tool_selection: ToolSelection | None = None
+        # A scoped snapshot is shared by compression and inference for
+        # one reasoning step. Dynamic candidate changes invalidate it.
+        self._selection_context: dict | None = None
 
         self.model_config = model_config or ModelConfig()
         self.context_config = context_config or ContextConfig()
@@ -1181,31 +1214,39 @@ class Agent:
                         if hint:
                             self.state.append_context(self.name, [hint])
 
-                        # Compressed the memory if needed before reasoning
-                        await self.compress_context()
+                        with self._tool_selection_step(tool_choice):
+                            # Account for the same selected schemas in
+                            # compression, runtime hints and inference.
+                            await self.compress_context()
 
-                        # Inject runtime state if needed before reasoning
-                        async for evt in self._inject_runtime_state():
-                            yield evt
+                            async for evt in self._inject_runtime_state():
+                                selection_context = self._selection_context
+                                self._selection_context = None
+                                yield evt
+                                self._selection_context = selection_context
 
-                        # Perform reasoning
-                        interrupted = False
-                        async for evt in self._reasoning(
-                            tool_choice=tool_choice,
-                        ):
-                            if isinstance(evt, Msg):
-                                # Candidate final message; ``_next_action``
-                                # decides whether it ends the reply
-                                final_msg = evt
-                                continue
+                            interrupted = False
+                            async for evt in self._reasoning(
+                                tool_choice=tool_choice,
+                            ):
+                                if isinstance(evt, Msg):
+                                    # Candidate final message; the next
+                                    # action decides whether it ends reply.
+                                    final_msg = evt
+                                    continue
 
-                            if isinstance(evt, ModelCallEndEvent):
-                                interrupted = (
-                                    evt.finished_reason
-                                    == FinishedReason.INTERRUPTED
-                                )
+                                if isinstance(evt, ModelCallEndEvent):
+                                    interrupted = (
+                                        evt.finished_reason
+                                        == FinishedReason.INTERRUPTED
+                                    )
 
-                            yield evt
+                                # Do not expose a live cache while the public
+                                # stream is suspended or closed by its reader.
+                                selection_context = self._selection_context
+                                self._selection_context = None
+                                yield evt
+                                self._selection_context = selection_context
 
                         if interrupted:
                             # Handled by the CancelledError branch below
@@ -1725,7 +1766,18 @@ class Agent:
 
         # Get the input arguments for the chat model, including messages and
         # tools
-        kwargs = await self._prepare_model_input()
+        scope = self._selection_context
+        if scope is not None:
+            # A reasoning middleware may change the constraint after the
+            # initial compression pass. Re-account for its required tools.
+            scope["tool_choice"] = tool_choice
+        kwargs = await self._prepare_model_input(tool_choice=tool_choice)
+        if self.tool_selector is not None and (
+            await self.model.count_tokens(**kwargs)
+            >= self.context_config.trigger_ratio * self.model.context_size
+        ):
+            await self.compress_context()
+            kwargs = await self._prepare_model_input(tool_choice=tool_choice)
 
         # Call the chat model
         res = await self._call_model(
@@ -3238,7 +3290,120 @@ class Agent:
 
         return result
 
-    async def _prepare_model_input(self) -> dict[str, Any]:
+    def _tool_selection_query(self) -> str | None:
+        """Use the latest task, or its summary after context compression."""
+        parts = []
+        found_user = False
+        for msg in reversed(self.state.context):
+            text = msg.get_text_content()
+            if text and (msg.role == "user" or not parts):
+                parts.append(text)
+            if msg.role == "user":
+                found_user = True
+                break
+        if not found_user and self.state.summary:
+            summary = UserMsg("user", self.state.summary).get_text_content()
+            if summary:
+                parts.append(summary)
+        return "\n".join(reversed(parts)) or None
+
+    @contextmanager
+    def _tool_selection_step(
+        self,
+        tool_choice: ToolChoice | None,
+    ) -> Iterator[None]:
+        """Keep one selection snapshot for a reasoning step."""
+        if self.tool_selector is None:
+            yield
+            return
+        previous = self._selection_context
+        scope = {
+            "query": self._tool_selection_query(),
+            "tool_choice": tool_choice,
+        }
+        self._selection_context = scope
+        try:
+            yield
+        finally:
+            if self._selection_context is scope:
+                self._selection_context = previous
+
+    async def _select_tool_schemas(
+        self,
+        messages: list[Msg],
+        tools: list[dict],
+        tool_choice: ToolChoice | None,
+    ) -> list[dict]:
+        """Select schemas against frozen input, preserving control tools.
+
+        Model-call middleware can deliberately replace tools or the model
+        afterwards; its modifications are outside this selection budget.
+        """
+        if self.tool_selector is None:
+            return tools
+
+        scope = self._selection_context
+        if scope is not None and tool_choice is None:
+            tool_choice = scope["tool_choice"]
+        query = (
+            scope["query"]
+            if scope is not None
+            else self._tool_selection_query()
+        )
+        names = {tool["function"]["name"] for tool in tools}
+        control_names = (
+            self.toolkit.builtin_meta_tool.tool.name,
+            self.toolkit.builtin_skill_viewer.tool.name,
+            _GenerateStructuredOutput.name,
+            _COMPRESSION_TOOL_NAME,
+        )
+        required = list(self.required_tools) + [
+            name for name in control_names if name in names
+        ]
+        key = json.dumps(
+            [
+                tools,
+                tool_choice.model_dump() if tool_choice else None,
+                required,
+                self.max_tool_schema_tokens,
+                id(self.model),
+                id(self.tool_selector),
+            ],
+            sort_keys=True,
+        )
+        if scope is not None and scope.get("key") == key:
+            self.last_tool_selection = deepcopy(scope["selection"])
+            return deepcopy(self.last_tool_selection.tools)
+
+        model = self.model
+        frozen_messages = deepcopy(messages)
+        base_tokens = await model.count_tokens(frozen_messages, [])
+
+        async def count_tokens(schemas: list[dict]) -> int:
+            """Count only the incremental cost of the candidate schemas."""
+            return max(
+                0,
+                await model.count_tokens(frozen_messages, schemas)
+                - base_tokens,
+            )
+
+        selection = await self.tool_selector.select(
+            query,
+            deepcopy(tools),
+            count_tokens=count_tokens,
+            max_tokens=self.max_tool_schema_tokens,
+            required_tools=required,
+            tool_choice=tool_choice,
+        )
+        self.last_tool_selection = deepcopy(selection)
+        if scope is not None:
+            scope.update(key=key, selection=deepcopy(selection))
+        return deepcopy(selection.tools)
+
+    async def _prepare_model_input(
+        self,
+        tool_choice: ToolChoice | None = None,
+    ) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
         the current context.
 
@@ -3270,6 +3435,7 @@ class Agent:
         tools = await self.toolkit.get_tool_schemas(
             self.state.tool_context.activated_groups,
         )
+        tools = await self._select_tool_schemas(messages, tools, tool_choice)
 
         return {
             "messages": messages,
