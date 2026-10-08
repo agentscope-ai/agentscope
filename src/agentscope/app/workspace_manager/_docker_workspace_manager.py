@@ -234,15 +234,8 @@ class DockerWorkspaceManager(
         try:
             await ws.initialize()
         except BaseException:
-            try:
-                await ws.close()
-            except BaseException:
-                logger.warning(
-                    "DockerWorkspaceManager: failed to clean up workspace %s "
-                    "after initialization failed",
-                    ws.workspace_id,
-                    exc_info=True,
-                )
+            # The container may already be running and nothing holds it.
+            await self._dispose_prewarmed(ws)
             raise
         return ws
 
