@@ -397,15 +397,10 @@ async def remove_skill(
     )
     try:
         await workspace.remove_skill(skill_name, agent_id=agent_id)
-    except KeyError as e:
-        # Every workspace but ``LocalWorkspace`` inherits the base
-        # ``remove_skill``, which reports an unknown name by raising
-        # ``KeyError``. Letting it escape turns a misspelled name into
-        # a 500, indistinguishable from the service being broken.
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"Skill {skill_name!r} not found.",
-        ) from e
+    except KeyError:
+        # ``LocalWorkspace`` already treats a missing skill as a no-op.
+        # Keep DELETE idempotent for the other workspace implementations.
+        return
 
 
 # ---------------------------------------------------------------------------

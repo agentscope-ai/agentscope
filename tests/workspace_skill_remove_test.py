@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for ``DELETE /workspace/skill/{name}`` on a sandboxed workspace.
+"""Tests for ``DELETE /workspace/skill/{name}``.
 
 The sandboxed workspaces (Docker, E2B, K8s, …) all inherit
 :meth:`WorkspaceBase.remove_skill`, which raises ``KeyError`` for an
-unknown name. The route must turn that into a 404 instead of letting
-it surface as a 500.
+unknown name. The route must treat that as an idempotent deletion,
+matching :class:`LocalWorkspace`, instead of letting it surface as a 500.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from agentscope.app._router._workspace import workspace_router
 from agentscope.app.deps import get_current_user_id, get_workspace_service
 from agentscope.skill import Skill
 from agentscope.tool import LocalBackend
-from agentscope.workspace import DockerWorkspace
+from agentscope.workspace import DockerWorkspace, LocalWorkspace, WorkspaceBase
 
 SKILL_NAME = "greeter"
 
@@ -39,7 +39,7 @@ Say hello.
 class _WorkspaceService:
     """Stand-in for :class:`WorkspaceService` with one live workspace."""
 
-    def __init__(self, workspace: DockerWorkspace) -> None:
+    def __init__(self, workspace: WorkspaceBase) -> None:
         self._workspace = workspace
 
     async def resolve(
@@ -47,14 +47,14 @@ class _WorkspaceService:
         user_id: str,
         agent_id: str,
         session_id: str,
-    ) -> DockerWorkspace:
+    ) -> WorkspaceBase:
         """Return the workspace the session is bound to."""
         _ = (user_id, agent_id, session_id)
         return self._workspace
 
 
 class WorkspaceSkillRemoveTest(TestCase):
-    """Deleting skills through the HTTP route of a sandboxed workspace."""
+    """Delete skills through the HTTP route."""
 
     def setUp(self) -> None:
         """Bind a :class:`DockerWorkspace` to a host directory.
@@ -66,12 +66,13 @@ class WorkspaceSkillRemoveTest(TestCase):
         ``python3``-only sandbox shim.
         """
         self.workdir = tempfile.mkdtemp()
-        self.workspace = DockerWorkspace()
-        self.workspace.workdir = self.workdir
+        workspace = DockerWorkspace()
+        workspace.workdir = self.workdir
         # pylint: disable=protected-access
-        self.workspace._backend = LocalBackend()
-        self.partition = self.workspace._skill_partition("agent-1")
-        self.workspace._equipped_partitions.add(self.partition)
+        workspace._backend = LocalBackend()
+        self.partition = workspace._skill_partition("agent-1")
+        workspace._equipped_partitions.add(self.partition)
+        self.workspace: WorkspaceBase = workspace
 
         app = FastAPI()
         app.include_router(workspace_router)
@@ -82,7 +83,9 @@ class WorkspaceSkillRemoveTest(TestCase):
             return _WorkspaceService(self.workspace)
 
         app.dependency_overrides[get_workspace_service] = _service
-        self.client = TestClient(app, raise_server_exceptions=False)
+        self.client = self.enterContext(
+            TestClient(app, raise_server_exceptions=False),
+        )
 
     def tearDown(self) -> None:
         """Remove the workspace directory created for the test."""
@@ -114,14 +117,25 @@ class WorkspaceSkillRemoveTest(TestCase):
         """List what an agent's partition now holds."""
         return asyncio.run(self.workspace.list_skills(agent_id=agent_id))
 
-    def test_unknown_skill_is_reported_as_not_found(self) -> None:
-        """A name that is not in the workspace is a 404, not a 500."""
+    def test_unknown_sandbox_skill_is_idempotent(self) -> None:
+        """Deleting an absent sandbox skill succeeds without a body."""
         response = self._delete("typo")
 
-        self.assertEqual(response.status_code, 404)
         self.assertEqual(
-            response.json(),
-            {"detail": "Skill 'typo' not found."},
+            (response.status_code, response.content),
+            (204, b""),
+        )
+
+    def test_unknown_local_skill_is_idempotent(self) -> None:
+        """Deleting an absent local skill has the same HTTP semantics."""
+        self.workspace = LocalWorkspace(workdir=self.workdir)
+        asyncio.run(self.workspace.initialize())
+
+        response = self._delete("typo")
+
+        self.assertEqual(
+            (response.status_code, response.content),
+            (204, b""),
         )
 
     def test_installed_skill_still_deletes(self) -> None:
