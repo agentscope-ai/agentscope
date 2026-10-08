@@ -106,6 +106,11 @@ class _DummyTool(ToolBase):
     is_external_tool: bool = False
     is_mcp: bool = False
 
+    def __init__(self, memory: AgenticMemoryMiddleware) -> None:
+        """Keep the middleware whose retrieval the call waits for."""
+        super().__init__()
+        self.memory = memory
+
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
@@ -140,6 +145,10 @@ class _DummyTool(ToolBase):
             `ToolChunk`:
                 The fixed tool output.
         """
+        # Let retrieval land before the next reasoning step polls it.
+        task = self.memory._retrieval_task  # pylint: disable=protected-access
+        if task is not None:
+            await asyncio.wait_for(task, timeout=10)
         return ToolChunk(content=[TextBlock(text="tool result")])
 
 
@@ -426,7 +435,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "what do you remember?"))
@@ -543,7 +552,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         await agent.reply(UserMsg("user", "recall memory"))
@@ -586,31 +595,10 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         )
         model.set_responses([_tool_response(), _text_response("done")])
         middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
-
-        class _RetrievalBarrierTool(_DummyTool):
-            """Complete retrieval before the next reasoning iteration."""
-
-            async def __call__(self, **kwargs: Any) -> ToolChunk:
-                """Wait for pending retrieval, then return the dummy result.
-
-                Args:
-                    **kwargs (`Any`):
-                        Dummy tool arguments.
-
-                Returns:
-                    `ToolChunk`:
-                        The fixed dummy tool output.
-                """
-                # pylint: disable-next=protected-access
-                task = middleware._retrieval_task
-                if task is not None:
-                    await asyncio.wait_for(task, timeout=10)
-                return await super().__call__(**kwargs)
-
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_RetrievalBarrierTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         await agent.reply(UserMsg("user", "recall my project"))
@@ -656,7 +644,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "ignore memories"))
@@ -698,7 +686,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "hello"))
@@ -808,7 +796,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "remember?"))
