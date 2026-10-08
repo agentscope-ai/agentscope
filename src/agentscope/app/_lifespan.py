@@ -25,6 +25,7 @@ from ._service import (
     SOPService,
     WorkspaceService,
 )
+from .rag.knowledge_base_manager import CollectionPerKbManager
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -108,6 +109,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             policy=resource_access_policy,
         )
         app.state.resource_access_service = resource_access_service
+        if isinstance(knowledge_base_manager, CollectionPerKbManager):
+            knowledge_base_manager.bind_resource_access_service(
+                resource_access_service,
+            )
 
         # Channel wiring is built here (before ChatService) so the chat
         # service can hand the client factory to get_toolkit: a session
