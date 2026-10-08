@@ -13,6 +13,7 @@ from agentscope.permission import (
 )
 
 
+# pylint: disable=too-many-public-methods
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
 
