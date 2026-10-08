@@ -154,6 +154,93 @@ Use a timeout long enough for checkpoint publication and guest readiness on
 your deployment. Filesystem data, tmpfs, and processes are restored by
 Firecracker; the workspace restarts its MCP gateway after reattachment.
 
+## User demo
+
+Use `examples/opensandbox_fastsandbox_demo/main.py` for a minimal agent workflow:
+create or attach a workspace, write and execute a Python file through agent
+tools, pause, then create a new workspace handle with the **same workspace ID**
+and read the file after resume. The demo uses public workspace APIs and
+confirms the paused state with `SandboxManager`.
+
+Install the fork branch containing this integration rather than an unmodified
+AgentScope release:
+
+```bash
+git clone --branch codex/opensandbox-fastsandbox-workspace \
+  https://github.com/jwx0925/agentscope.git
+cd agentscope
+uv venv --python 3.12
+uv pip install -e '.[workspace-opensandbox]'
+# Install a matching OpenSandbox SDK wheel if the release lacks template APIs.
+uv pip install /path/to/opensandbox-1.1.1rc2.dev106+gc7dc78a4.d20261008-py3-none-any.whl
+.venv/bin/python -c \
+  "from opensandbox import Sandbox; assert hasattr(Sandbox, 'create_from_template')"
+```
+
+Run from an application environment that can reach **both** the OpenSandbox
+lifecycle server and the sandbox ingress addresses returned by that server.
+The ACK service names below are reachable inside the cluster. A laptop cannot
+use these names directly, and forwarding only the lifecycle server port does
+not make the ingress reachable. The Kubernetes API address is not an
+OpenSandbox lifecycle endpoint.
+
+```bash
+# Current ACK example: run the application in a Pod with cluster networking.
+export OPENSANDBOX_DOMAIN="opensandbox-server.opensandbox-system.svc:80"
+export OPENSANDBOX_PROTOCOL="http"
+export OPENSANDBOX_API_KEY="your-opensandbox-server-api-key"
+# The prestarted gateway template verified on this ACK cluster:
+export OPENSANDBOX_TEMPLATE_ID="tpl-d4ba6ea1-c091-4ed7-81dd-247cdcf80da8"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com"
+export DEEPSEEK_MODEL="deepseek-flash"
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+
+.venv/bin/python examples/opensandbox_fastsandbox_demo/main.py
+# Or choose a stable ID; rerunning with it reattaches before sandbox expiry.
+.venv/bin/python examples/opensandbox_fastsandbox_demo/main.py \
+  --workspace-id my-fastsandbox-demo
+```
+
+The application talks to OpenSandbox; its server selects the FastSandbox
+backend. It does not connect directly to a Fastlet or Firecracker. Keep the
+model key in the application environment, not in the shared VM template.
+Do not pass `image`, `env`, `resource`, `entrypoint`, or `extra_pip` when using
+the prepared fast path; prepare dependencies and runtime settings in the
+template instead. Optional application skills can be supplied with
+`skill_paths=["./my-skill"]` and are seeded after creation.
+
+The demo ends with the workspace **paused and retained**, not deleted. Its
+sandbox lifetime is 1,800 seconds; save the printed workspace ID for reuse
+before expiration. `close()` currently includes durable checkpoint publication
+and can take tens of seconds. Agent conversation history is separate from
+sandbox state: the demo creates a new agent after resume and reads saved files.
+The fixed demo tasks use `PermissionMode.BYPASS` to run without interactive
+confirmation; applications should choose their own permission policy.
+
+For a service managing multiple users, use `OpenSandboxWorkspaceManager` and
+keep a stable, application-owned workspace ID:
+
+```python
+from agentscope.app.workspace_manager import OpenSandboxWorkspaceManager
+
+async with OpenSandboxWorkspaceManager(
+    template_id="your-succeeded-template-id",
+    domain="your-opensandbox-server:80",
+    api_key="your-server-api-key",
+    timeout_seconds=1800,
+) as manager:
+    workspace = await manager.get_workspace(
+        user_id="user-1", agent_id="agent-1", session_id="session-1",
+        workspace_id="user-1-agent-1",
+    )
+    # Use workspace.list_tools() when constructing the agent's Toolkit.
+    await manager.close(workspace.workspace_id)  # Pause and evict the handle.
+    workspace = await manager.get_workspace(
+        user_id="user-1", agent_id="agent-1", session_id="session-1",
+        workspace_id="user-1-agent-1",
+    )  # Resume the same sandbox on this cache miss.
+```
+
 ## Agent example
 
 Set `DEEPSEEK_API_KEY` in your environment. The example defaults to
