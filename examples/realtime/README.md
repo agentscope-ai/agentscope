@@ -24,7 +24,7 @@ audio itself never reaches the view; the transport plays it.
 - AgentScope with the realtime and TUI extras:
 
   ```bash
-  pip install "agentscope[realtime,tui]"
+  pip install "agentscope[realtime,realtime-local,tui]"
   ```
 
   `sounddevice` needs PortAudio: it is bundled on macOS and Windows; on

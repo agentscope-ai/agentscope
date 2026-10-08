@@ -67,6 +67,7 @@ service = [
     "uvicorn",
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
+    "aiortc>=1.14",
 ]
 # ------------ Storage backends ------------
 storage-redis = ["redis"]
@@ -110,10 +111,9 @@ tools = [
 ]
 # ------------ Realtime voice ------------
 realtime = [
-    "aiortc>=1.14",
     "websockets>=13",
-    "sounddevice",
 ]
+realtime-local = ["sounddevice"]
 # ------------ Terminal UI ------------
 tui = [
     "textual>=8.2,<9",

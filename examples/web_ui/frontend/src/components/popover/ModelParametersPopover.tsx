@@ -255,6 +255,8 @@ interface Props {
 	triggerLabel?: string;
 	/** Enum values unavailable in the current transport or UI. */
 	excludedEnumValues?: Record<string, unknown[]>;
+	/** Hide array fields when the caller has no array editor. */
+	hideArrayParameters?: boolean;
 }
 
 /**
@@ -278,6 +280,7 @@ export function ModelParametersPopover({
 	idPrefix = 'model',
 	triggerLabel,
 	excludedEnumValues,
+	hideArrayParameters = false,
 }: Props) {
 	const [values, setValues] = useState<Record<string, unknown>>({});
 	const { t } = useTranslation();
@@ -288,15 +291,12 @@ export function ModelParametersPopover({
 	const properties = schema?.properties ?? {};
 	const required = schema?.required ?? [];
 	const entries = Object.entries(properties).filter(
-		([, prop]) => resolveType(prop).type !== 'array',
+		([, prop]) => !hideArrayParameters || resolveType(prop).type !== 'array',
 	);
 
 	useEffect(() => {
-		setValues({
-			...extractDefaults(schema),
-			...(selectedModel?.parameters ?? {}),
-		});
-	}, [schema, selectedModel]);
+		setValues(selectedModel?.parameters ?? {});
+	}, [selectedModel]);
 
 	const handleChange = useCallback(
 		(key: string, value: unknown) => {

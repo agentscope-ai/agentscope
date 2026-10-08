@@ -296,6 +296,7 @@ class WebRTCAudioTransport(TransportBase):
             layout="mono",
             rate=self.input_sample_rate,
         )
+        cancelled = False
         try:
             while True:
                 frame = await track.recv()
@@ -307,10 +308,12 @@ class WebRTCAudioTransport(TransportBase):
                     )
                     if pcm:
                         self._enqueue_incoming(AudioFrame(pcm=pcm))
-        except (MediaStreamError, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            cancelled = True
+        except MediaStreamError:
             pass
         finally:
-            if not self._closed:
+            if not cancelled and not self._closed:
                 self._notify_disconnect()
 
     def _enqueue_incoming(self, frame: TransportFrame) -> None:

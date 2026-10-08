@@ -6,6 +6,8 @@ import secrets
 from weakref import WeakValueDictionary
 from typing import Type, TYPE_CHECKING, Any
 
+from pydantic import TypeAdapter
+
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
 from .hub import HubBase, HubError, MCPHubBase, SkillHubBase
@@ -31,7 +33,12 @@ from ._router import (
     sop_router,
     workspace_router,
 )
-from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
+from ._types import (
+    AgentMiddlewareFactory,
+    AgentToolFactory,
+    RealtimeIceServer,
+    SubAgentTemplate,
+)
 from .channel import ChannelBase, ChannelTypeRegistry
 from .message_bus import MessageBus
 from .storage import StorageBase
@@ -96,48 +103,11 @@ def _load_realtime_ice_servers(
                 "AGENTSCOPE_REALTIME_ICE_SERVERS must be valid JSON.",
             ) from exc
 
-    if not isinstance(servers, list):
-        raise ValueError("Realtime ICE servers must be a JSON array.")
-    result: list[dict[str, Any]] = []
-    allowed = {"urls", "username", "credential", "credentialType"}
-    for index, server in enumerate(servers):
-        if not isinstance(server, dict):
-            raise ValueError(
-                f"Realtime ICE server {index} must be an object.",
-            )
-        unexpected = set(server) - allowed
-        if unexpected:
-            raise ValueError(
-                f"Realtime ICE server {index} has unsupported fields: "
-                f"{sorted(unexpected)}.",
-            )
-        urls = server.get("urls")
-        valid_urls = (
-            isinstance(urls, str)
-            and bool(urls)
-            or isinstance(urls, list)
-            and bool(urls)
-            and all(isinstance(url, str) and url for url in urls)
-        )
-        if not valid_urls:
-            raise ValueError(
-                f"Realtime ICE server {index} requires non-empty URLs.",
-            )
-        for field in ("username", "credential"):
-            value = server.get(field)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(
-                    f"Realtime ICE server {index} field {field!r} "
-                    f"must be a string.",
-                )
-        credential_type = server.get("credentialType")
-        if credential_type not in {None, "password", "oauth"}:
-            raise ValueError(
-                f"Realtime ICE server {index} has an invalid "
-                f"credentialType.",
-            )
-        result.append(dict(server))
-    return result
+    validated = TypeAdapter(list[RealtimeIceServer]).validate_python(servers)
+    return [
+        server.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for server in validated
+    ]
 
 
 def create_app(

@@ -14,9 +14,9 @@ from agentscope.realtime import (
     DashScopeAudioRealtimeModel,
     DashScopeRealtimeModel,
     ModelDisconnectedError,
-    TruncationSupport,
 )
 from agentscope.realtime import _events as me
+from agentscope.realtime._dashscope._model import _realtime_url
 from agentscope.message import (
     AssistantMsg,
     SystemMsg,
@@ -29,6 +29,34 @@ from agentscope.message import (
 CRED = DashScopeCredential(api_key="sk-x")
 TRANSCRIPTION_DONE = "conversation.item.input_audio_transcription.completed"
 AMBIENT_DELTA = "conversation.item.ambient_audio_transcription.delta"
+
+
+class _OpenSocket:
+    """Yield one setup frame, then remain open until cancelled."""
+
+    def __init__(self, first_frame: dict | None = None) -> None:
+        self.first_frame = first_frame or {"type": "session.updated"}
+        self.first_sent = False
+        self.closed = False
+        self.sent: list[str] = []
+
+    def __aiter__(self) -> "_OpenSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        if not self.first_sent:
+            self.first_sent = True
+            return json.dumps(self.first_frame)
+        await asyncio.Future()
+        raise StopAsyncIteration
+
+    async def send(self, payload: str) -> None:
+        """Capture an outgoing WebSocket frame."""
+        self.sent.append(payload)
+
+    async def close(self) -> None:
+        """Record that the socket was closed."""
+        self.closed = True
 
 
 class DashScopeCardsTest(unittest.TestCase):
@@ -244,46 +272,46 @@ class DashScopeCardsTest(unittest.TestCase):
             },
         )
 
-    def test_credential_builds_regional_realtime_urls(self) -> None:
+    def test_adapter_builds_regional_realtime_urls(self) -> None:
         """Realtime URLs preserve the configured HTTP endpoint host."""
         self.assertListEqual(
             [
-                DashScopeCredential(
-                    api_key="sk-x",
-                ).get_realtime_base_url(),
-                DashScopeCredential(
-                    api_key="sk-x",
-                    base_url=(
+                _realtime_url(
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "model-x",
+                ),
+                _realtime_url(
+                    (
                         "https://dashscope-intl.aliyuncs.com"
                         "/compatible-mode/v1"
                     ),
-                ).get_realtime_base_url(),
-                DashScopeCredential(
-                    api_key="sk-x",
-                    base_url=(
+                    "model-x",
+                ),
+                _realtime_url(
+                    (
                         "https://llm-beijing.cn-beijing.maas.aliyuncs.com"
                         "/compatible-mode/v1"
                     ),
-                ).get_realtime_base_url(),
-                DashScopeCredential(
-                    api_key="sk-x",
-                    base_url=("http://localhost:8080/custom/dashscope/path"),
-                ).get_realtime_base_url(),
+                    "model-x",
+                ),
+                _realtime_url(
+                    "http://localhost:8080/custom/dashscope/path",
+                    "model-x",
+                ),
             ],
             [
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
-                "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
+                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+                "?model=model-x",
+                "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
+                "?model=model-x",
                 "wss://llm-beijing.cn-beijing.maas.aliyuncs.com"
-                "/api-ws/v1/realtime",
-                "ws://localhost:8080/api-ws/v1/realtime",
+                "/api-ws/v1/realtime?model=model-x",
+                "ws://localhost:8080/api-ws/v1/realtime?model=model-x",
             ],
         )
 
         with self.assertRaisesRegex(ValueError, "Invalid DashScope"):
-            DashScopeCredential(
-                api_key="sk-x",
-                base_url="not-a-url",
-            ).get_realtime_base_url()
+            _realtime_url("not-a-url", "model-x")
 
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""
@@ -397,19 +425,17 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
         self.assertListEqual(
             [
                 (
-                    omni.truncation,
                     omni.supports_text_input,
                     omni.supports_history_replay,
                 ),
                 (
-                    audio.truncation,
                     audio.supports_text_input,
                     audio.supports_history_replay,
                 ),
             ],
             [
-                (TruncationSupport.NONE, False, False),
-                (TruncationSupport.NONE, True, True),
+                (False, False),
+                (True, True),
             ],
         )
 
@@ -446,6 +472,10 @@ class DashScopeParseTest(unittest.TestCase):
                 "transcript": "天气",
             },
             {
+                "type": "conversation.item.input_audio_transcription.failed",
+                "item_id": "u2",
+            },
+            {
                 "type": "response.done",
                 "response": {
                     "id": "r1",
@@ -465,6 +495,7 @@ class DashScopeParseTest(unittest.TestCase):
                 ),
                 me.SpeechStartedEvent(item_id="u1", at_ms=120),
                 me.InputTranscriptionEvent(item_id="u1", text="天气"),
+                me.InputTranscriptionFailedEvent(item_id="u2"),
                 me.ResponseDoneEvent(
                     item_id="r1",
                     input_tokens=10,
@@ -704,30 +735,6 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
     async def test_workspace_endpoint_connects_models(self) -> None:
         """Both adapters connect through the credential endpoint."""
 
-        class ReadySocket:
-            """A socket that confirms setup and then remains open."""
-
-            def __init__(self) -> None:
-                self.ready_sent = False
-
-            def __aiter__(self) -> "ReadySocket":
-                """Return this socket as an asynchronous iterator."""
-                return self
-
-            async def __anext__(self) -> str:
-                """Confirm setup once, then wait for cancellation."""
-                if not self.ready_sent:
-                    self.ready_sent = True
-                    return json.dumps({"type": "session.updated"})
-                await asyncio.Future()
-                raise StopAsyncIteration
-
-            async def send(self, _payload: str) -> None:
-                """Accept an outgoing frame."""
-
-            async def close(self) -> None:
-                """Accept connection shutdown."""
-
         credential = DashScopeCredential(
             api_key="sk-workspace",
             base_url=(
@@ -744,7 +751,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
             credential,
         )
         connect = AsyncMock(
-            side_effect=[ReadySocket(), ReadySocket()],
+            side_effect=[_OpenSocket(), _OpenSocket()],
         )
 
         with patch("websockets.connect", new=connect):
@@ -811,34 +818,6 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
     async def test_reconnect_replaces_the_previous_event_queue(self) -> None:
         """Termination markers from an old socket cannot end a new one."""
 
-        class LiveSocket:
-            """A socket that remains open until its reader is cancelled."""
-
-            def __init__(self) -> None:
-                self.closed = False
-                self.sent: list[str] = []
-                self.ready_sent = False
-
-            def __aiter__(self) -> "LiveSocket":
-                """Return the socket as its own frame iterator."""
-                return self
-
-            async def __anext__(self) -> str:
-                """Wait until the reader task is cancelled."""
-                if not self.ready_sent:
-                    self.ready_sent = True
-                    return json.dumps({"type": "session.updated"})
-                await asyncio.Future()
-                raise StopAsyncIteration
-
-            async def send(self, payload: str) -> None:
-                """Capture an outgoing WebSocket frame."""
-                self.sent.append(payload)
-
-            async def close(self) -> None:
-                """Record that the socket was closed."""
-                self.closed = True
-
         model = DashScopeRealtimeModel(
             "qwen3.5-omni-flash-realtime",
             CRED,
@@ -846,7 +825,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
         old_queue = model._queue
         old_queue.put_nowait(me.SessionEndedEvent(reason="closed"))
         old_queue.put_nowait(None)
-        socket = LiveSocket()
+        socket = _OpenSocket()
 
         with patch(
             "websockets.connect",
@@ -908,43 +887,15 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
 
     async def test_connect_surfaces_session_setup_error(self) -> None:
         """An invalid session update fails connect with provider detail."""
-
-        class RejectedSocket:
-            """Return one provider error, then wait for cancellation."""
-
-            def __init__(self) -> None:
-                self.error_sent = False
-                self.closed = False
-
-            def __aiter__(self) -> "RejectedSocket":
-                """Return this socket as an asynchronous iterator."""
-                return self
-
-            async def __anext__(self) -> str:
-                """Return the provider error and then wait indefinitely."""
-                if not self.error_sent:
-                    self.error_sent = True
-                    return json.dumps(
-                        {
-                            "type": "error",
-                            "error": {
-                                "code": "invalid_parameter",
-                                "message": "Voice 'Cherry' is not supported.",
-                            },
-                        },
-                    )
-                await asyncio.Future()
-                raise StopAsyncIteration
-
-            async def send(self, _payload: str) -> None:
-                """Accept the session update sent during connection setup."""
-                return None
-
-            async def close(self) -> None:
-                """Record that the socket was closed."""
-                self.closed = True
-
-        socket = RejectedSocket()
+        socket = _OpenSocket(
+            {
+                "type": "error",
+                "error": {
+                    "code": "invalid_parameter",
+                    "message": "Voice 'Cherry' is not supported.",
+                },
+            },
+        )
         model = DashScopeRealtimeModel(
             "qwen3.5-omni-flash-realtime",
             CRED,
@@ -956,7 +907,7 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=socket),
         ):
             with self.assertRaisesRegex(
-                RuntimeError,
+                ModelDisconnectedError,
                 "Voice 'Cherry' is not supported",
             ):
                 await model.connect(instructions="test")

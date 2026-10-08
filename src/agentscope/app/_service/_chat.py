@@ -1506,6 +1506,9 @@ class ChatService:
                                     MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
                                     checkpoint_cursor,
                                 )
+                                await self._message_bus.log_trim(
+                                    MessageBusKeys.session_events(session_id),
+                                )
                     finally:
                         # A worker whose turn died never reached
                         # ``TeamSay``. Sent from inside the shielded

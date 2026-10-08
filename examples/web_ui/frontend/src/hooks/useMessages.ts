@@ -152,7 +152,6 @@ export function useMessages(
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
-	const realtimeAudioBlocksRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
@@ -183,26 +182,6 @@ export function useMessages(
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
-			let appendToMessage = true;
-			if (
-				event.type === EventType.DATA_BLOCK_START &&
-				(event as DataBlockStartEvent).media_type.startsWith('audio/') &&
-				optionsRef.current?.isRealtimeAudioActive?.()
-			) {
-				realtimeAudioBlocksRef.current.add((event as DataBlockStartEvent).block_id);
-				appendToMessage = false;
-			} else if (
-				(event.type === EventType.DATA_BLOCK_DELTA ||
-					event.type === EventType.DATA_BLOCK_END) &&
-				realtimeAudioBlocksRef.current.has(
-					(event as DataBlockDeltaEvent | DataBlockEndEvent).block_id,
-				)
-			) {
-				appendToMessage = false;
-				if (event.type === EventType.DATA_BLOCK_END) {
-					realtimeAudioBlocksRef.current.delete((event as DataBlockEndEvent).block_id);
-				}
-			}
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -258,9 +237,11 @@ export function useMessages(
 				// user's final transcription arrives. Route every identified event
 				// to its own reply instead of assuming event streams never overlap.
 				const reply = event.reply_id
-					? (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
+					? currentReplyRef.current?.id === event.reply_id
+						? currentReplyRef.current
+						: (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
 					: currentReplyRef.current;
-				if (reply && appendToMessage) {
+				if (reply) {
 					appendEvent(reply, event);
 					// ``appendEvent`` mutates in place, which would leave
 					// every Msg identical across renders and force the whole
@@ -292,7 +273,7 @@ export function useMessages(
 			// flow through `appendEvent` above (which builds up `source.data`
 			// in the Msg), but MessageBubble reads playback state from the
 			// manager so it can show progress and autoplay on completion.
-			if (audioManager && !optionsRef.current?.isRealtimeAudioActive?.()) {
+			if (audioManager) {
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
@@ -321,7 +302,6 @@ export function useMessages(
 		setLoadedKey(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
-		realtimeAudioBlocksRef.current.clear();
 		setMsgs([]);
 		setError(null);
 		clearInterruptTimer();

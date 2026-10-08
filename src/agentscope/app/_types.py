@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Shared type aliases for the agentscope app layer."""
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import Literal, TYPE_CHECKING, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..agent import ContextConfig, ReActConfig
 from ..event import AgentEvent
@@ -16,6 +16,31 @@ from ..workspace import WorkspaceBase
 if TYPE_CHECKING:
     from ._service._session_projection import SessionProjection
     from .storage import AgentRecord, SessionRecord
+
+
+class RealtimeIceServer(BaseModel):
+    """Browser-compatible WebRTC ICE server configuration."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    urls: str | list[str]
+    username: str | None = None
+    credential: str | None = None
+    credential_type: Literal["password", "oauth"] | None = Field(
+        default=None,
+        alias="credentialType",
+    )
+
+    @field_validator("urls")
+    @classmethod
+    def _validate_urls(cls, value: str | list[str]) -> str | list[str]:
+        """Require at least one non-empty ICE server URL."""
+        if isinstance(value, str):
+            if value:
+                return value
+        elif value and all(url for url in value):
+            return value
+        raise ValueError("urls must contain at least one non-empty URL")
 
 
 AgentMiddlewareFactory = (

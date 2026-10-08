@@ -221,6 +221,11 @@ class RealtimeAgent:
         if self._connected:
             return
 
+        if self._connection_generation:
+            async with self._barge_lock:
+                self._end_user_turn()
+                self._user_turn = ""
+                self._finish_reply(ReplyFinishedReason.ERROR)
         self._connection_generation += 1
 
         instructions = self.system_prompt
@@ -305,20 +310,7 @@ class RealtimeAgent:
         """Return whether a persisted message is safe to replay."""
         if message.role != "assistant":
             return True
-        if message.finished_reason is ReplyFinishedReason.ERROR:
-            return False
-        if message.finished_reason is ReplyFinishedReason.INTERRUPTED:
-            return bool(message.content) and all(
-                isinstance(block, TextBlock) for block in message.content
-            )
-        return (
-            message.finished_reason
-            in (
-                ReplyFinishedReason.COMPLETED,
-                ReplyFinishedReason.EXCEED_MAX_ITERS,
-            )
-            or message.finished_at is not None
-        )
+        return message.finished_reason is not ReplyFinishedReason.ERROR
 
     @staticmethod
     def _format_history_fallback(messages: list[Msg]) -> str:
@@ -715,6 +707,10 @@ class RealtimeAgent:
             case me.InputTranscriptionEvent():
                 self._on_transcription(event)
 
+            case me.InputTranscriptionFailedEvent():
+                self._end_user_turn()
+                self._user_turn = ""
+
             case me.ResponseCreatedEvent():
                 self._start_reply(event.item_id)
 
@@ -777,6 +773,8 @@ class RealtimeAgent:
                     event.message,
                 )
                 async with self._barge_lock:
+                    self._end_user_turn()
+                    self._user_turn = ""
                     self._finish_reply(ReplyFinishedReason.ERROR)
 
             case me.SessionEndedEvent():

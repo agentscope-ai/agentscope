@@ -1463,19 +1463,15 @@ class RedisStorage(StorageBase):
         session_id: str,
         message_id: str,
     ) -> bool:
-        """Delete every stored version matching ``message_id``."""
+        """Delete the stored message matching ``message_id``."""
         key = self._message_key(user_id, session_id)
-        deleted = False
-        while (
-            index := await self._find_message_index(key, message_id)
-        ) is not None:
-            raw = await self._client.lindex(key, index)
-            if raw is None:
-                break
-            removed = await self._client.lrem(key, 0, raw)
-            if not removed:
-                break
-            deleted = True
+        index = await self._find_message_index(key, message_id)
+        if index is None:
+            return False
+        raw = await self._client.lindex(key, index)
+        if raw is None:
+            return False
+        deleted = bool(await self._client.lrem(key, 0, raw))
         if deleted:
             await self._refresh_key_ttl(key)
         return deleted

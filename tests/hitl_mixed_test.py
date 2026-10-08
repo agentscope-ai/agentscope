@@ -610,7 +610,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     ),
                     self._get_expected_text_block(self.final_response_text),
                 ],
-                "finished_reason": "completed",
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
@@ -922,7 +921,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     ),
                     self._get_expected_text_block(self.final_response_text),
                 ],
-                "finished_reason": "completed",
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
@@ -1229,7 +1227,6 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     ),
                     self._get_expected_text_block(self.final_response_text),
                 ],
-                "finished_reason": "completed",
             },
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]

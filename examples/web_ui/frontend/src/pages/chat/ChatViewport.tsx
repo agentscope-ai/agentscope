@@ -259,6 +259,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	);
 
 	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
+	const voiceBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
 	const {
 		msgs,
 		loading: messagesLoading,
@@ -272,8 +273,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
 		onSessionUpdated: handleSessionUpdated,
-		isRealtimeAudioActive: () =>
-			realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting',
+		isRealtimeAudioActive: () => voiceBusy,
 		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
 	});
 	const {
@@ -798,7 +798,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										value={selectedRealtimeModel}
 										onChange={handleRealtimeModelChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										disabled={configPending || realtimeVoice.state !== 'idle'}
+										disabled={configPending || voiceBusy}
 										className="text-muted-foreground hover:text-foreground"
 									/>
 									<ModelParametersPopover
@@ -807,7 +807,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onChange={handleRealtimeParametersChange}
 										idPrefix="realtime"
 										triggerLabel={t('realtime.parameters')}
-										disabled={configPending || realtimeVoice.state !== 'idle'}
+										disabled={configPending || voiceBusy}
+										hideArrayParameters
 										excludedEnumValues={REALTIME_EXCLUDED_ENUM_VALUES}
 									/>
 									<LlmSelect
@@ -913,22 +914,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
-									disabled={
-										selectedModel === null ||
-										realtimeVoice.state === 'active' ||
-										realtimeVoice.state === 'connecting'
-									}
+									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}
-									voiceDisabled={
-										!selectedRealtimeModel ||
-										!agentId ||
-										!sessionId ||
-										(realtimeVoice.state === 'idle' && phase !== 'idle')
-									}
+									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
 									// cwd={
 									// 	{cwd: view?.session.config.cwd, git: {
 									// 		branch: 'main',

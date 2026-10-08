@@ -752,6 +752,7 @@ class StorageBase(ABC):
             msg (`Msg`): The message to persist.
         """
 
+    @abstractmethod
     async def delete_message(
         self,
         user_id: str,
@@ -759,10 +760,6 @@ class StorageBase(ABC):
         message_id: str,
     ) -> bool:
         """Delete one message from a session.
-
-        Storage backends written before message deletion was introduced stay
-        instantiable, but must implement this method before supporting
-        realtime transcript removal.
 
         Args:
             user_id (`str`): The owner user id.
@@ -772,9 +769,6 @@ class StorageBase(ABC):
         Returns:
             `bool`: Whether a matching message was deleted.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support deleting messages.",
-        )
 
     @abstractmethod
     async def get_message(

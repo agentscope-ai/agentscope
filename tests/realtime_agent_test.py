@@ -33,7 +33,6 @@ from agentscope.realtime import (
     RealtimeModelCard,
     SpeechTransition,
     TransportBase,
-    TruncationSupport,
     VADBase,
 )
 from agentscope.event import (
@@ -118,8 +117,12 @@ class ScriptedModel(RealtimeModelBase):
 
         input_audio_transcription: bool = False
 
-    truncation = TruncationSupport.NONE
     type = "scripted"
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether the scripted model delays user turn completion."""
+        return self.parameters.input_audio_transcription
 
     def __init__(
         self,
@@ -212,15 +215,6 @@ class ScriptedModel(RealtimeModelBase):
     async def cancel_response(self) -> None:
         """Record the cancel."""
         self.calls.append("cancel")
-
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """Record what the agent thinks the user heard."""
-        self.calls.append(f"truncate({item_id},{played_ms}ms,{played_text!r})")
 
 
 class HistoryScriptedModel(ScriptedModel):
@@ -927,8 +921,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             ("system", "summary", "Earlier summary", None),
             ("user", "user", "hello", None),
             ("assistant", "Friday", "hi", "completed"),
+            ("assistant", "Friday", "partial", None),
             ("assistant", "Friday", "legacy complete", None),
             ("assistant", "Friday", "unfinished", "interrupted"),
+            ("assistant", "Friday", "calling a tool", "interrupted"),
         ]
         self.assertEqual(
             {
@@ -1056,6 +1052,13 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         async with agent:
             await model.iterator_started[0].wait()
             old_queue = model.event_queues[0]
+            old_queue.put_nowait(me.SpeechStartedEvent(item_id="u1"))
+            old_queue.put_nowait(me.ResponseCreatedEvent(item_id="r1"))
+            old_queue.put_nowait(
+                me.TranscriptDeltaEvent(item_id="r1", delta="partial"),
+            )
+            while agent._reply is None:  # pylint: disable=W0212
+                await asyncio.sleep(0)
             agent._mark_disconnected()  # pylint: disable=protected-access
             await agent.connect()
             old_queue.put_nowait(None)
@@ -1066,6 +1069,8 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "connected": agent._connected,  # pylint: disable=W0212
                 "connection_generation": agent._connection_generation,
                 "sessions": model.sessions,
+                "reply_open": agent._reply is not None,
+                "user_turn_open": agent._user_turn_open,
                 "iterator_started": [
                     event.is_set() for event in model.iterator_started
                 ],
@@ -1090,6 +1095,8 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                     "connected": True,
                     "connection_generation": 2,
                     "sessions": 2,
+                    "reply_open": False,
+                    "user_turn_open": False,
                     "iterator_started": [True, True],
                     "iterator_finished": [True, False],
                 },
@@ -1270,8 +1277,8 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
     """Verify user reply boundaries around delayed transcription."""
 
-    async def test_user_reply_ends_after_delayed_transcription(self) -> None:
-        """A settled transcript closes its user reply after its text."""
+    async def test_user_reply_ends_after_transcription_result(self) -> None:
+        """Success and failure both close their delayed user replies."""
         model = ScriptedModel(
             [
                 [
@@ -1280,6 +1287,9 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
                     me.ResponseCreatedEvent(item_id="r1"),
                     me.InputTranscriptionEvent(item_id="u1", text="hello"),
                     me.ResponseDoneEvent(item_id="r1"),
+                    me.SpeechStartedEvent(item_id="u2"),
+                    me.SpeechEndedEvent(item_id="u2"),
+                    me.InputTranscriptionFailedEvent(item_id="u2"),
                 ],
             ],
             input_audio_transcription=True,
@@ -1291,7 +1301,11 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
             transport = FakeTransport(frames=3)
             async with transport:
                 async for event in agent.reply_stream(transport):
-                    if getattr(event, "reply_id", None) == "u1":
+                    if getattr(event, "role", None) == "user" or getattr(
+                        event,
+                        "reply_id",
+                        None,
+                    ) in {"u1", "u2"}:
                         user_events.append(
                             (
                                 event.type,
@@ -1315,6 +1329,8 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
                     ("TEXT_BLOCK_START", None, None, None),
                     ("TEXT_BLOCK_DELTA", None, "hello", None),
                     ("TEXT_BLOCK_END", None, None, None),
+                    ("REPLY_END", None, None, "completed"),
+                    ("REPLY_START", "user", None, None),
                     ("REPLY_END", None, None, "completed"),
                 ],
                 "context": [("user", "hello")],

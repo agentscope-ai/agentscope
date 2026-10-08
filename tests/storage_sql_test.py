@@ -267,7 +267,16 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
 
     async def test_agents_round_trip_and_source_filter(self) -> None:
         """``list_agents`` filters out ``source='team'`` workers."""
-        user_agent = _agent_record("user-1", "usr")
+        user_agent = AgentRecord.model_validate(
+            {
+                "user_id": "user-1",
+                "data": {
+                    "name": "usr",
+                    "context_config": {"max_image_num": 3},
+                    "react_config": {"max_iters": 7},
+                },
+            },
+        )
         team_agent = _agent_record("user-1", "team-worker")
         team_agent.source = "team"
 
@@ -276,6 +285,17 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
 
         listed = await self.storage.list_agents("user-1")
         self.assertEqual([a.id for a in listed], [user_agent.id])
+        self.assertDictEqual(
+            listed[0].data.model_dump(mode="json", exclude_defaults=True),
+            {
+                "id": user_agent.data.id,
+                "name": "usr",
+                "chat_config": {
+                    "context_config": {"max_image_num": 3},
+                    "react_config": {"max_iters": 7},
+                },
+            },
+        )
         # But direct get works for the team-spawned worker
         self.assertEqual(
             (await self.storage.get_agent("user-1", team_agent.id)).id,

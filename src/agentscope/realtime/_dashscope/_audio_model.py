@@ -45,6 +45,11 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
 
     parameters: "DashScopeAudioRealtimeModel.Parameters"
 
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Qwen Audio does not emit settled input transcription."""
+        return False
+
     @classmethod
     def list_models(
         cls,
@@ -121,7 +126,7 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
                         },
                     )
                 elif isinstance(block, ToolResultBlock):
-                    if block.id not in paired_ids or block.state == "running":
+                    if block.id not in paired_ids:
                         continue
                     output = (
                         block.output

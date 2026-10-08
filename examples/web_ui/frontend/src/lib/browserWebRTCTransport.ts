@@ -138,7 +138,6 @@ export class BrowserWebRTCTransport {
 		});
 		await channelReady;
 		this.throwIfStopped();
-		if (this.failureError) throw this.failureError;
 
 		this.progressTimer = window.setInterval(() => this.reportPlayout(), 100);
 		this.active = true;
@@ -312,7 +311,7 @@ export class BrowserWebRTCTransport {
 
 	private throwIfStopped(): void {
 		if (this.intentionalClose) {
-			throw new Error('The realtime connection was stopped.');
+			throw this.failureError ?? new Error('The realtime connection was stopped.');
 		}
 	}
 

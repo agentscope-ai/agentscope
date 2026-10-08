@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from ....realtime import RealtimeModelCard
+from ..._types import RealtimeIceServer
 
 
 class ListRealtimeModelsRequest(BaseModel):
@@ -28,7 +29,7 @@ class ListRealtimeModelsResponse(BaseModel):
 class RealtimeConfigResponse(BaseModel):
     """Browser-facing WebRTC configuration."""
 
-    ice_servers: list[dict] = Field(
+    ice_servers: list[RealtimeIceServer] = Field(
         description="RTCIceServer-compatible dictionaries.",
     )
 

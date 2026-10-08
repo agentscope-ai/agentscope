@@ -109,6 +109,10 @@ class _FakeMessage(dict):
         """Return the fixture's message id."""
         return self["id"]
 
+    def model_dump_json(self) -> str:
+        """Return stable JSON for changed-message detection."""
+        return json.dumps(self, sort_keys=True)
+
 
 class _FakeAgent:
     """Finite-event realtime agent double."""
@@ -924,6 +928,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                     "value": "1-0",
                     "ttl_secs": None,
                 },
+                {"method": "log_trim", "key": events_key},
                 {
                     "method": "acquire_lock",
                     "key": MessageBusKeys.session_event_checkpoint_lock(
@@ -939,23 +944,11 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             storage.calls,
             [
                 {
-                    "method": "upsert_message",
-                    "user_id": "alice",
-                    "session_id": "session-1",
-                    "message": message,
-                },
-                {
                     "method": "update_session_state",
                     "user_id": "alice",
                     "agent_id": "agent-1",
                     "session_id": "session-1",
                     "state": agent.state,
-                },
-                {
-                    "method": "upsert_message",
-                    "user_id": "alice",
-                    "session_id": "session-1",
-                    "message": message,
                 },
                 {
                     "method": "update_session_state",
@@ -1033,18 +1026,12 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(closed.wait(), timeout=1)
 
         self.assertEqual(
-            {
-                "cursor_values": [
-                    call["value"]
-                    for call in message_bus.calls
-                    if call["method"] == "registry_set"
-                ],
-                "persisted_messages": list(storage.messages),
-            },
-            {
-                "cursor_values": ["6-0"],
-                "persisted_messages": ["user-1"],
-            },
+            [
+                call["value"]
+                for call in message_bus.calls
+                if call["method"] == "registry_set"
+            ],
+            ["6-0"],
         )
 
     async def test_checkpoint_deletes_message_removed_from_context(
@@ -1094,17 +1081,17 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                         "state": agent.state,
                     },
                     {
-                        "method": "delete_message",
-                        "user_id": "alice",
-                        "session_id": "session-1",
-                        "message_id": "reply-1",
-                    },
-                    {
                         "method": "update_session_state",
                         "user_id": "alice",
                         "agent_id": "agent-1",
                         "session_id": "session-1",
                         "state": agent.state,
+                    },
+                    {
+                        "method": "delete_message",
+                        "user_id": "alice",
+                        "session_id": "session-1",
+                        "message_id": "reply-1",
                     },
                 ],
             },
@@ -1295,11 +1282,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 ],
             },
             {
-                "storage_methods": [
-                    "upsert_message",
-                    "update_session_state",
-                ]
-                * 3,
+                "storage_methods": ["update_session_state"] * 3,
                 "published_event_types": [event.type for event in events],
                 "cursor_values": ["1-0"] * 2,
             },

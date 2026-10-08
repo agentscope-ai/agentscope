@@ -646,15 +646,8 @@ async def list_messages(
     if offset is not None:
         extra["offset"] = offset
 
-    checkpoint_key = MessageBusKeys.session_event_checkpoint(session_id)
-    async with message_bus.acquire_lock(
-        MessageBusKeys.session_event_checkpoint_lock(session_id),
-        ttl_secs=MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS,
-    ):
-        event_cursor = await message_bus.registry_get(
-            checkpoint_key,
-            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
-        )
+    event_cursor = None
+    if before is not None or offset is not None:
         messages, has_more = await storage.list_messages(
             user_id,
             session_id,
@@ -662,6 +655,23 @@ async def list_messages(
             before=before,
             **extra,
         )
+    else:
+        checkpoint_key = MessageBusKeys.session_event_checkpoint(session_id)
+        async with message_bus.acquire_lock(
+            MessageBusKeys.session_event_checkpoint_lock(session_id),
+            ttl_secs=(MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS),
+        ):
+            event_cursor = await message_bus.registry_get(
+                checkpoint_key,
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            )
+            messages, has_more = await storage.list_messages(
+                user_id,
+                session_id,
+                limit=limit,
+                before=before,
+                **extra,
+            )
     return ListMessagesResponse(
         messages=messages,
         event_cursor=event_cursor,

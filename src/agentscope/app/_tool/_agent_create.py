@@ -14,7 +14,7 @@ from .._bus_ops import deliver_to_inbox
 from ..storage import (
     AgentData,
     AgentRecord,
-    ChatConfig,
+    AgentChatConfig,
     SessionConfig,
     TeamMember,
     TeamOrigin,
@@ -410,7 +410,7 @@ optional):
                 data=AgentData(
                     name=name,
                     system_prompt=system_prompt,
-                    chat_config=ChatConfig(
+                    chat_config=AgentChatConfig(
                         context_config=template.context_config,
                         react_config=template.react_config,
                     ).model_copy(deep=True),

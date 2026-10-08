@@ -63,7 +63,7 @@ class InviteConfig(BaseModel):
         return self
 
 
-class ChatConfig(BaseModel):
+class AgentChatConfig(BaseModel):
     """The settings that apply when the agent talks in text.
 
     Grouped in their own sub-model so a second interaction mode — a
@@ -121,8 +121,8 @@ class AgentData(BaseModel):
         json_schema_extra={"format": "textarea"},
     )
 
-    chat_config: ChatConfig = Field(
-        default_factory=ChatConfig,
+    chat_config: AgentChatConfig = Field(
+        default_factory=AgentChatConfig,
         description="The settings for the agent's text conversations.",
         title="Chat Config",
     )
@@ -163,17 +163,7 @@ class AgentData(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _fold_legacy_configs(cls, data: Any) -> Any:
-        """Read agents written before the text-mode settings moved under
-        :attr:`chat_config`.
-
-        Those carry ``context_config`` / ``react_config`` /
-        ``invite_config`` at the top level. Nothing migrates the stored
-        rows; they are folded here and written back in the new shape on
-        the next save. A ``PATCH`` body still using the old names lands
-        here too, which is why the legacy values are merged *into* an
-        existing ``chat_config`` rather than replacing it — the merged
-        record carries both, and only the named sub-configs change.
-        """
+        """Fold deprecated flat configs into ``chat_config``."""
         if not isinstance(data, dict):
             return data
         legacy = {

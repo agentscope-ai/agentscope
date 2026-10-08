@@ -10,10 +10,10 @@ from pydantic import (
     AliasChoices,
     BaseModel,
     Field,
-    model_serializer,
     model_validator,
 )
 
+from ...agent import ContextConfig, ReActConfig
 from ..access import (
     ResourceAccessPolicyBase,
     ResourceKind,
@@ -21,13 +21,43 @@ from ..access import (
     ResourceRef,
 )
 from ..storage import (
+    AgentChatConfig,
+    AgentData,
     AgentRecord,
     ChunkerConfig,
     CredentialRecord,
     EmbeddingModelConfig,
+    InviteConfig,
     KnowledgeBaseRecord,
     StorageBase,
 )
+
+
+class AgentDataView(BaseModel):
+    """Agent data with deprecated flat response fields."""
+
+    id: str
+    name: str
+    system_prompt: str
+    chat_config: AgentChatConfig
+    context_config: ContextConfig
+    react_config: ReActConfig
+    invite_config: InviteConfig
+
+    @model_validator(mode="before")
+    @classmethod
+    def _add_legacy_configs(cls, data: Any) -> Any:
+        """Populate deprecated fields from the grouped configuration."""
+        if isinstance(data, AgentData):
+            data = data.model_dump()
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        chat_config = AgentChatConfig.model_validate(data["chat_config"])
+        data.setdefault("context_config", chat_config.context_config)
+        data.setdefault("react_config", chat_config.react_config)
+        data.setdefault("invite_config", chat_config.invite_config)
+        return data
 
 
 # ---------------------------------------------------------------------
@@ -49,19 +79,7 @@ class AgentView(AgentRecord):
         ),
     )
 
-    @model_serializer(mode="wrap")
-    def _serialize_legacy_agent_config(self, handler: Any) -> dict:
-        """Keep deprecated flat agent configs in HTTP-facing views."""
-        payload = handler(self)
-        data = payload["data"]
-        chat_config = data["chat_config"]
-        for key in (
-            "context_config",
-            "react_config",
-            "invite_config",
-        ):
-            data[key] = chat_config[key]
-        return payload
+    data: AgentDataView
 
 
 class CredentialView(CredentialRecord):

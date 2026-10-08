@@ -72,23 +72,21 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             },
         )
 
-        self.assertEqual(
-            data.model_dump(),
-            AgentData.model_validate(
-                {
-                    "id": "a1",
-                    "name": "ann",
-                    "system_prompt": "You are ann.",
-                    "chat_config": {
-                        "context_config": {"max_image_num": 3},
-                        "react_config": {"max_iters": 7},
-                        "invite_config": {
-                            "invitable": True,
-                            "invite_description": "an old agent",
-                        },
+        self.assertDictEqual(
+            data.model_dump(mode="json", exclude_defaults=True),
+            {
+                "id": "a1",
+                "name": "ann",
+                "system_prompt": "You are ann.",
+                "chat_config": {
+                    "context_config": {"max_image_num": 3},
+                    "react_config": {"max_iters": 7},
+                    "invite_config": {
+                        "invitable": True,
+                        "invite_description": "an old agent",
                     },
                 },
-            ).model_dump(),
+            },
         )
         with self.assertWarns(DeprecationWarning):
             context_config = data.context_config
@@ -108,9 +106,6 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
                 "invite_config": data.chat_config.invite_config,
             },
         )
-        self.assertNotIn("context_config", data.model_dump())
-        self.assertNotIn("react_config", data.model_dump())
-        self.assertNotIn("invite_config", data.model_dump())
 
     def test_create_accepts_both_shapes(self) -> None:
         """POST bodies in either shape store the same grouped record."""
@@ -148,6 +143,18 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             ).chat_config.model_dump(mode="json"),
         )
         expected_chat_config = by_name["legacy"]["chat_config"]
+        self.assertListEqual(
+            sorted(by_name["legacy"]),
+            [
+                "chat_config",
+                "context_config",
+                "id",
+                "invite_config",
+                "name",
+                "react_config",
+                "system_prompt",
+            ],
+        )
         self.assertEqual(
             {
                 key: by_name["legacy"][key]
@@ -303,6 +310,10 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             "summary_schema",
             chat_config["properties"]["context_config"]["properties"],
         )
+        openapi = self.client.get("/openapi.json").json()
+        agent_view = openapi["components"]["schemas"]["AgentView"]
+        self.assertIn("data", agent_view["properties"])
+        self.assertNotEqual(agent_view.get("additionalProperties"), True)
 
     async def test_stored_agent_survives_a_round_trip(self) -> None:
         """A raw legacy Redis record is read and rewritten grouped."""

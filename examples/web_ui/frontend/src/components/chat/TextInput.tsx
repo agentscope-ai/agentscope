@@ -542,7 +542,13 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								<TooltipTrigger asChild>
 									<Button
 										type="button"
-										variant={voiceState === 'active' ? 'default' : 'ghost'}
+										variant={
+											voiceState === 'idle' &&
+											phase === 'idle' &&
+											!value.trim()
+												? 'ghost'
+												: 'default'
+										}
 										onClick={actionButton.onClick}
 										disabled={actionButton.disabled}
 										size="icon-lg"

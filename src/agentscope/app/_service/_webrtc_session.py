@@ -57,7 +57,7 @@ class WebRTCSession:
         self._close_lock = asyncio.Lock()
         self._closing = False
         self._lock_acquired = asyncio.Event()
-        self._persisted_message_ids: set[str] = set()
+        self._persisted_messages: dict[str, str] = {}
         self._open_user_replies: set[str] = set()
         self._pcm_block_ids: set[str] = set()
         self._last_entry_id: str | None = None
@@ -131,9 +131,10 @@ class WebRTCSession:
                 self._lock_acquired.set()
                 try:
                     self.agent = await self._agent_factory()
-                    self._persisted_message_ids.update(
-                        message.id for message in self.agent.state.context
-                    )
+                    self._persisted_messages = {
+                        message.id: message.model_dump_json()
+                        for message in self.agent.state.context
+                    }
                     async with self.transport:
                         async with self.agent:
                             async for event in self.agent.reply_stream(
@@ -252,31 +253,39 @@ class WebRTCSession:
             entry_id,
         )
         self._checkpoint_entry_id = entry_id
+        await self.message_bus.log_trim(
+            MessageBusKeys.session_events(self.session_id),
+        )
 
     async def _persist_state(self, state: AgentState | None = None) -> None:
         """Persist the latest complete messages and agent state."""
         if self.agent is None:
             return
         state = state or self.agent.state
-        current_ids = {message.id for message in state.context}
+        current_messages = {
+            message.id: message.model_dump_json() for message in state.context
+        }
         for message in state.context:
+            serialized = current_messages[message.id]
+            if self._persisted_messages.get(message.id) == serialized:
+                continue
             await self.storage.upsert_message(
                 self.user_id,
                 self.session_id,
                 message,
             )
-            self._persisted_message_ids.add(message.id)
-        removed_ids = self._persisted_message_ids - current_ids
-        for message_id in sorted(removed_ids):
-            await self.storage.delete_message(
-                self.user_id,
-                self.session_id,
-                message_id,
-            )
-            self._persisted_message_ids.remove(message_id)
+            self._persisted_messages[message.id] = serialized
         await self.storage.update_session_state(
             user_id=self.user_id,
             agent_id=self.agent_id,
             session_id=self.session_id,
             state=state,
         )
+        removed_ids = self._persisted_messages.keys() - current_messages.keys()
+        for message_id in sorted(removed_ids):
+            await self.storage.delete_message(
+                self.user_id,
+                self.session_id,
+                message_id,
+            )
+            self._persisted_messages.pop(message_id, None)

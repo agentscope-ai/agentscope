@@ -2,7 +2,6 @@
 """The realtime model base class."""
 import inspect
 from abc import ABC, abstractmethod
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence
 
@@ -16,18 +15,6 @@ from ..message import Msg, ToolResultBlock
 
 class ModelDisconnectedError(ConnectionError):
     """The provider closed the session; the next user audio reconnects."""
-
-
-class TruncationSupport(StrEnum):
-    """How the provider lets an interrupted turn be corrected. A protocol
-    property, constant across the models of one API."""
-
-    NONE = "none"
-    SERVER = "server"
-    """The provider corrects itself; ``truncate`` is a no-op."""
-
-    EXPLICIT = "explicit"
-    """The provider accepts an explicit truncate frame."""
 
 
 class RealtimeModelBase(ABC):
@@ -49,9 +36,6 @@ class RealtimeModelBase(ABC):
     type: str = ""
     """Identifies the adapter; stamped onto every card it lists so a stored
     config can be mapped back to this class."""
-
-    truncation: TruncationSupport = TruncationSupport.NONE
-    """Whether and how an interrupted turn can be corrected."""
 
     supports_text_input: bool = False
     """Whether a text turn can be injected mid-session."""
@@ -92,12 +76,15 @@ class RealtimeModelBase(ABC):
             for name, override in self.card.parameter_overrides.items()
             if "default" in override
         }
-        explicit_parameters = (
-            parameters.model_dump(exclude_unset=True) if parameters else {}
-        )
-        self.parameters = self.Parameters(
-            **{**card_defaults, **explicit_parameters},
-        )
+        if parameters is None:
+            self.parameters = self.Parameters(**card_defaults)
+        else:
+            defaults = {
+                name: value
+                for name, value in card_defaults.items()
+                if name not in parameters.model_fields_set
+            }
+            self.parameters = parameters.model_copy(update=defaults)
 
     @classmethod
     def _find_card(cls, model: str) -> RealtimeModelCard:
@@ -154,13 +141,7 @@ class RealtimeModelBase(ABC):
     @property
     def input_transcription_enabled(self) -> bool:
         """Whether a settled user transcript is expected after speech."""
-        return bool(
-            getattr(
-                getattr(self, "parameters", None),
-                "input_audio_transcription",
-                False,
-            ),
-        )
+        return False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -254,22 +235,3 @@ class RealtimeModelBase(ABC):
     @abstractmethod
     async def cancel_response(self) -> None:
         """Stop the active reply without closing the session."""
-
-    @abstractmethod
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """Rewrite an assistant turn to what the user actually heard. A
-        no-op unless :attr:`truncation` is ``EXPLICIT``.
-
-        Args:
-            item_id (`str`):
-                The interrupted assistant item.
-            played_ms (`int`):
-                Milliseconds of its audio that reached the speaker.
-            played_text (`str`):
-                The corresponding prefix of its spoken text.
-        """
