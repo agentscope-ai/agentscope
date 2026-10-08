@@ -449,11 +449,6 @@ class ToolBase(ABC):
         Case-insensitive matching is used to prevent bypasses on
         case-insensitive filesystems (macOS, Windows).
 
-        The path is resolved with :func:`os.path.realpath` so that a
-        symlink pointing at a sensitive file is judged by its target,
-        matching how :meth:`_path_in_allowed_working_path` normalizes
-        both sides of its comparison.
-
         Args:
             file_path (`str`):
                 The file path to check
@@ -472,8 +467,7 @@ class ToolBase(ABC):
             False
         """
 
-        # Normalize path, resolving symlinks so an alias cannot smuggle a
-        # dangerous target past the check below.
+        # Resolve symlinks so an alias is judged by its target
         abs_path = os.path.realpath(os.path.expanduser(file_path))
 
         # Split path into segments
