@@ -290,6 +290,8 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             r"find . '-exec' rm {} \;",
             r'find . "-execdir" rm {} \;',
             r"find . '-ok' rm {} \;",
+            "find . $'-delete'",
+            r"find . \-delete",
             'find . "-fls" results.txt',
             'find . "-fprint0" results.txt',
             """find . -name '*.tmp' "-delete\"""",
