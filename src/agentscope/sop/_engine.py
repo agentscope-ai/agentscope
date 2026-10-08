@@ -142,17 +142,12 @@ class SOPEngine:
                 if interrupting:
                     # The parked reply was closed; nothing is retried.
                     return
-                if record.phase is SOPPhase.AWAITING:
-                    # Let go of the stream rather than hold a coroutine
-                    # open; the caller comes back with an answer.
+                if record.phase in (SOPPhase.AWAITING, SOPPhase.FAILED):
+                    # Parked for an answer, or given up by the step itself;
+                    # either way, let go of the stream rather than retry.
                     return
                 if record.phase is SOPPhase.COMPLETED:
                     break
-                if record.phase is SOPPhase.FAILED:
-                    # The step gave up on itself; do not resurrect it,
-                    # or a step whose run vanished mid-turn would be
-                    # retried forever.
-                    return
                 if len(record.verifications) >= step.max_attempts:
                     record.phase = SOPPhase.FAILED
                     return
