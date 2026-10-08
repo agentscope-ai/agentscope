@@ -1070,12 +1070,17 @@ class LocalBackend(BackendBase):
     async def delete_path(self, path: str) -> None:
         """Delete a local file or directory tree.
 
-        No-op if *path* does not exist.
+        Symbolic links are removed without following their targets,
+        including when the target no longer exists. No-op if *path*
+        does not exist.
 
         Args:
             path (`str`):
                 Path to delete.
         """
+        if os.path.islink(path):
+            os.remove(path)
+            return
         if not os.path.exists(path):
             return
         if os.path.isdir(path):
