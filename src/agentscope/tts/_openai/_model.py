@@ -155,10 +155,10 @@ class OpenAITTSModel(TTSModelBase):
             "voice": self.parameters.voice,
             "input": text,
             "response_format": self.parameters.response_format,
-            **kwargs,
         }
         if self.parameters.instructions:
             request_kwargs["instructions"] = self.parameters.instructions
+        request_kwargs.update(kwargs)
 
         media_type = _MEDIA_TYPES.get(
             request_kwargs["response_format"],

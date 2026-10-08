@@ -7,11 +7,13 @@ Installing from a hub only writes here; putting an MCP into a workspace
 stays a separate, explicit act.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 
 from ..deps import get_current_user_id, get_mcp_hubs, get_storage
 from ..hub import MCPHubBase
 from .._service import MCPRenderError, render_mcp
 from ..storage import StorageBase
+from ...mcp import MCPClient
 from ._schema import MCPView, UpdateMCPRequest
 
 mcp_router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -44,6 +46,12 @@ async def update_mcp(
     sit anywhere in the config — inside a URL, a header, an env var — so
     the card's template plus the merged answers is the only thing that
     knows where to put it.
+
+    Raises:
+        `HTTPException`: 404 if the MCP is not in the caller's library,
+            400 if the MCP has no card to re-render from, 409 if the new
+            name is taken, or 422 if the name is not made of
+            ``[a-zA-Z0-9_-]``.
     """
     record = await storage.get_mcp(user_id, mcp_id)
     if record is None:
@@ -90,7 +98,20 @@ async def update_mcp(
         record.values = merged
         record.version = card.version
     elif body.name is not None:
-        record.client.name = body.name
+        # ``MCPClient`` checks its name in ``model_post_init``, which a
+        # plain attribute assignment skips; rebuild the client through
+        # ``model_validate`` so an illegal name is refused here. Stored
+        # as-is it would fail the same check on the next read, turning
+        # every route that loads the library into a 500.
+        try:
+            record.client = MCPClient.model_validate(
+                {**record.client.model_dump(), "name": body.name},
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
 
     if body.enabled is not None:
         record.enabled = body.enabled
