@@ -46,7 +46,7 @@ export function RealtimeModelSelect({
 }: Props) {
 	const { groups, loading } = useAvailableRealtimeModels();
 	const { t } = useTranslation();
-	const entries = Object.entries(groups);
+	const entries = Object.entries(groups).sort(([left], [right]) => left.localeCompare(right));
 
 	const handleSelect = (credentialId: string, model: RealtimeModelCard) => {
 		onChange?.({
@@ -93,7 +93,7 @@ export function RealtimeModelSelect({
 												handleSelect(items[0].credential.id, model)
 											}
 										>
-											{model.label}
+											{model.name}
 										</DropdownMenuItem>
 									))
 								: items.map(({ credential, models }) => (

@@ -2,6 +2,7 @@ type: realtime_model
 name: qwen-audio-3.1-realtime-plus
 label: Qwen-Audio-3.1-Realtime-Plus
 status: active
+release_date: 2026-09-20
 
 input_types:
   - audio/pcm

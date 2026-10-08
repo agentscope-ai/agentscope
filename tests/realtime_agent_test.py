@@ -540,6 +540,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "monk.",
                 ("user_start", "u2"),
                 ("reply_end", "interrupted"),
+                ("reply_end", "completed"),
             ],
         )
         self.assertEqual(
@@ -1743,8 +1744,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         pcm=b"\x01\x00",
                         sample_rate=24000,
                     ),
+                    me.ResponseCreatedEvent(item_id="r2"),
                     me.ToolCallEvent(
-                        item_id="r1",
+                        item_id="r2",
                         tool_call=ToolCallBlock(
                             id="c1",
                             name="stream_tool",
@@ -1752,23 +1754,23 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         ),
                     ),
                     me.ResponseDoneEvent(
-                        item_id="r1",
+                        item_id="r2",
                         input_tokens=5,
                         output_tokens=2,
                     ),
                     "WAIT",
-                    me.ResponseCreatedEvent(item_id="r2"),
+                    me.ResponseCreatedEvent(item_id="r3"),
                     me.TranscriptDeltaEvent(
-                        item_id="r2",
+                        item_id="r3",
                         delta="It is sunny.",
                     ),
                     me.AudioDeltaEvent(
-                        item_id="r2",
+                        item_id="r3",
                         pcm=b"\x01\x00",
                         sample_rate=24000,
                     ),
                     me.ResponseDoneEvent(
-                        item_id="r2",
+                        item_id="r3",
                         input_tokens=9,
                         output_tokens=3,
                     ),
@@ -1827,6 +1829,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
                 ("TEXT_BLOCK_END", "r1", None, None, None, None),
                 ("DATA_BLOCK_END", "r1", None, None, None, None),
+                ("MODEL_CALL_END", "r1", None, None, None, "completed"),
+                ("MODEL_CALL_START", "r1", None, None, None, None),
                 ("MODEL_CALL_END", "r1", None, None, None, "completed"),
                 ("TOOL_CALL_START", "r1", None, None, "c1", None),
                 (

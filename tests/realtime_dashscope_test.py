@@ -66,7 +66,13 @@ class DashScopeCardsTest(unittest.TestCase):
         """The Omni adapter lists the four Omni cards."""
         self.assertListEqual(
             [
-                (c.name, c.model_type, c.supports_tools, c.max_audio_turns)
+                (
+                    c.name,
+                    c.model_type,
+                    c.supports_tools,
+                    c.max_audio_turns,
+                    c.release_date.isoformat() if c.release_date else None,
+                )
                 for c in DashScopeRealtimeModel.list_models()
             ],
             [
@@ -75,24 +81,28 @@ class DashScopeCardsTest(unittest.TestCase):
                     "dashscope_omni_realtime",
                     False,
                     None,
+                    "2025-05-08",
                 ),
                 (
                     "qwen3-omni-flash-realtime",
                     "dashscope_omni_realtime",
                     False,
                     8,
+                    "2025-12-04",
                 ),
                 (
                     "qwen3.5-omni-flash-realtime",
                     "dashscope_omni_realtime",
                     True,
                     80,
+                    "2026-03-30",
                 ),
                 (
                     "qwen3.5-omni-plus-realtime",
                     "dashscope_omni_realtime",
                     True,
                     100,
+                    "2026-03-30",
                 ),
             ],
         )
@@ -106,6 +116,7 @@ class DashScopeCardsTest(unittest.TestCase):
                     c.model_type,
                     c.max_audio_turns,
                     c.max_audio_duration_s,
+                    c.release_date.isoformat() if c.release_date else None,
                 )
                 for c in DashScopeAudioRealtimeModel.list_models()
             ],
@@ -115,18 +126,21 @@ class DashScopeCardsTest(unittest.TestCase):
                     "dashscope_audio_realtime",
                     50,
                     300,
+                    "2026-07-14",
                 ),
                 (
                     "qwen-audio-3.0-realtime-plus",
                     "dashscope_audio_realtime",
                     50,
                     300,
+                    "2026-07-14",
                 ),
                 (
                     "qwen-audio-3.1-realtime-plus",
                     "dashscope_audio_realtime",
                     50,
                     300,
+                    "2026-09-20",
                 ),
             ],
         )
