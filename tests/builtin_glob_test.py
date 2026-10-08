@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-public-methods
 """Glob tool test case."""
 import os
 import tempfile
