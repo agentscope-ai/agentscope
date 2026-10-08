@@ -343,6 +343,12 @@ export interface TeamDetailResponse {
  */
 export type SessionStatus = 'running' | 'idle' | 'awaiting_permission' | 'awaiting_external_result';
 
+/** Response from the authoritative per-session status probe. */
+export interface SessionStatusResponse {
+	session_id: string;
+	status: SessionStatus;
+}
+
 /**
  * Per-session bundle returned by `GET /sessions/?agent_id=...`.
  *
