@@ -99,7 +99,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
                 model=model,  # type: ignore[arg-type]
             )
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "name": agent.name,
                 "system_prompt": agent.system_prompt,
@@ -233,7 +233,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
                 model=model,
             )
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "system_prompt": agent.system_prompt,
                 "toolkit": agent.toolkit,

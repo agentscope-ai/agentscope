@@ -569,7 +569,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             "sess-1",
         )
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "deleted": deleted,
                 "deleted_again": deleted_again,

@@ -412,7 +412,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         """Move media and full control payloads in both directions."""
         pcm = np.full((2_400,), 2_000, dtype="<i2").tobytes()
         await self.transport.send_audio(pcm, "item-1")
-        self.assertEqual(
+        self.assertListEqual(
             self.channel.sent,
             [
                 {
@@ -424,7 +424,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         )
 
         output = await self.transport.output_track.recv()
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "sample_rate": output.sample_rate,
                 "samples": output.samples,
@@ -440,7 +440,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
                 "has_audio": True,
             },
         )
-        self.assertEqual(
+        self.assertListEqual(
             self.channel.sent,
             [
                 {
@@ -460,7 +460,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         incoming = self.transport.incoming()
         audio = await anext(incoming)
         self.assertIsInstance(audio, AudioFrame)
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "byte_length": len(audio.pcm),
                 "has_audio": bool(np.any(np.frombuffer(audio.pcm, "<i2"))),
@@ -476,7 +476,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         control = await anext(incoming)
-        self.assertEqual(
+        self.assertDictEqual(
             control.model_dump(mode="json"),
             {"type": "interrupt", "data": {}},
         )
@@ -496,7 +496,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         confirmation = await anext(incoming)
-        self.assertEqual(
+        self.assertDictEqual(
             confirmation.model_dump(mode="json"),
             {"type": "user_confirm", "data": confirm_data},
         )
@@ -505,7 +505,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         while self.channel.sent[-1].get("type") != "clear_audio":
             await asyncio.sleep(0)
         clear_request = self.channel.sent[-1]
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "keys": set(clear_request),
                 "type": clear_request["type"],
@@ -530,7 +530,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         position = await clear_task
-        self.assertEqual(
+        self.assertDictEqual(
             self.transport.playout().model_dump(),
             {
                 "item_id": "",
@@ -543,7 +543,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         await self.transport.send_audio(pcm, "item-1")
         self.assertEqual(len(self.channel.sent), sent_after_clear)
         await self.transport.send_audio(pcm, "item-2")
-        self.assertEqual(
+        self.assertDictEqual(
             self.channel.sent[-1],
             {
                 "type": "audio_duration",
@@ -567,7 +567,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
             },
             state_after_item_2,
         )
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "item_id": position.item_id,
                 "played_ms": position.played_ms,
@@ -678,7 +678,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         )
         await asyncio.sleep(0)
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "cleared": cleared.model_dump(),
                 "before_late_ack": before_late_ack.model_dump(),
@@ -727,7 +727,7 @@ class WebRTCAudioTransportTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsInstance(model, DashScopeAudioRealtimeModel)
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "type": model.type,
                 "name": model.model,
@@ -1046,7 +1046,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         await session.close()
 
         events_key = MessageBusKeys.session_events("session-1")
-        self.assertEqual(
+        self.assertListEqual(
             message_bus.calls,
             [
                 {
@@ -1105,7 +1105,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         )
-        self.assertEqual(
+        self.assertListEqual(
             storage.calls,
             [
                 {
@@ -1124,7 +1124,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         )
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "transport_closed": transport.closed,
                 "peer_connection_closed": peer_connection.closed,
@@ -1190,7 +1190,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         session.start()
         await asyncio.wait_for(closed.wait(), timeout=1)
 
-        self.assertEqual(
+        self.assertListEqual(
             [
                 call["value"]
                 for call in message_bus.calls
@@ -1224,7 +1224,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         agent.state.context.clear()
         await session._persist_state()
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "reloaded_messages": list(storage.messages.values()),
                 "storage_calls": storage.calls,
@@ -1312,7 +1312,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         session.start()
         await asyncio.wait_for(closed.wait(), timeout=1)
 
-        self.assertEqual(
+        self.assertListEqual(
             message_bus.calls,
             [
                 {
@@ -1357,7 +1357,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         acquired = await session.wait_until_lock_acquired(0.01)
         await session.close()
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "acquired": acquired,
                 "message_bus_calls": message_bus.calls,
@@ -1432,7 +1432,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         session.start()
         await asyncio.wait_for(closed.wait(), timeout=1)
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "storage_methods": [call["method"] for call in storage.calls],
                 "published_event_types": [

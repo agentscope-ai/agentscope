@@ -508,7 +508,7 @@ class TestMessage(IsolatedAsyncioTestCase):
             self.session_id,
         )
 
-        self.assertEqual(
+        self.assertDictEqual(
             {
                 "deleted": deleted,
                 "deleted_again": deleted_again,
