@@ -13,6 +13,7 @@ from agentscope.permission import (
 )
 
 
+# pylint: disable=too-many-public-methods
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
 
@@ -88,6 +89,24 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test2.py", content)
         self.assertNotIn("test.txt", content)
 
+    async def test_dash_prefixed_patterns(self) -> None:
+        """The helper must receive option-like patterns as literal values."""
+        for name, pattern in (
+            ("-report.txt", "-report*.txt"),
+            ("--help", "--help"),
+            ("-report=one.txt", "-report=*.txt"),
+        ):
+            with self.subTest(pattern=pattern):
+                target = os.path.join(self.temp_dir, name)
+                with open(target, "w", encoding="utf-8"):
+                    pass
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(chunk.content[0].text, target)
+
     async def test_recursive_pattern(self) -> None:
         """Test recursive glob pattern."""
         chunk = await self.glob_tool(
@@ -101,6 +120,42 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
+
+    async def test_current_directory_segments(self) -> None:
+        """Standalone dot segments do not change the matched files."""
+        for pattern, expected in (
+            ("./*.py", ["test1.py", "test2.py"]),
+            ("./**/*.py", ["subdir/test3.py", "test1.py", "test2.py"]),
+            ("subdir/./*.py", ["subdir/test3.py"]),
+            (r".\subdir\.\*.py", ["subdir/test3.py"]),
+        ):
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertListEqual(
+                    sorted(chunk.content[0].text.splitlines()),
+                    [
+                        os.path.join(self.temp_dir, *name.split("/"))
+                        for name in expected
+                    ],
+                )
+
+    async def test_dot_prefixed_names_are_preserved(self) -> None:
+        """Normalizing '.' must not strip dots from hidden names."""
+        directory = os.path.join(self.temp_dir, ".config")
+        os.makedirs(directory)
+        path = os.path.join(directory, ".env")
+        with open(path, "w", encoding="utf-8"):
+            pass
+
+        result = await self.glob_tool(
+            pattern="./.config/./.env",
+            path=self.temp_dir,
+        )
+
+        self.assertEqual(result.content[0].text, path)
 
     async def test_default_head_limit_truncates_large_result(self) -> None:
         """Test the default head limit returns the newest 250 files."""

@@ -564,6 +564,14 @@ class AnthropicChatModel(ChatModelBase):
                 elif event.type == "message_delta":
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens
+                        # ``usage`` was stamped when ``message_start``
+                        # arrived, i.e. at time-to-first-token. Refresh it
+                        # here so ``time`` spans the whole generation, as
+                        # every other provider (and this model's
+                        # non-streaming path) already does.
+                        usage.time = (
+                            datetime.now() - start_datetime
+                        ).total_seconds()
 
                 if delta_res.content:
                     delta_res.usage = usage
