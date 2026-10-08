@@ -287,7 +287,7 @@ class OpenAIResponseModel(ChatModelBase):
         usage: ChatUsage | None = None
         response_id: str = _generate_id()
         text_id: str = _generate_id()
-        reasoning_block_ids: dict[str, dict[str, str]] = {}
+        reasoning_block_ids: dict[str, dict[tuple[str, int], str]] = {}
         # Mapping from Responses API item id (fc_xxx) to (call_id, name)
         # so subsequent argument deltas can be routed to the right tool
         # call block.
@@ -307,14 +307,20 @@ class OpenAIResponseModel(ChatModelBase):
                     "response.reasoning_text.delta",
                 }:
                     # Summary and raw reasoning are distinct representations
-                    # and can both occur for the same reasoning item.
+                    # and can both contain multiple parts for the same item.
+                    part_index = (
+                        event.summary_index
+                        if event_type
+                        == "response.reasoning_summary_text.delta"
+                        else event.content_index
+                    )
                     delta_res.append_thinking(
                         event.delta,
                         block_id=reasoning_block_ids.setdefault(
                             event.item_id,
                             {},
                         ).setdefault(
-                            event_type,
+                            (event_type, part_index),
                             _generate_id(),
                         ),
                     )
@@ -386,7 +392,7 @@ class OpenAIResponseModel(ChatModelBase):
                                     {},
                                 )
                                 if not block_ids:
-                                    block_ids["metadata"] = _generate_id()
+                                    block_ids[("metadata", 0)] = _generate_id()
                                 reasoning_item_raw = _dump_reasoning_item(
                                     output_item,
                                 )
@@ -430,20 +436,18 @@ class OpenAIResponseModel(ChatModelBase):
                 # Serialize once to handle both SDK content objects and
                 # provider-specific content dictionaries uniformly. Keep
                 # summary and raw reasoning in separate thinking blocks.
-                summary = " ".join(
+                summary_parts = [
                     part["text"]
                     for part in reasoning_item_raw.get("summary", []) or []
                     if part.get("text")
-                )
-                reasoning = "".join(
+                ]
+                reasoning_parts = [
                     part["text"]
                     for part in reasoning_item_raw.get("content", []) or []
                     if part.get("type") == "reasoning_text"
                     and part.get("text")
-                )
-                thinking_texts = [
-                    text for text in (summary, reasoning) if text
                 ]
+                thinking_texts = summary_parts + reasoning_parts
                 # Keep even empty-summary reasoning items: the API requires
                 # reasoning_item_id to be echoed back in multi-turn history.
                 if not thinking_texts and reasoning_item_id:
