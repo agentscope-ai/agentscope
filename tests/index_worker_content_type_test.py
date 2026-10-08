@@ -63,7 +63,7 @@ class _Knowledge:
     """Minimal vector-store facade used by the worker."""
 
     def __init__(self) -> None:
-        self.inserted_metadata: dict[str, object] | None = None
+        self.inserted_metadata: dict[str, object] = {}
 
     async def delete_document(self, document_id: str) -> None:
         """Accept the worker's cleanup call."""
@@ -139,17 +139,19 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
 
                 await worker.run_pipeline()
 
-                self.assertEqual(
+                self.assertListEqual(
                     parser.calls,
                     [(b"# AgentScope", "README.md")],
                 )
-                self.assertEqual(
+                self.assertListEqual(
                     storage.statuses,
                     ["parsing", "chunking", "indexing", "ready"],
                 )
-                self.assertIsNotNone(manager.knowledge.inserted_metadata)
-                assert manager.knowledge.inserted_metadata is not None
-                self.assertEqual(
-                    manager.knowledge.inserted_metadata["media_type"],
-                    "text/markdown",
+                self.assertDictEqual(
+                    manager.knowledge.inserted_metadata,
+                    {
+                        "filename": "README.md",
+                        "media_type": "text/markdown",
+                        "size_bytes": 7,
+                    },
                 )
