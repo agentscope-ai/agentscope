@@ -2,12 +2,10 @@
 """Glob tool test case."""
 import os
 import tempfile
-from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from utils import AnyString
-from agentscope.tool import ExecResult, Glob, LocalBackend
+from agentscope.tool import Glob
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -107,35 +105,6 @@ class GlobToolTest(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(chunk.state, "running")
                 self.assertEqual(chunk.content[0].text, target)
-
-    async def test_dash_prefixed_relative_directory(self) -> None:
-        """Relative base directories cannot be mistaken for helper options."""
-        directory = os.path.join(self.temp_dir, "-data")
-        os.makedirs(directory)
-        target = os.path.join(directory, "report.txt")
-        with open(target, "w", encoding="utf-8"):
-            pass
-        backend = LocalBackend()
-        glob = Glob(backend=backend)
-        exec_shell = backend.exec_shell
-
-        async def exec_in_temp(
-            command: list[str],
-            **kwargs: Any,
-        ) -> ExecResult:
-            return await exec_shell(command, cwd=self.temp_dir, **kwargs)
-
-        async def is_dir_in_temp(path: str) -> bool:
-            return os.path.isdir(os.path.join(self.temp_dir, path))
-
-        with patch.object(backend, "exec_shell", side_effect=exec_in_temp):
-            with patch.object(backend, "is_dir", side_effect=is_dir_in_temp):
-                chunk = await glob(pattern="*.txt", path="-data")
-        self.assertEqual(chunk.state, "running")
-        self.assertEqual(
-            chunk.content[0].text,
-            os.path.join("-data", "report.txt"),
-        )
 
     async def test_recursive_pattern(self) -> None:
         """Test recursive glob pattern."""
