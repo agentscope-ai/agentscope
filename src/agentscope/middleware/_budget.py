@@ -2,6 +2,7 @@
 """Budget control middleware for AgentScope agents."""
 from typing import AsyncGenerator, Callable, TYPE_CHECKING
 
+from ..agent._structured_output_tool import _GenerateStructuredOutput
 from ..event import ModelCallEndEvent, ReplyStartEvent
 from ..message import AssistantMsg, HintBlock
 from ..tool import ToolChoice
@@ -187,10 +188,6 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
         # Insert hint block if exceeded budget
         if used >= self.token_budget:
-            from ..agent._structured_output_tool import (
-                _GenerateStructuredOutput,
-            )
-
             # A structured reply can only end by calling this tool
             tool_name = _GenerateStructuredOutput.name
             reply_context = agent.state.reply_context
