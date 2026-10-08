@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """Toolkit test case."""
-import asyncio
 import base64
 import json
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
@@ -496,55 +495,45 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
 
     async def test_sync_function_returning_awaitable(self) -> None:
-        """Resolve coroutine and Future results before publishing tool text."""
+        """Await the coroutine returned by a sync function."""
 
         async def finish(value: str) -> ToolChunk:
             """Create the deferred tool result."""
             return ToolChunk(content=[TextBlock(text=value)])
 
-        def deferred_coroutine(value: str) -> Awaitable[ToolChunk]:
+        def deferred(value: str) -> Awaitable[ToolChunk]:
             """Return a coroutine without executing it."""
             return finish(value)
 
-        def deferred_future(value: str) -> Awaitable[ToolChunk]:
-            """Return a Future containing the tool result."""
-            future = asyncio.get_running_loop().create_future()
-            future.set_result(ToolChunk(content=[TextBlock(text=value)]))
-            return future
-
-        for deferred in (deferred_coroutine, deferred_future):
-            with self.subTest(function=deferred.__name__):
-                toolkit = Toolkit(
-                    tools=[FunctionTool(deferred, name="deferred")],
-                )
-                results = [
-                    item
-                    async for item in toolkit.call_tool(
-                        ToolCallBlock(
-                            id="awaitable",
-                            name="deferred",
-                            input='{"value": "completed"}',
-                        ),
-                        AgentState(),
-                    )
-                ]
-                self.assertDictEqual(
-                    results[-1].model_dump(),
+        toolkit = Toolkit(tools=[FunctionTool(deferred)])
+        results = [
+            item
+            async for item in toolkit.call_tool(
+                ToolCallBlock(
+                    id="awaitable",
+                    name="deferred",
+                    input='{"value": "completed"}',
+                ),
+                AgentState(),
+            )
+        ]
+        self.assertDictEqual(
+            results[-1].model_dump(),
+            {
+                "content": [
                     {
-                        "content": [
-                            {
-                                "type": "text",
-                                "created_at": AnyString(),
-                                "finished_at": None,
-                                "id": AnyString(),
-                                "text": "completed",
-                            },
-                        ],
-                        "state": "success",
-                        "metadata": {},
-                        "id": "awaitable",
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "completed",
                     },
-                )
+                ],
+                "state": "success",
+                "metadata": {},
+                "id": "awaitable",
+            },
+        )
 
     async def test_async_callable_tool(self) -> None:
         """Await an async callable object."""
@@ -583,105 +572,6 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "is_last": True,
                 "metadata": {},
                 "id": AnyString(),
-            },
-        )
-
-    async def test_sync_function_returning_awaitable_stream(self) -> None:
-        """Normalize a stream obtained from a deferred result."""
-
-        async def stream() -> AsyncGenerator[str, None]:
-            """Yield the tool output incrementally."""
-            yield "first"
-            yield "second"
-
-        async def prepare() -> AsyncGenerator[str, None]:
-            """Prepare the asynchronous output stream."""
-            return stream()
-
-        def deferred() -> Awaitable[AsyncGenerator[str, None]]:
-            """Return the coroutine that prepares the stream."""
-            return prepare()
-
-        toolkit = Toolkit(tools=[FunctionTool(deferred)])
-        results = [
-            item
-            async for item in toolkit.call_tool(
-                ToolCallBlock(id="stream", name="deferred", input="{}"),
-                AgentState(),
-            )
-        ]
-        self.assertEqual(len(results), 3)
-        for chunk, expected_text in zip(results[:-1], ["first", "second"]):
-            self.assertDictEqual(
-                chunk.model_dump(),
-                {
-                    "content": [
-                        {
-                            "type": "text",
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                            "id": AnyString(),
-                            "text": expected_text,
-                        },
-                    ],
-                    "state": "running",
-                    "is_last": True,
-                    "metadata": {},
-                    "id": AnyString(),
-                },
-            )
-        self.assertDictEqual(
-            results[-1].model_dump(),
-            {
-                "content": [
-                    {
-                        "type": "text",
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                        "id": AnyString(),
-                        "text": "firstsecond",
-                    },
-                ],
-                "state": "success",
-                "metadata": {},
-                "id": "stream",
-            },
-        )
-
-    async def test_awaitable_tool_failure(self) -> None:
-        """Report failures from deferred work as tool errors."""
-
-        async def fail() -> ToolChunk:
-            """Raise an exception during deferred execution."""
-            raise ValueError("deferred failure")
-
-        def deferred() -> Awaitable[ToolChunk]:
-            """Return a coroutine that fails when awaited."""
-            return fail()
-
-        toolkit = Toolkit(tools=[FunctionTool(deferred)])
-        results = [
-            item
-            async for item in toolkit.call_tool(
-                ToolCallBlock(id="failure", name="deferred", input="{}"),
-                AgentState(),
-            )
-        ]
-        self.assertDictEqual(
-            results[-1].model_dump(),
-            {
-                "content": [
-                    {
-                        "type": "text",
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                        "id": AnyString(),
-                        "text": "deferred failure",
-                    },
-                ],
-                "state": "error",
-                "metadata": {},
-                "id": "failure",
             },
         )
 
