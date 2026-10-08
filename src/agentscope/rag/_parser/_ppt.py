@@ -51,6 +51,28 @@ def _iter_shapes(shapes: Any) -> Iterator[Any]:
             yield shape
 
 
+def _normalise_breaks(text: str) -> str:
+    """Normalise PowerPoint line-break characters to ``\n``.
+
+    ``python-pptx`` renders an ``<a:br/>`` element - what the
+    PowerPoint UI produces for Shift+Enter - as a vertical tab, and
+    ``paragraph.text`` / ``cell.text`` hand that character straight
+    through. Left in place it both embeds a control character in the
+    extracted text and glues the two lines together, so they are
+    embedded as one token run.
+
+    Args:
+        text (`str`):
+            The raw text of a paragraph or a table cell.
+
+    Returns:
+        `str`:
+            The text with ``\r\n``, ``\r`` and ``\v``
+            replaced by ``\n``.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\v", "\n")
+
+
 def _extract_table_rows(table: Any) -> list[list[str]]:
     """Read a python-pptx table into a 2-D ``list[list[str]]``.
 
@@ -67,13 +89,7 @@ def _extract_table_rows(table: Any) -> list[list[str]]:
     for row in table.rows:
         cells: list[str] = []
         for cell in row.cells:
-            text = cell.text.strip()
-            text = (
-                text.replace("\r\n", "\n")
-                .replace("\r", "\n")
-                .replace("\v", "\n")
-            )
-            cells.append(text)
+            cells.append(_normalise_breaks(cell.text.strip()))
         rows.append(cells)
     return rows
 
@@ -338,7 +354,7 @@ class PPTParser(ParserBase):
             if getattr(shape, "has_text_frame", False):
                 try:
                     parts = [
-                        para.text.strip()
+                        _normalise_breaks(para.text).strip()
                         for para in shape.text_frame.paragraphs
                         if para.text.strip()
                     ]

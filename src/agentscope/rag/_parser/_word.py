@@ -350,20 +350,50 @@ class WordParser(ParserBase):
                     if self.table_format == "markdown"
                     else _table_to_json(table_data)
                 )
-                if not rendered:
-                    continue
 
-                if self.separate_table:
-                    flush_text()
-                    sections.append(
-                        Section(
-                            content=TextBlock(text=rendered),
-                            source=filename,
-                            metadata={},
-                        ),
-                    )
-                else:
-                    text_buffer.append(rendered)
+                if rendered:
+                    if self.separate_table:
+                        flush_text()
+                        sections.append(
+                            Section(
+                                content=TextBlock(text=rendered),
+                                source=filename,
+                                metadata={},
+                            ),
+                        )
+                    else:
+                        text_buffer.append(rendered)
+
+                # Images pasted into table cells live under the table's
+                # ``w:p`` elements, not under body-level paragraphs; without
+                # this pass they are silently dropped.
+                if self.include_image:
+                    image_blocks: list[DataBlock] = []
+                    for p_elem in element.findall(".//" + qn("w:p")):
+                        # The outer paragraph scan already covers images in
+                        # nested text-box paragraphs.
+                        if p_elem.xpath("ancestor::w:p"):
+                            continue
+                        image_blocks.extend(
+                            _extract_image_blocks(
+                                Paragraph(p_elem, doc),
+                                filename,
+                            ),
+                        )
+                    if image_blocks:
+                        flush_text()
+                        for block in image_blocks:
+                            sections.append(
+                                Section(
+                                    content=block,
+                                    source=filename,
+                                    metadata={
+                                        "media_type": (
+                                            block.source.media_type
+                                        ),
+                                    },
+                                ),
+                            )
 
         flush_text()
         return sections

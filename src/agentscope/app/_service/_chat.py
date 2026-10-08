@@ -88,6 +88,11 @@ if TYPE_CHECKING:
     from ..channel import ChannelClients
 
 
+_CHECKPOINT_LOCK_TTL_SECS = (
+    MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+)
+
+
 @dataclass(frozen=True)
 class _LeaderContext:
     """This session leads its team."""
@@ -436,7 +441,7 @@ class ChatService:
         session_id: str,
         reply_msg: Msg,
         error: Exception,
-    ) -> None:
+    ) -> str | None:
         """Close a reply that died mid-stream, and say why.
 
         The stream never emitted its terminating ``ReplyEndEvent``, so
@@ -463,7 +468,7 @@ class ChatService:
                 "completed.",
                 session_id,
             )
-            return
+            return None
 
         end_event = ReplyEndEvent(
             session_id=session_id,
@@ -472,7 +477,7 @@ class ChatService:
             error=_classify_error(error),
         )
         reply_msg.append_event(end_event)
-        await publish_session_event(
+        entry_id = await publish_session_event(
             self._message_bus,
             session_id,
             end_event.model_dump(mode="json"),
@@ -482,6 +487,7 @@ class ChatService:
             session_id,
             end_event.error.type if end_event.error else "error",
         )
+        return entry_id
 
     async def _notify_leader_of_failure(
         self,
@@ -633,18 +639,28 @@ class ChatService:
                 name=agent_id,
                 content=[],
             )
+            checkpoint_cursor = ""
             for event in (start_event, end_event):
                 reply_msg.append_event(event)
-                await publish_session_event(
+                checkpoint_cursor = await publish_session_event(
                     self._message_bus,
                     session_id,
                     event.model_dump(mode="json"),
                 )
-            await self._storage.upsert_message(
-                user_id,
-                session_id,
-                reply_msg,
-            )
+            async with self._message_bus.acquire_lock(
+                MessageBusKeys.session_event_checkpoint_lock(session_id),
+                ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+            ):
+                await self._storage.upsert_message(
+                    user_id,
+                    session_id,
+                    reply_msg,
+                )
+                await self._message_bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint(session_id),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    checkpoint_cursor,
+                )
         except Exception:
             logger.exception(
                 "Failed to report a failure for session %r; the original "
@@ -1159,14 +1175,15 @@ class ChatService:
 
                 agent_state = session_record.state
                 agent_state.session_id = session_id
+                chat_config = agent_record.data.chat_config
                 agent = self._agent_cls(
                     name=agent_record.data.name,
                     system_prompt=system_prompt,
                     model=model,
                     toolkit=toolkit,
                     model_config=ModelConfig(fallback_model=fallback_model),
-                    context_config=agent_record.data.context_config,
-                    react_config=agent_record.data.react_config,
+                    context_config=chat_config.context_config,
+                    react_config=chat_config.react_config,
                     state=agent_state,
                     middlewares=middlewares,
                     offloader=workspace,
@@ -1192,7 +1209,6 @@ class ChatService:
             # ----------------------------------------------------------------
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
-            events_key = MessageBusKeys.session_events(session_id)
             # Channel-bound run: start streaming the reply back to the
             # platform chat. Delivery is plain REST, so this node does it
             # rather than handing the run to whichever one holds the
@@ -1210,6 +1226,7 @@ class ChatService:
                 )
             reply_msg: Msg | None = None
             reply_msgs: list[Msg] = []
+            checkpoint_cursor: str | None = None
             released = False
 
             # Text of the user turn that opened this run, captured
@@ -1262,10 +1279,12 @@ class ChatService:
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        event.model_dump(mode="json"),
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            event.model_dump(mode="json"),
+                                        )
                                     )
                                     await self._project_event(
                                         user_id,
@@ -1316,10 +1335,12 @@ class ChatService:
                                     ExternalExecutionResultEvent,
                                 ),
                             ):
-                                await publish_session_event(
-                                    self._message_bus,
-                                    session_id,
-                                    input_msg.model_dump(mode="json"),
+                                checkpoint_cursor = (
+                                    await publish_session_event(
+                                        self._message_bus,
+                                        session_id,
+                                        input_msg.model_dump(mode="json"),
+                                    )
                                 )
 
                             # Emit a synthetic REPLY_START so SSE subscribers
@@ -1337,7 +1358,7 @@ class ChatService:
                                 reply_id=agent.state.reply_id,
                                 name=agent_record.data.name,
                             )
-                            await publish_session_event(
+                            checkpoint_cursor = await publish_session_event(
                                 self._message_bus,
                                 session_id,
                                 continuation_start.model_dump(mode="json"),
@@ -1352,10 +1373,12 @@ class ChatService:
                                 if reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        event.model_dump(mode="json"),
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            event.model_dump(mode="json"),
+                                        )
                                     )
                                     await self._project_event(
                                         user_id,
@@ -1387,11 +1410,13 @@ class ChatService:
                                 worker_name,
                             )
                         else:
-                            await self._close_failed_reply(
+                            failure_cursor = await self._close_failed_reply(
                                 session_id,
                                 reply_msg,
                                 e,
                             )
+                            if failure_cursor is not None:
+                                checkpoint_cursor = failure_cursor
 
                         # A failed turn stops the run; whatever is still
                         # queued is handed to a fresh one by the
@@ -1455,19 +1480,36 @@ class ChatService:
                 # before this write lands.
                 async def _persist() -> None:
                     try:
-                        for msg in reply_msgs:
-                            await self._storage.upsert_message(
-                                user_id,
+                        async with self._message_bus.acquire_lock(
+                            MessageBusKeys.session_event_checkpoint_lock(
                                 session_id,
-                                msg,
+                            ),
+                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                        ):
+                            for msg in reply_msgs:
+                                await self._storage.upsert_message(
+                                    user_id,
+                                    session_id,
+                                    msg,
+                                )
+                            await self._storage.update_session_state(
+                                user_id=user_id,
+                                agent_id=agent_id,
+                                session_id=session_id,
+                                state=agent.state,
                             )
-                        await self._storage.update_session_state(
-                            user_id=user_id,
-                            agent_id=agent_id,
-                            session_id=session_id,
-                            state=agent.state,
-                        )
-                        await self._message_bus.log_trim(events_key)
+                            if checkpoint_cursor is not None:
+                                await self._message_bus.registry_set(
+                                    MessageBusKeys.session_event_checkpoint(
+                                        session_id,
+                                    ),
+                                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                                    checkpoint_cursor,
+                                )
+                                await self._message_bus.log_trim(
+                                    MessageBusKeys.session_events(session_id),
+                                    before_id=checkpoint_cursor,
+                                )
                     finally:
                         # A worker whose turn died never reached
                         # ``TeamSay``. Sent from inside the shielded

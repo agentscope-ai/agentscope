@@ -1567,6 +1567,55 @@ class TestDashScopeCosyVoiceRealtimeMode(
             self.assertFalse(raw.startswith(b"RIFF"))
             self.assertEqual(raw, b"MOREPCM")
 
+    async def test_callback_errors_reach_audio_consumers(self) -> None:
+        """Failure must not finalize empty or partial audio successfully."""
+        with patch.dict("sys.modules", self.mock_modules):
+            from agentscope.tts._dashscope._cosyvoice_utils import (
+                _make_cosyvoice_callback_class,
+            )
+
+            callback_cls = _make_cosyvoice_callback_class()
+            for audio in (b"", b"PCMPCM"):
+                for consumer in ("stream", "blocking", "polling"):
+                    with self.subTest(audio=audio, consumer=consumer):
+                        cb = callback_cls()
+                        cb.on_data(audio)
+                        cb.on_error("synthesis failed")
+                        cb.on_close()
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "^CosyVoice TTS error: synthesis failed$",
+                        ):
+                            if consumer == "stream":
+                                _ = [c async for c in cb.get_audio_chunks()]
+                            else:
+                                cb.get_audio_response(
+                                    block=consumer == "blocking",
+                                )
+
+    async def test_callback_new_utterance_clears_error(self) -> None:
+        """Resetting or reopening must not carry a stale provider error."""
+        with patch.dict("sys.modules", self.mock_modules):
+            from agentscope.tts._dashscope._cosyvoice_utils import (
+                _make_cosyvoice_callback_class,
+            )
+
+            callback_cls = _make_cosyvoice_callback_class()
+            for reset_method in ("reset", "on_open"):
+                with self.subTest(reset_method=reset_method):
+                    cb = callback_cls()
+                    cb.on_data(b"OLDPCM")
+                    cb.on_error("old failure")
+                    getattr(cb, reset_method)()
+                    cb.on_data(b"NEWPCM")
+                    cb.on_complete()
+                    response = cb.get_audio_response(block=True)
+                    self.assertEqual(
+                        base64.b64decode(response.content.source.data)[44:],
+                        b"NEWPCM",
+                    )
+                    self.assertTrue(response.is_last)
+
     async def test_callback_reset(self) -> None:
         """reset() clears all state."""
         with patch.dict("sys.modules", self.mock_modules):

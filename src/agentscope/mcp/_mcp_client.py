@@ -234,13 +234,15 @@ class MCPClient(BaseModel):
     ) -> AsyncGenerator[Any, None]:
         """Create an owned HTTP client that runtime headers can update."""
         config = self.mcp_config
-        if config.headers or config.timeout:
-            client = httpx.AsyncClient(
-                headers=config.headers,
-                timeout=config.timeout,
-            )
-        else:
-            client = create_mcp_http_client()
+        # Use the SDK factory to keep the transport's own client defaults
+        client = create_mcp_http_client(
+            headers=config.headers,
+            timeout=(
+                httpx.Timeout(config.timeout)
+                if config.timeout is not None
+                else None
+            ),
+        )
         # Snapshot before overlaying: clearing runtime headers restores it.
         self._static_headers = httpx.Headers(client.headers)
         client.headers.update(self._runtime_headers)
