@@ -409,6 +409,98 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_reasoning_content_with_optional_summary(self) -> None:
+        """Raw reasoning remains visible and separate from its summary."""
+        for summary in ([], [_MockReasoningSummary(text="Summary")]):
+            with self.subTest(summary=summary):
+                item = _MockReasoningItem(
+                    id="rs_content",
+                    summary=summary,
+                    content=[
+                        {
+                            "type": "reasoning_text",
+                            "text": "Raw reasoning",
+                        },
+                    ],
+                )
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=_mock_completion(
+                        text="Answer",
+                        reasoning_output_item=item,
+                    ),
+                )
+                result = await self.model([])
+                texts = (["Summary"] if summary else []) + ["Raw reasoning"]
+                self.assertEqual(
+                    (result.is_last, result.content),
+                    (
+                        True,
+                        [
+                            *[
+                                ThinkingBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    thinking=text,
+                                    reasoning_item_id=item.id,
+                                    reasoning_item_raw=item.model_dump(
+                                        exclude_none=True,
+                                    ),
+                                )
+                                for text in texts
+                            ],
+                            TextBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                text="Answer",
+                            ),
+                        ],
+                    ),
+                )
+
+    async def test_reasoning_preserves_part_boundaries(self) -> None:
+        """Each summary and reasoning content part remains separate."""
+        item = _MockReasoningItem(
+            id="rs_parts",
+            summary=[
+                _MockReasoningSummary(text="Summary one"),
+                _MockReasoningSummary(text="Summary two"),
+            ],
+            content=[
+                {"type": "reasoning_text", "text": "Reasoning one"},
+                {"type": "reasoning_text", "text": "Reasoning two"},
+            ],
+        )
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_mock_completion(
+                reasoning_output_item=item,
+            ),
+        )
+
+        result = await self.model([])
+        raw = item.model_dump(exclude_none=True)
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking=text,
+                        reasoning_item_id=item.id,
+                        reasoning_item_raw=raw,
+                    )
+                    for text in (
+                        "Summary one",
+                        "Summary two",
+                        "Reasoning one",
+                        "Reasoning two",
+                    )
+                ],
+            ),
+        )
+
     async def test_reasoning_raw_item_excludes_none_fields(self) -> None:
         """Optional null SDK fields are not stored for history replay."""
         reasoning_item = _MockReasoningItem.model_validate(
@@ -655,6 +747,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 "response.reasoning_summary_text.delta",
                 delta="Thinking",
                 item_id="rs_123",
+                summary_index=0,
                 response=MagicMock(id="resp-2"),
             ),
             _make_event(
@@ -730,6 +823,171 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_reasoning_text_with_optional_summary(self) -> None:
+        """Raw and summary deltas stay separate without done repeats."""
+        parts = {
+            "reasoning_summary_text": ("Summary ", "text"),
+            "reasoning_text": ("Raw ", "reasoning"),
+        }
+        for kinds in (
+            ("reasoning_text",),
+            ("reasoning_summary_text", "reasoning_text"),
+        ):
+            with self.subTest(kinds=kinds):
+                item = _MockReasoningItem(
+                    id="rs_text",
+                    summary=[_MockReasoningSummary(text="Summary text")]
+                    if len(kinds) == 2
+                    else [],
+                    content=[
+                        {"type": "reasoning_text", "text": "Raw reasoning"},
+                    ],
+                )
+                raw = item.model_dump(exclude_none=True)
+                events = [
+                    _make_event(
+                        f"response.{kind}.delta",
+                        item_id=item.id,
+                        delta=parts[kind][index],
+                        **(
+                            {"summary_index": 0}
+                            if kind == "reasoning_summary_text"
+                            else {"content_index": 0}
+                        ),
+                    )
+                    for index in range(2)
+                    for kind in kinds
+                ]
+                events.extend(
+                    _make_event(
+                        f"response.{kind}.done",
+                        item_id=item.id,
+                        text="".join(parts[kind]),
+                    )
+                    for kind in kinds
+                )
+                events.extend(
+                    [
+                        _make_event(
+                            "response.output_text.delta",
+                            delta="Answer",
+                        ),
+                        _make_event(
+                            "response.completed",
+                            response=_mock_completion(
+                                reasoning_output_item=item,
+                            ),
+                        ),
+                    ],
+                )
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(events),
+                )
+                responses = [r async for r in await self.model([])]
+                answer = TextBlock.model_construct(
+                    id=A,
+                    created_at=A,
+                    text="Answer",
+                )
+                self.assertEqual(
+                    (responses[0].is_last, responses[0].content),
+                    (
+                        False,
+                        [
+                            ThinkingBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                thinking=parts[kinds[0]][0],
+                            ),
+                        ],
+                    ),
+                )
+                self.assertEqual(
+                    (responses[-1].is_last, responses[-1].content),
+                    (
+                        True,
+                        [
+                            *[
+                                ThinkingBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    thinking="".join(parts[kind]),
+                                    reasoning_item_id=item.id,
+                                    reasoning_item_raw=raw,
+                                )
+                                for kind in kinds
+                            ],
+                            answer,
+                        ],
+                    ),
+                )
+
+    async def test_stream_reasoning_preserves_part_boundaries(self) -> None:
+        """Reasoning stream indices identify independent thinking blocks."""
+        item = _MockReasoningItem(
+            id="rs_parts",
+            summary=[
+                _MockReasoningSummary(text="Summary one"),
+                _MockReasoningSummary(text="Summary two"),
+            ],
+            content=[
+                {"type": "reasoning_text", "text": "Reasoning one"},
+                {"type": "reasoning_text", "text": "Reasoning two"},
+            ],
+        )
+        events = [
+            _make_event(
+                "response.reasoning_summary_text.delta",
+                item_id=item.id,
+                summary_index=index,
+                delta=part.text,
+            )
+            for index, part in enumerate(item.summary)
+        ]
+        events.extend(
+            _make_event(
+                "response.reasoning_text.delta",
+                item_id=item.id,
+                content_index=index,
+                delta=part["text"],
+            )
+            for index, part in enumerate(item.content or [])
+        )
+        events.append(
+            _make_event(
+                "response.completed",
+                response=_mock_completion(reasoning_output_item=item),
+            ),
+        )
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        responses = [response async for response in await self.model([])]
+        raw = item.model_dump(exclude_none=True)
+
+        self.assertEqual(
+            (responses[-1].is_last, responses[-1].content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        thinking=text,
+                        reasoning_item_id=item.id,
+                        reasoning_item_raw=raw,
+                    )
+                    for text in (
+                        "Summary one",
+                        "Summary two",
+                        "Reasoning one",
+                        "Reasoning two",
+                    )
+                ],
+            ),
+        )
+
     async def test_stream_preserves_multiple_reasoning_items(self) -> None:
         """Streaming keeps every reasoning item's encrypted payload."""
         first_raw = {
@@ -760,11 +1018,13 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 "response.reasoning_summary_text.delta",
                 delta="First",
                 item_id="rs_first",
+                summary_index=0,
             ),
             _make_event(
                 "response.reasoning_summary_text.delta",
                 delta="Second",
                 item_id="rs_second",
+                summary_index=0,
             ),
             _make_event("response.completed", response=completed_resp),
         ]
