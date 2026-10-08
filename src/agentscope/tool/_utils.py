@@ -111,8 +111,8 @@ def _extract_input_schema(
     # Create a dynamic model with the function signature
     fields = {}
     for name, param in inspect.signature(tool_func).parameters.items():
-        # Skip the `self` and `cls` parameters
-        if name in ["self", "cls"]:
+        # Skip `self`, `cls` and the toolkit-injected `_agent_state`
+        if name in ["self", "cls", "_agent_state"]:
             continue
 
         annotation = type_hints.get(name, param.annotation)
