@@ -8,10 +8,7 @@ from typing import Any, AsyncGenerator, List, Literal, Type, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from ..._utils._audio import (
-    _build_streaming_wav_header,
-    _build_wav_header,
-)
+from ..._utils._audio import _build_streaming_wav_header
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
@@ -23,8 +20,6 @@ from ...message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
-    DataBlock,
-    Base64Source,
 )
 from ...tool import ToolChoice
 
@@ -434,9 +429,7 @@ class DashScopeChatModel(ChatModelBase):
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
         """
-        content_blocks: List[
-            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-        ] = []
+        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         if response.choices:
             choice = response.choices[0]
@@ -446,41 +439,6 @@ class DashScopeChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
-
-            # Non-streaming audio comes back whole, on ``message.audio``.
-            # The request only asks for it when ``voice`` is set, and the
-            # streaming path already emits both halves, so dropping it here
-            # is what makes ``stream=False`` lose the reply: on omni models
-            # the spoken text exists *only* in the transcript, and the bytes
-            # only in ``data``.
-            audio_obj = getattr(choice.message, "audio", None)
-            if audio_obj is not None:
-                if isinstance(audio_obj, dict):
-                    audio_data = audio_obj.get("data", "")
-                    audio_transcript = audio_obj.get("transcript", "")
-                else:
-                    audio_data = getattr(audio_obj, "data", "") or ""
-                    audio_transcript = (
-                        getattr(audio_obj, "transcript", "") or ""
-                    )
-                # Prefer the model's own text; fall back to the transcript.
-                if not choice.message.content and audio_transcript:
-                    content_blocks.append(TextBlock(text=audio_transcript))
-                if audio_data:
-                    # ``format`` is pinned to ``pcm16`` in the request, so
-                    # this is headerless raw PCM. Wrap it in a real WAV
-                    # header: unlike the streaming deltas, this response is
-                    # complete, so declare the true chunk sizes.
-                    payload = base64.b64decode(audio_data)
-                    payload = _build_wav_header(len(payload)) + payload
-                    content_blocks.append(
-                        DataBlock(
-                            source=Base64Source(
-                                data=base64.b64encode(payload).decode("ascii"),
-                                media_type="audio/wav",
-                            ),
-                        ),
-                    )
 
             for tool_call in choice.message.tool_calls or []:
                 content_blocks.append(

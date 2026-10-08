@@ -9,6 +9,7 @@ Tests cover both non-streaming and streaming modes, verifying that:
 """
 import base64
 import io
+import struct
 import wave
 from typing import Any
 import unittest
@@ -380,10 +381,19 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         # round-trip unchanged.
         payload = base64.b64decode(source.data)
         self.assertEqual(payload[:4], b"RIFF")
+        self.assertEqual(
+            struct.unpack("<I", payload[4:8])[0],
+            36 + len(pcm),
+        )
+        self.assertEqual(
+            struct.unpack("<I", payload[40:44])[0],
+            len(pcm),
+        )
         with wave.open(io.BytesIO(payload), "rb") as wav:
             self.assertEqual(wav.getnchannels(), 1)
             self.assertEqual(wav.getsampwidth(), 2)
             self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm) // 2)
             self.assertEqual(wav.readframes(wav.getnframes()), pcm)
 
     async def test_thinking_response(

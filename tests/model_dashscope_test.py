@@ -52,16 +52,12 @@ def _mock_completion(
     tool_calls: Any = None,
     reasoning: Any = None,
     response_id: str = "req-1",
-    audio: dict | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
     msg.content = text
     msg.reasoning_content = reasoning
     msg.tool_calls = None
-    # Set explicitly: a bare MagicMock would fabricate a truthy ``audio``
-    # attribute and send every response down the audio branch.
-    msg.audio = audio
 
     if tool_calls:
         tc_mocks = []
@@ -254,90 +250,6 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-
-    async def test_audio_response_is_not_dropped(self) -> None:
-        """A non-streaming audio reply keeps both halves.
-
-        On omni models the spoken text is carried *only* by the transcript
-        and the bytes *only* by ``data``, so a non-streaming request that
-        discards ``message.audio`` returns an empty response.
-        """
-        model = DashScopeChatModel(
-            credential=DashScopeCredential(api_key="k"),
-            model="qwen-omni-turbo",
-            stream=False,
-            context_size=128_000,
-            parameters=DashScopeChatModel.Parameters(voice="cherry"),
-        )
-        mock_client = MagicMock()
-        model.client = mock_client
-
-        pcm = b"\x01\x02" * 240
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=_mock_completion(
-                text=None,
-                response_id="req-audio",
-                audio={
-                    "data": base64.b64encode(pcm).decode(),
-                    "transcript": "Hello from audio.",
-                },
-            ),
-        )
-
-        result = await model([])
-
-        sent = mock_client.chat.completions.create.call_args.kwargs
-        self.assertEqual(sent["audio"]["format"], "pcm16")
-
-        texts = [b.text for b in result.content if isinstance(b, TextBlock)]
-        self.assertEqual(texts, ["Hello from audio."])
-
-        blocks = [b for b in result.content if isinstance(b, DataBlock)]
-        self.assertEqual(len(blocks), 1)
-        source = blocks[0].source
-        self.assertEqual(source.media_type, "audio/wav")
-
-        payload = base64.b64decode(source.data)
-        self.assertEqual(payload[:4], b"RIFF")
-        with wave.open(io.BytesIO(payload), "rb") as wav:
-            self.assertEqual(wav.getnchannels(), 1)
-            self.assertEqual(wav.getsampwidth(), 2)
-            self.assertEqual(wav.getframerate(), 24000)
-            self.assertEqual(wav.readframes(wav.getnframes()), pcm)
-
-    async def test_audio_transcript_does_not_duplicate_text(self) -> None:
-        """When the model already replied in text, the transcript is dropped.
-
-        Mirrors the streaming path, which only emits the transcript when the
-        provider left ``content`` empty.
-        """
-        model = DashScopeChatModel(
-            credential=DashScopeCredential(api_key="k"),
-            model="qwen-omni-turbo",
-            stream=False,
-            context_size=128_000,
-            parameters=DashScopeChatModel.Parameters(voice="cherry"),
-        )
-        mock_client = MagicMock()
-        model.client = mock_client
-
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=_mock_completion(
-                text="Spoken answer.",
-                response_id="req-audio",
-                audio={
-                    "data": base64.b64encode(b"\x00\x00").decode(),
-                    "transcript": "Spoken answer.",
-                },
-            ),
-        )
-
-        result = await model([])
-
-        texts = [b.text for b in result.content if isinstance(b, TextBlock)]
-        self.assertEqual(texts, ["Spoken answer."])
-        blocks = [b for b in result.content if isinstance(b, DataBlock)]
-        self.assertEqual(len(blocks), 1)
 
     async def test_extra_body_is_not_mutated(self) -> None:
         """Model defaults do not mutate the caller-owned extra body."""
