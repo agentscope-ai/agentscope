@@ -340,14 +340,11 @@ class BashCommandParser:
         if name_node is None or name_node.text.decode("utf8") != "find":
             return False
 
-        # Match against shell-dequoted tokens instead of AST node types:
-        # quoted arguments are ``string``/``raw_string`` nodes, so a quoted
-        # ``"-delete"`` is invisible to a node-type scan while the shell
-        # still passes it to find as a predicate.
+        # Match dequoted tokens, since the shell passes ``"-delete"`` to find
         try:
             tokens = shlex.split(cmd_node.text.decode("utf8"))
         except ValueError:
-            return False
+            return True
 
         # Skip environment assignments before the program name
         i = 0
@@ -361,7 +358,8 @@ class BashCommandParser:
             if expect_value:
                 expect_value = False
                 continue
-            if token in FIND_MUTATING_PREDICATES:
+            # shlex keeps the ``$`` of ANSI-C quoting such as ``$'-delete'``
+            if token.lstrip("$") in FIND_MUTATING_PREDICATES:
                 return True
             if token in FIND_VALUE_PREDICATES or token.startswith("-newer"):
                 expect_value = True
