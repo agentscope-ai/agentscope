@@ -331,10 +331,13 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                     at_ms=data.get("audio_end_ms", 0),
                 )
 
-            case "response.output_item.added" | "response.output_item.done":
+            case "response.output_item.added":
                 item = data.get("item", {})
                 if item.get("type") == "function_call" and item.get("name"):
                     self._tool_names[item["call_id"]] = item["name"]
+                return None
+
+            case "response.output_item.done":
                 return None
 
             case "response.function_call_arguments.delta":
