@@ -9,6 +9,7 @@ Tests cover both non-streaming and streaming modes, verifying that:
 """
 import base64
 import io
+import struct
 import wave
 from typing import Any
 import unittest
@@ -332,6 +333,97 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
+
+    async def test_audio_response_with_voice_is_a_playable_wav(self) -> None:
+        """``voice`` forces ``pcm16``, and the result must still be a WAV.
+
+        ``voice`` is the only way to make the request carry
+        ``format: pcm16``, so it is the only way to reach the forced wire
+        format. The streaming path already re-wraps those bytes in a WAV
+        header; the non-streaming path must produce the same playable block
+        rather than headerless PCM.
+        """
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="gpt-4o-audio-preview",
+            stream=False,
+            context_size=128_000,
+            parameters=OpenAIChatModel.Parameters(voice="alloy"),
+        )
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        pcm = b"\x01\x02" * 480
+        expected_wav = io.BytesIO()
+        with wave.open(expected_wav, "wb") as wav_writer:
+            wav_writer.setnchannels(1)
+            wav_writer.setsampwidth(2)
+            wav_writer.setframerate(24000)
+            wav_writer.writeframes(pcm)
+        expected_payload = expected_wav.getvalue()
+        expected_audio_data = base64.b64encode(expected_payload).decode()
+
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(
+                text=None,
+                audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello from audio.",
+                },
+            ),
+        )
+
+        result = await model([])
+
+        # The trigger: asking for audio pins the wire format to raw PCM.
+        sent = mock_client.chat.completions.create.call_args.kwargs
+        self.assertEqual(sent["audio"]["format"], "pcm16")
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Hello from audio.",
+                    ),
+                    DataBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        source=Base64Source.model_construct(
+                            type="base64",
+                            media_type="audio/wav",
+                            data=expected_audio_data,
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        # A well-formed file, not just something a live-stream player will
+        # tolerate: the stdlib ``wave`` module reads it and the samples
+        # round-trip unchanged.
+        blocks = [b for b in result.content if isinstance(b, DataBlock)]
+        source = blocks[0].source
+        self.assertIsInstance(source, Base64Source)
+        payload = base64.b64decode(source.data)
+        self.assertEqual(payload[:4], b"RIFF")
+        self.assertEqual(
+            struct.unpack("<I", payload[4:8])[0],
+            36 + len(pcm),
+        )
+        self.assertEqual(
+            struct.unpack("<I", payload[40:44])[0],
+            len(pcm),
+        )
+        with wave.open(io.BytesIO(payload), "rb") as wav:
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.getsampwidth(), 2)
+            self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm) // 2)
+            self.assertEqual(wav.readframes(wav.getnframes()), pcm)
 
     async def test_thinking_response(
         self,
