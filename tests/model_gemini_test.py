@@ -274,12 +274,29 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
 
                 result = await self.model([])
 
-                self.assertEqual(result.usage.cache_input_tokens, expected)
+                self.assertEqual(
+                    dict(result.usage),
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "time": result.usage.time,
+                        "cache_creation_input_tokens": 0,
+                        "cache_input_tokens": expected,
+                        "type": "chat",
+                        "metadata": None,
+                    },
+                )
                 self.assertIs(type(result.usage.cache_input_tokens), int)
                 usage = Usage(**dict(result.usage))
-                self.assertEqual(usage.input_tokens, 10)
-                self.assertEqual(usage.output_tokens, 5)
-                self.assertEqual(usage.cache_input_tokens, expected)
+                self.assertEqual(
+                    usage.model_dump(),
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_input_tokens": expected,
+                        "cache_creation_input_tokens": 0,
+                    },
+                )
 
     async def test_usage_classifies_tool_use_tokens_as_input(self) -> None:
         """Usage classifies tool-use tokens as input, not output."""
@@ -434,14 +451,28 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 self.assertEqual(len(responses), 2)
                 for response in responses:
                     self.assertEqual(
-                        response.usage.cache_input_tokens,
-                        expected,
+                        dict(response.usage),
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "time": response.usage.time,
+                            "cache_creation_input_tokens": 0,
+                            "cache_input_tokens": expected,
+                            "type": "chat",
+                            "metadata": None,
+                        },
                     )
                     self.assertIs(type(response.usage.cache_input_tokens), int)
                     usage = Usage(**dict(response.usage))
-                    self.assertEqual(usage.input_tokens, 10)
-                    self.assertEqual(usage.output_tokens, 5)
-                    self.assertEqual(usage.cache_input_tokens, expected)
+                    self.assertEqual(
+                        usage.model_dump(),
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "cache_input_tokens": expected,
+                            "cache_creation_input_tokens": 0,
+                        },
+                    )
 
     async def test_stream_usage_classifies_tool_use_tokens(self) -> None:
         """Streaming usage classifies tool-use tokens as input."""
