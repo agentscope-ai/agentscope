@@ -37,6 +37,7 @@ from ..storage import (
     SessionNaming,
     SessionRecord,
     ChannelOrigin,
+    ScheduleOrigin,
     SOPOrigin,
 )
 from ..storage._utils import _resolve_team_leader
@@ -841,6 +842,28 @@ class ChatService:
                             f"agent {agent_id!r}."
                         ),
                     )
+                if input_msg is None and isinstance(
+                    session_record.origin,
+                    ScheduleOrigin,
+                ):
+                    schedule = await self._storage.get_schedule(
+                        user_id,
+                        session_record.origin.schedule_id,
+                    )
+                    if (
+                        schedule is not None
+                        and schedule.user_id == user_id
+                        and schedule.agent_id == agent_id
+                        and schedule.data.stateful
+                        and session_id == f"{schedule.id}_stateful"
+                    ):
+                        # Apply the latest schedule policy under the session
+                        # lock. A preceding run may have persisted its old
+                        # mode after the schedule was edited. Keep all other
+                        # permission context and conversation state intact.
+                        session_record.state.permission_context.mode = (
+                            schedule.data.permission_mode
+                        )
                 worker_name = agent_record.data.name
                 if (
                     isinstance(session_record.origin, SOPOrigin)
