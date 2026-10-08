@@ -1,0 +1,22 @@
+{
+  "workspace_id": "agentscope-fastsandbox-259a65fcd506",
+  "template_id": "tpl-2ed07129-71f6-41ad-b164-e0fabfd73d2d",
+  "model": "deepseek-flash",
+  "status": "PASS",
+  "sandbox_id": "fsb-36cde1c6-6f43-4f75-a346-ad3b65cbda71",
+  "initialize_seconds": 72.75805346295238,
+  "pause_seconds": 44.18362076906487,
+  "resume_initialize_seconds": 119.69810866215266,
+  "same_sandbox": true,
+  "filesystem_preserved": true,
+  "tmpfs_preserved": true,
+  "boot_and_process_identity_preserved": true,
+  "agent_after_resume": true,
+  "verified_on": "2026-10-08",
+  "environment": "Alibaba Cloud managed Kubernetes (ACK)",
+  "agentscope_version": "2.0.10.dev0",
+  "opensandbox_sdk_version": "1.1.1rc2.dev106+gc7dc78a4.d20261008",
+  "same_node": false,
+  "verification_cycles": 1,
+  "timing_scope": "Workspace initialization includes template/checkpoint transfer, SDK health checks, and gateway setup. This is a functional test, not a same-node resume benchmark."
+}

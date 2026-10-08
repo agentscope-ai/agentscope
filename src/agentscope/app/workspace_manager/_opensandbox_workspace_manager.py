@@ -10,10 +10,10 @@ Differences from the Docker manager:
 * No ``basedir`` / host workdir layout: OpenSandbox sandboxes carry
   their own filesystem state across pause/resume, so there is nothing
   to bind-mount on the host.
-* No image build step: the manager passes an image name plus runtime
-  bootstrap options to :class:`OpenSandboxWorkspace`.
+* No image build step: the manager forwards a FastSandbox template ID
+  plus runtime bootstrap options to :class:`OpenSandboxWorkspace`.
 * Reattachment uses OpenSandbox sandbox metadata. The workspace writes
-  ``agentscope.workspace.id`` at create time and looks it up via
+  ``agentscope-workspace-id`` in template mode and looks it up via
   ``SandboxManager.list_sandbox_infos`` inside
   :meth:`OpenSandboxWorkspace.initialize`. The manager itself stays
   metadata-blind and just forwards ``workspace_id``.
@@ -35,7 +35,6 @@ from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace._opensandbox._constants import (
     DEFAULT_GATEWAY_PORT,
-    DEFAULT_IMAGE,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
 )
@@ -58,7 +57,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self,
         *,
         isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
-        image: str = DEFAULT_IMAGE,
+        template_id: str | None = None,
+        image: str | None = None,
         api_key: str = "",
         domain: str = "",
         protocol: Literal["http", "https"] = "http",
@@ -83,9 +83,12 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 Isolation grain for :meth:`assign_workspace_id`, used
                 when :meth:`get_workspace` is called without an explicit
                 ``workspace_id``.
-            image (`str`, defaults to `DEFAULT_IMAGE`):
-                OpenSandbox image passed to every workspace this manager
-                produces.
+            template_id (`str | None`, optional):
+                FastSandbox template passed to every workspace. Defaults
+                to ``OPENSANDBOX_TEMPLATE_ID`` when no image is specified.
+            image (`str | None`, optional):
+                Explicit legacy image-based creation, mutually exclusive
+                with ``template_id``.
             api_key (`str`, defaults to `""`):
                 OpenSandbox API key. ``""`` lets the SDK fall back to
                 its environment-based configuration.
@@ -107,9 +110,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             env (`dict[str, str] | None`, optional):
                 Environment variables applied when creating a sandbox.
             sandbox_metadata (`dict[str, str] | None`, optional):
-                Extra metadata merged with the per-workspace
-                ``agentscope.workspace.id`` / ``agentscope.user.id`` /
-                ``agentscope.agent.id`` keys.
+                Extra metadata merged with the workspace, user, and
+                agent identity tags.
             resource (`dict[str, str] | None`, optional):
                 Resource limits forwarded to OpenSandbox create.
             entrypoint (`list[str] | None`, optional):
@@ -133,6 +135,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 How often the background sweeper wakes up to look for
                 idle workspaces.
         """
+        self._template_id = template_id
         self._image = image
         self._api_key = api_key
         self._domain = domain
@@ -171,8 +174,14 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         and is forwarded so metadata-based reattachment works on the
         next cache miss.
         """
+        user_key, agent_key = (
+            ("agentscope.user.id", "agentscope.agent.id")
+            if self._image is not None
+            else ("agentscope-user-id", "agentscope-agent-id")
+        )
         ws = OpenSandboxWorkspace(
             workspace_id=workspace_id,
+            template_id=self._template_id,
             image=self._image,
             api_key=self._api_key,
             domain=self._domain,
@@ -182,8 +191,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             gateway_port=self._gateway_port,
             env=self._env,
             sandbox_metadata={
-                "agentscope.user.id": user_id,
-                "agentscope.agent.id": agent_id,
+                user_key: user_id,
+                agent_key: agent_id,
                 **self._sandbox_metadata,
             },
             resource=self._resource,
@@ -226,8 +235,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 sessions partition under ``sessions/<session_id>/``).
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key and the
-                value stored in the sandbox's ``agentscope.workspace.id``
-                metadata. When unset the manager falls back to
+                value stored in the sandbox's workspace metadata.
+                When unset the manager falls back to
                 :meth:`assign_workspace_id` under its isolation policy.
 
         Returns:

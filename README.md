@@ -133,7 +133,7 @@ The SDK layer — compose an agent from a rich set of building blocks:
 | [**Permission & HITL**](https://docs.agentscope.io/latest/en/building-blocks/permission-system/overview) | Fine-grained control over tools and resources, confirmation, bypass mode |
 | [**Middleware**](https://docs.agentscope.io/latest/en/building-blocks/middleware) | Composable hooks across the loop — reply, reasoning, acting, model calling, permission checking, context compression, system prompt |
 | [**Memory**](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory) | Agentic memory with switchable backends (ReMe, Mem0) |
-| [**Workspace / Sandbox**](https://docs.agentscope.io/latest/en/building-blocks/workspace/overview) | Isolated tool & code execution — local, Docker, Apple Container, Bubblewrap, E2B, OpenSandbox, Daytona, K8s |
+| [**Workspace / Sandbox**](https://docs.agentscope.io/latest/en/building-blocks/workspace/overview) | Isolated tool & code execution — local, Docker, Apple Container, Bubblewrap, E2B, OpenSandbox, Daytona, K8s. [FastSandbox setup](docs/opensandbox_fastsandbox.md) |
 
 Start your first agent with AgentScope 2.0 in console:
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import timedelta
 import shlex
 from typing import TYPE_CHECKING, Literal
@@ -14,11 +15,11 @@ from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
-    DEFAULT_IMAGE,
     BOOTSTRAP_COMMAND_TIMEOUT,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
     GATEWAY_HOME,
+    LEGACY_METADATA_WORKSPACE_ID_KEY,
     METADATA_WORKSPACE_ID_KEY,
     SANDBOX_WORKDIR,
 )
@@ -50,7 +51,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self,
         *,
         workspace_id: str | None = None,
-        image: str = DEFAULT_IMAGE,
+        template_id: str | None = None,
+        image: str | None = None,
         api_key: str = "",
         domain: str = "",
         protocol: Literal["http", "https"] = "http",
@@ -76,8 +78,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             workspace_id (`str | None`, optional):
                 Stable identifier; also stored in sandbox metadata for
                 reattachment.
-            image (`str`, defaults to `DEFAULT_IMAGE`):
-                OpenSandbox image used when creating a fresh sandbox.
+            template_id (`str | None`, optional):
+                Succeeded FastSandbox template. Defaults to the
+                ``OPENSANDBOX_TEMPLATE_ID`` environment variable unless
+                ``image`` explicitly selects image-based creation.
+            image (`str | None`, optional):
+                Explicit image-based creation for legacy deployments.
+                Mutually exclusive with ``template_id``. By default,
+                workspace creation requires a FastSandbox template.
             api_key (`str`, defaults to `""`):
                 OpenSandbox API key (``""`` lets the SDK use its
                 environment fallback).
@@ -121,7 +129,33 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             skill_paths=skill_paths,
         )
         self.workdir = SANDBOX_WORKDIR
+        self.template_id = (
+            template_id
+            if template_id is not None or image is not None
+            else os.getenv("OPENSANDBOX_TEMPLATE_ID")
+        )
+        if self.template_id is not None:
+            self.template_id = self.template_id.strip()
+            if not self.template_id:
+                raise ValueError("template_id must not be blank")
+        if self.template_id and image is not None:
+            raise ValueError("template_id and image are mutually exclusive")
+        if not self.template_id and not image:
+            raise ValueError(
+                "FastSandbox requires template_id or OPENSANDBOX_TEMPLATE_ID; "
+                "pass image explicitly for image-based creation",
+            )
+        if self.template_id and (env or resource or entrypoint):
+            raise ValueError(
+                "FastSandbox templates fix env, resource and entrypoint; "
+                "configure these when building the template",
+            )
         self.image = image
+        self._workspace_metadata_key = (
+            METADATA_WORKSPACE_ID_KEY
+            if self.template_id
+            else LEGACY_METADATA_WORKSPACE_ID_KEY
+        )
         self.api_key = api_key
         self.domain = domain
         self.protocol = protocol
@@ -168,13 +202,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
 
-        ``sandbox.pause()`` — not ``kill()`` — so the next
+        Wait for ``Paused`` after ``sandbox.pause()`` so the next
         :meth:`initialize` can reattach via metadata lookup and
         resume. Errors are swallowed.
         """
         if self._sandbox is not None:
             try:
                 await self._sandbox.pause()
+                await self._wait_until_paused(self._sandbox.id)
             except Exception as exc:
                 logger.warning("OpenSandboxWorkspace: pause failed: %s", exc)
             try:
@@ -215,15 +250,15 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
     async def _find_existing_sandbox(self) -> SandboxInfo | None:
         """Return the most recent sandbox matching this workspace id."""
-        from opensandbox.models.sandboxes import SandboxFilter, SandboxState
+        from opensandbox.models.sandboxes import SandboxFilter
         from opensandbox import SandboxManager
 
         manager = await SandboxManager.create(
             connection_config=self._connection_config(),
         )
         sandbox_filter = SandboxFilter(
-            states=[SandboxState.RUNNING, SandboxState.PAUSED],
-            metadata={METADATA_WORKSPACE_ID_KEY: self.workspace_id},
+            states=["Running", "Pausing", "Paused"],
+            metadata={self._workspace_metadata_key: self.workspace_id},
         )
         try:
             infos = await manager.list_sandbox_infos(sandbox_filter)
@@ -253,15 +288,27 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         from opensandbox import Sandbox
 
         kwargs: dict = {
-            "image": self.image,
             "connection_config": self._connection_config(),
             "metadata": {
                 **self.sandbox_metadata,
-                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
+                self._workspace_metadata_key: self.workspace_id,
             },
             "timeout": timedelta(seconds=self.timeout_seconds),
             "ready_timeout": timedelta(seconds=self.timeout_seconds),
         }
+        if self.template_id:
+            create = getattr(Sandbox, "create_from_template", None)
+            if create is None:
+                raise RuntimeError(
+                    "Install an OpenSandbox SDK with create_from_template "
+                    "support to use FastSandbox workspaces",
+                )
+            return await create(
+                template_id=self.template_id,
+                network_policy=self.network_policy,
+                **kwargs,
+            )
+        kwargs["image"] = self.image
         if self.env:
             kwargs["env"] = self.env
         if self.resource:
@@ -277,6 +324,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         from opensandbox import Sandbox
 
         state = info.status.state.lower()
+
+        if state == "pausing":
+            await self._wait_until_paused(info.id)
+            state = "paused"
 
         if state == "paused":
             return await Sandbox.resume(
@@ -296,6 +347,31 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             f"OpenSandbox sandbox {info.id!r} is not attachable "
             f"(state={state!r})",
         )
+
+    async def _wait_until_paused(self, sandbox_id: str) -> None:
+        """Wait for the durable checkpoint before allowing reattachment."""
+        from opensandbox import SandboxManager
+
+        manager = await SandboxManager.create(self._connection_config())
+        deadline = asyncio.get_running_loop().time() + self.timeout_seconds
+        try:
+            while asyncio.get_running_loop().time() < deadline:
+                info = await manager.get_sandbox_info(sandbox_id)
+                state = info.status.state.lower()
+                if state == "paused":
+                    return
+                if state in {"failed", "terminated", "stopping"}:
+                    raise RuntimeError(
+                        f"Sandbox {sandbox_id!r} cannot pause "
+                        f"(state={state!r})",
+                    )
+                await asyncio.sleep(0.5)
+            raise TimeoutError(
+                f"Sandbox {sandbox_id!r} did not reach Paused within "
+                f"{self.timeout_seconds}s",
+            )
+        finally:
+            await manager.close()
 
     async def _wait_until_running(self, timeout: float = 30.0) -> None:
         """Poll until the sandbox reports healthy.
@@ -374,10 +450,17 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             # System packages used by bootstrap and builtin tools. The
             # default image runs as root, so no sudo is needed. ``ripgrep``
             # backs the Grep tool.
+            "if command -v apk >/dev/null 2>&1; then "
+            "apk add --no-cache bash curl ca-certificates ripgrep "
+            "python3 procps "
+            "&& ln -sf /usr/bin/python3 /usr/local/bin/python; "
+            "elif command -v apt-get >/dev/null 2>&1; then "
             "apt-get update -qq "
             "&& apt-get install -y --no-install-recommends curl "
-            "ca-certificates ripgrep "
-            "&& rm -rf /var/lib/apt/lists/*",
+            "ca-certificates ripgrep procps "
+            "&& rm -rf /var/lib/apt/lists/*; "
+            "else echo 'Workspace bootstrap requires apk or apt-get' >&2; "
+            "exit 1; fi",
             # Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
             # suppresses shell rc edits.
             "curl -LsSf https://astral.sh/uv/install.sh "
