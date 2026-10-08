@@ -78,8 +78,8 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
 
         Returns:
             `dict[str, Any] | None`:
-                A dictionary representing the formatted DataBlock, or ``None``
-                if the media type is unsupported.
+                A dictionary representing the formatted DataBlock, or a text
+                placeholder if the media type is unsupported.
         """
         if not any(
             fnmatch(block.source.media_type, pattern)
@@ -87,11 +87,11 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         ):
             logger.warning(
                 "Unsupported media type %s for DashScope API. Supported "
-                "types: %s. This block will be skipped.",
+                "types: %s. Replaced with a text placeholder.",
                 block.source.media_type,
                 ", ".join(self.supported_input_media_types),
             )
-            return None
+            return self._unsupported_media_placeholder(block.source)
 
         main_type = block.source.media_type.split("/")[0]
 
@@ -106,10 +106,24 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
 
         logger.warning(
             "Unsupported main media type %s for DashScope API. "
-            "This block will be skipped.",
+            "Replaced with a text placeholder.",
             main_type,
         )
-        return None
+        return self._unsupported_media_placeholder(block.source)
+
+    @staticmethod
+    def _unsupported_media_placeholder(
+        source: URLSource | Base64Source,
+    ) -> dict[str, Any]:
+        """Build a text placeholder standing in for a media block the
+        endpoint cannot ingest, so the enclosing message is not dropped
+        when the media block was its only content."""
+        main_type = source.media_type.split("/", 1)[0]
+        if isinstance(source, URLSource):
+            text = f"[{main_type} file returned, URL: {source.url}]"
+        else:
+            text = f"[{main_type} file returned, type: {source.media_type}]"
+        return {"type": "text", "text": text}
 
     @staticmethod
     def _format_image_source(
