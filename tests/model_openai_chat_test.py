@@ -354,6 +354,15 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         model.client = mock_client
 
         pcm = b"\x01\x02" * 480
+        expected_wav = io.BytesIO()
+        with wave.open(expected_wav, "wb") as wav_writer:
+            wav_writer.setnchannels(1)
+            wav_writer.setsampwidth(2)
+            wav_writer.setframerate(24000)
+            wav_writer.writeframes(pcm)
+        expected_payload = expected_wav.getvalue()
+        expected_audio_data = base64.b64encode(expected_payload).decode()
+
         mock_client.chat.completions.create = AsyncMock(
             return_value=_mock_completion(
                 text=None,
@@ -370,15 +379,35 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         sent = mock_client.chat.completions.create.call_args.kwargs
         self.assertEqual(sent["audio"]["format"], "pcm16")
 
-        blocks = [b for b in result.content if isinstance(b, DataBlock)]
-        self.assertEqual(len(blocks), 1)
-        source = blocks[0].source
-        self.assertIsInstance(source, Base64Source)
-        self.assertEqual(source.media_type, "audio/wav")
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Hello from audio.",
+                    ),
+                    DataBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        source=Base64Source.model_construct(
+                            type="base64",
+                            media_type="audio/wav",
+                            data=expected_audio_data,
+                        ),
+                    ),
+                ],
+            ),
+        )
 
         # A well-formed file, not just something a live-stream player will
         # tolerate: the stdlib ``wave`` module reads it and the samples
         # round-trip unchanged.
+        blocks = [b for b in result.content if isinstance(b, DataBlock)]
+        source = blocks[0].source
+        self.assertIsInstance(source, Base64Source)
         payload = base64.b64decode(source.data)
         self.assertEqual(payload[:4], b"RIFF")
         self.assertEqual(
