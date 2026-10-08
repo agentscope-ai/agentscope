@@ -7,8 +7,6 @@ dicts), a lightweight xai_sdk stub is built at module load so that tests run
 without the real package.  The stub objects support __eq__ and __repr__ so
 full assertListEqual comparisons work.
 """
-import os
-import re
 import sys
 from typing import Any
 from types import ModuleType
@@ -317,8 +315,14 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
         )
 
     async def test_chat_formatter_tool_result_with_url_media(self) -> None:
-        """URL media in a tool result becomes a placeholder with its URL."""
+        """URL media in a tool result is promoted as a real image part."""
         fmt = XAIChatFormatter()
+        picture = DataBlock(
+            source=URLSource(
+                url="https://example.com/a.png",
+                media_type="image/png",
+            ),
+        )
         res = await fmt.format(
             [
                 AssistantMsg(
@@ -327,15 +331,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                         ToolResultBlock(
                             id="call_1",
                             name="screenshot",
-                            output=[
-                                TextBlock(text="done"),
-                                DataBlock(
-                                    source=URLSource(
-                                        url="https://example.com/a.png",
-                                        media_type="image/png",
-                                    ),
-                                ),
-                            ],
+                            output=[TextBlock(text="done"), picture],
                             state=ToolResultState.SUCCESS,
                         ),
                     ],
@@ -347,9 +343,16 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             [
                 tool_result(
                     "done\n<system-reminder>A(n) image file is returned "
-                    "and can be accessed at the URL: "
-                    "https://example.com/a.png.</system-reminder>",
+                    "and will be presented to you with the identifier "
+                    f"[{picture.id}].</system-reminder>",
                     tool_call_id="call_1",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    f"- {picture.id} (image file): ",
+                    image("https://example.com/a.png"),
+                    "</system-reminder>",
                 ),
             ],
         )
@@ -357,8 +360,14 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     async def test_chat_formatter_tool_result_with_base64_media(
         self,
     ) -> None:
-        """Base64 media in a tool result is saved to a file, not dumped."""
+        """Base64 media in a tool result is promoted as a data URI."""
         fmt = XAIChatFormatter()
+        picture = DataBlock(
+            source=Base64Source(
+                data="iVBORw0KGgo=",
+                media_type="image/png",
+            ),
+        )
         res = await fmt.format(
             [
                 AssistantMsg(
@@ -367,11 +376,50 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                         ToolResultBlock(
                             id="call_1",
                             name="screenshot",
+                            output=[picture],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "<system-reminder>A(n) image file is returned and "
+                    "will be presented to you with the identifier "
+                    f"[{picture.id}].</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    f"- {picture.id} (image file): ",
+                    image("data:image/png;base64,iVBORw0KGgo="),
+                    "</system-reminder>",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_tool_result_unsupported_media(
+        self,
+    ) -> None:
+        """Media the formatter cannot promote keeps the textual fallback."""
+        fmt = XAIChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="recording",
                             output=[
                                 DataBlock(
-                                    source=Base64Source(
-                                        data="iVBORw0KGgo=",
-                                        media_type="image/png",
+                                    source=URLSource(
+                                        url="https://example.com/a.wav",
+                                        media_type="audio/wav",
                                     ),
                                 ),
                             ],
@@ -381,18 +429,119 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 ),
             ],
         )
-        path = re.search(
-            r"saved locally at: (.+)\.</system-reminder>",
-            res[0].args[0],
-        ).group(1)
-        os.unlink(path)
         self.assertListEqual(
             res,
             [
                 tool_result(
-                    "<system-reminder>A(n) image file is returned and "
-                    f"saved locally at: {path}.</system-reminder>",
+                    "<system-reminder>A(n) audio file is returned and "
+                    "can be accessed at the URL: "
+                    "https://example.com/a.wav.</system-reminder>",
                     tool_call_id="call_1",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Promoted media does not split parallel tool-result messages."""
+        fmt = XAIChatFormatter()
+        picture = DataBlock(
+            id="image_1",
+            source=URLSource(
+                url="https://example.com/shot.png",
+                media_type="image/png",
+            ),
+        )
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_shot",
+                            name="screenshot",
+                            input="{}",
+                        ),
+                        ToolCallBlock(
+                            id="call_title",
+                            name="get_title",
+                            input="{}",
+                        ),
+                        ToolResultBlock(
+                            id="call_shot",
+                            name="screenshot",
+                            output=[
+                                TextBlock(text="Screenshot taken."),
+                                picture,
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                        ToolResultBlock(
+                            id="call_title",
+                            name="get_title",
+                            output=[TextBlock(text="Example Domain")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        normalized_res = [
+            (
+                res[0].role,
+                [part.text for part in res[0].content],
+                [
+                    (
+                        tool_call.id,
+                        tool_call.type,
+                        tool_call.function.name,
+                        tool_call.function.arguments,
+                    )
+                    for tool_call in res[0].tool_calls
+                ],
+            ),
+            *res[1:],
+        ]
+        self.assertListEqual(
+            normalized_res,
+            [
+                (
+                    2,
+                    [],
+                    [
+                        (
+                            "call_shot",
+                            1,
+                            "screenshot",
+                            "{}",
+                        ),
+                        (
+                            "call_title",
+                            1,
+                            "get_title",
+                            "{}",
+                        ),
+                    ],
+                ),
+                tool_result(
+                    "Screenshot taken.\n"
+                    "<system-reminder>A(n) image file is returned and "
+                    "will be presented to you with the identifier "
+                    "[image_1].</system-reminder>",
+                    tool_call_id="call_shot",
+                ),
+                tool_result(
+                    "Example Domain",
+                    tool_call_id="call_title",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    "- image_1 (image file): ",
+                    image("https://example.com/shot.png"),
+                    "</system-reminder>",
                 ),
             ],
         )
