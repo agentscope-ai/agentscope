@@ -920,7 +920,7 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
         )
         async with aiofiles.open(host_path, "r") as f:
             content = await f.read()
-        self.assertIn("file:///workspace/data/", content)
+        self.assertIn("workspace:///data/", content)
         self.assertTrue(
             os.path.isdir(os.path.join(self._shared_workdir.name, "data")),
         )
