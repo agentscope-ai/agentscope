@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """Unit tests for the tracing module using an in-memory OTel exporter."""
 import asyncio
 import json
@@ -411,6 +412,30 @@ class TracingTest(IsolatedAsyncioTestCase):
             span_attrs.get("gen_ai.tool.name"),
             "get_weather",
             "execute_tool span should have gen_ai.tool.name = get_weather",
+        )
+
+    async def test_execute_tool_span_has_tool_description(self) -> None:
+        """execute_tool span must carry gen_ai.tool.description."""
+        self.model.set_responses(
+            [
+                _make_tool_call_response("c9", "Nanjing"),
+                _make_text_response("Nanjing result."),
+            ],
+        )
+        msg = UserMsg(name="user", content="Weather in Nanjing?")
+        await self.agent.reply(msg)
+
+        tool_spans = self._spans_by_name("execute_tool")
+        self.assertEqual(
+            len(tool_spans),
+            1,
+            "Expected exactly one execute_tool span",
+        )
+        span_attrs = dict(tool_spans[0].attributes or {})
+        self.assertEqual(
+            span_attrs.get("gen_ai.tool.description"),
+            WeatherTool.description,
+            "execute_tool span should carry the tool description",
         )
 
     # -----------------------------------------------------------------------
