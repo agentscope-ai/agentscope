@@ -207,9 +207,11 @@ class DeepSeekChatModel(ChatModelBase):
         thinking_type = (
             "enabled" if self.parameters.thinking_enable else "disabled"
         )
-        kwargs["extra_body"] = dict(kwargs.get("extra_body") or {})
-        kwargs["extra_body"].setdefault("thinking", {})
-        kwargs["extra_body"]["thinking"].setdefault("type", thinking_type)
+        extra_body = dict(kwargs.get("extra_body") or {})
+        thinking = dict(extra_body.get("thinking") or {})
+        thinking.setdefault("type", thinking_type)
+        extra_body["thinking"] = thinking
+        kwargs["extra_body"] = extra_body
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

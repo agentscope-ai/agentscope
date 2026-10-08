@@ -261,6 +261,44 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_extra_body_is_not_mutated(self) -> None:
+        """Nested thinking defaults must not mutate caller state."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        extra_body = {"thinking": {"budget_tokens": 1024}}
+
+        self.model.parameters.thinking_enable = False
+        await self.model([], extra_body=extra_body)
+        first_request = self.mock_client.chat.completions.create.call_args
+
+        self.model.parameters.thinking_enable = True
+        await self.model([], extra_body=extra_body)
+        second_request = self.mock_client.chat.completions.create.call_args
+
+        self.assertEqual(
+            extra_body,
+            {"thinking": {"budget_tokens": 1024}},
+        )
+        self.assertEqual(
+            first_request.kwargs["extra_body"],
+            {
+                "thinking": {
+                    "budget_tokens": 1024,
+                    "type": "disabled",
+                },
+            },
+        )
+        self.assertEqual(
+            second_request.kwargs["extra_body"],
+            {
+                "thinking": {
+                    "budget_tokens": 1024,
+                    "type": "enabled",
+                },
+            },
+        )
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests
