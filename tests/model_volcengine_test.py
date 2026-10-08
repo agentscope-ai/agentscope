@@ -184,6 +184,29 @@ class TestVolcengineNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "volcengine-1")
 
+    async def test_extra_body_is_not_mutated(self) -> None:
+        """Defaulting thinking.type leaves the caller's extra_body intact."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        self.model.parameters.thinking_enable = False
+        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
+
+        await self.model([], extra_body=extra_body)
+
+        self.assertDictEqual(
+            extra_body,
+            {"custom": "value", "thinking": {"budget_tokens": 1024}},
+        )
+        self.assertDictEqual(
+            mock_create.await_args.kwargs["extra_body"],
+            {
+                "custom": "value",
+                "thinking": {"budget_tokens": 1024, "type": "disabled"},
+            },
+        )
+
     async def test_tool_call_response(
         self,
     ) -> None:
