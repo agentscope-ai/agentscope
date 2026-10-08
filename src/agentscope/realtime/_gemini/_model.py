@@ -72,6 +72,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
     type = "gemini_realtime"
     truncation = TruncationSupport.SERVER
     supports_text_input = True
+    supports_ready_ack = True
 
     def __init__(
         self,
@@ -146,7 +147,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             ),
         )
         # Realtime input is rejected until the server acknowledges setup.
-        await self._ready.wait()
+        await asyncio.wait_for(self._ready.wait(), timeout=10)
         if self._ws is None:
             raise ModelDisconnectedError("Session closed during setup.")
 
@@ -160,6 +161,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
             self._reader.cancel()
             await asyncio.gather(self._reader, return_exceptions=True)
             self._reader = None
+
+    async def wait_ready(self) -> None:
+        """Connect already waits for setupComplete."""
+        if self._ws is None:
+            raise ModelDisconnectedError("Session closed before it was ready.")
 
     async def events(self) -> AsyncIterator[me.ModelEvent]:
         """Yield events until the session ends."""

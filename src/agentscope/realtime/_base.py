@@ -56,6 +56,9 @@ class RealtimeModelBase(ABC):
     supports_text_input: bool = False
     """Whether a text turn can be injected mid-session."""
 
+    supports_ready_ack: bool = False
+    """Whether the adapter can confirm that a new session is ready."""
+
     def __init__(
         self,
         model: str,
@@ -138,6 +141,11 @@ class RealtimeModelBase(ABC):
         """The PCM rate of the audio in :class:`AudioDelta`, in Hz."""
         return self.card.output_sample_rate
 
+    @property
+    def effective_max_audio_turns(self) -> int | None:
+        """The active turn limit after provider parameter overrides."""
+        return self.card.max_audio_turns
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -166,6 +174,12 @@ class RealtimeModelBase(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Close the session and release the connection."""
+
+    async def wait_ready(self) -> None:
+        """Wait until the provider has accepted the session configuration.
+
+        Adapters that support proactive reconnect override this method.
+        """
 
     @abstractmethod
     async def events(self) -> AsyncIterator[ModelEvent]:

@@ -50,6 +50,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
     type = "dashscope_omni_realtime"
     truncation = TruncationSupport.NONE
     supports_text_input = False
+    supports_ready_ack = True
 
     def __init__(
         self,
@@ -75,6 +76,8 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
+        self._ready = asyncio.Event()
+        self._session_ready = False
         self._item_id = ""
         self._tool_args: dict[str, str] = {}
         self._tool_names: dict[str, str] = {}
@@ -96,6 +99,8 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         await self.close()
         while not self._queue.empty():
             self._queue.get_nowait()
+        self._ready.clear()
+        self._session_ready = False
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
@@ -113,6 +118,12 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         )
         self._reader = asyncio.create_task(self._read(), name="dashscope-rt")
         await self._send(self._session_update(instructions, tools))
+
+    async def wait_ready(self) -> None:
+        """Wait for the session.updated acknowledgement."""
+        await asyncio.wait_for(self._ready.wait(), timeout=10)
+        if not self._session_ready:
+            raise ModelDisconnectedError("Session closed before it was ready.")
 
     async def close(self) -> None:
         """Stop reading and close the WebSocket."""
@@ -220,13 +231,15 @@ class DashScopeRealtimeModel(RealtimeModelBase):
             "voice": p.voice,
             "input_audio_format": f"pcm{self.input_sample_rate // 1000}",
             "output_audio_format": f"pcm{self.output_sample_rate // 1000}",
-            "turn_detection": None
-            if p.turn_detection == "none"
-            else {
-                "type": p.turn_detection,
-                "threshold": p.vad_threshold,
-                "silence_duration_ms": p.vad_silence_duration_ms,
-            },
+            "turn_detection": (
+                None
+                if p.turn_detection == "none"
+                else {
+                    "type": p.turn_detection,
+                    "threshold": p.vad_threshold,
+                    "silence_duration_ms": p.vad_silence_duration_ms,
+                }
+            ),
         }
         if p.input_audio_transcription:
             session["input_audio_transcription"] = {
@@ -260,7 +273,15 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
                 try:
-                    event = self._parse(json.loads(raw))
+                    data = json.loads(raw)
+                    if data.get("type") == "session.updated":
+                        self._session_ready = True
+                        self._ready.set()
+                    elif (
+                        data.get("type") == "error" and not self._session_ready
+                    ):
+                        self._ready.set()
+                    event = self._parse(data)
                 except Exception:  # noqa: BLE001
                     logger.exception("DashScopeRealtimeModel: bad frame")
                     continue
@@ -269,6 +290,8 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         except Exception as exc:  # noqa: BLE001
             logger.error("DashScopeRealtimeModel: connection lost: %s", exc)
         finally:
+            self._session_ready = False
+            self._ready.set()
             self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
             self._queue.put_nowait(None)
 
