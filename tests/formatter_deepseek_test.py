@@ -2,6 +2,7 @@
 """Comprehensive formatter unit tests for DeepSeekChatFormatter and
 DeepSeekMultiAgentFormatter, with exact ground-truth comparisons.
 """
+
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import (
@@ -31,9 +32,7 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up shared fixtures and ground-truth dicts."""
-        _hist_prompt = (
-            DeepSeekMultiAgentFormatter().conversation_history_prompt
-        )
+        _hist_prompt = DeepSeekMultiAgentFormatter().conversation_history_prompt
 
         self.msgs_system = [
             SystemMsg(
@@ -718,3 +717,103 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class TestDeepSeekUnsupportedMedia(IsolatedAsyncioTestCase):
+    """A media block DeepSeek cannot ingest must not silently vanish.
+
+    DeepSeek is text-only by default, so every DataBlock degrades — the hint
+    branch already kept a placeholder for that case, but the plain-message
+    branch and the multi-agent history branch dropped it silently, so a
+    media-only user message disappeared entirely.
+    """
+
+    async def test_chat_formatter_unsupported_media_only(self) -> None:
+        """A media-only user message keeps the turn with a placeholder."""
+        fmt = DeepSeekChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "[audio/wav attached, not supported by this provider]",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_keeps_text(self) -> None:
+        """Text survives alongside the placeholder for mixed messages."""
+        fmt = DeepSeekChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="listen:"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="aGVsbG8=",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "listen:\n[audio/wav attached, not supported by this provider]",
+                },
+            ],
+            res,
+        )
+
+    async def test_multi_agent_unsupported_media_traced_in_history(self) -> None:
+        """A media-only agent turn stays traceable in the rendered history."""
+        fmt = DeepSeekMultiAgentFormatter()
+        msgs = [
+            SystemMsg("system", "sys"),
+            AssistantMsg("agentA", [audio_block()]),
+            UserMsg("user", "hi"),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {"role": "system", "content": "sys"},
+                {
+                    "role": "user",
+                    "content": (
+                        "# Conversation History\n"
+                        "The content between <history></history> tags contains "
+                        "your conversation history\n"
+                        "<history>\n"
+                        "agentA: [audio/wav attached, not supported by this provider]\n"
+                        "user: hi\n"
+                        "</history>"
+                    ),
+                },
+            ],
+            res,
+        )
+
+
+def audio_block() -> DataBlock:
+    """A shared audio DataBlock the DeepSeek endpoint cannot ingest."""
+    return DataBlock(
+        source=Base64Source(data="aGVsbG8=", media_type="audio/wav"),
+    )
