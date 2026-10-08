@@ -8,6 +8,7 @@ import hashlib
 import tempfile
 from types import SimpleNamespace
 from typing import Any
+from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 from dataclasses import asdict
@@ -46,6 +47,9 @@ from agentscope.message import (
     ToolResultState,
     ToolCallBlock,
 )
+
+# Probe the temp filesystem rather than assuming case rules from the OS.
+_CASE_INSENSITIVE_FS = os.path.exists(tempfile.gettempdir().swapcase())
 
 
 class _LongResultTool(ToolBase):
@@ -1902,32 +1906,24 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
             os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
         )
 
-    def _require_case_insensitive_filesystem(self) -> None:
-        """Check the fixture filesystem rather than assuming an OS."""
-        probe = os.path.join(self.src_dir.name, "CaseProbe")
-        with open(probe, "w", encoding="utf-8") as f:
-            f.write("probe")
-        if not os.path.exists(os.path.join(self.src_dir.name, "caseprobe")):
-            self.skipTest("requires a case-insensitive filesystem")
-
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
     async def test_add_skill_case_only_directory_collision(self) -> None:
         """Case-only names get distinct paths without renaming the skills."""
-        self._require_case_insensitive_filesystem()
         ws = await self._workspace()
         await ws.add_skill(self._make_skill("source-a", "Example"))
         await ws.add_skill(self._make_skill("source-b", "example"))
 
-        skills = await ws.list_skills()
-        self.assertEqual(
-            {s.name: os.path.basename(s.dir) for s in skills},
-            {"Example": "Example", "example": "example_1"},
+        self.assertDictEqual(
+            {
+                s.name: (os.path.basename(s.dir), s.markdown)
+                for s in await ws.list_skills()
+            },
+            {"Example": ("Example", "body"), "example": ("example_1", "body")},
         )
-        for skill in skills:
-            self.assertEqual(skill.markdown, "body")
 
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
     async def test_seed_skill_case_only_directory_collision(self) -> None:
         """Seed population keeps both skills on insensitive filesystems."""
-        self._require_case_insensitive_filesystem()
         ws = await self._workspace(
             skill_paths=[
                 self._make_skill("source-a", "Example"),
@@ -1936,13 +1932,16 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
         )
 
         for agent_id in ("A", "B"):
-            skills = await ws.list_skills(agent_id=agent_id)
-            self.assertEqual(
-                {s.name: os.path.basename(s.dir) for s in skills},
-                {"Example": "Example", "example": "example_1"},
+            self.assertDictEqual(
+                {
+                    s.name: (os.path.basename(s.dir), s.markdown)
+                    for s in await ws.list_skills(agent_id=agent_id)
+                },
+                {
+                    "Example": ("Example", "body"),
+                    "example": ("example_1", "body"),
+                },
             )
-            for skill in skills:
-                self.assertEqual(skill.markdown, "body")
 
     async def test_seeds_equip_each_agent_with_its_own_copy(self) -> None:
         """``skill_paths`` reach every agent, but as separate copies."""
