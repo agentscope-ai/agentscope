@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import timedelta
 import shlex
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
+from .._gateway_client import GatewayClient
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
@@ -24,6 +26,7 @@ from ._constants import (
     SANDBOX_WORKDIR,
 )
 from ._opensandbox_backend import OpenSandboxBackend
+from ._template import PREPARED_STATE_FILE, prepared_template_state
 
 if TYPE_CHECKING:
     from opensandbox import Sandbox
@@ -172,6 +175,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
         self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
+        self._fresh_template_sandbox = False
 
     @property
     def sandbox_id(self) -> str | None:
@@ -190,14 +194,46 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         bootstrap step is idempotent, so an interrupted bootstrap
         re-runs cleanly on the next ``initialize``.
         """
+        self._fresh_template_sandbox = False
         existing = await self._find_existing_sandbox()
         if existing is not None:
             self._sandbox = await self._attach_existing_sandbox(existing)
         else:
             self._sandbox = await self._create_sandbox()
+            self._fresh_template_sandbox = bool(self.template_id)
         await self._wait_until_running()
 
         self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)
+
+    async def _initialize_prepared_workspace(self) -> bool:
+        """Reuse an empty gateway only on a freshly created template VM.
+
+        Existing workspaces need persisted MCP restoration and a fresh
+        registry. Templates without this contract retain normal bootstrap.
+        """
+        if not self._fresh_template_sandbox or self.extra_pip:
+            return False
+        backend = self.get_backend()
+        try:
+            state = json.loads(await backend.read_file(PREPARED_STATE_FILE))
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+            return False
+        if state != prepared_template_state(self.gateway_port):
+            return False
+
+        gateway = GatewayClient(
+            backend=backend,
+            gateway_port=self.gateway_port,
+            timeout=30.0,
+            gateway_log_path=self._gateway_log,
+        )
+        if not await gateway.health():
+            await gateway.aclose()
+            return False
+        self._gateway = gateway
+        self._mcp_specs = {}
+        await self._setup_skills()
+        return True
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
