@@ -12,6 +12,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from utils import AnyString
@@ -251,6 +252,37 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await self.bus.publish("ch", {"i": 2})
         await asyncio.wait_for(task, timeout=2.0)
         self.assertEqual([p["i"] for p in received], [1, 2])
+
+    async def test_subscribe_cleanup_survives_cancellation(self) -> None:
+        """A consumer cancelled again while closing the pubsub must not
+        abort the close, otherwise the connection leaks from the pool."""
+        ready, closing = asyncio.Event(), asyncio.Event()
+        finish, released = asyncio.Event(), asyncio.Event()
+        pubsub = self.fr.pubsub()
+        original_aclose = pubsub.aclose
+
+        async def _slow_aclose() -> None:
+            closing.set()
+            await finish.wait()
+            await original_aclose()
+            released.set()
+
+        async def _consumer() -> None:
+            async for _ in self.bus.subscribe("ch", on_ready=ready.set):
+                pass
+
+        pubsub.aclose = _slow_aclose
+        with patch.object(self.fr, "pubsub", return_value=pubsub):
+            task = asyncio.create_task(_consumer())
+            await asyncio.wait_for(ready.wait(), timeout=2.0)
+            task.cancel()
+            await asyncio.wait_for(closing.wait(), timeout=2.0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        finish.set()
+        await asyncio.wait_for(released.wait(), timeout=2.0)
 
 
 class TestLockPrimitive(IsolatedAsyncioTestCase):
