@@ -234,11 +234,7 @@ class MCPClient(BaseModel):
     ) -> AsyncGenerator[Any, None]:
         """Create an owned HTTP client that runtime headers can update."""
         config = self.mcp_config
-        # Build the client through the SDK's factory so taking ownership
-        # cannot change how it is configured: a raw ``httpx.AsyncClient``
-        # would apply httpx's own defaults instead of the transport's,
-        # which turns ``timeout=None`` into "no timeout at all" and drops
-        # the long read timeout a held-open response stream needs.
+        # Use the SDK factory to keep the transport's own client defaults
         client = create_mcp_http_client(
             headers=config.headers,
             timeout=(
