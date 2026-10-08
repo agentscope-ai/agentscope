@@ -107,7 +107,7 @@ interface FieldProps {
 function BooleanField({ id, label, prop, value, onChange }: FieldProps) {
 	return (
 		<>
-			<Label htmlFor={id} className="whitespace-nowrap">
+			<Label htmlFor={id} className="min-w-0 whitespace-normal leading-tight">
 				{label}
 			</Label>
 			<Switch
@@ -136,13 +136,17 @@ function EnumField({
 
 	return (
 		<>
-			<Label htmlFor={id} className="whitespace-nowrap">
+			<Label htmlFor={id} className="min-w-0 whitespace-normal leading-tight">
 				{label}
 				{required && <span className="text-destructive ml-0.5">*</span>}
 			</Label>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<Button id={id} variant="outline" className="w-full justify-between gap-1">
+					<Button
+						id={id}
+						variant="outline"
+						className="min-w-0 w-full justify-between gap-1"
+					>
 						<span className="truncate">{displayValue}</span>
 						<ChevronDown className="size-3.5 opacity-50 shrink-0" />
 					</Button>
@@ -170,7 +174,7 @@ function NumberField({ id, label, required, prop, value, onChange }: FieldProps)
 
 	return (
 		<>
-			<Label htmlFor={id} className="whitespace-nowrap">
+			<Label htmlFor={id} className="min-w-0 whitespace-normal leading-tight">
 				{label}
 				{required && <span className="text-destructive ml-0.5">*</span>}
 			</Label>
@@ -209,7 +213,7 @@ function NumberField({ id, label, required, prop, value, onChange }: FieldProps)
 function StringField({ id, label, required, prop, value, onChange }: FieldProps) {
 	return (
 		<>
-			<Label htmlFor={id} className="whitespace-nowrap">
+			<Label htmlFor={id} className="min-w-0 whitespace-normal leading-tight">
 				{label}
 				{required && <span className="text-destructive ml-0.5">*</span>}
 			</Label>
@@ -341,7 +345,7 @@ export function ModelParametersPopover({
 				<p className="text-muted-foreground text-xs">{t('model-parameters.empty')}</p>
 			) : (
 				<div
-					className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+					className="grid grid-cols-[minmax(0,1fr)_minmax(7.5rem,10rem)] items-center gap-x-3 gap-y-3"
 					onPointerDown={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
 				>
@@ -409,7 +413,7 @@ export function ModelParametersPopover({
 				align="start"
 				className={cn(
 					parametersOnly
-						? 'w-80 max-h-(--radix-dropdown-menu-content-available-height) overflow-x-hidden overflow-y-auto p-3'
+						? 'w-80 max-w-(--radix-dropdown-menu-content-available-width) max-h-(--radix-dropdown-menu-content-available-height) overflow-x-hidden overflow-y-auto p-3'
 						: 'min-w-40',
 				)}
 			>

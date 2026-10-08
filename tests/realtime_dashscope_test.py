@@ -167,6 +167,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-omni-turbo-realtime": {
                     "schema": {
                         "default": "Chelsie",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Cherry", "Serena", "Ethan", "Chelsie"],
                         "title": "Voice",
                         "type": "string",
@@ -176,6 +179,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3-omni-flash-realtime": {
                     "schema": {
                         "default": "Cherry",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Cherry", "Serena", "Ethan", "Chelsie"],
                         "title": "Voice",
                         "type": "string",
@@ -185,6 +191,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3.5-omni-flash-realtime": {
                     "schema": {
                         "default": "Tina",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Tina", "Serena", "Ethan"],
                         "title": "Voice",
                         "type": "string",
@@ -194,6 +203,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3.5-omni-plus-realtime": {
                     "schema": {
                         "default": "Tina",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": ["Tina", "Serena", "Ethan"],
                         "title": "Voice",
                         "type": "string",
@@ -233,6 +245,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-audio-3.0-realtime-flash": {
                     "schema": {
                         "default": "longanqian",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "longanqian",
                             "longanlingxin",
@@ -248,6 +263,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-audio-3.0-realtime-plus": {
                     "schema": {
                         "default": "longanqian",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "longanqian",
                             "longanlingxin",
@@ -263,6 +281,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen-audio-3.1-realtime-plus": {
                     "schema": {
                         "default": "longanqian_v3.1",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
                         "enum": [
                             "longanqian",
                             "longanlingxin",
