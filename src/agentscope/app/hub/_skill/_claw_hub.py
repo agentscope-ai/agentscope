@@ -641,7 +641,10 @@ class ClawSkillHub(SkillHubBase):
         item["owner"] = payload.get("owner")
 
         card = self._to_card(item)
-        parsed = await asyncio.to_thread(frontmatter.loads, markdown.text)
+        parsed = await asyncio.to_thread(
+            frontmatter.loads,
+            markdown.text.removeprefix("\ufeff"),
+        )
         card.markdown = parsed.content
         if not card.description:
             card.description = str(parsed.get("description", ""))
