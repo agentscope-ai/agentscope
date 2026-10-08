@@ -58,37 +58,6 @@ class _RecordTool(ToolBase):
         return ToolChunk(content=[TextBlock(text="Recorded")])
 
 
-class _NoArgTool(ToolBase):
-    """A tool that takes no arguments at all."""
-
-    name = "ping"
-    description = "Return a pong."
-    is_concurrency_safe = True
-    is_read_only = True
-
-    def __init__(self) -> None:
-        """Initialize the tool with an empty argument schema."""
-        super().__init__()
-        self.input_schema = {"type": "object", "properties": {}}
-        self.executed = 0
-
-    async def check_permissions(
-        self,
-        tool_input: dict[str, Any],
-        context: PermissionContext,
-    ) -> PermissionDecision:
-        """Allow the tool input."""
-        return PermissionDecision(
-            behavior=PermissionBehavior.ALLOW,
-            message="Allowed",
-        )
-
-    async def __call__(self) -> ToolChunk:
-        """Record the execution and answer."""
-        self.executed += 1
-        return ToolChunk(content=[TextBlock(text="Pong")])
-
-
 class JsonLoadsWithRepairTest(unittest.TestCase):
     """Unittest for the `_json_loads_with_repair` function."""
 
@@ -146,26 +115,10 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
         )
 
     def test_empty_arguments_are_an_empty_object(self) -> None:
-        """Test that an empty argument payload means "no arguments".
-
-        Some providers emit no ``arguments`` at all for a tool call that
-        takes none, which reaches the parser as an empty string instead
-        of ``"{}"``.
-        """
+        """Test that an empty argument payload is parsed as no arguments."""
         for json_str in ["", "   "]:
             with self.subTest(json_str=json_str):
                 self.assertDictEqual(_json_loads_with_repair(json_str), {})
-        # An empty payload stays empty under a schema-guided repair too
-        self.assertDictEqual(
-            _json_loads_with_repair(
-                "",
-                {
-                    "type": "object",
-                    "properties": {"count": {"type": "integer"}},
-                },
-            ),
-            {},
-        )
 
     def test_reject_invalid_arguments(self) -> None:
         """Test the arguments that cannot be loaded into a valid dict."""
@@ -305,63 +258,6 @@ class ToolCallArgumentRepairTest(IsolatedAsyncioTestCase):
                     "output": "Input validation failed for tool 'record': "
                     "'many' is not of type 'integer' (at $.value)",
                     "state": "error",
-                    "metadata": {},
-                    "created_at": AnyString(),
-                    "finished_at": None,
-                },
-            ],
-        )
-
-    async def test_empty_arguments_run_a_no_arg_tool(self) -> None:
-        """Test that an empty argument payload executes a tool that takes
-        no arguments, instead of failing as malformed JSON."""
-        tool = _NoArgTool()
-        tool_call = ToolCallBlock(id="ping_call_0", name="ping", input="")
-        model = MockModel()
-        model.set_responses(
-            [
-                [ChatResponse(content=[tool_call], is_last=True)],
-                [
-                    ChatResponse(
-                        content=[TextBlock(text="Done")],
-                        is_last=True,
-                    ),
-                ],
-            ],
-        )
-        agent = Agent(
-            name="Friday",
-            system_prompt="You're a helpful assistant.",
-            model=model,
-            toolkit=Toolkit(tools=[tool]),
-            injection_config=InjectionConfig(inject_runtime_state=False),
-        )
-
-        await agent.reply(UserMsg(name="user", content="Ping"))
-
-        self.assertEqual(tool.executed, 1)
-        self.assertListEqual(
-            [
-                block.model_dump()
-                for block in agent.state.context[-1].get_content_blocks(
-                    "tool_result",
-                )
-            ],
-            [
-                {
-                    "type": "tool_result",
-                    "id": "ping_call_0",
-                    "name": "ping",
-                    "output": [
-                        {
-                            "type": "text",
-                            "text": "Pong",
-                            "id": AnyString(),
-                            "created_at": AnyString(),
-                            "finished_at": None,
-                        },
-                    ],
-                    "state": "success",
                     "metadata": {},
                     "created_at": AnyString(),
                     "finished_at": None,

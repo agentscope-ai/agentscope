@@ -121,11 +121,8 @@ def _json_loads_with_repair(
         `ToolJSONDecodeError`:
             If the JSON string cannot be loaded into a dict.
     """
-    # Some providers emit no ``arguments`` at all for a tool call that
-    # takes none, which arrives here as an empty string rather than
-    # ``"{}"``. Treat an empty payload as an empty argument object
-    # instead of malformed JSON.
-    if not json_str or json_str.isspace():
+    # Some providers stream no arguments at all for a no-argument tool call
+    if not json_str.strip():
         return {}
 
     parsed = None
