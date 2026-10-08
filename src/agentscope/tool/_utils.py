@@ -79,7 +79,6 @@ def _extract_input_schema(
     tool_func: Callable,
     include_var_positional: bool = False,
     include_var_keyword: bool = False,
-    is_state_injected: bool = False,
 ) -> dict:
     """Extract input schema from the tool function's docstring
 
@@ -91,8 +90,6 @@ def _extract_input_schema(
             schema.
         include_var_keyword (`bool`):
             Whether to include variable keyword arguments in the JSON schema.
-        is_state_injected (`bool`, optional):
-            Whether to omit the framework-injected ``_agent_state`` parameter.
 
     Returns:
         `dict`:
@@ -114,10 +111,8 @@ def _extract_input_schema(
     # Create a dynamic model with the function signature
     fields = {}
     for name, param in inspect.signature(tool_func).parameters.items():
-        # Skip the `self` and `cls` parameters
-        if name in ["self", "cls"]:
-            continue
-        if is_state_injected and name == "_agent_state":
+        # Skip `self`, `cls` and the toolkit-injected `_agent_state`
+        if name in ["self", "cls", "_agent_state"]:
             continue
 
         annotation = type_hints.get(name, param.annotation)

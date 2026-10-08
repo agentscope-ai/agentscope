@@ -85,9 +85,7 @@ class FunctionTool(ToolBase):
             is_read_only (`bool`, optional):
                 Whether this tool only reads data without side effects.
             is_state_injected (`bool`, optional):
-                Whether this tool requires agent state injection. The
-                ``_agent_state`` parameter is omitted from automatically
-                inferred input schemas and supplied by the toolkit.
+                Whether this tool requires agent state injection.
             middlewares (`list[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
             permission (`PermissionDecision | None`, optional):
@@ -106,10 +104,7 @@ class FunctionTool(ToolBase):
             input_schema = _remove_title_field(
                 input_schema.model_json_schema(),
             )
-        self.input_schema = input_schema or _extract_input_schema(
-            func,
-            is_state_injected=is_state_injected,
-        )
+        self.input_schema = input_schema or _extract_input_schema(func)
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
         self.is_state_injected = is_state_injected

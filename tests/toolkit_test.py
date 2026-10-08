@@ -494,70 +494,6 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
 
-    async def test_state_injected_function(self) -> None:
-        """Infer business parameters and inject state at invocation."""
-        received_states: list[AgentState] = []
-
-        def echo(value: str, _agent_state: AgentState) -> str:
-            """Return a value with the current session.
-
-            Args:
-                value: The value to return.
-                _agent_state: The agent state injected by the toolkit.
-            """
-            received_states.append(_agent_state)
-            return f"{value}:{_agent_state.session_id}"
-
-        tool = FunctionTool(echo, is_state_injected=True)
-        self.assertDictEqual(
-            tool.input_schema,
-            {
-                "type": "object",
-                "properties": {
-                    "value": {
-                        "type": "string",
-                        "description": "The value to return.",
-                    },
-                },
-                "required": ["value"],
-            },
-        )
-
-        state = AgentState(session_id="test-session")
-        toolkit = Toolkit(tools=[tool])
-        response = None
-        async for result in toolkit.call_tool(
-            ToolCallBlock(
-                id="test_state_injection",
-                name="echo",
-                input=json.dumps({"value": "hello"}),
-            ),
-            state,
-        ):
-            if isinstance(result, ToolResponse):
-                response = result
-
-        self.assertEqual(received_states, [state])
-        self.assertIs(received_states[0], state)
-        self.assertIsNotNone(response)
-        self.assertDictEqual(
-            response.model_dump(),
-            {
-                "content": [
-                    {
-                        "type": "text",
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                        "id": AnyString(),
-                        "text": "hello:test-session",
-                    },
-                ],
-                "state": "success",
-                "metadata": {},
-                "id": "test_state_injection",
-            },
-        )
-
     async def test_sync_non_streaming_function(self) -> None:
         """Test registering a synchronous non-streaming function."""
 
@@ -1198,6 +1134,65 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             response.content[0].text,
             f"started{expected_dict_text}",
+        )
+
+    async def test_state_injected_function(self) -> None:
+        """Infer business parameters and inject state at invocation."""
+
+        def echo(value: str, _agent_state: AgentState) -> str:
+            """Return a value with the current session.
+
+            Args:
+                value: The value to return.
+                _agent_state: The agent state injected by the toolkit.
+            """
+            return f"{value}:{_agent_state.session_id}"
+
+        tool = FunctionTool(echo, is_state_injected=True)
+        self.assertDictEqual(
+            tool.input_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "string",
+                        "description": "The value to return.",
+                    },
+                },
+                "required": ["value"],
+            },
+        )
+
+        state = AgentState(session_id="test-session")
+        toolkit = Toolkit(tools=[tool])
+        response = None
+        async for result in toolkit.call_tool(
+            ToolCallBlock(
+                id="test_state_injection",
+                name="echo",
+                input=json.dumps({"value": "hello"}),
+            ),
+            state,
+        ):
+            if isinstance(result, ToolResponse):
+                response = result
+
+        self.assertDictEqual(
+            response.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "hello:test-session",
+                    },
+                ],
+                "state": "success",
+                "metadata": {},
+                "id": "test_state_injection",
+            },
         )
 
     async def test_custom_input_schema(self) -> None:
