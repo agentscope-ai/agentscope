@@ -395,7 +395,12 @@ async def remove_skill(
         agent_id,
         session_id,
     )
-    await workspace.remove_skill(skill_name, agent_id=agent_id)
+    try:
+        await workspace.remove_skill(skill_name, agent_id=agent_id)
+    except KeyError:
+        # ``LocalWorkspace`` already treats a missing skill as a no-op.
+        # Keep DELETE idempotent for the other workspace implementations.
+        return
 
 
 # ---------------------------------------------------------------------------
