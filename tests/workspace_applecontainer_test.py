@@ -336,12 +336,13 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
     """
 
     async def test_bootstrap_dependencies(self) -> None:
-        """Bootstrap installed ``rg``, ``uv``, and ``python3``."""
+        """``rg`` is installed without MCP; ``uv`` waits for the gateway."""
         ws = AppleContainerWorkspace()
         async with ws:
             backend = ws.get_backend()
+            self.assertIsNone(ws._gateway)
 
-            # ripgrep — installed by apt-get during bootstrap.
+            # ripgrep — installed by apt-get during base runtime setup.
             result = await backend.exec_shell(["rg", "--version"])
             self.assertTrue(
                 result.ok(),
@@ -349,7 +350,9 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
                 f"{result.stderr.decode(errors='replace')}",
             )
 
-            # uv — installed by the uv installer script during bootstrap.
+            await ws._ensure_mcp_gateway()
+
+            # uv — installed when the gateway venv is bootstrapped.
             result = await backend.exec_shell(["uv", "--version"])
             self.assertTrue(
                 result.ok(),
@@ -389,12 +392,12 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
             self.assertIn("tool_call_ok", combined)
 
     async def test_gateway_healthy_and_mcp_list(self) -> None:
-        """Gateway is healthy and ``list_mcps`` returns a list."""
+        """No MCP config lists nothing without launching the gateway."""
         ws = AppleContainerWorkspace()
         async with ws:
+            self.assertIsNone(ws._gateway)
             mcps = await ws.list_mcps()
-            self.assertIsInstance(mcps, list)
-            # After init, mcps may be empty or seeded — both are valid.
+            self.assertEqual(mcps, [])
 
     async def test_mcp_server_register_and_call(self) -> None:
         """Register a real MCP echo server, list its tools, call one."""

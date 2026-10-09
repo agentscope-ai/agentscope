@@ -147,12 +147,12 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.
 
-        First-time bootstrap (uv → gateway venv → agentscope → gateway
-        script upload) is driven by
-        :meth:`SandboxedWorkspaceBase._setup_mcp_gateway` once
+        First-time bootstrap is driven by the shared base once
         ``initialize`` has bound the backend and created the workspace
         layout (which lays down ``workdir`` / ``_gateway_home`` first),
-        so this hook only has to attach or create the sandbox. Every
+        so this hook only has to attach or create the sandbox. Builtin
+        Glob/Grep packages install even when no MCP is configured; the
+        gateway venv starts only when an MCP server needs it. Every
         bootstrap step is idempotent, so an interrupted bootstrap
         re-runs cleanly on the next ``initialize``.
         """
@@ -343,21 +343,37 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             f"(workspace_id={self.workspace_id!r})",
         )
 
-    def _bootstrap_commands(self) -> list[str]:
-        """Return the provisioning shell command sequence.
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Install OS packages used by builtin Grep.
 
-        Called once by :meth:`SandboxedWorkspaceBase._setup_mcp_gateway`
+        The default image runs as root, so no sudo is needed.
+        ``ripgrep`` backs Grep. ``curl`` and ``ca-certificates`` share
+        this apt transaction; the gateway uv installer needs them later,
+        but they are not a gateway process.
+        """
+        return [
+            "apt-get update -qq "
+            "&& apt-get install -y --no-install-recommends curl "
+            "ca-certificates ripgrep "
+            "&& rm -rf /var/lib/apt/lists/*",
+        ]
+
+    def _bootstrap_commands(self) -> list[str]:
+        """Return the MCP gateway venv command sequence.
+
+        Called by :meth:`SandboxedWorkspaceBase._setup_mcp_gateway`
         when the gateway script is missing (fresh sandbox, or a prior
         bootstrap that was interrupted before the script was written).
         The base class runs each command with
-        :attr:`_bootstrap_cmd_timeout` and then uploads the glob helper
-        and gateway script itself, so this hook only builds the command
-        list.
+        :attr:`_bootstrap_cmd_timeout` and then uploads the gateway
+        script itself, so this hook only builds the command list.
+        Builtin packages and the Glob helper are installed separately
+        by :meth:`_system_bootstrap_commands`.
 
         The workspace layout (``data/``, ``skills/``, ``sessions/``,
         gateway home) is created by the base class
         :meth:`_ensure_workspace_layout` before bootstrap runs, so
-        bootstrap only installs the runtime. ``uv`` lands at
+        bootstrap only installs the gateway runtime. ``uv`` lands at
         ``/usr/local/bin`` (on the default PATH, root needs no sudo) and
         is invoked bare, matching K8s/E2B.
 
@@ -371,13 +387,6 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
         return [
-            # System packages used by bootstrap and builtin tools. The
-            # default image runs as root, so no sudo is needed. ``ripgrep``
-            # backs the Grep tool.
-            "apt-get update -qq "
-            "&& apt-get install -y --no-install-recommends curl "
-            "ca-certificates ripgrep "
-            "&& rm -rf /var/lib/apt/lists/*",
             # Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
             # suppresses shell rc edits.
             "curl -LsSf https://astral.sh/uv/install.sh "
