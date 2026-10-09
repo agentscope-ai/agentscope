@@ -2,14 +2,42 @@
 """Unit tests for the batch ASR reference implementation."""
 
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentscope.asr import ASRModelBase, ASRResponse, OpenAIASRModel
 from agentscope.credential import OpenAICredential
+from agentscope.message import TextBlock
 
 
 class TestOpenAIASRModel(IsolatedAsyncioTestCase):
     """Test transcription without making network requests."""
+
+    def test_response_uses_timestamp_factory(self) -> None:
+        """Use the configurable timestamp factory for response creation."""
+        content = TextBlock(
+            text="Hello world",
+            id="text-id",
+            created_at="text-created-at",
+        )
+        with patch(
+            "agentscope._utils._common._timestamp_factory",
+            return_value="FROZEN-TS",
+        ):
+            response = ASRResponse(
+                content=content,
+                id="response-id",
+            )
+
+        self.assertEqual(
+            dict(response),
+            {
+                "content": content,
+                "id": "response-id",
+                "created_at": "FROZEN-TS",
+                "type": "asr",
+                "metadata": None,
+            },
+        )
 
     def make_model(
         self,

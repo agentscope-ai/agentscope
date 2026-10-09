@@ -29,7 +29,7 @@ class ASRModelCard(BaseModel):
         return cls(
             name=config["name"],
             label=config["label"],
-            input_types=config["input_types"],
+            input_types=config.get("input_types", []),
             output_types=config.get("output_types", ["text/plain"]),
             parameter_schema=parameter_class.model_json_schema(),
         )

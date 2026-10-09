@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from .._logging import logger
 from ..credential import CredentialBase
 from ._response import ASRResponse
 
@@ -18,8 +19,8 @@ if TYPE_CHECKING:
 class ASRModelBase(ABC):
     """Transcribe a complete audio file into text.
 
-    Streaming-input recognition has a different lifecycle and can extend this
-    interface without imposing connection or buffering semantics on batch APIs.
+    Streaming-input recognition requires a separate lifecycle and is outside
+    this batch-only contract.
     """
 
     class Parameters(BaseModel):
@@ -40,7 +41,7 @@ class ASRModelBase(ABC):
         cls,
         custom_yaml_dir: str | None = None,
     ) -> list["ASRModelCard"]:
-        """List the model cards beside a concrete implementation."""
+        """List model cards associated with a concrete implementation."""
         from ._model_card import ASRModelCard
 
         yaml_dir = (
@@ -48,10 +49,20 @@ class ASRModelBase(ABC):
             if custom_yaml_dir is not None
             else Path(inspect.getfile(cls)).parent / "_models"
         )
-        return [
-            ASRModelCard.from_yaml(str(path), cls.Parameters)
-            for path in sorted(yaml_dir.glob("*.yaml"))
-        ]
+        model_cards = []
+        for path in sorted(yaml_dir.glob("*.yaml")):
+            try:
+                model_cards.append(
+                    ASRModelCard.from_yaml(str(path), cls.Parameters),
+                )
+            # Keep one invalid card from hiding other valid cards.
+            # pylint: disable-next=broad-exception-caught
+            except Exception as error:
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.warning(
+                    f"Failed to load ASR model card {path}: {error}",
+                )
+        return model_cards
 
     @abstractmethod
     async def transcribe(
