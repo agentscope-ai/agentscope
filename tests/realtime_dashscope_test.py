@@ -27,6 +27,12 @@ from agentscope.message import (
 )
 
 CRED = DashScopeCredential(api_key="sk-x")
+WORKSPACE_HOST = "https://llm-workspace.cn-beijing.maas.aliyuncs.com"
+WORKSPACE_BASE_URL = f"{WORKSPACE_HOST}/compatible-mode/v1"
+WORKSPACE_CRED = DashScopeCredential(
+    api_key="sk-workspace",
+    base_url=WORKSPACE_BASE_URL,
+)
 TRANSCRIPTION_DONE = "conversation.item.input_audio_transcription.completed"
 AMBIENT_DELTA = "conversation.item.ambient_audio_transcription.delta"
 
@@ -63,38 +69,92 @@ class DashScopeCardsTest(unittest.TestCase):
     """Each adapter lists only its own cards, tagged with its type."""
 
     def test_omni_cards(self) -> None:
-        """The Omni adapter lists the four Omni cards."""
+        """The Omni adapter lists the five Omni cards."""
         self.assertListEqual(
             [
-                (c.name, c.model_type, c.supports_tools, c.max_audio_turns)
+                (
+                    c.name,
+                    c.model_type,
+                    c.protocol_variant,
+                    c.supports_tools,
+                    c.max_audio_turns,
+                )
                 for c in DashScopeRealtimeModel.list_models()
             ],
             [
                 (
                     "qwen-omni-turbo-realtime",
                     "dashscope_omni_realtime",
+                    "default",
                     False,
                     None,
                 ),
                 (
                     "qwen3-omni-flash-realtime",
                     "dashscope_omni_realtime",
+                    "default",
                     False,
                     8,
                 ),
                 (
                     "qwen3.5-omni-flash-realtime",
                     "dashscope_omni_realtime",
+                    "default",
                     True,
                     80,
                 ),
                 (
                     "qwen3.5-omni-plus-realtime",
                     "dashscope_omni_realtime",
+                    "default",
+                    True,
+                    100,
+                ),
+                (
+                    "qwen3.8-omni-flash-realtime",
+                    "dashscope_omni_realtime",
+                    "qwen_omni_v2",
                     True,
                     100,
                 ),
             ],
+        )
+
+    def test_qwen38_card_limits(self) -> None:
+        """The Qwen3.8 card exposes the documented audio limits."""
+        card = next(
+            card
+            for card in DashScopeRealtimeModel.list_models()
+            if card.name == "qwen3.8-omni-flash-realtime"
+        )
+
+        self.assertDictEqual(
+            {
+                "name": card.name,
+                "protocol_variant": card.protocol_variant,
+                "input_types": card.input_types,
+                "output_types": card.output_types,
+                "input_sample_rate": card.input_sample_rate,
+                "output_sample_rate": card.output_sample_rate,
+                "supports_tools": card.supports_tools,
+                "max_context_tokens": card.max_context_tokens,
+                "max_audio_turns": card.max_audio_turns,
+                "max_audio_duration_s": card.max_audio_duration_s,
+                "max_session_duration_s": card.max_session_duration_s,
+            },
+            {
+                "name": "qwen3.8-omni-flash-realtime",
+                "protocol_variant": "qwen_omni_v2",
+                "input_types": ["audio/pcm", "image/jpeg"],
+                "output_types": ["audio/pcm", "text/plain"],
+                "input_sample_rate": 16000,
+                "output_sample_rate": 24000,
+                "supports_tools": True,
+                "max_context_tokens": 196608,
+                "max_audio_turns": 100,
+                "max_audio_duration_s": 600,
+                "max_session_duration_s": 7200,
+            },
         )
 
     def test_audio_cards(self) -> None:
@@ -144,7 +204,7 @@ class DashScopeCardsTest(unittest.TestCase):
                     ],
                     "runtime_default": DashScopeRealtimeModel(
                         name,
-                        CRED,
+                        WORKSPACE_CRED,
                     ).parameters.voice,
                 }
                 for name in cards
@@ -181,6 +241,21 @@ class DashScopeCardsTest(unittest.TestCase):
                     "schema": {
                         "default": "Tina",
                         "enum": ["Tina", "Serena", "Ethan"],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "Tina",
+                },
+                "qwen3.8-omni-flash-realtime": {
+                    "schema": {
+                        "default": "Tina",
+                        "enum": [
+                            "Tina",
+                            "Serena",
+                            "Ryan",
+                            "Katerina",
+                            "Mia",
+                        ],
                         "title": "Voice",
                         "type": "string",
                     },
@@ -298,6 +373,10 @@ class DashScopeCardsTest(unittest.TestCase):
                     "http://localhost:8080/custom/dashscope/path",
                     "model-x",
                 ),
+                _realtime_url(
+                    WORKSPACE_BASE_URL,
+                    "qwen3.8-omni-flash-realtime",
+                ),
             ],
             [
                 "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
@@ -307,11 +386,38 @@ class DashScopeCardsTest(unittest.TestCase):
                 "wss://llm-beijing.cn-beijing.maas.aliyuncs.com"
                 "/api-ws/v1/realtime?model=model-x",
                 "ws://localhost:8080/api-ws/v1/realtime?model=model-x",
+                "wss://llm-workspace.cn-beijing.maas.aliyuncs.com"
+                "/api-ws/v1/realtime"
+                "?model=qwen3.8-omni-flash-realtime",
             ],
         )
 
         with self.assertRaisesRegex(ValueError, "Invalid DashScope"):
             _realtime_url("not-a-url", "model-x")
+
+    def test_qwen38_rejects_shared_dashscope_endpoints(self) -> None:
+        """Qwen3.8 requires a workspace-bound endpoint."""
+        for base_url in [
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+            (
+                "https://cn-hongkong.dashscope.aliyuncs.com"
+                "/compatible-mode/v1"
+            ),
+        ]:
+            with self.subTest(base_url=base_url):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "requires a workspace-specific DashScope base_url",
+                ):
+                    DashScopeRealtimeModel(
+                        "qwen3.8-omni-flash-realtime",
+                        DashScopeCredential(
+                            api_key="sk-x",
+                            base_url=base_url,
+                        ),
+                    )
 
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""
@@ -329,6 +435,7 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3-omni-flash-realtime": "DashScopeRealtimeModel",
                 "qwen3.5-omni-flash-realtime": "DashScopeRealtimeModel",
                 "qwen3.5-omni-plus-realtime": "DashScopeRealtimeModel",
+                "qwen3.8-omni-flash-realtime": "DashScopeRealtimeModel",
             },
         )
 
@@ -372,6 +479,52 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
         model = DashScopeRealtimeModel("qwen3-omni-flash-realtime", CRED)
         session = model._session_update("x", [{"type": "function"}])["session"]
         self.assertNotIn("tools", session)
+
+    def test_qwen38_payload(self) -> None:
+        """Qwen3.8 uses nested audio config and the current ASR model."""
+        model = DashScopeRealtimeModel(
+            "qwen3.8-omni-flash-realtime",
+            WORKSPACE_CRED,
+        )
+
+        self.assertDictEqual(
+            model._session_update("be nice", [{"type": "function"}]),
+            {
+                "type": "session.update",
+                "session": {
+                    "instructions": "be nice",
+                    "modalities": ["audio", "text"],
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "silence_duration_ms": 800,
+                    },
+                    "audio": {
+                        "input": {
+                            "format": {
+                                "type": "pcm",
+                                "sample_rate": 16000,
+                                "sample_format": "s16le",
+                                "channels": 1,
+                                "packing": "interleaved",
+                                "channel_layout": "mono",
+                            },
+                        },
+                        "output": {
+                            "voice": "Tina",
+                            "format": {
+                                "type": "pcm",
+                                "sample_rate": 24000,
+                            },
+                        },
+                    },
+                    "input_audio_transcription": {
+                        "model": "qwen3-asr-flash-realtime",
+                    },
+                    "tools": [{"type": "function"}],
+                },
+            },
+        )
 
     def test_audio_payload_with_smart_turn(self) -> None:
         """Audio session.update with smart_turn and a voiceprint."""
@@ -653,6 +806,26 @@ class DashScopeParseTest(unittest.TestCase):
             ],
             [None, None, me.ModelErrorEvent(code="E1", message="boom")],
         )
+
+
+class DashScopeResponseControlTest(IsolatedAsyncioTestCase):
+    """Response requests follow each model generation's wire shape."""
+
+    async def test_qwen38_response_request_has_no_legacy_config(self) -> None:
+        """Qwen3.8 reads modalities from the session configuration."""
+        model = DashScopeRealtimeModel(
+            "qwen3.8-omni-flash-realtime",
+            WORKSPACE_CRED,
+        )
+        sent: list[dict] = []
+
+        async def capture(payload: dict) -> None:
+            sent.append(payload)
+
+        model._send = capture  # type: ignore[method-assign]
+        await model.request_response()
+
+        self.assertListEqual(sent, [{"type": "response.create"}])
 
 
 class DashScopeAudioTextInputTest(IsolatedAsyncioTestCase):

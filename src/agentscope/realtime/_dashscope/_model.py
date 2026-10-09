@@ -17,13 +17,29 @@ from ...message import TextBlock, ToolCallBlock, ToolResultBlock
 
 _SESSION_READY_TIMEOUT_S = 15.0
 _REALTIME_PATH = "/api-ws/v1/realtime"
+_QWEN_OMNI_V2 = "qwen_omni_v2"
+_SHARED_DASHSCOPE_HOSTS = {
+    "cn-hongkong.dashscope.aliyuncs.com",
+    "dashscope.aliyuncs.com",
+    "dashscope-intl.aliyuncs.com",
+    "dashscope-us.aliyuncs.com",
+}
 
 
-def _realtime_url(base_url: str, model: str) -> str:
+def _realtime_url(
+    base_url: str,
+    model: str,
+    requires_workspace: bool = False,
+) -> str:
     """Build the DashScope realtime endpoint from a credential URL."""
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"Invalid DashScope base_url: {base_url!r}.")
+    if requires_workspace and parsed.hostname in _SHARED_DASHSCOPE_HOSTS:
+        raise ValueError(
+            f"{model} requires a workspace-specific DashScope "
+            f"base_url, not {parsed.netloc!r}.",
+        )
     scheme = "wss" if parsed.scheme == "https" else "ws"
     return f"{scheme}://{parsed.netloc}{_REALTIME_PATH}?model={model}"
 
@@ -62,6 +78,11 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         """Whether DashScope input transcription is enabled."""
         return self.parameters.input_audio_transcription
 
+    @property
+    def _uses_omni_v2_protocol(self) -> bool:
+        """Whether the model uses the current Qwen-Omni wire format."""
+        return self.card.protocol_variant == _QWEN_OMNI_V2
+
     def __init__(
         self,
         model: str,
@@ -82,6 +103,11 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 The model card, looked up by name if omitted.
         """
         super().__init__(model, credential, parameters, model_card)
+        _realtime_url(
+            credential.base_url,
+            model,
+            self._uses_omni_v2_protocol,
+        )
         self.parameters: DashScopeRealtimeModel.Parameters
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
@@ -120,7 +146,11 @@ class DashScopeRealtimeModel(RealtimeModelBase):
 
         credential: DashScopeCredential = self.credential  # type: ignore
         self._ws = await websockets.connect(
-            _realtime_url(credential.base_url, self.model),
+            _realtime_url(
+                credential.base_url,
+                self.model,
+                self._uses_omni_v2_protocol,
+            ),
             additional_headers={
                 "Authorization": f"Bearer "
                 f"{credential.api_key.get_secret_value()}",
@@ -228,12 +258,10 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         """Ask for a reply, cancelling one already in flight first."""
         if self._item_id:
             await self.cancel_response()
-        await self._send(
-            {
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]},
-            },
-        )
+        payload: dict[str, Any] = {"type": "response.create"}
+        if not self._uses_omni_v2_protocol:
+            payload["response"] = {"modalities": ["text", "audio"]}
+        await self._send(payload)
 
     async def cancel_response(self) -> None:
         """Cancel the reply in flight, if any."""
@@ -251,23 +279,59 @@ class DashScopeRealtimeModel(RealtimeModelBase):
     ) -> dict:
         """Build the ``session.update`` message."""
         p = self.parameters
-        session: dict[str, Any] = {
-            "instructions": instructions,
-            "modalities": ["audio", "text"],
-            "voice": p.voice,
-            "input_audio_format": f"pcm{self.input_sample_rate // 1000}",
-            "output_audio_format": f"pcm{self.output_sample_rate // 1000}",
-            "turn_detection": None
+        turn_detection = (
+            None
             if p.turn_detection == "none"
             else {
                 "type": p.turn_detection,
                 "threshold": p.vad_threshold,
                 "silence_duration_ms": p.vad_silence_duration_ms,
-            },
+            }
+        )
+        session: dict[str, Any] = {
+            "instructions": instructions,
+            "modalities": ["audio", "text"],
+            "turn_detection": turn_detection,
         }
+        if self._uses_omni_v2_protocol:
+            session["audio"] = {
+                "input": {
+                    "format": {
+                        "type": "pcm",
+                        "sample_rate": self.input_sample_rate,
+                        "sample_format": "s16le",
+                        "channels": 1,
+                        "packing": "interleaved",
+                        "channel_layout": "mono",
+                    },
+                },
+                "output": {
+                    "voice": p.voice,
+                    "format": {
+                        "type": "pcm",
+                        "sample_rate": self.output_sample_rate,
+                    },
+                },
+            }
+        else:
+            session.update(
+                {
+                    "voice": p.voice,
+                    "input_audio_format": (
+                        f"pcm{self.input_sample_rate // 1000}"
+                    ),
+                    "output_audio_format": (
+                        f"pcm{self.output_sample_rate // 1000}"
+                    ),
+                },
+            )
         if p.input_audio_transcription:
             session["input_audio_transcription"] = {
-                "model": "gummy-realtime-v1",
+                "model": (
+                    "qwen3-asr-flash-realtime"
+                    if self._uses_omni_v2_protocol
+                    else "gummy-realtime-v1"
+                ),
             }
         if tools and self.card.supports_tools:
             session["tools"] = tools
