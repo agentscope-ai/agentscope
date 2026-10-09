@@ -367,6 +367,38 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
         # Should ask for confirmation (safety check)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
+    async def test_allow_rule_rejects_path_traversal(self) -> None:
+        """An allow rule must not admit a path that escapes the approved
+        directory via ``..`` (see issue #3179).
+
+        Before the fix ``fnmatch`` matched the raw path string, so
+        ``/tmp/../etc/passwd`` matched the ``/tmp/**`` allow rule and was
+        wrongly allowed even though it resolves outside ``/tmp``.
+        """
+        self.engine.add_rule(
+            PermissionRule(
+                tool_name="Write",
+                rule_content="/tmp/**",
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+
+        # A legitimate file inside the approved directory is allowed.
+        decision = await self.engine.check_permission(
+            Write(),
+            {"file_path": "/tmp/test.txt"},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+        # A path that textually looks inside /tmp but resolves outside it
+        # via ".." must NOT be allowed by the allow rule.
+        decision = await self.engine.check_permission(
+            Write(),
+            {"file_path": "/tmp/../etc/passwd"},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
     async def test_dangerous_file_blocks_edit(self) -> None:
         """Test that Edit operations on dangerous files require
         confirmation."""
