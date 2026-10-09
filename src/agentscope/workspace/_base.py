@@ -322,6 +322,7 @@ class WorkspaceBase:
                 Cap on concurrently live *stateful* MCP instances.
                 ``None`` derives ``max(40, 2 * <stateful defaults>)``
                 so one session can always start its own seeded set.
+                Any explicit value, including ``0``, is used as given.
         """
         self.workspace_id = workspace_id or _generate_id()
         self.is_alive = False
@@ -331,10 +332,12 @@ class WorkspaceBase:
         self.skill_paths = [
             _normalize_local_path(path) for path in skill_paths or []
         ]
-        self.max_live_stateful_mcps = max_live_stateful_mcps or max(
-            _DEFAULT_MAX_LIVE_STATEFUL_MCPS,
-            2 * len([m for m in self.default_mcps if m.is_stateful]),
-        )
+        if max_live_stateful_mcps is None:
+            max_live_stateful_mcps = max(
+                _DEFAULT_MAX_LIVE_STATEFUL_MCPS,
+                2 * len([m for m in self.default_mcps if m.is_stateful]),
+            )
+        self.max_live_stateful_mcps = max_live_stateful_mcps
 
         self._mcp_specs = {}
         self._mcp_instances = {}
