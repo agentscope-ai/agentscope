@@ -1923,3 +1923,74 @@ class ChannelSessionLookupTest(IsolatedAsyncioTestCase):
                 chat_name="产品群",
             ),
         )
+
+
+class SessionOwnerScopeTest(IsolatedAsyncioTestCase):
+    """A preset session id must only ever address the caller's own row."""
+
+    async def asyncSetUp(self) -> None:
+        """Create a fresh in-memory storage."""
+        self._stack = AsyncExitStack()
+        self.storage = await self._stack.enter_async_context(
+            AsyncSQLAlchemyStorage(url="sqlite+aiosqlite:///:memory:"),
+        )
+
+    async def asyncTearDown(self) -> None:
+        """Close the storage."""
+        await self._stack.aclose()
+
+    async def _seed_owner(self) -> str:
+        """Create one session for ``ownerA`` and return its id."""
+        owner = await self.storage.upsert_session(
+            user_id="ownerA",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-A"),
+        )
+        self.assertIsNotNone(owner.id)
+        return owner.id
+
+    async def _steal(self, session_id: str) -> None:
+        """Try to overwrite ``ownerA``'s session as ``ownerB``."""
+        await self.storage.upsert_session(
+            user_id="ownerB",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-B"),
+            session_id=session_id,
+        )
+
+    async def test_owner_row_survives_a_foreign_attempt(self) -> None:
+        """A rejected steal must leave the owner's session untouched."""
+        from sqlalchemy.exc import IntegrityError
+
+        owner_id = await self._seed_owner()
+
+        with self.assertRaises(IntegrityError):
+            await self._steal(owner_id)
+
+        still = await self.storage.get_session("ownerA", "agent", owner_id)
+        self.assertIsNotNone(still)
+        self.assertEqual(still.config.workspace_id, "ws-A")
+        self.assertEqual(still.user_id, "ownerA")
+
+        held = [
+            _.id for _ in await self.storage.list_sessions("ownerB", "agent")
+        ]
+        self.assertEqual(held, [])
+
+    async def test_owner_can_still_update_its_own_session(self) -> None:
+        """The in-place update path for a genuinely owned row is kept."""
+        owner_id = await self._seed_owner()
+
+        updated = await self.storage.upsert_session(
+            user_id="ownerA",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="ws-A2"),
+            session_id=owner_id,
+        )
+
+        self.assertEqual(updated.id, owner_id)
+        self.assertEqual(updated.config.workspace_id, "ws-A2")
+        self.assertEqual(
+            len(await self.storage.list_sessions("ownerA", "agent")),
+            1,
+        )
