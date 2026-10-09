@@ -56,11 +56,11 @@ class ASRModelBase(ABC):
                     ASRModelCard.from_yaml(str(path), cls.Parameters),
                 )
             # Keep one invalid card from hiding other valid cards.
-            # pylint: disable-next=broad-exception-caught
             except Exception as error:
-                # pylint: disable-next=logging-fstring-interpolation
                 logger.warning(
-                    f"Failed to load ASR model card {path}: {error}",
+                    "Failed to load ASR model card %s: %s",
+                    path,
+                    error,
                 )
         return model_cards
 
