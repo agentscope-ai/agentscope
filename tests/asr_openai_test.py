@@ -57,12 +57,41 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
     async def test_transcribes_audio(self) -> None:
         """Transcribe audio and send the default model and format."""
         model = self.make_model()
-        response = await model.transcribe(b"audio bytes", "sample.mp3")
+        with (
+            patch(
+                "agentscope._utils._common._id_factory",
+                return_value="text-id",
+            ),
+            patch(
+                "agentscope._utils._common._timestamp_factory",
+                return_value="FROZEN-TS",
+            ),
+            patch(
+                "agentscope.asr._response._get_timestamp",
+                return_value="response-id",
+            ),
+        ):
+            response = await model.transcribe(
+                b"audio bytes",
+                "sample.mp3",
+            )
 
         self.assertIsInstance(model, ASRModelBase)
         self.assertIsInstance(response, ASRResponse)
-        self.assertEqual(response.content.text, "Hello world")
-        self.assertEqual(response.type, "asr")
+        self.assertEqual(
+            dict(response),
+            {
+                "content": TextBlock(
+                    text="Hello world",
+                    id="text-id",
+                    created_at="FROZEN-TS",
+                ),
+                "id": "response-id",
+                "created_at": "FROZEN-TS",
+                "type": "asr",
+                "metadata": None,
+            },
+        )
         model.client.audio.transcriptions.create.assert_awaited_once_with(
             file=("sample.mp3", b"audio bytes"),
             model="gpt-4o-mini-transcribe",
@@ -105,15 +134,39 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
             [OpenAIASRModel],
         )
         cards = OpenAICredential.list_asr_models()
+        parameter_schema = OpenAIASRModel.Parameters.model_json_schema()
         self.assertEqual(
-            {card.name for card in cards},
-            {"gpt-4o-mini-transcribe", "gpt-4o-transcribe"},
-        )
-        self.assertTrue(all(card.type == "asr_model" for card in cards))
-        self.assertTrue(all("audio/wav" in card.input_types for card in cards))
-        self.assertTrue(
-            all(
-                "language" in card.parameter_schema["properties"]
-                for card in cards
-            ),
+            [card.model_dump(mode="json") for card in cards],
+            [
+                {
+                    "type": "asr_model",
+                    "name": "gpt-4o-mini-transcribe",
+                    "label": "GPT-4o Mini Transcribe",
+                    "input_types": [
+                        "audio/flac",
+                        "audio/mpeg",
+                        "audio/mp4",
+                        "audio/ogg",
+                        "audio/wav",
+                        "audio/webm",
+                    ],
+                    "output_types": ["text/plain"],
+                    "parameter_schema": parameter_schema,
+                },
+                {
+                    "type": "asr_model",
+                    "name": "gpt-4o-transcribe",
+                    "label": "GPT-4o Transcribe",
+                    "input_types": [
+                        "audio/flac",
+                        "audio/mpeg",
+                        "audio/mp4",
+                        "audio/ogg",
+                        "audio/wav",
+                        "audio/webm",
+                    ],
+                    "output_types": ["text/plain"],
+                    "parameter_schema": parameter_schema,
+                },
+            ],
         )

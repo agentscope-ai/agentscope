@@ -11,11 +11,22 @@ class ASRModelCard(BaseModel):
     """A model and its supported audio input types."""
 
     type: Literal["asr_model"] = "asr_model"
+    """The model card type discriminator."""
+
     name: str
+    """The model identifier used in provider API calls."""
+
     label: str
+    """The human-readable model label."""
+
     input_types: list[str] = Field(default_factory=list)
+    """The supported audio input media types."""
+
     output_types: list[str] = Field(default_factory=lambda: ["text/plain"])
+    """The supported transcription output media types."""
+
     parameter_schema: dict
+    """The JSON schema for provider-specific parameters."""
 
     @classmethod
     def from_yaml(
