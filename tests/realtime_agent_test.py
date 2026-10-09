@@ -1290,6 +1290,63 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
     """Verify user reply boundaries around delayed transcription."""
 
+    async def test_transcription_after_transport_end_keeps_turn(self) -> None:
+        """A late transcript stays in the user reply already closed."""
+        model = ScriptedModel(
+            [
+                [
+                    me.SpeechStartedEvent(item_id="u1"),
+                    me.SpeechEndedEvent(item_id="u1"),
+                ],
+            ],
+            input_audio_transcription=True,
+        )
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async def _collect() -> list[tuple[Any, ...]]:
+            transport = FakeTransport(frames=1)
+            async with transport:
+                return [
+                    (
+                        event.type,
+                        getattr(event, "role", None),
+                        getattr(event, "delta", None),
+                        getattr(event, "finished_reason", None),
+                    )
+                    async for event in agent.reply_stream(transport)
+                    if getattr(event, "reply_id", None) == "u1"
+                ]
+
+        async with agent:
+            first_events = await _collect()
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id="u1", text="hello"),
+            )
+            next_events = await _collect()
+
+        self.assertEqual(
+            {
+                "first_events": first_events,
+                "next_events": next_events,
+                "context": [
+                    (message.role, message.id, message.get_text_content())
+                    for message in agent.state.context
+                ],
+            },
+            {
+                "first_events": [
+                    ("REPLY_START", "user", None, None),
+                    ("REPLY_END", None, None, "completed"),
+                ],
+                "next_events": [
+                    ("TEXT_BLOCK_START", None, None, None),
+                    ("TEXT_BLOCK_DELTA", None, "hello", None),
+                    ("TEXT_BLOCK_END", None, None, None),
+                ],
+                "context": [("user", "u1", "hello")],
+            },
+        )
+
     async def test_user_reply_ends_after_transcription_result(self) -> None:
         """Success and failure both close their delayed user replies."""
         model = ScriptedModel(

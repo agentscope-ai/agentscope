@@ -452,7 +452,6 @@ class RealtimeAgent:
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
             self._end_user_turn()
-            self._user_turn = ""
             while not self._out.empty():
                 queued = self._out.get_nowait()
                 self._yielded_checkpoint = (

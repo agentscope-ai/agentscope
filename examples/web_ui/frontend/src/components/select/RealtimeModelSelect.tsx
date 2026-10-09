@@ -110,7 +110,7 @@ export function RealtimeModelSelect({
 																handleSelect(credential.id, model)
 															}
 														>
-															{model.label}
+															{model.name}
 														</DropdownMenuItem>
 													))}
 												</DropdownMenuSubContent>
