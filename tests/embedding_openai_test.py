@@ -2,6 +2,7 @@
 # pylint: disable=protected-access
 """Unit tests for OpenAIEmbeddingModel."""
 from dataclasses import asdict
+import json
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -62,6 +63,78 @@ class OpenAIListModelsTest(IsolatedAsyncioTestCase):
 
 class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
     """Test OpenAI embedding API calls with mocked responses."""
+
+    async def _check_sdk_usage(
+        self,
+        include_usage: bool,
+        tokens: int | None,
+    ) -> None:
+        """Exercise SDK parsing with an offline compatible endpoint."""
+        import httpx
+        import openai
+
+        payload: dict[str, Any] = {
+            "object": "list",
+            "model": "compatible-embedding",
+            "data": [
+                {"object": "embedding", "index": 0, "embedding": [0.1, 0.2]},
+            ],
+        }
+        if include_usage:
+            payload["usage"] = (
+                {"prompt_tokens": tokens, "total_tokens": tokens}
+                if tokens is not None
+                else None
+            )
+        requests = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.method, "POST")
+            self.assertEqual(request.url.path, "/v1/embeddings")
+            self.assertEqual(json.loads(request.content)["input"], ["hello"])
+            requests.append(request)
+            return httpx.Response(200, json=payload)
+
+        async with openai.AsyncClient(
+            api_key="test-key",
+            base_url="https://embedding.invalid/v1",
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handle),
+            ),
+            max_retries=0,
+        ) as client:
+            with patch("openai.AsyncClient", return_value=client):
+                model = OpenAIEmbeddingModel(
+                    credential=OpenAICredential(api_key="test-key"),
+                    model="compatible-embedding",
+                    dimensions=2,
+                    max_retries=0,
+                )
+            result = await model(["hello"])
+
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(result.embeddings, [[0.1, 0.2]])
+        self.assertEqual(result.source, "api")
+        self.assertIsNotNone(result.usage)
+        self.assertEqual(result.usage.tokens, tokens)
+        self.assertIsInstance(result.usage.time, float)
+        self.assertGreaterEqual(result.usage.time, 0)
+
+    async def test_sdk_omitted_usage(self) -> None:
+        """Omitted usage must not discard otherwise valid embeddings."""
+        await self._check_sdk_usage(include_usage=False, tokens=None)
+
+    async def test_sdk_null_usage(self) -> None:
+        """Explicit null usage leaves the token count unknown."""
+        await self._check_sdk_usage(include_usage=True, tokens=None)
+
+    async def test_sdk_reported_usage(self) -> None:
+        """Reported token counts are preserved after SDK parsing."""
+        await self._check_sdk_usage(include_usage=True, tokens=7)
+
+    async def test_sdk_zero_usage(self) -> None:
+        """A reported zero is distinct from an unknown token count."""
+        await self._check_sdk_usage(include_usage=True, tokens=0)
 
     @patch("openai.AsyncClient")
     async def test_single_batch(self, mock_client_cls: Any) -> None:
