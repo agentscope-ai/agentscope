@@ -66,6 +66,12 @@ the adapter keeps the same workspace host and derives this WebSocket URL:
 wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen3.8-omni-flash-realtime
 ```
 
+For the Singapore region, use the corresponding workspace URL:
+
+```bash
+export DASHSCOPE_BASE_URL=https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+```
+
 ### Tools
 
 The example registers `Bash`, `Edit`, `Write` and `Read`. When the model calls

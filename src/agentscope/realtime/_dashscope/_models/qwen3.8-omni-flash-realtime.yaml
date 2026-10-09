@@ -2,7 +2,6 @@ type: realtime_model
 name: qwen3.8-omni-flash-realtime
 label: Qwen3.8-Omni-Flash Realtime
 status: active
-protocol_variant: qwen_omni_v2
 
 input_types:
   - audio/pcm

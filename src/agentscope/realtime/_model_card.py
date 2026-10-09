@@ -26,10 +26,6 @@ class RealtimeModelCard(BaseModel):
 
     name: str = Field(description="The model identifier.")
     label: str = Field(description="Human-readable label for the UI.")
-    protocol_variant: str = Field(
-        default="default",
-        description="Wire protocol variant used by the model adapter.",
-    )
 
     status: Literal["active", "deprecated", "sunset"] = Field(
         default="active",

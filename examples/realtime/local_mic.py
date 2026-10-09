@@ -33,10 +33,13 @@ async def main() -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise SystemExit("Set DASHSCOPE_API_KEY first.")
-    credential_kwargs: dict[str, str] = {}
-    if base_url := os.environ.get("DASHSCOPE_BASE_URL"):
-        credential_kwargs["base_url"] = base_url
-    credential = DashScopeCredential(api_key=api_key, **credential_kwargs)
+    credential = DashScopeCredential(
+        api_key=api_key,
+        base_url=os.environ.get(
+            "DASHSCOPE_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+    )
 
     # Resolve the model class from its card rather than hard-coding it:
     # a credential can serve several realtime APIs, and each card carries
