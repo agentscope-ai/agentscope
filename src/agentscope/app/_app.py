@@ -44,7 +44,7 @@ from .message_bus import MessageBus
 from .storage import StorageBase
 from ..agent import Agent
 from ..credential import CredentialFactory, CredentialBase
-from ..rag import ApproxTokenChunker, ChunkerBase, ParserBase, TextParser
+from ..rag import ApproxTokenChunker, ChunkerBase, ParserBase, TextParser, HtmlParser
 
 from .._logging import logger
 from .._version import __version__
@@ -374,7 +374,7 @@ def create_app(
         app.state.knowledge_parsers = (
             knowledge_parsers
             if knowledge_parsers is not None
-            else [TextParser()]
+            else [TextParser(), HtmlParser()]
         )
         chunker_classes = list(
             knowledge_chunkers

@@ -895,28 +895,58 @@ class RAGMiddleware(MiddlewareBase):
             msgs = inputs
 
         if msgs:
-            # Deepcopy because we are about to mutate the first text block of
-            # each message to prepend the speaker name — never touch the
-            # caller's message objects.
-            # TODO: one message should embed into one vector; the
-            # embedding API only does one vector per block for now.
+            # One message should embed into one vector. Since the embedding API
+            # only does one vector per block for now, we merge all textual
+            # information inside a message into a single TextBlock, while
+            # keeping DataBlocks intact in their original relative positions.
             blocks: list[TextBlock | DataBlock] = []
             for msg in deepcopy(msgs):
-                # Blank text is not a query.  Dropping it — instead of
-                # labelling it — keeps an image-only message a pure
-                # multimodal query rather than a "{name}:" text search.
-                content = [
-                    b
-                    for b in msg.content
-                    if not isinstance(b, TextBlock) or b.text.strip()
-                ]
-                first_text = next(
-                    (b for b in content if isinstance(b, TextBlock)),
-                    None,
-                )
-                if first_text:
-                    first_text.text = f"{msg.name}: {first_text.text}"
-                blocks.extend(content)
+                text_parts = []
+                for b in msg.content:
+                    if getattr(b, "type", "") == "text":
+                        text = getattr(b, "text", "")
+                        if text.strip():
+                            text_parts.append(text.strip())
+                    elif getattr(b, "type", "") == "tool_call":
+                        text_parts.append(
+                            f"[Tool Call: {getattr(b, 'name', '')}] "
+                            f"{getattr(b, 'input', '')}",
+                        )
+                    elif getattr(b, "type", "") == "tool_result":
+                        out = getattr(b, "output", "")
+                        if isinstance(out, str):
+                            out_str = out
+                        elif isinstance(out, list):
+                            out_str = "\n".join(
+                                getattr(ob, "text", "")
+                                for ob in out
+                                if getattr(ob, "type", "") == "text"
+                            )
+                        else:
+                            out_str = str(out)
+                        text_parts.append(
+                            f"[Tool Result: {getattr(b, 'name', '')}] "
+                            f"{out_str}",
+                        )
+                    elif getattr(b, "type", "") == "thinking":
+                        text_parts.append(
+                            f"[Thinking] {getattr(b, 'thinking', '')}",
+                        )
+
+                combined_text = "\n".join(text_parts) if text_parts else ""
+
+                new_content = []
+                text_inserted = False
+                for b in msg.content:
+                    if getattr(b, "type", "") == "data":
+                        new_content.append(b)
+                    elif combined_text and not text_inserted:
+                        new_content.append(
+                            TextBlock(text=f"{msg.name}: {combined_text}"),
+                        )
+                        text_inserted = True
+
+                blocks.extend(new_content)
 
             self._cached_inputs = blocks
 

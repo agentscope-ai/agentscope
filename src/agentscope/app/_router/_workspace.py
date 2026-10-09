@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
 import mimetypes
+from typing import Any, AsyncIterator
 from urllib.parse import quote
 
 from fastapi import (
@@ -11,6 +12,7 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -26,7 +28,7 @@ from ..deps import (
 from ..hub import SkillHubBase
 from .._service import WorkspaceService, WorkspaceStatus
 from .._service._workspace import SkillUploadError, UploadManifest
-from ..storage import MCPRecord, StorageBase
+from ..storage import MCPRecord, SkillRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
 from ._schema import (
@@ -324,6 +326,7 @@ async def upload_skill(
     status_code=status.HTTP_201_CREATED,
 )
 async def add_skills_from_library(
+    request: Request,
     body: AddSkillsFromLibraryRequest,
     agent_id: str = Query(...),
     session_id: str = Query(...),
@@ -351,25 +354,55 @@ async def add_skills_from_library(
         if record is None:
             failed[skill_id] = "Not in your library."
             continue
-        hub = skill_hubs.get(record.hub_id or "")
-        if hub is None:
-            failed[
-                record.name
-            ] = f"Its hub {record.hub_id!r} is no longer registered."
-            continue
-        try:
+        blob_store = getattr(request.app.state, "blob_store", None)
+
+        async def _install_from_hub(r: SkillRecord) -> bool:
+            hub = skill_hubs.get(r.hub_id or "")
+            if hub is None:
+                failed[
+                    r.name
+                ] = f"Its hub {r.hub_id!r} is no longer registered."
+                return False
             archive = await hub.download(
                 user_id,
-                record.card_id or record.name,
-                record.version,
+                r.card_id or r.name,
+                r.version,
             )
             await workspace_service.install_skill(
                 workspace,
                 archive.stream,
                 archive.format,
-                record.name,
+                r.name,
                 agent_id=agent_id,
             )
+            return True
+
+        try:
+            if getattr(record, "archive_uri", None) and blob_store:
+
+                async def _iter_blob(fp: Any) -> AsyncIterator[bytes]:
+                    while True:
+                        data = await fp.read(1024 * 1024)
+                        if not data:
+                            break
+                        yield data
+
+                try:
+                    async with blob_store.open(record.archive_uri) as fp:
+                        await workspace_service.install_skill(
+                            workspace,
+                            _iter_blob(fp),
+                            getattr(record, "archive_format", "zip"),
+                            record.name,
+                            agent_id=agent_id,
+                        )
+                except Exception:
+                    # Fallback to hub download if blob read fails
+                    if not await _install_from_hub(record):
+                        continue
+            else:
+                if not await _install_from_hub(record):
+                    continue
         except Exception as e:  # pylint: disable=broad-except
             failed[record.name] = _describe_exception(e)
             continue

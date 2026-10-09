@@ -262,7 +262,16 @@ class TeamMemberLoopMiddlewareTest(IsolatedAsyncioTestCase):
             {
                 "reasons": [ReplyFinishedReason.ERROR],
                 "error_type": "internal",
-                "team_say_calls": [],
+                "team_say_calls": [
+                    {
+                        "content": (
+                            "ESCALATION PROTOCOL: I have failed to "
+                            "complete my task properly after 2 attempts. "
+                            "I require assistance or reassignment."
+                        ),
+                        "to": "Leader",
+                    },
+                ],
                 "model_calls": 3,
             },
         )

@@ -15,10 +15,14 @@ class SkillRecord(_RecordBase):
     says it does, and the archive is re-fetched from the hub when the
     skill is actually put into a workspace.
 
-    TODO: store the archive so the library survives the hub dropping the
-    card or going offline. That needs a blob store, and the one this app
-    has is only wired up alongside ``knowledge_base_manager``.
     """
+
+    archive_uri: str | None = Field(default=None)
+    """The blob store URI where the downloaded archive is stored, allowing
+    skills to survive the hub going offline."""
+
+    archive_format: str | None = Field(default=None)
+    """The format of the downloaded archive (e.g. 'zip', 'tar')."""
 
     user_id: str
 
