@@ -334,7 +334,6 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
-                "finished_reason": None,
                 "structured_output": None,
                 "error": None,
             },
@@ -976,6 +975,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
             },
             {
                 **msg_base,

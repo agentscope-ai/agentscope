@@ -15,8 +15,7 @@ export interface CredentialWithModels {
  *
  * One credential list plus one model list per provider — the most expensive
  * fan-out on the page, and every model picker in the app mounts it. Cached
- * under the shared default window and re-fetched on demand through
- * `refetch`, which is what the "credential just added" trigger calls.
+ * under a shared query key that credential mutations invalidate.
  */
 async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 	const { credentials } = await credentialApi.list();
@@ -54,7 +53,7 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 export const AVAILABLE_MODELS_KEY = ['available-models'];
 
 export function useAvailableModels() {
-	const { data, isPending, error, refetch } = useQuery({
+	const { data, isPending, error } = useQuery({
 		queryKey: AVAILABLE_MODELS_KEY,
 		queryFn: fetchGroups,
 	});
@@ -63,6 +62,5 @@ export function useAvailableModels() {
 		groups: data ?? {},
 		loading: isPending,
 		error: error as Error | null,
-		refetch: () => void refetch(),
 	};
 }

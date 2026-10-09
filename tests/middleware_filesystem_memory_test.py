@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
+import asyncio
 import os
 import shutil
 import tempfile
@@ -105,6 +106,11 @@ class _DummyTool(ToolBase):
     is_external_tool: bool = False
     is_mcp: bool = False
 
+    def __init__(self, memory: AgenticMemoryMiddleware) -> None:
+        """Keep the middleware whose retrieval the call waits for."""
+        super().__init__()
+        self.memory = memory
+
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
@@ -139,6 +145,10 @@ class _DummyTool(ToolBase):
             `ToolChunk`:
                 The fixed tool output.
         """
+        # Let retrieval land before the next reasoning step polls it.
+        task = self.memory._retrieval_task  # pylint: disable=protected-access
+        if task is not None:
+            await asyncio.wait_for(task, timeout=10)
         return ToolChunk(content=[TextBlock(text="tool result")])
 
 
@@ -287,7 +297,7 @@ def _write_memory_file(
     """
     path = os.path.join(memory_dir, filename)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(
             "---\n"
             f"name: {filename}\n"
@@ -425,7 +435,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "what do you remember?"))
@@ -542,7 +552,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         await agent.reply(UserMsg("user", "recall memory"))
@@ -563,6 +573,47 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                     "has_real_memory": True,
                     "has_missing_memory": False,
                 },
+            ],
+        )
+
+    async def test_agent_deduplicates_selected_memory_filenames(self) -> None:
+        """Duplicate selections should not consume the retrieval budget."""
+        memory_dir = os.path.join(self.temp_dir, "Memory")
+        os.makedirs(memory_dir)
+        for name in ["a", "b"]:
+            _write_memory_file(
+                memory_dir,
+                f"{name}.md",
+                f"Memory {name}",
+                "project",
+                f"Fact {name}.",
+            )
+
+        model = _RecordingMockModel()
+        model.set_structured_response(
+            _structured_response(["a.md"] * 5 + ["b.md"]),
+        )
+        model.set_responses([_tool_response(), _text_response("done")])
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        agent = self._make_agent(
+            model,
+            middleware,
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
+        )
+
+        await agent.reply(UserMsg("user", "recall my project"))
+        a_path, b_path = (
+            os.path.join(memory_dir, _) for _ in ["a.md", "b.md"]
+        )
+        self.assertListEqual(
+            _hint_texts(agent),
+            [
+                f"Memory (saved today): {a_path}:\n\n"
+                "---\nname: a.md\ndescription: Memory a\ntype: project\n"
+                "---\n\nFact a.\n\n\n---\n\n"
+                f"Memory (saved today): {b_path}:\n\n"
+                "---\nname: b.md\ndescription: Memory b\ntype: project\n"
+                "---\n\nFact b.\n",
             ],
         )
 
@@ -593,7 +644,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "ignore memories"))
@@ -635,7 +686,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "hello"))
@@ -745,7 +796,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "remember?"))

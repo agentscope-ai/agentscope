@@ -123,7 +123,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("cat file.txt | grep error", []),
             ("docker ps | grep nginx", ["docker ps"]),
-            ("npm run build | tee output.log", ["npm run"]),
+            ("npm run build | tee output.log", ["npm run", "tee output.log"]),
         ]
 
         for command, expected in test_cases:
@@ -140,7 +140,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
             ),
             (
                 "npm install && npm run build | tee log.txt",
-                ["npm install", "npm run"],
+                ["npm install", "npm run", "tee log.txt"],
             ),
         ]
 
@@ -223,8 +223,6 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "git log",
             "git diff",
             "git show",
-            "git branch",
-            "git remote -v",
             "git log --oneline",
         ]
         for cmd in read_only_commands:
@@ -280,6 +278,48 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 self.assertFalse(
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_tee_writes_through_are_not_read_only(self) -> None:
+        """Test commands writing through ``tee`` are not read-only."""
+        writing_commands = [
+            "echo x | tee out.txt",
+            "echo x | tee -a out.txt",
+            "echo x | tee /tmp/out.txt",
+            "cat README.md | tee /tmp/out.txt",
+            "printf hi | tee /tmp/out.txt",
+        ]
+        for cmd in writing_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_mutating_git_commands_are_not_read_only(self) -> None:
+        """Git subcommands that mutate by argument skip the fast path."""
+        expected = {
+            "git branch -D main": False,
+            "git branch -vD x": False,
+            "git tag -d v1": False,
+            "git remote add o u": False,
+            "git reflog expire --all": False,
+            "git grep -Otouch foo": False,
+            "git grep -iO touch foo": False,
+            "git grep '-Otouch' foo": False,
+            "git grep --open-files-in-pager=touch foo": False,
+            "git diff --output=/tmp/x": False,
+            "git log --output ~/.bashrc": False,
+            "git status": True,
+            "git log": True,
+            "git log --oneline -n 5": True,
+            "git grep -n foo": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
                 )
 
     async def test_single_read_only_docker_commands(self) -> None:
@@ -881,6 +921,168 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 )
                 self.assertIsNotNone(result)
                 self.assertIn(expected_substring, result)
+
+    async def test_denylist_every_e_expression(self) -> None:
+        """Test denylist: every -e expression is checked, not only the 1st."""
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '/x/w /tmp/out' f",
+                self.dangerous_files,
+            ),
+            "sed write operation (w/W) not allowed",
+        )
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '1e id' f",
+                self.dangerous_files,
+            ),
+            "sed expression '1e id' not in allowlist",
+        )
+        self.assertIsNone(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e 's/x/y/g' f",
+                self.dangerous_files,
+            ),
+        )
+
+    async def test_long_option_with_inline_value(self) -> None:
+        """Test long options that carry their value after an '='.
+
+        ``shlex`` keeps such an option and its value in one token, so a value
+        that is a sed script, a backup suffix or a script file has to be split
+        off before the option is recognised -- otherwise both disappear from
+        the analysis and the command they belong to goes unchecked.
+        """
+        cases = [
+            (
+                "sed -n --expression='/bin/sh/e' -e '1p' notes.txt",
+                "sed -n -e '1p' -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed --file=script.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+            (
+                "sed --expression='/bin/sh/e' notes.txt",
+                "sed --expression '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                # An unchecked long option leaves the *filename* to be judged
+                # as the expression, so plain line printing is flagged too.
+                "sed -n --expression='5p' notes.txt",
+                "sed -n '5p' notes.txt",
+                None,
+            ),
+        ]
+        for inline, separated, expected in cases:
+            with self.subTest(inline=inline):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        inline,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_short_option_with_attached_value(self) -> None:
+        """Attached short-option values match their separated forms."""
+        cases = [
+            (
+                "sed -e's/a/b/' notes.txt",
+                "sed -e 's/a/b/' notes.txt",
+                None,
+            ),
+            (
+                "sed -ne'5p' notes.txt",
+                "sed -n -e '5p' notes.txt",
+                None,
+            ),
+            (
+                "sed -e'/bin/sh/e' notes.txt",
+                "sed -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed -i.bak 's/x/y/' .env",
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -fscript.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+        ]
+        for attached, separated, expected in cases:
+            with self.subTest(attached=attached):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        attached,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_separated_backup_suffix(self) -> None:
+        """A separated dotted -i suffix is a backup suffix, not a script."""
+        cases = [
+            (
+                "sed -i .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .orig 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed --in-place .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -i bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                # A dot inside a script keeps the token unconsumed.
+                "sed -i '/example.com/d' notes.txt",
+                "sed expression '/example.com/d' not in allowlist",
+            ),
+        ]
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        cmd,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
 
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""

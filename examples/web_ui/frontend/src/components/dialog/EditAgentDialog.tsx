@@ -57,9 +57,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				name: d.name,
 				system_prompt: d.system_prompt,
 			},
-			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
-			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
-			invite_config: { ...base.invite_config, ...(d.invite_config ?? {}) },
+			context_config: { ...base.context_config, ...d.chat_config.context_config },
+			react_config: { ...base.react_config, ...d.chat_config.react_config },
+			invite_config: { ...base.invite_config, ...d.chat_config.invite_config },
 		});
 		setErrorMsg('');
 	}, [open, schema, agent]);
@@ -83,9 +83,11 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 				{
 					name,
 					system_prompt: values.identity.system_prompt as string | undefined,
-					context_config: values.context_config as unknown as ContextConfig,
-					react_config: values.react_config as unknown as ReActConfig,
-					invite_config: values.invite_config as unknown as InviteConfig,
+					chat_config: {
+						context_config: values.context_config as unknown as ContextConfig,
+						react_config: values.react_config as unknown as ReActConfig,
+						invite_config: values.invite_config as unknown as InviteConfig,
+					},
 				},
 				{ silent: true },
 			);

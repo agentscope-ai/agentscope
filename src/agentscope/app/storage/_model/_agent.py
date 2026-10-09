@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent storage class."""
-from typing import Literal, Self
+import warnings
+from typing import Any, Literal, Self
 
 from pydantic import Field, BaseModel, model_validator
 from pydantic.json_schema import SkipJsonSchema
@@ -62,6 +63,34 @@ class InviteConfig(BaseModel):
         return self
 
 
+class AgentChatConfig(BaseModel):
+    """The settings that apply when the agent talks in text.
+
+    Grouped in their own sub-model so a second interaction mode — a
+    realtime voice one, whose context management and parameters differ
+    from the text loop's — adds a block beside this one instead of
+    widening :class:`AgentData` with fields that only apply to one mode.
+    """
+
+    context_config: ContextConfig = Field(
+        default_factory=ContextConfig,
+        description="The context config for the agent.",
+        title="Context Config",
+    )
+
+    react_config: ReActConfig = Field(
+        default_factory=ReActConfig,
+        description="The react config for the agent.",
+        title="React Config",
+    )
+
+    invite_config: InviteConfig = Field(
+        default_factory=InviteConfig,
+        description="The invite config for the agent.",
+        title="Invite Config",
+    )
+
+
 class AgentData(BaseModel):
     """The agent data model."""
 
@@ -92,21 +121,65 @@ class AgentData(BaseModel):
         json_schema_extra={"format": "textarea"},
     )
 
-    context_config: ContextConfig = Field(
-        description="The context config for the agent.",
-        title="Context Config",
+    chat_config: AgentChatConfig = Field(
+        default_factory=AgentChatConfig,
+        description="The settings for the agent's text conversations.",
+        title="Chat Config",
     )
 
-    react_config: ReActConfig = Field(
-        description="The react config for the agent.",
-        title="React Config",
-    )
+    @property
+    def context_config(self) -> ContextConfig:
+        """Return the deprecated flat context configuration."""
+        warnings.warn(
+            "AgentData.context_config is deprecated; use "
+            "AgentData.chat_config.context_config instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.chat_config.context_config
 
-    invite_config: InviteConfig = Field(
-        default_factory=InviteConfig,
-        description="The invite config for the agent.",
-        title="Invite Config",
-    )
+    @property
+    def react_config(self) -> ReActConfig:
+        """Return the deprecated flat ReAct configuration."""
+        warnings.warn(
+            "AgentData.react_config is deprecated; use "
+            "AgentData.chat_config.react_config instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.chat_config.react_config
+
+    @property
+    def invite_config(self) -> InviteConfig:
+        """Return the deprecated flat invite configuration."""
+        warnings.warn(
+            "AgentData.invite_config is deprecated; use "
+            "AgentData.chat_config.invite_config instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.chat_config.invite_config
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_configs(cls, data: Any) -> Any:
+        """Fold deprecated flat configs into ``chat_config``."""
+        if not isinstance(data, dict):
+            return data
+        legacy = {
+            key: data[key]
+            for key in ("context_config", "react_config", "invite_config")
+            if key in data
+        }
+        if not legacy:
+            return data
+
+        chat_config = data.get("chat_config") or {}
+        if not isinstance(chat_config, dict):
+            chat_config = chat_config.model_dump()
+        data = {k: v for k, v in data.items() if k not in legacy}
+        data["chat_config"] = {**chat_config, **legacy}
+        return data
 
 
 class AgentRecord(_RecordBase):

@@ -2,6 +2,12 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-10] `功能` `实验性`:** 智能体服务支持基于 WebRTC 的实时语音对话，文本与语音模式共享同一会话历史。
+- **[2026-09] `功能` `实验性`:** 支持 SOP（标准作业流程）—— 将多步骤任务按标准流程执行，框架与智能体服务均已支持。[文档](https://docs.agentscope.io/latest/zh/building-blocks/sop) | [服务](https://docs.agentscope.io/latest/zh/deploy/sop)
+- **[2026-09] `功能`:** 支持 `TeamPipeline` —— 由 leader 智能体向成员智能体分派任务。[文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/team)
+- **[2026-09] `集成`:** 通过 `MiniMaxChatModel` 支持 MiniMax 聊天模型（默认 MiniMax-M3）。
+- **[2026-09] `功能`:** 支持模型路由 —— 使用 `ModelRouterMiddleware` 为每次回复选择合适的聊天模型。
+- **[2026-09] `集成`:** 通过 TypeSafe SDK 集成 Jev 分类模型 `JevClassifierModel`。
 - **[2026-09] `功能`:** [agentscope-skill](https://github.com/agentscope-ai/skills/tree/main/skills/agentscope-skill) 已适配 AgentScope v2。
 - **[2026-09] `集成`:** `RealtimeAgent` 支持 DashScope、OpenAI、Gemini 与 xAI 的实时语音 API。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/speech-to-speech)
 - **[2026-09] `功能` `实验性`:** 支持实时语音智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/overview)

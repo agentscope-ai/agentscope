@@ -61,6 +61,7 @@ from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
 from agentscope.tui._launcher import _AgentScopeTUI, _RealtimeTUI
 from agentscope.tui._messages import (
+    _diff_stats,
     MessageUI,
     TextBlockUI,
     ThinkingUI,
@@ -413,6 +414,11 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(message_widget, app.query_one(MessageUI))
             self.assertIs(text_widget, app.query_one(TextBlockUI))
             self.assertEqual(ui.messages[0].get_text_content(), "hello")
+
+    def test_diff_stats_counts_lines_starting_with_a_marker(self) -> None:
+        """A removed ``---`` and an added ``++counter;`` both count."""
+        diff = "--- a\n+++ b\n@@ -1 +1 @@\n----\n+++counter;\n"
+        self.assertEqual(_diff_stats(diff), (1, 1))
 
 
 class ChatUITest(unittest.IsolatedAsyncioTestCase):
@@ -1583,6 +1589,24 @@ class RealtimeLauncherTest(unittest.IsolatedAsyncioTestCase):
                 [inputs.model_dump() for inputs in agent.sent],
                 expected,
             )
+
+    async def test_failed_typed_turn_is_not_shown(self) -> None:
+        agent = _FakeRealtimeAgent()
+        app = _RealtimeTUI(agent, object(), [], "user")
+        msg = UserMsg(name="user", content="not delivered")
+        error = RuntimeError("send failed")
+        with patch.object(agent, "send", side_effect=error):
+            async with app.run_test(size=(80, 24)):
+                with patch.object(app, "notify") as notify:
+                    await app._send(msg)
+
+                self.assertTupleEqual(app.query_one(ChatUI).messages, ())
+
+        notify.assert_called_once_with(
+            "send failed",
+            title="Agent error",
+            severity="error",
+        )
 
     async def test_confirmation_and_interrupt_reach_the_agent(self) -> None:
         agent = _FakeRealtimeAgent()

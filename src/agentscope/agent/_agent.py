@@ -590,12 +590,20 @@ class Agent:
                 ),
             )
 
+        # Same time text as the runtime injection; keeps other braces intact
+        timezone = self.injection_config.timezone
+        now = datetime.now(_resolve_timezone(timezone))
+        compression_prompt = cfg.compression_prompt.replace(
+            "{current_time}",
+            f"{now.strftime(self.injection_config.time_format)} ({timezone})",
+        )
+
         messages = (
             msgs_system
             + msgs_to_compress
             + instruction_msgs
             + [
-                UserMsg(name="user", content=cfg.compression_prompt),
+                UserMsg(name="user", content=compression_prompt),
             ]
         )
 
@@ -650,7 +658,7 @@ class Agent:
                         + [
                             UserMsg(
                                 name="user",
-                                content=cfg.compression_prompt,
+                                content=compression_prompt,
                             ),
                         ]
                     )
@@ -1200,14 +1208,8 @@ class Agent:
                             yield evt
 
                         if interrupted:
-                            end_event = ReplyEndEvent(
-                                session_id=self.state.session_id,
-                                reply_id=self.state.reply_id,
-                                finished_reason=(
-                                    ReplyFinishedReason.INTERRUPTED
-                                ),
-                            )
-                            return
+                            # Handled by the CancelledError branch below
+                            raise asyncio.CancelledError()
 
                     case Acting(tool_calls=tool_calls):
                         made_progress = True
@@ -1253,14 +1255,8 @@ class Agent:
                                     break_execution_for_interruption = True
 
                             if break_execution_for_interruption:
-                                end_event = ReplyEndEvent(
-                                    session_id=self.state.session_id,
-                                    reply_id=self.state.reply_id,
-                                    finished_reason=(
-                                        ReplyFinishedReason.INTERRUPTED
-                                    ),
-                                )
-                                return
+                                # Handled by the CancelledError branch below
+                                raise asyncio.CancelledError()
 
                             if break_execution_for_hitl:
                                 break
@@ -3198,12 +3194,18 @@ class Agent:
             name=tool_result.name,
             output=reserved_blocks,
             state=tool_result.state,
+            metadata=deepcopy(tool_result.metadata),
+            created_at=tool_result.created_at,
+            finished_at=tool_result.finished_at,
         )
         offload_tool_result = ToolResultBlock(
             id=tool_result.id,
             name=tool_result.name,
             output=offload_blocks,
             state=tool_result.state,
+            metadata=deepcopy(tool_result.metadata),
+            created_at=tool_result.created_at,
+            finished_at=tool_result.finished_at,
         )
 
         return reserved_tool_result, offload_tool_result
@@ -3576,7 +3578,7 @@ class Agent:
             )
 
         elif required and not satisfied:
-            # Maybe the model needs futher reasoning-acting to
+            # Maybe the model needs further reasoning-acting to
             # generate the structured output
             tool_choice = None
             suffix = (

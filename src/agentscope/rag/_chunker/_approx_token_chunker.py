@@ -28,7 +28,7 @@ class ApproxTokenChunker(ChunkerBase):
 
     Sections carrying a :class:`~agentscope.message.DataBlock`
     (images, video, etc.) are passed through unchanged as a single
-    chunk.
+    chunk. Empty or whitespace-only text produces no chunk.
 
     .. note:: Chunks never span across two input Sections, as
         required by :class:`ChunkerBase`.
@@ -144,9 +144,11 @@ class ApproxTokenChunker(ChunkerBase):
         for section in sections:
             contents: list[TextBlock | DataBlock]
             if isinstance(section.content, TextBlock):
+                # Blank pieces (e.g. empty scanned pages) are dropped
                 contents = [
                     TextBlock(text=piece)
                     for piece in self._split_text(section.content.text)
+                    if piece.strip()
                 ]
             else:
                 # DataBlock pass-through: never slice multimodal data

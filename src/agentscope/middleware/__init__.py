@@ -11,6 +11,7 @@ from ._longterm_memory import (
 )
 from ._tracing import TracingMiddleware
 from ._tts_middleware import TTSMiddleware
+from ._model_router import ChatModelCandidate, ModelRouterMiddleware
 
 __all__ = [
     "MiddlewareBase",
@@ -21,4 +22,6 @@ __all__ = [
     "TracingMiddleware",
     "ReplyBudgetControlMiddleware",
     "TTSMiddleware",
+    "ChatModelCandidate",
+    "ModelRouterMiddleware",
 ]

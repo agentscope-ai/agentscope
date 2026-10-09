@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The Moonshot AI formatter for agentscope."""
+
 import base64
+from fnmatch import fnmatch
 from typing import Any
 
 import requests
@@ -21,10 +23,11 @@ from ..message import (
 )
 
 
-def _moonshot_format_image_source(
+def _moonshot_format_media_source(
     source: URLSource | Base64Source,
 ) -> dict[str, Any]:
-    """Convert an image source to Moonshot ``image_url`` format.
+    """Convert an image or video source to Moonshot ``image_url`` or
+    ``video_url`` format.
 
     Moonshot's vision API only accepts base64 data URIs or file IDs — raw
     remote URLs are rejected. This helper downloads remote ``http(s)://``
@@ -48,12 +51,12 @@ def _moonshot_format_image_source(
             url = f"data:{source.media_type};base64,{encoded}"
 
     else:
-        raise ValueError(f"Unsupported image source type: {type(source)}")
+        raise ValueError(f"Unsupported media source type: {type(source)}")
 
-    return {
-        "type": "image_url",
-        "image_url": {"url": url},
-    }
+    key = (
+        "video_url" if source.media_type.startswith("video/") else "image_url"
+    )
+    return {"type": key, key: {"url": url}}
 
 
 class MoonshotChatFormatter(_OpenAIFormatterBase):
@@ -67,10 +70,15 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
         ),
     )
 
@@ -78,7 +86,19 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         self,
         source: URLSource | Base64Source,
     ) -> dict[str, Any]:
-        return _moonshot_format_image_source(source)
+        return _moonshot_format_media_source(source)
+
+    def _format_openai_data_block(
+        self,
+        block: DataBlock,
+    ) -> dict[str, Any] | None:
+        media_type = block.source.media_type
+        if media_type.startswith("video/") and any(
+            fnmatch(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            return _moonshot_format_media_source(block.source)
+        return super()._format_openai_data_block(block)
 
     # pylint: disable=too-many-branches
     async def format(
@@ -119,8 +139,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
                 if isinstance(block, ThinkingBlock):
                     # Preserve reasoning_content for multi-turn
-                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
-                    reasoning_parts.append(block.thinking)
+                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking).
+                    # Skip empty thinking: a redacted ThinkingBlock is
+                    # stored with ``thinking=""``, and emitting it
+                    # alone yields an assistant turn whose content is
+                    # null and which the API rejects.
+                    if block.thinking:
+                        reasoning_parts.append(block.thinking)
 
                 elif isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
@@ -307,10 +332,15 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
     )
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
         description=(
-            "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "video/*"]``.'
         ),
     )
 
@@ -318,7 +348,19 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         self,
         source: URLSource | Base64Source,
     ) -> dict[str, Any]:
-        return _moonshot_format_image_source(source)
+        return _moonshot_format_media_source(source)
+
+    def _format_openai_data_block(
+        self,
+        block: DataBlock,
+    ) -> dict[str, Any] | None:
+        media_type = block.source.media_type
+        if media_type.startswith("video/") and any(
+            fnmatch(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            return _moonshot_format_media_source(block.source)
+        return super()._format_openai_data_block(block)
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the Moonshot AI API format for
@@ -348,20 +390,19 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
 
         is_first_agent_message = True
         async for typ, group in self._group_messages(msgs[start_index:]):
-            if typ == "tool_sequence":
-                formatted_msgs.extend(
-                    await MoonshotChatFormatter(
-                        input_types=self.input_types,
-                    ).format(group),
-                )
-            elif typ == "agent_message":
-                formatted_msgs.extend(
-                    await self._format_agent_message(
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_tool_sequence(group),
+                    )
+                case "agent_message":
+                    formatted_group = await self._format_agent_message(
                         group,
                         is_first_agent_message,
-                    ),
-                )
-                is_first_agent_message = False
+                    )
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

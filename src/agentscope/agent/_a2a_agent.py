@@ -362,8 +362,9 @@ class A2AAgent:
             input_msgs = []
 
         # Observed messages are earlier context, so they lead this input.
+        # They stay cached until the reply is committed to sending below,
+        # so a rejected pre-flight keeps them for the retry.
         input_msgs = [*self.state.observed_context, *input_msgs]
-        self.state.observed_context.clear()
 
         if not input_msgs:
             raise ValueError(
@@ -411,6 +412,9 @@ class A2AAgent:
 
         finished_reason = ReplyFinishedReason.COMPLETED
         run = _TextRun()
+
+        # The message is going out now: consume the observed messages.
+        self.state.observed_context.clear()
 
         async for response in self._client.send_message(
             self._build_request(input_msgs),

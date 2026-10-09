@@ -197,8 +197,8 @@ class ChannelClients:
         )
 
         # Subscribe before returning: the caller is about to run the
-        # agent, and the run drops its event log when it persists, so a
-        # subscription opened any later could miss the whole reply.
+        # agent, and this lets the stream distinguish the retained prior
+        # run from events that belong to the new reply.
         try:
             events = await open_reply_stream(self._bus, session_id)
         except Exception:  # pylint: disable=broad-except

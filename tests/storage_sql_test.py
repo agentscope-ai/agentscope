@@ -10,7 +10,7 @@ literal assertions) of the Redis backend's tests so both backends
 stay behavioural equivalents.
 """
 from contextlib import AsyncExitStack
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from importlib import import_module
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -21,7 +21,7 @@ from sqlalchemy.dialects import mysql
 from utils import AnyString
 
 from agentscope.app.storage._sql._mappers import _to_record
-from agentscope.app.storage._sql._tables import SessionRow
+from agentscope.app.storage._sql._tables import AgentRow, SessionRow
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -44,6 +44,13 @@ from agentscope.app.storage import (
     ScheduleOrigin,
     SessionRecord,
     SkillRecord,
+    SOPAgentRef,
+    SOPData,
+    SOPRecord,
+    SOPRunRecord,
+    SOPStepDataV1,
+    AgentVerifier,
+    HumanVerifier,
     AsyncSQLAlchemyStorage,
     TeamData,
     TeamMember,
@@ -54,6 +61,7 @@ from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.credential import DashScopeCredential
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.message import AssistantMsg, UserMsg
+from agentscope.sop import SOPPhase, SOPRunState, SOPStepRunState
 
 
 def _channel_record(
@@ -171,6 +179,15 @@ def _mcp_record(user_id: str, name: str = "deepwiki") -> MCPRecord:
     )
 
 
+# A procedure needs at least one milestone, so the fixtures that only
+# care about the record around it still carry one.
+_A_STEP = SOPStepDataV1(
+    subject="model",
+    description="make the hull",
+    executor=SOPAgentRef(agent_id="a-1", session_key="modeller"),
+)
+
+
 class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
     """End-to-end tests for :class:`AsyncSQLAlchemyStorage` over
     in-memory SQLite."""
@@ -249,16 +266,58 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
     # ------------------------------------------------------------------
 
     async def test_agents_round_trip_and_source_filter(self) -> None:
-        """``list_agents`` filters out ``source='team'`` workers."""
-        user_agent = _agent_record("user-1", "usr")
+        """Legacy agent rows load grouped and team workers stay hidden."""
+        record_id = "agent-legacy"
+        data_id = "agent-data-legacy"
+        now = datetime.now()
+        # Insert at the row layer so AgentData cannot normalize the legacy
+        # payload before it reaches SQL storage.
+        # pylint: disable=protected-access
+        async with self.storage._session() as sess:
+            sess.add(
+                AgentRow(
+                    id=record_id,
+                    created_at=now,
+                    updated_at=now,
+                    user_id="user-1",
+                    source="user",
+                    payload={
+                        "data": {
+                            "id": data_id,
+                            "name": "usr",
+                            "system_prompt": "You are usr.",
+                            "context_config": {"max_image_num": 3},
+                            "react_config": {"max_iters": 7},
+                        },
+                    },
+                ),
+            )
+            await sess.commit()
+
         team_agent = _agent_record("user-1", "team-worker")
         team_agent.source = "team"
-
-        await self.storage.upsert_agent("user-1", user_agent)
         await self.storage.upsert_agent("user-1", team_agent)
 
         listed = await self.storage.list_agents("user-1")
-        self.assertEqual([a.id for a in listed], [user_agent.id])
+        self.assertEqual([agent.id for agent in listed], [record_id])
+        self.assertDictEqual(
+            listed[0].model_dump(mode="json", exclude_defaults=True),
+            {
+                "id": record_id,
+                "updated_at": now.isoformat(),
+                "created_at": now.isoformat(),
+                "user_id": "user-1",
+                "data": {
+                    "id": data_id,
+                    "name": "usr",
+                    "system_prompt": "You are usr.",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 7},
+                    },
+                },
+            },
+        )
         # But direct get works for the team-spawned worker
         self.assertEqual(
             (await self.storage.get_agent("user-1", team_agent.id)).id,
@@ -487,6 +546,417 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             long_session,
         )
         self.assertEqual([m.id for m in listed], [long_msg_id])
+
+    async def test_delete_message(self) -> None:
+        """Deleting by id removes only the matching persisted message."""
+        first = UserMsg(name="u", content="first")
+        second = AssistantMsg(name="a", content="second")
+        await self.storage.upsert_message("user-1", "sess-1", first)
+        await self.storage.upsert_message("user-1", "sess-1", second)
+
+        deleted = await self.storage.delete_message(
+            "user-1",
+            "sess-1",
+            first.id,
+        )
+        deleted_again = await self.storage.delete_message(
+            "user-1",
+            "sess-1",
+            first.id,
+        )
+        messages, has_more = await self.storage.list_messages(
+            "user-1",
+            "sess-1",
+        )
+
+        self.assertDictEqual(
+            {
+                "deleted": deleted,
+                "deleted_again": deleted_again,
+                "messages": [message.model_dump() for message in messages],
+                "has_more": has_more,
+            },
+            {
+                "deleted": True,
+                "deleted_again": False,
+                "messages": [second.model_dump()],
+                "has_more": False,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # SOPs
+    # ------------------------------------------------------------------
+
+    async def test_sops_round_trip(self) -> None:
+        """Upsert / get / list / delete + owner scoping."""
+        record = SOPRecord(
+            user_id="user-1",
+            data=SOPData(
+                name="ship",
+                description="build one",
+                steps=[
+                    SOPStepDataV1(
+                        subject="model",
+                        description="make the hull",
+                        executor=SOPAgentRef(
+                            agent_id="agent-1",
+                            session_key="modeller",
+                        ),
+                        verifier=AgentVerifier(
+                            agent=SOPAgentRef(
+                                agent_id="agent-2",
+                                session_key="reviewer",
+                            ),
+                            criteria="Every panel has to be watertight.",
+                        ),
+                    ),
+                    SOPStepDataV1(
+                        subject="paint",
+                        description="give it a livery",
+                        executor=SOPAgentRef(
+                            agent_id="agent-1",
+                            session_key="modeller",
+                        ),
+                        verifier=HumanVerifier(question="Good enough?"),
+                    ),
+                ],
+            ),
+        )
+        await self.storage.upsert_sop("user-1", record)
+
+        fetched = await self.storage.get_sop("user-1", record.id)
+
+        self.maxDiff = None
+        self.assertDictEqual(
+            fetched.model_dump(mode="json"),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "data": {
+                    "name": "ship",
+                    "description": "build one",
+                    "steps": [
+                        {
+                            "version": "v1",
+                            "subject": "model",
+                            "description": "make the hull",
+                            "executor": {
+                                "agent_id": "agent-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": {
+                                "type": "agent",
+                                "agent": {
+                                    "agent_id": "agent-2",
+                                    "session_key": "reviewer",
+                                },
+                                "criteria": (
+                                    "Every panel has to be watertight."
+                                ),
+                            },
+                            "max_attempts": 3,
+                        },
+                        {
+                            "version": "v1",
+                            "subject": "paint",
+                            "description": "give it a livery",
+                            "executor": {
+                                "agent_id": "agent-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": {
+                                "type": "human",
+                                "question": "Good enough?",
+                            },
+                            "max_attempts": 3,
+                        },
+                    ],
+                    "workspace_grain": "run",
+                    "session_settings": {},
+                },
+            },
+        )
+
+        self.assertEqual(
+            [_.id for _ in await self.storage.list_sops("user-1")],
+            [record.id],
+        )
+        self.assertEqual(await self.storage.list_sops("user-2"), [])
+        self.assertIsNone(await self.storage.get_sop("user-2", record.id))
+
+        self.assertTrue(await self.storage.delete_sop("user-1", record.id))
+        self.assertFalse(await self.storage.delete_sop("user-1", record.id))
+
+    async def test_sop_runs_round_trip(self) -> None:
+        """A run stores its snapshot, its sessions and the SDK's state."""
+        run = SOPRunRecord(
+            user_id="user-1",
+            sop_id="sop-1",
+            definition=SOPData(
+                name="ship",
+                steps=[
+                    SOPStepDataV1(
+                        subject="model",
+                        description="make the hull",
+                        executor=SOPAgentRef(
+                            agent_id="agent-1",
+                            session_key="modeller",
+                        ),
+                    ),
+                ],
+            ),
+            sessions={"modeller": "session-1"},
+            state=SOPRunState(steps=[SOPStepRunState()]),
+        )
+        await self.storage.upsert_sop_run("user-1", run)
+
+        fetched = await self.storage.get_sop_run("user-1", run.id)
+
+        self.maxDiff = None
+        self.assertDictEqual(
+            fetched.model_dump(mode="json"),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "sop_id": "sop-1",
+                "definition": {
+                    "name": "ship",
+                    "description": "",
+                    "steps": [
+                        {
+                            "version": "v1",
+                            "subject": "model",
+                            "description": "make the hull",
+                            "executor": {
+                                "agent_id": "agent-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": None,
+                            "max_attempts": 3,
+                        },
+                    ],
+                    "workspace_grain": "run",
+                    "session_settings": {},
+                },
+                "sessions": {"modeller": "session-1"},
+                "state": {
+                    "id": AnyString(),
+                    "inputs": [],
+                    "steps": [
+                        {
+                            "phase": "pending",
+                            "given": [],
+                            "submission": None,
+                            "verifications": [],
+                        },
+                    ],
+                    "created_at": AnyString(),
+                    "phase": "pending",
+                },
+            },
+        )
+
+        self.assertIsNone(await self.storage.get_sop_run("user-2", run.id))
+        self.assertTrue(await self.storage.delete_sop_run("user-1", run.id))
+        self.assertFalse(await self.storage.delete_sop_run("user-1", run.id))
+
+    async def test_sop_runs_are_listed_by_procedure_and_phase(self) -> None:
+        """``phase`` is a column, so the database does the filtering."""
+        waiting = SOPRunRecord(
+            user_id="user-1",
+            sop_id="sop-1",
+            definition=SOPData(name="a", steps=[_A_STEP]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
+            ),
+        )
+        done = SOPRunRecord(
+            user_id="user-1",
+            sop_id="sop-1",
+            definition=SOPData(name="a", steps=[_A_STEP]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.COMPLETED)],
+            ),
+        )
+        other = SOPRunRecord(
+            user_id="user-1",
+            sop_id="sop-2",
+            definition=SOPData(name="b", steps=[_A_STEP]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
+            ),
+        )
+        for record in (waiting, done, other):
+            await self.storage.upsert_sop_run("user-1", record)
+
+        self.assertEqual(
+            {_.id for _ in await self.storage.list_sop_runs("user-1")},
+            {waiting.id, done.id, other.id},
+        )
+        self.assertEqual(
+            {
+                _.id
+                for _ in await self.storage.list_sop_runs(
+                    "user-1",
+                    sop_id="sop-1",
+                )
+            },
+            {waiting.id, done.id},
+        )
+        self.assertEqual(
+            {
+                _.id
+                for _ in await self.storage.list_sop_runs(
+                    "user-1",
+                    phase=SOPPhase.AWAITING,
+                )
+            },
+            {waiting.id, other.id},
+        )
+        self.assertEqual(await self.storage.list_sop_runs("user-2"), [])
+
+    async def test_update_sop_run_writes_the_run_and_not_the_snapshot(
+        self,
+    ) -> None:
+        """The hot path rewrites state and sessions, and keeps the rest."""
+        run = SOPRunRecord(
+            user_id="user-1",
+            sop_id="sop-1",
+            definition=SOPData(name="ship", steps=[_A_STEP]),
+            state=SOPRunState(steps=[SOPStepRunState()]),
+        )
+        await self.storage.upsert_sop_run("user-1", run)
+
+        await self.storage.update_sop_run(
+            "user-1",
+            run.id,
+            SOPRunState(
+                id=run.state.id,
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
+            ),
+            sessions={"modeller": "session-1"},
+        )
+
+        updated = await self.storage.get_sop_run("user-1", run.id)
+
+        self.maxDiff = None
+        self.assertDictEqual(
+            updated.model_dump(mode="json"),
+            {
+                "id": run.id,
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "sop_id": "sop-1",
+                "definition": {
+                    "name": "ship",
+                    "description": "",
+                    "steps": [
+                        {
+                            "version": "v1",
+                            "subject": "model",
+                            "description": "make the hull",
+                            "executor": {
+                                "agent_id": "a-1",
+                                "session_key": "modeller",
+                            },
+                            "verifier": None,
+                            "max_attempts": 3,
+                        },
+                    ],
+                    "workspace_grain": "run",
+                    "session_settings": {},
+                },
+                "sessions": {"modeller": "session-1"},
+                "state": {
+                    "id": AnyString(),
+                    "inputs": [],
+                    "steps": [
+                        {
+                            "phase": "awaiting",
+                            "given": [],
+                            "submission": None,
+                            "verifications": [],
+                        },
+                    ],
+                    "created_at": AnyString(),
+                    "phase": "awaiting",
+                },
+            },
+        )
+        # The promoted column moved with it, so the filter still finds it.
+        self.assertEqual(
+            [
+                _.id
+                for _ in await self.storage.list_sop_runs(
+                    "user-1",
+                    phase=SOPPhase.AWAITING,
+                )
+            ],
+            [run.id],
+        )
+
+        with self.assertRaises(KeyError):
+            await self.storage.update_sop_run(
+                "user-1",
+                "nope",
+                SOPRunState(),
+            )
+        with self.assertRaises(KeyError):
+            await self.storage.update_sop_run(
+                "user-2",
+                run.id,
+                SOPRunState(),
+            )
+
+    async def test_deleting_a_sop_takes_its_runs_with_it(self) -> None:
+        """A run is only readable through the definition it snapshotted."""
+        sop = SOPRecord(
+            user_id="user-1",
+            data=SOPData(name="ship", steps=[_A_STEP]),
+        )
+        await self.storage.upsert_sop("user-1", sop)
+        run = SOPRunRecord(
+            user_id="user-1",
+            sop_id=sop.id,
+            definition=sop.data,
+        )
+        await self.storage.upsert_sop_run("user-1", run)
+
+        self.assertTrue(await self.storage.delete_sop("user-1", sop.id))
+
+        self.assertIsNone(await self.storage.get_sop_run("user-1", run.id))
+        self.assertEqual(await self.storage.list_sop_runs("user-1"), [])
+
+    async def test_a_step_state_subclass_survives_the_database(self) -> None:
+        """What a step kept beyond the base record is stored, not trimmed."""
+        run = SOPRunRecord(
+            user_id="user-1",
+            sop_id="sop-1",
+            definition=SOPData(name="ship", steps=[_A_STEP]),
+            state=SOPRunState(
+                steps=[SOPStepRunState(phase=SOPPhase.AWAITING, call_id="c1")],
+            ),
+        )
+        await self.storage.upsert_sop_run("user-1", run)
+
+        fetched = await self.storage.get_sop_run("user-1", run.id)
+
+        self.assertDictEqual(
+            fetched.state.steps[0].model_dump(mode="json"),
+            {
+                "phase": "awaiting",
+                "given": [],
+                "submission": None,
+                "verifications": [],
+                "call_id": "c1",
+            },
+        )
 
     # ------------------------------------------------------------------
     # Teams
@@ -747,6 +1217,55 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
         )
         self.assertIsNone(fetched.processing_node)
         self.assertIsNone(fetched.lease_expires_at)
+
+    async def test_upsert_leased_document(self) -> None:
+        """A leased document read back from storage can be upserted again."""
+        kb = _kb_record("user-1")
+        await self.storage.upsert_knowledge_base("user-1", kb)
+        doc = _kd_record("user-1", kb.id)
+        await self.storage.upsert_knowledge_document("user-1", doc)
+        await self.storage.acquire_knowledge_document_lease(
+            "user-1",
+            kb.id,
+            doc.id,
+            "worker-A",
+            timedelta(minutes=5),
+            datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        leased = await self.storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            doc.id,
+        )
+        leased.data.chunk_count = 3
+        await self.storage.upsert_knowledge_document("user-1", leased)
+
+        fetched = await self.storage.get_knowledge_document(
+            "user-1",
+            kb.id,
+            doc.id,
+        )
+        self.assertDictEqual(
+            fetched.model_dump(mode="json"),
+            {
+                "id": doc.id,
+                "created_at": AnyString(),
+                "updated_at": AnyString(),
+                "user_id": "user-1",
+                "knowledge_base_id": kb.id,
+                "processing_node": "worker-A",
+                "status": "pending",
+                "lease_expires_at": "2026-01-01T12:05:00",
+                "data": {
+                    "filename": "f.txt",
+                    "size": 42,
+                    "content_type": None,
+                    "blob_uri": "local://f.txt",
+                    "error": None,
+                    "chunk_count": 3,
+                },
+            },
+        )
 
     async def test_expired_lease_and_pending_sweep(self) -> None:
         """``list_..._with_expired_lease`` + ``..._pending_since`` filters."""
@@ -1103,6 +1622,46 @@ class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     await storage.get_channel_id_by_platform_bot_id("cli-1"),
                     "chan-1",
+                )
+
+    async def test_migrations_alone_create_the_sop_tables(self) -> None:
+        """Same isolation for 0004 — without ``metadata.create_all`` a
+        missing migration surfaces here rather than in production."""
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            url = f"sqlite+aiosqlite:///{os.path.join(tmp, 'as.db')}"
+
+            async with AsyncSQLAlchemyStorage(
+                url,
+                auto_migrate=True,
+                create_tables=False,
+            ) as storage:
+                sop = SOPRecord(
+                    user_id="user-1",
+                    data=SOPData(name="ship", steps=[_A_STEP]),
+                )
+                await storage.upsert_sop("user-1", sop)
+                await storage.upsert_sop_run(
+                    "user-1",
+                    SOPRunRecord(
+                        user_id="user-1",
+                        sop_id=sop.id,
+                        definition=sop.data,
+                        state=SOPRunState(
+                            steps=[SOPStepRunState(phase=SOPPhase.AWAITING)],
+                        ),
+                    ),
+                )
+                self.assertEqual(
+                    len(
+                        await storage.list_sop_runs(
+                            "user-1",
+                            phase=SOPPhase.AWAITING,
+                        ),
+                    ),
+                    1,
                 )
 
 

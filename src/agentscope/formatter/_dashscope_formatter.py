@@ -459,6 +459,8 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 A list of dictionaries formatted for the DashScope API.
         """
 
+        self.assert_list_of_msgs(msgs)
+
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":
@@ -475,13 +477,13 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

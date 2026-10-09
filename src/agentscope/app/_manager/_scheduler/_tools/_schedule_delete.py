@@ -55,6 +55,7 @@ class ScheduleDelete(ToolBase):
         scheduler: Any,
         storage: StorageBase,
         message_bus: MessageBus,
+        scheduler_manager: Any,
     ) -> None:
         """Initialize the schedule delete tool.
 
@@ -69,11 +70,16 @@ class ScheduleDelete(ToolBase):
                 The message bus used to cancel in-flight chat runs for
                 any execution session spawned by this schedule and to
                 purge their per-session bus state.
+            scheduler_manager (`Any`):
+                The scheduler manager, used to tell the timer-owning node
+                that a schedule changed. Must expose a
+                ``notify_changed(schedule_id)`` coroutine.
         """
         self._user_id = user_id
         self._scheduler = scheduler
         self._storage = storage
         self._message_bus = message_bus
+        self._scheduler_manager = scheduler_manager
 
     async def check_permissions(
         self,
@@ -140,6 +146,8 @@ class ScheduleDelete(ToolBase):
                 ],
                 state=ToolResultState.ERROR,
             )
+
+        await self._scheduler_manager.notify_changed(schedule_id)
 
         return ToolChunk(
             content=[

@@ -665,7 +665,7 @@ class WorkspaceBase:
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Register a new MCP server for one agent/session and persist.
 
         Implementations record the config in :attr:`_mcp_specs`, start
@@ -681,6 +681,12 @@ class WorkspaceBase:
                 them positionally could silently hit another session.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The live client stored and used by the workspace, which may
+                differ from ``mcp_client`` for sandboxed implementations.
+                It can be evicted later, use :meth:`list_mcps` then.
 
         Raises:
             `ValueError`:
@@ -792,9 +798,9 @@ class WorkspaceBase:
     async def _close_mcp_instance(instance: MCPClient) -> None:
         """Close one live handle, downgrading failures to warnings.
 
-        Stateless clients hold no connection, so they are skipped.
+        Unconnected clients (e.g. local stateless ones) are skipped.
         """
-        if not (instance.is_stateful and instance.is_connected):
+        if not instance.is_connected:
             return
         try:
             await instance.close()
@@ -1012,8 +1018,8 @@ class WorkspaceBase:
         ``${workdir}/sessions/<session_id>/context.jsonl`` (one
         message per JSONL line). Inline base64
         :class:`DataBlock` payloads are extracted into ``data/`` and
-        rewritten as ``file://`` URL blocks before serialisation so
-        the JSONL line size stays bounded.
+        rewritten as portable ``workspace://`` URL blocks before
+        serialisation so the JSONL line size stays bounded.
 
         Args:
             session_id (`str`):

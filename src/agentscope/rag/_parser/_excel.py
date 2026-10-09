@@ -46,7 +46,7 @@ def _get_excel_column_name(col_index: int) -> str:
 
 
 def _extract_table_data(df: Any) -> list[list[str]]:
-    """Extract table data from a pandas DataFrame.
+    """Extract table data from a DataFrame read with ``header=None``.
 
     NaN values are converted to empty strings, and Windows-style line
     breaks (``\\r\\n``) are normalised to ``\\n``.
@@ -62,8 +62,7 @@ def _extract_table_data(df: Any) -> list[list[str]]:
     """
     import pandas as pd
 
-    header = [str(col).strip() for col in df.columns]
-    rows: list[list[str]] = [header]
+    rows: list[list[str]] = []
     for _, row in df.iterrows():
         cells: list[str] = []
         for val in row:
@@ -134,7 +133,8 @@ class ExcelParser(ParserBase):
 
     Each sheet is scanned for tabular data and (optionally) images.
     Tables are rendered as Markdown pipe-tables or JSON arrays; images
-    are emitted as standalone :class:`DataBlock` sections.
+    are emitted as standalone :class:`DataBlock` sections, including on
+    sheets without cell values. Header-only tables are preserved.
 
     When ``separate_sheet=True`` each sheet becomes a batch of
     sections that never intermix with other sheets, making it possible
@@ -249,9 +249,15 @@ class ExcelParser(ParserBase):
             ) from e
 
         if isinstance(file, str):
-            excel_file = pd.ExcelFile(file)
-        else:
+            with open(file, "rb") as fp:
+                file = fp.read()
+
+        try:
             excel_file = pd.ExcelFile(io.BytesIO(file))
+        except Exception as e:  # pylint: disable=broad-except
+            raise ValueError(
+                f"Failed to parse {filename!r} as Excel: {e}",
+            ) from e
 
         workbook = None
         try:
@@ -305,29 +311,35 @@ class ExcelParser(ParserBase):
         sheet_sections: list[Section] = []
 
         try:
-            df = excel_file.parse(sheet_name=sheet_name)
+            # Keep cell text as-is instead of letting pandas infer types or NAs
+            df = excel_file.parse(
+                sheet_name=sheet_name,
+                header=None,
+                dtype=object,
+                keep_default_na=False,
+            )
         except Exception as e:
             logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
             return sheet_sections
 
-        if df.empty:
-            return sheet_sections
+        # Keep the first row as cell data: pandas column labels would rename
+        # duplicate headers and replace blank headers with "Unnamed: ...".
+        if not df.empty:
+            table_data = _extract_table_data(df)
 
-        table_data = _extract_table_data(df)
+            if self.table_format == "markdown":
+                table_text = self._table_to_markdown(table_data, sheet_name)
+            else:
+                table_text = self._table_to_json(table_data, sheet_name)
 
-        if self.table_format == "markdown":
-            table_text = self._table_to_markdown(table_data, sheet_name)
-        else:
-            table_text = self._table_to_json(table_data, sheet_name)
-
-        if table_text:
-            sheet_sections.append(
-                Section(
-                    content=TextBlock(text=table_text),
-                    source=filename,
-                    metadata={"sheet": sheet_name},
-                ),
-            )
+            if table_text:
+                sheet_sections.append(
+                    Section(
+                        content=TextBlock(text=table_text),
+                        source=filename,
+                        metadata={"sheet": sheet_name},
+                    ),
+                )
 
         if self.include_image and workbook is not None:
             try:

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 import base64
-from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from ._block import (
     TextBlock,
     ThinkingBlock,
@@ -92,7 +91,7 @@ class Msg(BaseModel):
 
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """The creation time of the message"""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
@@ -520,12 +519,15 @@ class Msg(BaseModel):
     def append_usage(self, usage: Usage) -> Self:
         """Accumulate the token usage of one model call into this message.
 
+        The message keeps a copy of ``usage``, so the object handed over by
+        the caller is never adopted and keeps its own value.
+
         Args:
             usage (`Usage`):
                 The token usage to be accumulated.
         """
         if self.usage is None:
-            self.usage = usage
+            self.usage = usage.model_copy()
         else:
             self.usage.input_tokens += usage.input_tokens
             self.usage.output_tokens += usage.output_tokens
@@ -574,7 +576,7 @@ def UserMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="user"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(
@@ -637,7 +639,7 @@ def AssistantMsg(
         content=_to_blocks(content),
         role="assistant",
         metadata=metadata or {},
-        created_at=created_at or datetime.now().isoformat(),
+        created_at=created_at or _generate_timestamp(),
         finished_at=finished_at,
         finished_reason=finished_reason,
         structured_output=structured_output,
@@ -683,7 +685,7 @@ def SystemMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="system"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(

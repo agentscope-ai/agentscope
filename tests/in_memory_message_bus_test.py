@@ -11,8 +11,10 @@ No external dependencies (no Redis, no fakeredis) — just asyncio.
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import _in_memory_message_bus as _bus
 
 
 class TestQueuePrimitive(IsolatedAsyncioTestCase):
@@ -284,6 +286,42 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             order,
             ["first-in", "first-out", "second-in"],
         )
+
+    async def test_try_lock_is_exclusive_until_unlocked(self) -> None:
+        """A second claim on a held key is refused; ``unlock`` frees it."""
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+        self.assertFalse(await self.bus.try_lock("k", ttl_secs=10))
+        self.assertTrue(await self.bus.is_locked("k"))
+
+        await self.bus.unlock("k")
+
+        self.assertFalse(await self.bus.is_locked("k"))
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+
+    async def test_try_lock_lease_expires_for_a_holder_that_crashed(
+        self,
+    ) -> None:
+        """A claim whose lease expired is claimable again."""
+        with patch.object(_bus.time, "monotonic") as monotonic:
+            monotonic.return_value = 1_000.0
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+            self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+
+            # The holder is gone; ``unlock`` is never called.
+            monotonic.return_value = 1_000.0 + 600
+
+            self.assertFalse(await self.bus.is_locked("k"))
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+
+    async def test_acquire_lock_ignores_ttl_secs(self) -> None:
+        """``acquire_lock`` documents that it holds until the body ends."""
+        with patch.object(_bus.time, "monotonic") as monotonic:
+            monotonic.return_value = 1_000.0
+            async with self.bus.acquire_lock("k", ttl_secs=1):
+                monotonic.return_value = 1_000.0 + 3_600
+                self.assertTrue(await self.bus.is_locked("k"))
+                self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+            self.assertFalse(await self.bus.is_locked("k"))
 
 
 class TestRegistryPrimitive(IsolatedAsyncioTestCase):

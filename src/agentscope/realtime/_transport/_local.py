@@ -75,6 +75,9 @@ class LocalAudioTransport(TransportBase):
         """Open both streams."""
         import sounddevice as sd
 
+        # A fresh queue: the previous session's sentinel and capture must
+        # not leak into this one.
+        self._in_queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
         self._in_stream = sd.InputStream(
             samplerate=self.input_sample_rate,
@@ -96,11 +99,18 @@ class LocalAudioTransport(TransportBase):
 
     async def close(self) -> None:
         """Stop both streams and end :meth:`incoming`."""
+        # Detach first so a late callback cannot enqueue behind the sentinel.
+        self._loop = None
         for stream in (self._in_stream, self._out_stream):
             if stream is not None:
                 stream.stop()
                 stream.close()
         self._in_stream = self._out_stream = None
+        with self._lock:
+            self._pending.clear()
+            self._item_id = ""
+            self._played_samples = 0
+            self._first_played_at = None
         self._in_queue.put_nowait(None)
 
     # ------------------------------------------------------------------

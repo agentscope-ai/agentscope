@@ -17,7 +17,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.event import (
     ReplyEndEvent,
     ToolResultStartEvent,
@@ -296,7 +296,11 @@ def _assert_interrupted_end(
 class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
     """``task.cancel()`` lands during tool execution."""
 
-    def _make_agent(self, tools: list[ToolBase]) -> tuple[Agent, MockModel]:
+    def _make_agent(
+        self,
+        tools: list[ToolBase],
+        raise_cancelled_error: bool = False,
+    ) -> tuple[Agent, MockModel]:
         model = MockModel(model="mock-model", stream=True)
         agent = Agent(
             name="Friday",
@@ -307,8 +311,56 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             # agent_injection_test, turn it off to keep the assertions
             # focused.
             injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(
+                interruption_raise_cancelled_error=raise_cancelled_error,
+            ),
         )
         return agent, model
+
+    async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
+        """With ``interruption_raise_cancelled_error`` the cancellation
+        reaches the caller once the interrupted tool call is closed."""
+        tool = _TimeoutSequentialTool()
+        agent, model = self._make_agent([tool], raise_cancelled_error=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-1",
+                                name=tool.name,
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+        events: list[Any] = []
+
+        async def _drive() -> None:
+            inputs = UserMsg(name="user", content="Hi")
+            async for evt in agent.reply_stream(inputs):
+                events.append(evt)
+
+        task = asyncio.create_task(_drive())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        _assert_interrupted_end(
+            self,
+            events,
+            reply_id=agent.state.reply_id,
+            session_id=agent.state.session_id,
+        )
+        self.assertListEqual(
+            agent.state.get_unfinished_tool_calls(agent.name),
+            [],
+        )
 
     async def test_sequential_tool_cancelled_mid_execution(self) -> None:
         """Sequential batch: model emits one slow sequential tool call,

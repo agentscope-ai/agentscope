@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
 """Unit tests for BudgetControlMiddleware."""
-from typing import Any
+from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from pydantic import BaseModel
+
 from utils import MockModel
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ReActConfig
 from agentscope.message import UserMsg, TextBlock, ToolCallBlock, HintBlock
-from agentscope.middleware import ReplyBudgetControlMiddleware
+from agentscope.middleware import MiddlewareBase, ReplyBudgetControlMiddleware
 from agentscope.model import ChatResponse, ChatUsage
 from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
     PermissionDecision,
 )
-from agentscope.event import UserConfirmResultEvent, ConfirmResult
-from agentscope.tool import ToolBase, Toolkit, ToolChunk
+from agentscope.event import (
+    ConfirmResult,
+    ReplyEndEvent,
+    UserConfirmResultEvent,
+)
+from agentscope.tool import ToolBase, Toolkit, ToolChoice, ToolChunk
 
 
 def _response(
@@ -88,6 +94,44 @@ class ConfirmRequiredTool(ToolBase):
     async def __call__(self, **kwargs: Any) -> ToolChunk:
         """Return a fixed result."""
         return ToolChunk(content=[TextBlock(text="confirmed result")])
+
+
+class Answer(BaseModel):
+    """The structured output schema used in the tests."""
+
+    city: str
+
+
+class ToolChoiceModel(MockModel):
+    """Model that follows ``tool_choice`` as a provider does: text only
+    under ``"none"``. The first call runs the dummy tool for 300 tokens."""
+
+    def __init__(self, calls_offered_tool: bool) -> None:
+        """Initialize the recorded tool choices."""
+        super().__init__()
+        self.stream = False
+        self.calls_offered_tool = calls_offered_tool
+        self.tool_choices: list = []
+
+    async def _call_api(self, *args: Any, **kwargs: Any) -> ChatResponse:
+        """Record tool_choice and answer by it."""
+        tool_choice = kwargs.get("tool_choice")
+        self.tool_choices.append(tool_choice)
+        mode = getattr(tool_choice, "mode", None)
+        usage = ChatUsage(input_tokens=200, output_tokens=100, time=0.0)
+        if len(self.tool_choices) == 1:
+            block = ToolCallBlock(id="tc_1", name="dummy", input="{}")
+        elif mode == "GenerateStructuredOutput" or (
+            mode != "none" and self.calls_offered_tool
+        ):
+            block = ToolCallBlock(
+                id=f"tc_{len(self.tool_choices)}",
+                name="GenerateStructuredOutput",
+                input='{"city": "Paris"}',
+            )
+        else:
+            block = TextBlock(text="Paris")
+        return ChatResponse(content=[block], is_last=True, usage=usage)
 
 
 def _has_hint_block(msg: Any, hint_message: str) -> bool:
@@ -336,11 +380,14 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         ]
         self.assertGreater(len(hint_msgs), 0)
 
-    async def test_state_cleanup_after_reply(self) -> None:
-        """middle_context entry for the reply is removed after reply ends."""
+    async def test_state_reset_on_next_reply(self) -> None:
+        """middle_context only keeps the counter of the latest reply."""
         model = MockModel()
         model.set_responses(
-            [_response("done", input_tokens=10, output_tokens=5)],
+            [
+                _response("done", input_tokens=10, output_tokens=5),
+                _response("done again", input_tokens=20, output_tokens=8),
+            ],
         )
 
         middleware = ReplyBudgetControlMiddleware(token_budget=1000)
@@ -353,11 +400,63 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         )
 
         await agent.reply(UserMsg("user", "hello"))
+        await agent.reply(UserMsg("user", "hello again"))
 
         middleware_key = await middleware.get_middleware_key()
-        bucket = agent.state.middle_context.get(middleware_key, {})
-        # All per-reply entries must have been cleaned up
-        self.assertEqual(len(bucket), 0)
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {agent.state.reply_id: 28},
+        )
+
+    async def test_swallowed_reply_end_keeps_counting(self) -> None:
+        """A redo round forced by swallowing the ReplyEndEvent spends the
+        budget of the same reply."""
+
+        class SwallowOnceMiddleware(MiddlewareBase):
+            """Swallow the first ReplyEndEvent to force a redo round."""
+
+            def __init__(self) -> None:
+                """Initialize the swallow flag."""
+                self.swallowed = False
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Swallow the first ReplyEndEvent, pass everything else."""
+                async for item in next_handler(**input_kwargs):
+                    if isinstance(item, ReplyEndEvent) and not self.swallowed:
+                        self.swallowed = True
+                        continue
+                    yield item
+
+        model = MockModel()
+        model.set_responses(
+            [
+                _response("first answer", input_tokens=10, output_tokens=5),
+                _response("second answer", input_tokens=20, output_tokens=8),
+            ],
+        )
+
+        middleware = ReplyBudgetControlMiddleware(token_budget=1000)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=self.toolkit,
+            middlewares=[SwallowOnceMiddleware(), middleware],
+        )
+
+        msg = await agent.reply(UserMsg("user", "hello"))
+
+        self.assertEqual(msg.get_text_content(), "second answer")
+        middleware_key = await middleware.get_middleware_key()
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {agent.state.reply_id: 43},
+        )
 
     async def test_token_accumulation_persists_across_hitl(self) -> None:
         """Token accumulation in middle_context persists across HITL boundary.
@@ -471,6 +570,70 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         ]
         self.assertGreater(len(hint_msgs), 0)
 
-        # middle_context must be cleaned up after reply ends
-        bucket = agent.state.middle_context.get(middleware_key, {})
-        self.assertNotIn(reply_id, bucket)
+        # Both model calls are counted on the same reply
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {reply_id: 370},
+        )
+
+    async def test_budget_exceeded_keeps_structured_output_tool(self) -> None:
+        """A spent budget still lets a structured reply end."""
+        model = ToolChoiceModel(calls_offered_tool=True)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=Toolkit(tools=[DummyTool()]),
+            middlewares=[ReplyBudgetControlMiddleware(token_budget=300)],
+        )
+
+        res = await agent.reply(
+            UserMsg("user", "Capital of France?"),
+            structured_schema=Answer,
+        )
+
+        self.assertEqual(res.structured_output, {"city": "Paris"})
+        self.assertListEqual(
+            model.tool_choices,
+            [
+                None,
+                ToolChoice(
+                    mode="auto",
+                    tools=["GenerateStructuredOutput"],
+                ),
+            ],
+        )
+
+    async def test_budget_exceeded_keeps_forced_structured_output(
+        self,
+    ) -> None:
+        """The agent's forced structured output call is kept."""
+        model = ToolChoiceModel(calls_offered_tool=False)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=Toolkit(tools=[DummyTool()]),
+            middlewares=[ReplyBudgetControlMiddleware(token_budget=300)],
+            react_config=ReActConfig(max_iters=3),
+        )
+
+        res = await agent.reply(
+            UserMsg("user", "Capital of France?"),
+            structured_schema=Answer,
+        )
+
+        self.assertEqual(res.structured_output, {"city": "Paris"})
+        offered = ToolChoice(mode="auto", tools=["GenerateStructuredOutput"])
+        self.assertListEqual(
+            model.tool_choices,
+            [
+                None,
+                offered,
+                offered,
+                ToolChoice(
+                    mode="GenerateStructuredOutput",
+                    tools=["GenerateStructuredOutput"],
+                ),
+            ],
+        )

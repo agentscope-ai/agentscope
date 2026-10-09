@@ -526,7 +526,8 @@ class GeminiChatModel(ChatModelBase):
                     usage_metadata,
                     "cached_content_token_count",
                     0,
-                ),
+                )
+                or 0,
             )
         return None
 

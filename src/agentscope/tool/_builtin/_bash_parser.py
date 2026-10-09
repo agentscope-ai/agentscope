@@ -21,7 +21,8 @@ from tree_sitter import Language, Parser, Node
 from .._constants import DANGEROUS_NODE_TYPES, DANGEROUS_COMMANDS
 
 
-# Commands that are considered safe and don't require permission rules
+# Commands that are considered safe and don't require permission rules,
+# so any command that writes must not be listed here
 SAFE_COMMANDS: Set[str] = {
     "echo",
     "cat",
@@ -32,7 +33,6 @@ SAFE_COMMANDS: Set[str] = {
     "false",
     "printf",
     "grep",
-    "tee",
 }
 
 # Safe environment variables that can be skipped when extracting command prefix
@@ -68,9 +68,6 @@ GIT_READ_ONLY_COMMANDS = {
     "git log",
     "git diff",
     "git show",
-    "git branch",
-    "git tag",
-    "git remote",
     "git ls-files",
     "git ls-tree",
     "git cat-file",
@@ -80,7 +77,6 @@ GIT_READ_ONLY_COMMANDS = {
     "git shortlog",
     "git blame",
     "git grep",
-    "git reflog",
     "git config --get",
     "git config --list",
 }
@@ -213,6 +209,19 @@ class BashCommandParser:
 
         if self._is_mutating_find_command(cmd):
             return False
+
+        # ``git grep -O<cmd>`` runs a command, ``--output=<file>`` writes one
+        if cmd.startswith("git "):
+            try:
+                tokens = shlex.split(cmd)
+            except ValueError:
+                return False
+            if any(
+                _.startswith(("--output", "--op"))
+                or (_.startswith("-") and not _.startswith("--") and "O" in _)
+                for _ in tokens[2:]
+            ):
+                return False
 
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
@@ -728,39 +737,76 @@ class BashCommandParser:
 
         while i < len(args):
             arg = args[i]
+            # A GNU long option may carry its value right after '=', which
+            # keeps option name and value in one token. Split them, or the
+            # value -- a sed script, a backup suffix -- vanishes from the
+            # analysis together with the option that introduced it.
+            name, assigned, inline = (
+                arg.partition("=") if arg.startswith("--") else (arg, "", "")
+            )
 
+            # -e/--expression takes a sed script as its value, so it must be
+            # matched before the combined short flags below
+            if name in ("-e", "--expression"):
+                if assigned:
+                    expressions.append(inline)
+                    found_first_expr = True
+                elif i + 1 < len(args):
+                    expressions.append(args[i + 1])
+                    found_first_expr = True
+                    i += 1
+            # --file is the long spelling of -f, which the flag allowlist
+            # below rejects: an expression read from a file is never seen here.
+            elif name == "--file":
+                flags.append("f")
             # Handle flags
-            if arg.startswith("-") and not arg.startswith("--"):
-                # Combined flags like -nE
-                flag_chars = arg[1:]
-                for char in flag_chars:
+            elif name.startswith("-") and not name.startswith("--"):
+                # Parse combined flags while respecting options whose value
+                # may be attached to the same token, e.g. -ne'5p',
+                # -e's/a/b/' and -i.bak.
+                flag_chars = name[1:]
+                for index, char in enumerate(flag_chars):
                     flags.append(char)
-                # -i flag may have optional backup extension argument
-                # But only skip if next arg doesn't look like an expression
-                if "i" in flag_chars and i + 1 < len(args):
+                    remainder = flag_chars[index + 1 :]
+                    if char == "e":
+                        if remainder:
+                            expressions.append(remainder)
+                            found_first_expr = True
+                        elif i + 1 < len(args):
+                            expressions.append(args[i + 1])
+                            found_first_expr = True
+                            i += 1
+                        break
+                    if char in ("f", "i"):
+                        # -f consumes a script filename and -i consumes an
+                        # optional backup suffix. Neither remainder contains
+                        # more flags.
+                        break
+
+                # A separated -i backup suffix retains the existing
+                # platform-compatible handling. Attached suffixes were
+                # consumed as the remainder above.
+                if flag_chars.endswith("i") and i + 1 < len(args):
                     next_arg = args[i + 1]
-                    # Skip backup extension only if it's not an expression
-                    # or file
+                    # A sed script never starts with a dot, e.g. BSD ".bak"
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
-                        and "." not in next_arg
-                    ):
-                        i += 1  # Skip backup extension
-            elif arg == "--in-place":
-                flags.append("i")
-                if i + 1 < len(args):
-                    next_arg = args[i + 1]
-                    if (
-                        not next_arg.startswith("-")
-                        and not next_arg.startswith("s")
-                        and "." not in next_arg
+                        and (next_arg.startswith(".") or "." not in next_arg)
                     ):
                         i += 1
-            elif arg in ["-e", "--expression"]:
-                if i + 1 < len(args):
-                    expressions.append(args[i + 1])
-                    i += 1
+            elif name == "--in-place":
+                flags.append("i")
+                # Written with '=', the backup suffix already came along in
+                # this token; only the separated form can take the next one.
+                if not assigned and i + 1 < len(args):
+                    next_arg = args[i + 1]
+                    if (
+                        not next_arg.startswith("-")
+                        and not next_arg.startswith("s")
+                        and (next_arg.startswith(".") or "." not in next_arg)
+                    ):
+                        i += 1
             elif not arg.startswith("-"):
                 # First non-flag, non-option arg is expression (if no -e used)
                 if not found_first_expr:

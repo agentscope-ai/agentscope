@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for schedule validation before persistence and registration."""
-from datetime import datetime
-from unittest import IsolatedAsyncioTestCase
+from datetime import datetime, timedelta
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from fastapi import HTTPException
 
@@ -119,6 +119,95 @@ def _record() -> ScheduleRecord:
             permission_mode=PermissionMode.DONT_ASK,
         ),
     )
+
+
+class ScheduleWeekdayTest(TestCase):
+    """Standard cron weekdays are translated for APScheduler."""
+
+    def test_standard_weekdays(self) -> None:
+        """Numeric weekdays count from Sunday; names pass through."""
+        record = _record()
+        actual = {}
+        for expression in ("1", "0", "7", "1-5", "0-7/3", "mon-fri"):
+            record.data.cron_expression = f"0 9 * * {expression}"
+            trigger = SchedulerManager.validate_schedule(record)
+            actual[expression] = str(trigger.fields[4])
+        self.assertDictEqual(
+            actual,
+            {
+                "1": "mon",
+                "0": "sun",
+                "7": "sun",
+                "1-5": "mon,tue,wed,thu,fri",
+                "0-7/3": "sun,wed,sat",
+                "mon-fri": "mon-fri",
+            },
+        )
+
+        record.data.cron_expression = "0 9 * * 8"
+        with self.assertRaises(ValueError):
+            SchedulerManager.validate_schedule(record)
+
+
+# UTC-12 sits west of every real server timezone, so a start time taken
+# from the server's naive wall clock lands hours in this zone's future.
+_FAR_WEST_TZ = "Etc/GMT+12"
+
+
+class ScheduleDefaultStartTest(IsolatedAsyncioTestCase):
+    """A schedule created without a start time is active right away."""
+
+    def _assert_fires_within_the_hour(self, record: ScheduleRecord) -> None:
+        trigger = SchedulerManager.validate_schedule(record)
+        now = datetime.now().astimezone()
+        next_fire = trigger.get_next_fire_time(None, now)
+        self.assertIsNotNone(next_fire)
+        self.assertLessEqual(next_fire - now, timedelta(hours=1))
+
+    async def test_router_default_start_is_an_absolute_instant(self) -> None:
+        """An hourly schedule must not skip runs in a far-off timezone."""
+        storage = _Storage()
+
+        await create_schedule(
+            _request("0 * * * *", timezone=_FAR_WEST_TZ),
+            user_id="user-1",
+            storage=storage,
+            access=_Access(),
+            scheduler=_Scheduler(),
+        )
+
+        self._assert_fires_within_the_hour(storage.upserted[0])
+
+    async def test_tool_default_start_is_an_absolute_instant(self) -> None:
+        """The agent-facing tool's default start must not drift either."""
+        storage = _Storage()
+        tool = ScheduleCreate(
+            user_id="user-1",
+            agent_id="agent-1",
+            chat_model_config=_request("0 * * * *").chat_model_config,
+            storage=storage,
+            scheduler_manager=_Scheduler(),
+        )
+
+        await tool(
+            name="hourly",
+            cron_expression="0 * * * *",
+            timezone=_FAR_WEST_TZ,
+        )
+
+        self._assert_fires_within_the_hour(storage.upserted[0])
+
+    def test_model_default_start_is_an_absolute_instant(self) -> None:
+        """Records built without ``started_at`` get the same guarantee."""
+        record = _record()
+        record.data = ScheduleData(
+            name="hourly",
+            cron_expression="0 * * * *",
+            timezone=_FAR_WEST_TZ,
+            chat_model_config=record.data.chat_model_config,
+        )
+
+        self._assert_fires_within_the_hour(record)
 
 
 class ScheduleValidationTest(IsolatedAsyncioTestCase):

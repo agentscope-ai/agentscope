@@ -4,7 +4,7 @@
 from dataclasses import asdict
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyValue
 
@@ -111,6 +111,16 @@ class GeminiTextCallTest(IsolatedAsyncioTestCase):
                 "source": "api",
             },
         )
+
+    async def test_sdk_async(self) -> None:
+        """Text embedding awaits the asynchronous SDK call."""
+        model = self._make_text_model()
+        model.client = MagicMock()
+        model.client.aio.models.embed_content = AsyncMock(
+            return_value=MagicMock(embeddings=[]),
+        )
+        await model(["hello"])
+        model.client.aio.models.embed_content.assert_awaited_once()
 
     async def test_text_rejects_datablock(self) -> None:
         """Text mode rejects DataBlock inputs."""
