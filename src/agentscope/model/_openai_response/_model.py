@@ -281,7 +281,7 @@ class OpenAIResponseModel(ChatModelBase):
         """
         usage: ChatUsage | None = None
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
+        text_block_ids: dict[tuple[str, int], str] = {}
         reasoning_block_ids: dict[str, dict[tuple[str, int], str]] = {}
         # Mapping from Responses API item id (fc_xxx) to (call_id, name)
         # so subsequent argument deltas can be routed to the right tool
@@ -333,8 +333,19 @@ class OpenAIResponseModel(ChatModelBase):
                         ),
                     )
 
-                elif event_type == "response.output_text.delta":
-                    delta_res.append_text(event.delta, block_id=text_id)
+                elif event_type in (
+                    "response.output_text.delta",
+                    "response.refusal.delta",
+                ):
+                    # Keep message content parts separate while accumulating
+                    # fragmented deltas into their original ordered blocks.
+                    delta_res.append_text(
+                        event.delta,
+                        block_id=text_block_ids.setdefault(
+                            (event.item_id, event.content_index),
+                            _generate_id(),
+                        ),
+                    )
 
                 elif event_type == "response.output_item.added":
                     item = event.item
@@ -475,6 +486,10 @@ class OpenAIResponseModel(ChatModelBase):
                     if getattr(part, "type", None) == "output_text":
                         content_blocks.append(
                             TextBlock(type="text", text=part.text),
+                        )
+                    elif getattr(part, "type", None) == "refusal":
+                        content_blocks.append(
+                            TextBlock(type="text", text=part.refusal),
                         )
 
             elif item_type == "function_call":
