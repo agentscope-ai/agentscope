@@ -319,6 +319,9 @@ class MCPTool(ToolBase):
     ) -> ToolChunk:
         """Invoke the MCP tool and convert the result to ToolChunk.
 
+        Structured-only results are serialized as JSON text when the server
+        does not provide any content blocks.
+
         Args:
             **kwargs: Arguments to pass to the MCP tool.
 
@@ -347,8 +350,18 @@ class MCPTool(ToolBase):
             )
 
         # Convert MCP result to AgentScope blocks
+        content = self._convert_mcp_content_to_blocks(result.content)
+        if not result.content and result.structuredContent is not None:
+            content = [
+                TextBlock(
+                    text=json.dumps(
+                        result.structuredContent,
+                        ensure_ascii=False,
+                    ),
+                ),
+            ]
         return ToolChunk(
-            content=self._convert_mcp_content_to_blocks(result.content),
+            content=content,
             state=ToolResultState.ERROR
             if result.isError
             else ToolResultState.RUNNING,
