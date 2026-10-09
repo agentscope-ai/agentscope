@@ -1602,6 +1602,139 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_native_error_cells_preserved(self) -> None:
+        """Stored Excel error values stay visible in both renderers.
+
+        pandas' openpyxl reader turns type ``e`` cells into NaN.  The
+        parser must copy those stored values back, while blanks, text,
+        numbers, and unevaluated formulas stay as they were.
+        """
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Errors"
+        sheet.append(["Case", "Value", "Note"])
+        sheet.append(["#NULL!", "text-after", 1])
+        sheet.append(["native_div0", "#DIV/0!", None])
+        sheet.append(["blank", None, "still-blank"])
+        sheet.append(["text_na", "NA", "00123"])
+        sheet.append(["integer", 42, None])
+        sheet.append(["literal", "#GETTING_DATA", "N/A"])
+        sheet.append(["formula", "=1/0", None])
+        sheet.append(["native_na", "#N/A", "#VALUE!"])
+        self.assertEqual(sheet["A2"].data_type, "e")
+        self.assertEqual(sheet["A2"].value, "#NULL!")
+        self.assertEqual(sheet["B3"].data_type, "e")
+        self.assertEqual(sheet["B3"].value, "#DIV/0!")
+        self.assertEqual(sheet["B9"].data_type, "e")
+        self.assertEqual(sheet["C9"].data_type, "e")
+        self.assertEqual(sheet["C9"].value, "#VALUE!")
+        self.assertEqual(sheet["B7"].data_type, "s")
+        self.assertEqual(sheet["B8"].data_type, "f")
+        self.assertIsNone(sheet["B4"].value)
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+        payload = buffer.getvalue()
+
+        rows = [
+            ["Case", "Value", "Note"],
+            ["#NULL!", "text-after", "1"],
+            ["native_div0", "#DIV/0!", ""],
+            ["blank", "", "still-blank"],
+            ["text_na", "NA", "00123"],
+            ["integer", "42", ""],
+            ["literal", "#GETTING_DATA", "N/A"],
+            ["formula", "", ""],
+            ["native_na", "#N/A", "#VALUE!"],
+        ]
+        markdown = (
+            "| Case | Value | Note |\n"
+            "| --- | --- | --- |\n"
+            "| #NULL! | text-after | 1 |\n"
+            "| native_div0 | #DIV/0! |  |\n"
+            "| blank |  | still-blank |\n"
+            "| text_na | NA | 00123 |\n"
+            "| integer | 42 |  |\n"
+            "| literal | #GETTING_DATA | N/A |\n"
+            "| formula |  |  |\n"
+            "| native_na | #N/A | #VALUE! |\n"
+        )
+        markdown_coords = (
+            "| [A1] Case | [B1] Value | [C1] Note |\n"
+            "| --- | --- | --- |\n"
+            "| [A2] #NULL! | [B2] text-after | [C2] 1 |\n"
+            "| [A3] native_div0 | [B3] #DIV/0! | [C3]  |\n"
+            "| [A4] blank | [B4]  | [C4] still-blank |\n"
+            "| [A5] text_na | [B5] NA | [C5] 00123 |\n"
+            "| [A6] integer | [B6] 42 | [C6]  |\n"
+            "| [A7] literal | [B7] #GETTING_DATA | [C7] N/A |\n"
+            "| [A8] formula | [B8]  | [C8]  |\n"
+            "| [A9] native_na | [B9] #N/A | [C9] #VALUE! |\n"
+        )
+
+        for table_format in ("markdown", "json"):
+            for coordinates in (False, True):
+                with self.subTest(
+                    table_format=table_format,
+                    coordinates=coordinates,
+                ):
+                    parser = ExcelParser(
+                        table_format=table_format,
+                        include_cell_coordinates=coordinates,
+                        include_sheet_names=False,
+                    )
+                    sections = await parser.parse(payload, "errors.xlsx")
+                    self.assertEqual(len(sections), 1)
+                    text = sections[0].content.text
+                    if table_format == "markdown":
+                        expected = markdown_coords if coordinates else markdown
+                    elif coordinates:
+                        body = "\n".join(
+                            json.dumps(
+                                {
+                                    f"{'ABC'[col]}{row + 1}": cell
+                                    for col, cell in enumerate(values)
+                                },
+                                ensure_ascii=False,
+                            )
+                            for row, values in enumerate(rows)
+                        )
+                        expected = (
+                            "<system-info>A table loaded as a JSON "
+                            f"array:</system-info>\n{body}"
+                        )
+                    else:
+                        body = "\n".join(
+                            json.dumps(values, ensure_ascii=False)
+                            for values in rows
+                        )
+                        expected = (
+                            "<system-info>A table loaded as a JSON "
+                            f"array:</system-info>\n{body}"
+                        )
+                    self.assertEqual(
+                        [section.model_dump() for section in sections],
+                        [
+                            {
+                                "content": {
+                                    "type": "text",
+                                    "text": expected,
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                "source": "errors.xlsx",
+                                "metadata": {},
+                            },
+                        ],
+                    )
+                    self.assertIn("#DIV/0!", text)
+                    self.assertIn("#N/A", text)
+                    self.assertIn("#VALUE!", text)
+                    self.assertIn("#NULL!", text)
+
     async def test_multi_sheet_merged_by_default(self) -> None:
         """``separate_sheet=False`` (default) merges sheets into one
         Section."""
