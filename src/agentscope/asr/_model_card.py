@@ -13,19 +13,29 @@ class ASRModelCard(BaseModel):
     type: Literal["asr_model"] = "asr_model"
     """The model card type discriminator."""
 
-    name: str
+    name: str = Field(
+        description="The model identifier used in provider API calls.",
+    )
     """The model identifier used in provider API calls."""
 
-    label: str
+    label: str = Field(description="The human-readable model label.")
     """The human-readable model label."""
 
-    input_types: list[str] = Field(default_factory=list)
+    input_types: list[str] = Field(
+        default_factory=list,
+        description="The supported audio input media types.",
+    )
     """The supported audio input media types."""
 
-    output_types: list[str] = Field(default_factory=lambda: ["text/plain"])
+    output_types: list[str] = Field(
+        default_factory=lambda: ["text/plain"],
+        description="The supported transcription output media types.",
+    )
     """The supported transcription output media types."""
 
-    parameter_schema: dict
+    parameter_schema: dict = Field(
+        description="The JSON schema for provider-specific parameters.",
+    )
     """The JSON schema for provider-specific parameters."""
 
     @classmethod
