@@ -7,10 +7,11 @@ Covers:
     responses with ``responseModalities: ["AUDIO"]``.
   * Handling of empty/missing text and empty audio responses.
 """
+import asyncio
 import base64
 import io
 import wave
-from typing import Any
+from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -82,11 +83,13 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
 
         self.mock_client = MagicMock()
         self.mock_client.aio.models.generate_content = AsyncMock()
+        self.mock_client.aio.models.generate_content_stream = AsyncMock()
+        self.mock_client.aio.aclose = AsyncMock()
         self.patcher = patch(
             "google.genai.Client",
             return_value=self.mock_client,
         )
-        self.patcher.start()
+        self.client_factory = self.patcher.start()
 
     def tearDown(self) -> None:
         """Tear down the test case."""
@@ -99,6 +102,92 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
             model="gemini-2.5-flash-preview-tts",
             parameters=GeminiTTSModel.Parameters(voice="Kore"),
         )
+
+    async def test_client_closed_after_aggregate(self) -> None:
+        """Successful, failed and cancelled calls all release the client."""
+        for error in (
+            None,
+            RuntimeError("API failed"),
+            asyncio.CancelledError(),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.mock_client.reset_mock()
+                self.mock_client.aio.models.generate_content.side_effect = (
+                    error
+                )
+                self.mock_client.aio.models.generate_content.return_value = (
+                    _make_api_response([b"AAAA"])
+                )
+                model = self._make_model()
+                if error is None:
+                    await model.synthesize("hello")
+                else:
+                    with self.assertRaises(type(error)) as raised:
+                        await model.synthesize("hello")
+                    self.assertIs(raised.exception, error)
+                self.mock_client.aio.aclose.assert_awaited_once_with()
+                self.mock_client.close.assert_called_once_with()
+
+    async def test_stream_client_lifetime(self) -> None:
+        """Keep the client alive until normal completion or early close."""
+        for early_close in (False, True):
+            with self.subTest(early_close=early_close):
+                self.mock_client.reset_mock()
+                self.client_factory.reset_mock()
+
+                async def responses() -> AsyncIterator[MagicMock]:
+                    for data in (b"AAAA", b"BBBB"):
+                        yield _make_api_response([data])
+
+                generate = self.mock_client.aio.models.generate_content_stream
+                generate.return_value = responses()
+                model = self._make_model()
+                model.stream = True
+                stream = await model.synthesize("hello")
+                self.client_factory.assert_not_called()
+                await anext(stream)
+                self.mock_client.aio.aclose.assert_not_awaited()
+                self.mock_client.close.assert_not_called()
+                if early_close:
+                    await stream.aclose()
+                else:
+                    _ = [chunk async for chunk in stream]
+                self.mock_client.aio.aclose.assert_awaited_once_with()
+                self.mock_client.close.assert_called_once_with()
+
+    async def test_stream_failure_closes_client(self) -> None:
+        """Setup and iteration failures, including cancellation, clean up."""
+        for during_iteration in (False, True):
+            for error in (
+                RuntimeError("stream failed"),
+                asyncio.CancelledError(),
+            ):
+                with self.subTest(
+                    during_iteration=during_iteration,
+                    error=type(error).__name__,
+                ):
+                    self.mock_client.reset_mock()
+                    generate = (
+                        self.mock_client.aio.models.generate_content_stream
+                    )
+                    generate.side_effect = None if during_iteration else error
+
+                    async def responses(
+                        failure: BaseException,
+                    ) -> AsyncIterator[MagicMock]:
+                        yield _make_api_response([b"AAAA"])
+                        raise failure
+
+                    if during_iteration:
+                        generate.return_value = responses(error)
+                    model = self._make_model()
+                    model.stream = True
+                    with self.assertRaises(type(error)) as raised:
+                        stream = await model.synthesize("hello")
+                        _ = [chunk async for chunk in stream]
+                    self.assertIs(raised.exception, error)
+                    self.mock_client.aio.aclose.assert_awaited_once_with()
+                    self.mock_client.close.assert_called_once_with()
 
     async def test_synthesizes_audio(self) -> None:
         """The audio parts are concatenated into a self-contained WAV."""
