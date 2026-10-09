@@ -23,4 +23,4 @@ max_session_duration_s: 7200
 parameter_overrides:
   voice:
     default: "Tina"
-    enum: ["Tina", "Serena", "Ryan", "Katerina", "Mia"]
+    enum: ["Tina", "Serena", "Ryan", "Katerina", "longanlingxin"]

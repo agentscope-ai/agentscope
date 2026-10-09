@@ -248,7 +248,7 @@ class DashScopeCardsTest(unittest.TestCase):
                             "Serena",
                             "Ryan",
                             "Katerina",
-                            "Mia",
+                            "longanlingxin",
                         ],
                         "title": "Voice",
                         "type": "string",
