@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.tool import ExecResult, LocalBackend
 from agentscope.tool._builtin._backend import _normalize_newlines
@@ -202,6 +203,19 @@ class TestLocalBackendFileIO(IsolatedAsyncioTestCase):
 
 class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
     """Test cases for the derived filesystem helpers (native ``os.*``)."""
+
+    async def test_getcwd_defaults_to_process_directory(self) -> None:
+        """An unconfigured backend follows the process cwd at call time."""
+        backend = LocalBackend()
+        with patch("os.getcwd", return_value=self.temp_dir.name):
+            self.assertEqual(await backend.getcwd(), self.temp_dir.name)
+
+    async def test_getcwd_keeps_configured_workdir(self) -> None:
+        """Resolve a relative workdir once, regardless of later cwd changes."""
+        expected = os.path.abspath("workspace")
+        backend = LocalBackend(workdir="workspace")
+        with patch("os.getcwd", return_value=self.temp_dir.name):
+            self.assertEqual(await backend.getcwd(), expected)
 
     async def asyncSetUp(self) -> None:
         """Build a backend and a temp dir per test."""
