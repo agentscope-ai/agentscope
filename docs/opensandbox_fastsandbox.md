@@ -332,16 +332,33 @@ The remaining live gateway check executes through execd's command API, whose
 default stream shutdown grace period is 200 ms. Sandbox creation and complete
 AgentScope workspace readiness are therefore different measurements.
 
-A durable pause/resume cycle was verified on the **same node and Fastlet**.
-Pause took 51.531 seconds, including 37.289 seconds to publish a 5 GiB
-checkpoint. Full resume and workspace initialization took 68.080 seconds:
-66.157 seconds were spent provisioning the SDK handle and waiting for service
-readiness, followed by the normal workspace restoration flow. Runtime restore
-itself logged 31.7 ms, but `/ping` returned transient HTTP 503 responses. The
-cause of that readiness delay remains unresolved; runtime readiness alone
-must not be reported as a usable workspace. Gateway restart took 1.294
-seconds. Files, tmpfs, boot ID, background process, user skills, callable MCP
-restoration, and agent/session scope isolation all passed.
+After the stable gateway MAC fix in
+[FastSandbox #96](https://github.com/opensandbox-group/fast-sandbox/pull/96),
+a newly built template was verified on 2026-10-09 on the **same node and
+Fastlet**. Two warmups preceded one fresh-workspace measurement. SDK creation
+and readiness took 58.7 ms; complete workspace initialization took 425.2 ms,
+including a 277.7 ms prepared marker and live gateway check. These are single
+samples, separate from the ten-sample startup results above.
+
+| Same-node operation after the MAC fix | Time | Samples |
+| --- | ---: | ---: |
+| Durable pause, including checkpoint publication | 61.292 s | 1 |
+| Checkpoint publication (6 GiB) | 46.663 s | 1 |
+| Complete resume and workspace initialization | 3.994 s | 1 |
+| Gateway restart during resume | 1.312 s | 1 |
+
+The earlier pre-fix run took 68.080 seconds for complete resume, including
+66.157 seconds waiting for SDK provisioning and service readiness. The guest
+had retained an ARP entry for a gateway MAC that changed when its TAP interface
+was recreated. The fixed runtime uses a stable gateway MAC; the new-template
+verification completed resume without that long readiness delay. These are
+separate single-cycle observations, not a controlled performance comparison.
+
+Files, tmpfs, boot ID, background process, user skills, callable MCP restoration,
+and agent/session scope isolation all passed after the fix. See the
+[post-fix test result](test-results/opensandbox_fixed_gateway_mac_ack_20261009.json)
+for raw timings and placement evidence. Durable pause remains dominated by
+checkpoint publication; it should not be described as an in-memory suspend.
 
 The native template used one vCPU, 2 GiB of memory, a 3 GiB rootfs, and the host
 CPU configuration (`none`, after the AMD host rejected T2A). The test used
