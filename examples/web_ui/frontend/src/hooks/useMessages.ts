@@ -29,6 +29,7 @@ export type SubagentHitlEntry = {
 	worker_agent_id: string;
 	worker_agent_name: string;
 	reply_id: string;
+	tool_call_id: string;
 	event_type: 'require_user_confirm' | 'require_external_execution';
 	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
 	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
@@ -52,8 +53,8 @@ const hasPendingToolCall = (msg: Msg | undefined): boolean => {
 	return false;
 };
 
-const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
-	`${e.worker_session_id}:${e.reply_id}`;
+const hitlKey = (e: { worker_session_id: string; reply_id: string; tool_call_id: string }) =>
+	`${e.worker_session_id}:${e.reply_id}:${e.tool_call_id}`;
 
 /**
  * Lifecycle phase of the reply currently owned by this session.
@@ -195,7 +196,7 @@ export function useMessages(
 				} else if (custom.name === 'subagent_require_user_confirm') {
 					// A team member is asking for confirmation; show (or
 					// refresh) its card on this leader view. Dedup by
-					// (worker_session_id, reply_id).
+					// (worker_session_id, reply_id, tool_call_id).
 					const e = custom.value as unknown as SubagentHitlEntry;
 					setSubagentHitl((prev) => [
 						...prev.filter((x) => hitlKey(x) !== hitlKey(e)),
@@ -203,8 +204,20 @@ export function useMessages(
 					]);
 				} else if (custom.name === 'subagent_user_confirm_result') {
 					// The member resolved (or its run ended); clear the card.
-					const v = custom.value as { worker_session_id: string; reply_id: string };
-					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
+					const v = custom.value as {
+						worker_session_id: string;
+						reply_id: string;
+						tool_call_ids?: string[];
+					};
+					const toolCallIds = v.tool_call_ids ?? [];
+					setSubagentHitl((prev) =>
+						prev.filter(
+							(x) =>
+								x.worker_session_id !== v.worker_session_id ||
+								x.reply_id !== v.reply_id ||
+								(toolCallIds.length > 0 && !toolCallIds.includes(x.tool_call_id)),
+						),
+					);
 				}
 				return;
 			}

@@ -75,20 +75,27 @@ class SubagentHitlProjector:
         self._storage = storage
 
     @staticmethod
-    def entry_id(worker_session_id: str, reply_id: str) -> str:
-        """Return the projection entry id for one pending request.
+    def entry_id(
+        worker_session_id: str,
+        reply_id: str,
+        tool_call_id: str,
+    ) -> str:
+        """Return the projection entry id for one pending tool call.
 
         Args:
             worker_session_id (`str`):
                 The worker session that emitted the HITL request.
             reply_id (`str`):
                 The worker-side reply id the request belongs to.
+            tool_call_id (`str`):
+                The tool call awaiting confirmation or execution.
 
         Returns:
             `str`:
-                The entry id, ``"{worker_session_id}:{reply_id}"``.
+                The entry id, ``"{worker_session_id}:{reply_id}:"
+                ``{tool_call_id}"``.
         """
-        return f"{worker_session_id}:{reply_id}"
+        return f"{worker_session_id}:{reply_id}:{tool_call_id}"
 
     async def maybe_project(
         self,
@@ -167,30 +174,70 @@ class SubagentHitlProjector:
                 "event": event.model_dump(mode="json"),
                 "created_at": datetime.now().isoformat(),
             }
-            await projection.upsert(
-                leader_sid,
-                self.KIND,
-                self.entry_id(session_record.id, event.reply_id),
-                payload,
-            )
-            await projection.publish(leader_sid, self.EVT_REQUIRE, payload)
+            for tool_call in event.tool_calls:
+                call_payload = {
+                    **payload,
+                    "tool_call_id": tool_call.id,
+                    "event": {
+                        **payload["event"],
+                        "tool_calls": [tool_call.model_dump(mode="json")],
+                    },
+                }
+                await projection.upsert(
+                    leader_sid,
+                    self.KIND,
+                    self.entry_id(
+                        session_record.id,
+                        event.reply_id,
+                        tool_call.id,
+                    ),
+                    call_payload,
+                )
+                await projection.publish(
+                    leader_sid,
+                    self.EVT_REQUIRE,
+                    call_payload,
+                )
         else:
-            # Clear the pending card. ``ReplyEndEvent`` is the primary
-            # clear signal (the resume's continuation event is NOT
-            # republished through the stream); the explicit result
-            # events clear early when they do flow through. All are
-            # idempotent — deleting an already-gone entry is a no-op.
-            await projection.delete(
-                leader_sid,
-                self.KIND,
-                self.entry_id(session_record.id, event.reply_id),
-            )
+            # Result inputs clear only the calls they answer; reply end
+            # clears any remaining calls for that reply.
+            if isinstance(event, UserConfirmResultEvent):
+                tool_call_ids = [
+                    result.tool_call.id for result in event.confirm_results
+                ]
+            elif isinstance(event, ExternalExecutionResultEvent):
+                tool_call_ids = [
+                    result.id for result in event.execution_results
+                ]
+            else:
+                tool_call_ids = []
+
+            entries = await projection.list(leader_sid, self.KIND)
+            cleared_ids = []
+            for entry in entries:
+                if (
+                    entry.get("worker_session_id") != session_record.id
+                    or entry.get("reply_id") != event.reply_id
+                    or (
+                        tool_call_ids
+                        and entry.get("tool_call_id") not in tool_call_ids
+                    )
+                ):
+                    continue
+                call_id = entry["tool_call_id"]
+                await projection.delete(
+                    leader_sid,
+                    self.KIND,
+                    self.entry_id(session_record.id, event.reply_id, call_id),
+                )
+                cleared_ids.append(call_id)
             await projection.publish(
                 leader_sid,
                 self.EVT_RESULT,
                 {
                     "worker_session_id": session_record.id,
                     "reply_id": event.reply_id,
+                    "tool_call_ids": cleared_ids,
                 },
             )
 
@@ -271,5 +318,9 @@ class SubagentHitlProjector:
                 await projection.delete(
                     leader_sid,
                     cls.KIND,
-                    cls.entry_id(worker_sid, entry["reply_id"]),
+                    cls.entry_id(
+                        worker_sid,
+                        entry["reply_id"],
+                        entry["tool_call_id"],
+                    ),
                 )
