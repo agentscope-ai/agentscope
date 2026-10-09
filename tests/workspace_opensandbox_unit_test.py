@@ -390,7 +390,7 @@ class TestPreparedGateway(IsolatedAsyncioTestCase):
         repo = Path(__file__).resolve().parent.parent
         spec = importlib.util.spec_from_file_location(
             "prepare_gateway",
-            repo / "examples/opensandbox_fastsandbox_template/"
+            repo / "examples/workspace/opensandbox/template/"
             "prepare_gateway.py",
         )
         assert spec is not None and spec.loader is not None

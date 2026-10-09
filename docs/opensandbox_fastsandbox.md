@@ -73,18 +73,61 @@ workspace bootstrap are separate milestones.
 A Firecracker template can include a running, healthy MCP gateway with an
 empty registry, preloaded MCP/tool modules, and the standard empty workspace
 layout. Build the image with the files in
-`examples/opensandbox_fastsandbox_template/`, then create the template through
+`examples/workspace/opensandbox/template/`, then create the template through
 the OpenSandbox API. Configure its readiness probe to check the gateway's
 HTTP `/health` endpoint and verify the empty layout before the builder captures
 the memory snapshot.
 
-Build from the same AgentScope source version as your application:
+Build from the same AgentScope source version as your application.
+The one-command builder packages this checkout and installs the gateway's
+builtin-tool dependencies automatically:
+
+```bash
+# Local verification: build and load an amd64 image, start its gateway,
+# check the empty layout/registry, and remove the validation container.
+.venv/bin/python examples/workspace/opensandbox/build_template.py \
+  --image agentscope-gateway:local --local
+
+# Full build: Docker must already be logged in to this image registry.
+export OPENSANDBOX_DOMAIN="your-opensandbox-server:80"
+export OPENSANDBOX_API_KEY="your-server-api-key"
+.venv/bin/python examples/workspace/opensandbox/build_template.py \
+  --image your-registry/agentscope-gateway:your-version \
+  --publish s3://your-template-bucket/publish \
+  --nameservers 100.100.2.136 100.100.2.138 \
+  --output dist/opensandbox-template.json
+```
+
+The tool requires Python 3.11+, `uv`, and Docker with Buildx. Full builds also
+require a template-capable OpenSandbox SDK, server-side registry/artifact-store
+access, and access from the application to both the lifecycle server and sandbox
+ingress. Local mode does not use OpenSandbox or create a Firecracker snapshot.
+
+Full builds push `linux/amd64`, create a native template from its immutable
+image digest, wait for `Succeeded`, then restore a temporary sandbox to verify
+the prepared marker and live empty gateway. Only after validation succeeds does
+stdout print `export OPENSANDBOX_TEMPLATE_ID=...`; progress goes to stderr.
+The temporary validation sandbox is deleted. The image and template are retained.
+
+Defaults are one vCPU, 2 GiB memory, and a 4 GiB rootfs; override with `--cpu`,
+`--memory`, and `--disk`. Use `--requirements ./requirements.txt` to bake extra
+application dependencies into the gateway venv. Requirements must be portable
+package requirements; local files and relative includes are not copied.
+Use `--dry-run` to inspect the plan without building or contacting a server.
+
+The JSON output records the image and template ID as soon as they are available.
+`--wait-timeout` defaults to 1,800 seconds for template builds; on timeout the
+remote build continues and its ID is retained for `osb template get <id>`.
+Local readiness checks wait at most 120 seconds. A failed gateway validation
+exits nonzero and never prints a success export.
+
+To build and register the template manually:
 
 ```bash
 uv build --wheel --out-dir dist
-cp dist/agentscope-*.whl examples/opensandbox_fastsandbox_template/
+cp dist/agentscope-*.whl examples/workspace/opensandbox/template/
 docker build -t your-registry/agentscope-gateway:your-version \
-  examples/opensandbox_fastsandbox_template/
+  examples/workspace/opensandbox/template/
 docker push your-registry/agentscope-gateway:your-version
 ```
 
@@ -156,7 +199,7 @@ Firecracker; the workspace restarts its MCP gateway after reattachment.
 
 ## User demo
 
-Use `examples/opensandbox_fastsandbox_demo/main.py` for a minimal agent workflow:
+Use `examples/workspace/opensandbox/main.py` for a minimal agent workflow:
 create or attach a workspace, write and execute a Python file through agent
 tools, pause, then create a new workspace handle with the **same workspace ID**
 and read the file after resume. The demo uses public workspace APIs and
@@ -195,9 +238,9 @@ export DEEPSEEK_BASE_URL="https://api.deepseek.com"
 export DEEPSEEK_MODEL="deepseek-flash"
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
 
-.venv/bin/python examples/opensandbox_fastsandbox_demo/main.py
+.venv/bin/python examples/workspace/opensandbox/main.py
 # Or choose a stable ID; rerunning with it reattaches before sandbox expiry.
-.venv/bin/python examples/opensandbox_fastsandbox_demo/main.py \
+.venv/bin/python examples/workspace/opensandbox/main.py \
   --workspace-id my-fastsandbox-demo
 ```
 
@@ -248,7 +291,7 @@ Set `DEEPSEEK_API_KEY` in your environment. The example defaults to
 
 ```bash
 REPORT_PATH=fastsandbox-agent-result.json \
-  python examples/opensandbox_fastsandbox_agent.py
+  python examples/workspace/opensandbox/verify_pause_resume.py
 ```
 
 The agent writes and runs a Python program using workspace tools. The example

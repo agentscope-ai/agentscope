@@ -10,8 +10,11 @@ RUN uv venv /root/.agentscope/.venv \
 # Supply the same AgentScope wheel as the application using this template.
 COPY agentscope-*.whl /tmp/
 COPY prepare_gateway.py check_gateway.py start_gateway.sh /opt/agentscope-template/
+COPY requirements.txt /tmp/requirements.txt
 RUN uv pip install --python /root/.agentscope/.venv/bin/python \
     --no-deps /tmp/agentscope-*.whl \
+ && ([ ! -s /tmp/requirements.txt ] || uv pip install \
+       --python /root/.agentscope/.venv/bin/python -r /tmp/requirements.txt) \
  && /root/.agentscope/.venv/bin/python /opt/agentscope-template/prepare_gateway.py \
  && /root/.agentscope/.venv/bin/python -c \
     "from agentscope.tool import MCPTool" \
@@ -19,7 +22,7 @@ RUN uv pip install --python /root/.agentscope/.venv/bin/python \
     /root/.agentscope/_mcp_gateway_app.py --help \
  && uv pip freeze --python /root/.agentscope/.venv/bin/python \
     > /root/.agentscope/prebuilt-requirements.txt \
- && rm -f /tmp/agentscope-*.whl \
+ && rm -f /tmp/agentscope-*.whl /tmp/requirements.txt \
  && rm -rf /root/.cache/uv
 WORKDIR /workspace
 ENTRYPOINT ["sh", "/opt/agentscope-template/start_gateway.sh"]
