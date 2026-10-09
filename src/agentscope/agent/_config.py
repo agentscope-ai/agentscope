@@ -411,6 +411,15 @@ class ReActConfig(BaseModel):
     is swallowed once the fallback interruption message and
     ``ReplyEndEvent`` have been emitted."""
 
+    reject_truncated_tool_call: bool = Field(
+        title="Reject Truncated Tool Call",
+        default=False,
+        description="Whether to reject the final tool call when the provider "
+        "reports a length limit and its arguments are incomplete JSON.",
+    )
+    """Whether to prevent an explicitly truncated tool call from entering
+    the tool executor. The rejected call is closed with an error result."""
+
 
 class ModelConfig(BaseModel):
     """The model related configuration."""

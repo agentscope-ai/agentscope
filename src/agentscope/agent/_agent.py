@@ -243,6 +243,10 @@ class Agent:
         # reply loop only exits after the event is delivered (not swallowed)
         self._receive_reply_end: bool = False
 
+        # Set only for the final malformed tool call of a length-truncated
+        # model response and consumed before that call enters the executor.
+        self._rejected_tool_call_id: str | None = None
+
     def _validate_configs(self) -> None:
         """Validate the config combinations that a single config class cannot
         check by itself.
@@ -1813,6 +1817,19 @@ class Agent:
             completed_response.usage,
         )
 
+        self._rejected_tool_call_id = None
+        if (
+            self.react_config.reject_truncated_tool_call
+            and completed_response.finished_reason == FinishedReason.LENGTH
+            and completed_response.content
+            and isinstance(completed_response.content[-1], ToolCallBlock)
+        ):
+            tool_call = completed_response.content[-1]
+            try:
+                json.loads(tool_call.input)
+            except (TypeError, ValueError):
+                self._rejected_tool_call_id = tool_call.id
+
         # A thinking-only response is an intermediate reasoning step rather
         # than a user-visible final answer. Keep the ReAct loop running so the
         # model can produce text, data, or a tool call on the next iteration.
@@ -2473,6 +2490,20 @@ class Agent:
             | ToolResultEndEvent`:
                 The events generated during the tool call execution.
         """
+        if tool_call.id == self._rejected_tool_call_id:
+            self._rejected_tool_call_id = None
+            async for evt in self._handle_error_tool_call(
+                tool_call,
+                message=(
+                    "The tool was not executed because the model response "
+                    "reached a length limit and the tool arguments are "
+                    "incomplete JSON."
+                ),
+                state=ToolResultState.ERROR,
+            ):
+                yield evt
+            return
+
         # ===================================================================
         # Step 1: Check and parse the tool call input:
         #  - if failed, directly return the error message to the agent

@@ -27,6 +27,9 @@ class FinishedReason(StrEnum):
     COMPLETED = "completed"
     """The model response is completed."""
 
+    LENGTH = "length"
+    """The provider stopped generating because a length limit was reached."""
+
 
 @dataclass
 class ChatResponse(DictMixin):
@@ -63,7 +66,8 @@ class ChatResponse(DictMixin):
     metadata: dict[str, JSONSerializableObject] = field(
         default_factory=lambda: {},
     )
-    """The metadata of the chat response"""
+    """The metadata of the chat response. A finish reason reported by the
+    provider is stored under ``raw_finish_reason`` when available."""
 
     def append_text(self, text: str, block_id: str | None = None) -> Self:
         """Append text to the current response."""

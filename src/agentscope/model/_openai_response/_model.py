@@ -11,6 +11,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIResponseFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -27,6 +28,19 @@ else:
 
 # kwargs accepted by Chat Completions but NOT by the Responses API.
 _RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
+
+_LENGTH_FINISH_REASONS = frozenset({"max_output_tokens"})
+
+
+def _get_finish_reason(response: Any) -> str | None:
+    """Read the finish reason from an OpenAI Responses response."""
+    incomplete_details = getattr(response, "incomplete_details", None)
+    reason = getattr(incomplete_details, "reason", None)
+    if isinstance(reason, str) and reason:
+        return reason
+
+    status = getattr(response, "status", None)
+    return status if isinstance(status, str) and status else None
 
 
 def _dump_reasoning_item(item: Any) -> dict[str, Any]:
@@ -263,9 +277,9 @@ class OpenAIResponseModel(ChatModelBase):
         Each event yields only the *delta* content produced by that event so
         that the base ``ChatModelBase.__call__`` can accumulate the full
         response. Because the Responses API only returns the upstream
-        response id on the final ``response.completed`` event, we assign a
-        locally-generated ``response_id`` up-front so every delta chunk
-        carries a stable id.
+        response id on the final ``response.completed`` or
+        ``response.incomplete`` event, we assign a locally-generated
+        ``response_id`` up-front so every delta chunk carries a stable id.
 
         Args:
             start_datetime (`datetime`):
@@ -372,7 +386,10 @@ class OpenAIResponseModel(ChatModelBase):
                             input=event.delta or "",
                         )
 
-                elif event_type == "response.completed":
+                elif event_type in {
+                    "response.completed",
+                    "response.incomplete",
+                }:
                     resp = event.response
                     if resp.usage:
                         u = resp.usage
@@ -391,6 +408,13 @@ class OpenAIResponseModel(ChatModelBase):
                             if details
                             else 0,
                         )
+
+                    _record_finish_reason(
+                        delta_res,
+                        _get_finish_reason(resp),
+                        _LENGTH_FINISH_REASONS,
+                    )
+
                     # Attach reasoning item id metadata from the completed
                     # response so the formatter can echo it back in
                     # multi-turn history. The Responses API requires every
@@ -398,7 +422,12 @@ class OpenAIResponseModel(ChatModelBase):
                     # reasoning item (see the function-calling guide); the
                     # reasoning item may have an empty summary when the model
                     # does not expose it (e.g. o1/o4-mini as of 2026-05).
-                    for output_item in getattr(resp, "output", []):
+                    output_items = (
+                        getattr(resp, "output", [])
+                        if event_type == "response.completed"
+                        else []
+                    )
+                    for output_item in output_items:
                         if getattr(output_item, "type", None) == "reasoning":
                             reasoning_item_id = getattr(
                                 output_item,
@@ -423,7 +452,7 @@ class OpenAIResponseModel(ChatModelBase):
                                         reasoning_item_raw=reasoning_item_raw,
                                     )
 
-                if delta_res.content or usage:
+                if delta_res.content or usage or delta_res.metadata:
                     delta_res.usage = usage
                     yield delta_res
 
@@ -527,7 +556,13 @@ class OpenAIResponseModel(ChatModelBase):
         if response_id:
             resp_kwargs["id"] = response_id
 
-        return ChatResponse(**resp_kwargs)
+        chat_response = ChatResponse(**resp_kwargs)
+        _record_finish_reason(
+            chat_response,
+            _get_finish_reason(response),
+            _LENGTH_FINISH_REASONS,
+        )
+        return chat_response
 
     def _format_tools(
         self,

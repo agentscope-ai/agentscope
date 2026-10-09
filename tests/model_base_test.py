@@ -96,6 +96,7 @@ def _expected(
     is_last: bool,
     finished_reason: FinishedReason = FinishedReason.COMPLETED,
     usage: dict | None = None,
+    metadata: dict | None = None,
 ) -> dict:
     """Build the expected serialized ``ChatResponse`` dict, with
     ``AnyString`` placeholders for auto-generated fields (id,
@@ -111,7 +112,7 @@ def _expected(
         "type": "chat_response",
         "usage": usage,
         "finished_reason": finished_reason,
-        "metadata": {},
+        "metadata": metadata or {},
     }
 
 
@@ -239,6 +240,42 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
                     finished_reason=FinishedReason.COMPLETED,
                 ),
             ],
+        )
+
+    async def test_stream_preserves_explicit_finish_reason_metadata(
+        self,
+    ) -> None:
+        """A terminal reason-only delta must reach the final response."""
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="hello", id="t1")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[],
+                        is_last=False,
+                        finished_reason=FinishedReason.LENGTH,
+                        metadata={"raw_finish_reason": "max_tokens"},
+                    ),
+                ],
+            ],
+        )
+
+        gen = await self.model(messages=self.messages)
+        collected = [_dump(c) async for c in gen]
+
+        self.assertEqual(
+            collected[-1],
+            _expected(
+                content=[
+                    {"type": "text", "text": "hello", "id": "t1"},
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.LENGTH,
+                metadata={"raw_finish_reason": "max_tokens"},
+            ),
         )
 
     # ------------------------------------------------------------------

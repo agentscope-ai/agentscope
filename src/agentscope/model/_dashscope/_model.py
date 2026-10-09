@@ -13,6 +13,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import (
@@ -29,6 +30,9 @@ if TYPE_CHECKING:
 else:
     ChatCompletion = Any
     AsyncStream = Any
+
+
+_LENGTH_FINISH_REASONS = frozenset({"length"})
 
 
 class DashScopeChatModel(ChatModelBase):
@@ -342,6 +346,11 @@ class DashScopeChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                _record_finish_reason(
+                    delta_res,
+                    getattr(choice, "finish_reason", None),
+                    _LENGTH_FINISH_REASONS,
+                )
                 delta = choice.delta
 
                 # Thinking
@@ -424,7 +433,7 @@ class DashScopeChatModel(ChatModelBase):
                             media_type="audio/wav",
                         )
 
-                if delta_res.content or usage:
+                if delta_res.content or usage or delta_res.metadata:
                     delta_res.usage = usage
                     yield delta_res
 
@@ -490,7 +499,14 @@ class DashScopeChatModel(ChatModelBase):
         if response_id:
             resp_kwargs["id"] = response_id
 
-        return ChatResponse(**resp_kwargs)
+        chat_response = ChatResponse(**resp_kwargs)
+        if response.choices:
+            _record_finish_reason(
+                chat_response,
+                getattr(response.choices[0], "finish_reason", None),
+                _LENGTH_FINISH_REASONS,
+            )
+        return chat_response
 
     def _format_tools(
         self,

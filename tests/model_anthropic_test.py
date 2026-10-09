@@ -22,7 +22,7 @@ from agentscope.message import (
     ToolCallBlock,
     ThinkingBlock,
 )
-from agentscope.model import AnthropicChatModel
+from agentscope.model import AnthropicChatModel, FinishedReason
 from agentscope.credential import AnthropicCredential
 from agentscope.tool import ToolChoice
 
@@ -48,6 +48,7 @@ def _mock_completion(
     tool_calls: Any = None,
     thinking: Any = None,
     response_id: str = "msg-1",
+    stop_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming Anthropic Message response."""
     blocks = []
@@ -74,6 +75,7 @@ def _mock_completion(
     resp = MagicMock()
     resp.id = response_id
     resp.content = blocks
+    resp.stop_reason = stop_reason
     resp.usage = MagicMock()
     resp.usage.input_tokens = 10
     resp.usage.output_tokens = 5
@@ -235,6 +237,22 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "msg-1")
+
+    async def test_context_limit_finish_reason_is_normalized(self) -> None:
+        """Both Anthropic length-limit variants share one reason."""
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_mock_completion(
+                stop_reason="model_context_window_exceeded",
+            ),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(
+            result.metadata,
+            {"raw_finish_reason": "model_context_window_exceeded"},
+        )
 
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""

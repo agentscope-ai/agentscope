@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import DeepSeekChatModel
+from agentscope.model import DeepSeekChatModel, FinishedReason
 from agentscope.credential import DeepSeekCredential
 from agentscope.tool import ToolChoice
 
@@ -41,6 +41,7 @@ def _mock_completion(
     tool_calls: Any = None,
     reasoning: Any = None,
     response_id: str = "deepseek-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
@@ -60,6 +61,7 @@ def _mock_completion(
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason
 
     resp = MagicMock()
     resp.id = response_id
@@ -182,6 +184,17 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "deepseek-1")
+
+    async def test_length_finish_reason_is_normalized(self) -> None:
+        """The OpenAI-compatible reason is normalized."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(finish_reason="length"),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(result.metadata, {"raw_finish_reason": "length"})
 
     async def test_extra_body_is_not_mutated(self) -> None:
         """Defaulting thinking.type leaves the caller's extra_body intact."""

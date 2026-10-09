@@ -11,6 +11,7 @@ from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ...credential import GeminiCredential
 from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -20,6 +21,9 @@ if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
 else:
     GenerateContentResponse = Any
+
+
+_LENGTH_FINISH_REASONS = frozenset({"MAX_TOKENS"})
 
 
 def _is_null_schema(schema: Any) -> bool:
@@ -410,9 +414,16 @@ class GeminiChatModel(ChatModelBase):
                             ),
                         )
 
+            if chunk.candidates:
+                _record_finish_reason(
+                    delta_res,
+                    getattr(chunk.candidates[0], "finish_reason", None),
+                    _LENGTH_FINISH_REASONS,
+                )
+
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
-            if delta_res.content or usage:
+            if delta_res.content or usage or delta_res.metadata:
                 delta_res.usage = usage
                 yield delta_res
 
@@ -467,12 +478,19 @@ class GeminiChatModel(ChatModelBase):
 
         usage = self._extract_usage(response.usage_metadata, start_datetime)
 
-        return ChatResponse(
+        chat_response = ChatResponse(
             id=getattr(response, "response_id", None) or _generate_id(),
             content=content_blocks,
             is_last=True,
             usage=usage,
         )
+        if response.candidates:
+            _record_finish_reason(
+                chat_response,
+                getattr(response.candidates[0], "finish_reason", None),
+                _LENGTH_FINISH_REASONS,
+            )
+        return chat_response
 
     def _extract_usage(
         self,
