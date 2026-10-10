@@ -26,7 +26,7 @@ deployment.
 co-locating multiple logical knowledge bases inside the same physical
 collection — typically multi-tenant deployments where every record
 carries a ``{"tenant_id": "..."}`` payload.  It is set once at
-construction time and **always** applied: search/list never escape
+construction time and **always** applied: search/list/delete never escape
 it, and insert forces it onto every chunk's metadata so a malicious or
 buggy parser cannot rebind a record into another scope.
 """
@@ -113,6 +113,8 @@ class KnowledgeBase:
                 - :meth:`insert_document` forces these keys onto every
                   inserted chunk's metadata, overriding caller-supplied
                   values, so records cannot leak into another scope.
+                - :meth:`delete_document` removes only records matching
+                  both the document id and every filter pair.
 
                 ``None`` disables filtering — the default for
                 deployments where every knowledge base owns its
@@ -356,17 +358,30 @@ class KnowledgeBase:
         return document_id
 
     async def delete_document(self, document_id: str) -> None:
-        """Remove every record for one source document.
+        """Remove every record for one source document within this scope.
+
+        Records must also match :attr:`metadata_filter` when set.
+        Custom vector stores must support scoped deletion; an unsupported
+        filter raises an error instead of falling back to unscoped deletion.
 
         Args:
             document_id (`str`):
                 The source document id whose records should be removed.
         """
         await self.ensure_collection()
-        await self._vector_store.delete(
-            self._collection,
-            document_id,
-        )
+        if self._metadata_filter:
+            await self._vector_store.delete(
+                self._collection,
+                document_id,
+                metadata_filter=self._metadata_filter,
+            )
+        else:
+            # Preserve compatibility with custom stores using the original
+            # delete signature when no scoping is required.
+            await self._vector_store.delete(
+                self._collection,
+                document_id,
+            )
 
     async def list_documents(self) -> list["DocumentSummary"]:
         """List all distinct source documents in this knowledge base.
