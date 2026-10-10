@@ -122,19 +122,22 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     @staticmethod
     def _format_audio_source(
         source: URLSource | Base64Source,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Convert an audio source to OpenAI input_audio format.
 
         Local ``file://`` URLs are read from disk. Remote URLs are downloaded.
-        Only ``wav`` and ``mp3`` formats are supported by the OpenAI API.
+        Only ``wav`` and ``mp3`` formats are supported by the OpenAI API;
+        any other audio subtype is skipped, like every unsupported block in
+        :meth:`_format_openai_data_block`.
 
         Args:
             source (`URLSource | Base64Source`):
                 The audio source to convert.
 
         Returns:
-            `dict[str, Any]`:
-                A dictionary with ``"type": "input_audio"`` in OpenAI format.
+            `dict[str, Any] | None`:
+                A dictionary with ``"type": "input_audio"`` in OpenAI format,
+                or ``None`` if the media type cannot be encoded.
         """
         media_type_to_format = {
             "audio/wav": "wav",
@@ -143,10 +146,12 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         }
         media_type = source.media_type
         if media_type not in media_type_to_format:
-            raise TypeError(
-                f"Unsupported audio media type: {media_type}, "
-                "only WAV and MP3 audio are supported.",
+            logger.warning(
+                "Unsupported audio media type %s for OpenAI API, only WAV "
+                "and MP3 audio are supported. This block will be skipped.",
+                media_type,
             )
+            return None
         audio_format = media_type_to_format[media_type]
 
         if isinstance(source, Base64Source):
