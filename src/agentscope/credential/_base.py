@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The credential base class."""
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING, Any, Type
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,58 @@ if TYPE_CHECKING:
     from ..realtime import RealtimeModelBase, RealtimeModelCard
     from ..tts import TTSModelBase
     from ..tts._tts_model_card import TTSModelCard
+
+
+async def _http_get_json(url: str, headers: dict[str, str]) -> Any:
+    """Perform a GET request and return the parsed JSON body.
+
+    Single network seam for the remote-model listing helpers below, so
+    tests can patch network access in one place.
+
+    Args:
+        url (`str`): The fully qualified URL to fetch.
+        headers (`dict[str, str]`): Request headers.
+
+    Returns:
+        `Any`: The decoded JSON response body.
+
+    Raises:
+        Exception: Network or HTTP errors propagate to the caller.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+async def _list_openai_compatible_models(
+    base_url: str,
+    api_key: str,
+) -> list[str]:
+    """Query an OpenAI-compatible endpoint's ``GET /models`` listing.
+
+    Args:
+        base_url (`str`): The endpoint's OpenAI-compatible base URL.
+        api_key (`str`): The bearer token sent as the API key.
+
+    Returns:
+        `list[str]`: Sorted, de-duplicated model IDs reported by the
+        endpoint.
+    """
+    payload = await _http_get_json(
+        f"{base_url.rstrip('/')}/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    entries = payload.get("data", []) if isinstance(payload, dict) else []
+    return sorted(
+        {
+            entry["id"]
+            for entry in entries
+            if isinstance(entry, dict) and "id" in entry
+        },
+    )
 
 
 class CredentialBase(BaseModel):
@@ -110,5 +162,29 @@ class CredentialBase(BaseModel):
         Returns:
             `Type[EmbeddingModelBase] | None`:
                 The embedding model class, or ``None``.
+        """
+        return None
+
+    async def list_remote_models(self) -> list[str] | None:
+        """Query the endpoint behind this credential for the models it
+        actually serves.
+
+        The service layer surfaces the result next to the static
+        model-card catalog (:meth:`list_models`) so users can spot
+        catalog entries the configured endpoint does not serve, and
+        endpoint models missing from the catalog. The default returns
+        ``None`` — this credential type has no supported remote listing
+        (e.g. the provider SDK exposes no model-list API).
+
+        Returns:
+            `list[str] | None`:
+                Sorted, de-duplicated raw model IDs reported by the
+                remote endpoint, or ``None`` when unsupported for this
+                credential type.
+
+        Raises:
+            Exception:
+                Network or HTTP errors propagate to the caller; the
+                service layer maps them to an upstream error response.
         """
         return None

@@ -70,3 +70,12 @@ class OpenAICredential(CredentialBase):
         from ..realtime import OpenAIRealtimeModel
 
         return [OpenAIRealtimeModel]
+
+    async def list_remote_models(self) -> list[str] | None:
+        """Query the endpoint's OpenAI-compatible ``GET /models`` listing."""
+        from ._base import _list_openai_compatible_models
+
+        return await _list_openai_compatible_models(
+            self.base_url or "https://api.openai.com/v1",
+            self.api_key.get_secret_value(),
+        )

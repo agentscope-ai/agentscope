@@ -40,3 +40,12 @@ class VolcengineCredential(CredentialBase):
         from ..model import VolcengineChatModel
 
         return VolcengineChatModel
+
+    async def list_remote_models(self) -> list[str] | None:
+        """Query the endpoint's OpenAI-compatible ``GET /models`` listing."""
+        from ._base import _list_openai_compatible_models
+
+        return await _list_openai_compatible_models(
+            self.base_url,
+            self.api_key.get_secret_value(),
+        )

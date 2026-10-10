@@ -71,6 +71,7 @@ from ._credential import (
     UpdateCredentialRequest,
     ListCredentialsResponse,
     ListCredentialSchemasResponse,
+    ListRemoteModelsResponse,
 )
 from ._knowledge_base import (
     ChunkerInfo,

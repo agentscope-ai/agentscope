@@ -37,3 +37,24 @@ class AnthropicCredential(CredentialBase):
         from ..model import AnthropicChatModel
 
         return AnthropicChatModel
+
+    async def list_remote_models(self) -> list[str] | None:
+        """Query the Anthropic ``GET /v1/models`` listing."""
+        from ._base import _http_get_json
+
+        payload = await _http_get_json(
+            f"{(self.base_url or 'https://api.anthropic.com').rstrip('/')}"
+            "/v1/models",
+            headers={
+                "x-api-key": self.api_key.get_secret_value(),
+                "anthropic-version": "2023-06-01",
+            },
+        )
+        entries = payload.get("data", []) if isinstance(payload, dict) else []
+        return sorted(
+            {
+                entry["id"]
+                for entry in entries
+                if isinstance(entry, dict) and "id" in entry
+            },
+        )
