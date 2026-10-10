@@ -5,12 +5,14 @@
 Tests cover both non-streaming and streaming modes.
 OpenAI Responses API uses event-based streaming with response.completed.
 """
+import asyncio
 from typing import Any, cast
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
-from openai import APIError
+import httpx
+from openai import APIError, AsyncOpenAI
 from openai.types.responses import ResponseOutputMessage
 from pydantic import BaseModel
 
@@ -1512,3 +1514,68 @@ class TestOpenAIResponseFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
         self.assertIsNone(fmt_choice)
+
+
+class _TrackedBody(httpx.AsyncByteStream):
+    """SSE body that stays open until ``aclose`` releases it."""
+
+    def __init__(self) -> None:
+        """Record whether provider-response cleanup has run."""
+        self.closed = False
+        self.stop = asyncio.Event()
+
+    async def __aiter__(self) -> Any:
+        """Yield one Responses text delta, then wait to be closed."""
+        yield (
+            b'data: {"type":"response.output_text.delta",'
+            b'"sequence_number":0,"item_id":"msg_1","output_index":0,'
+            b'"content_index":0,"delta":"hello"}\n\n'
+        )
+        await self.stop.wait()
+
+    async def aclose(self) -> None:
+        """Mark the HTTP body closed and unblock iteration."""
+        self.closed = True
+        self.stop.set()
+
+
+class TestPublicModelStreamClose(IsolatedAsyncioTestCase):
+    """Closing the public model stream must close the provider response."""
+
+    async def test_aclose_closes_offline_httpx_response(self) -> None:
+        """``aclose`` waits for the SDK stream to close its HTTP body.
+
+        Uses the real OpenAI SSE parser and an in-process
+        ``httpx.MockTransport``. No network call is made.
+        """
+        body = _TrackedBody()
+
+        def _handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+            )
+
+        transport = httpx.MockTransport(_handler)
+        client = AsyncOpenAI(
+            api_key="offline-test",
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+        model = _make_model(stream=True)
+        original_client = model.client
+        model.client = client
+        stream = None
+        try:
+            stream = await model([])
+            first = await anext(stream)
+            self.assertEqual(first.content[0].text, "hello")
+            self.assertFalse(body.closed)
+            await stream.aclose()
+            self.assertTrue(body.closed)
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            await body.aclose()
+            await client.close()
+            await original_client.close()
