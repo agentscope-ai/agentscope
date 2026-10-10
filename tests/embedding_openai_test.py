@@ -113,12 +113,21 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
             result = await model(["hello"])
 
         self.assertEqual(len(requests), 1)
-        self.assertEqual(result.embeddings, [[0.1, 0.2]])
-        self.assertEqual(result.source, "api")
-        self.assertIsNotNone(result.usage)
-        self.assertEqual(result.usage.tokens, tokens)
-        self.assertIsInstance(result.usage.time, float)
-        self.assertGreaterEqual(result.usage.time, 0)
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1, 0.2]],
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {
+                    "tokens": tokens,
+                    "time": A,
+                    "type": "embedding",
+                },
+                "source": "api",
+            },
+        )
 
     async def test_sdk_omitted_usage(self) -> None:
         """Omitted usage must not discard otherwise valid embeddings."""
