@@ -1018,8 +1018,8 @@ class WorkspaceBase:
         ``${workdir}/sessions/<session_id>/context.jsonl`` (one
         message per JSONL line). Inline base64
         :class:`DataBlock` payloads are extracted into ``data/`` and
-        rewritten as ``file://`` URL blocks before serialisation so
-        the JSONL line size stays bounded.
+        rewritten as portable ``workspace://`` URL blocks before
+        serialisation so the JSONL line size stays bounded.
 
         Args:
             session_id (`str`):

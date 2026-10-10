@@ -123,6 +123,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -143,6 +144,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -169,6 +171,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -195,6 +198,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -220,6 +224,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "realtime_model_config": None,
                 "knowledge_config": None,
             },
         )
@@ -342,6 +347,7 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
                     },
                     "fallback_chat_model_config": None,
                     "tts_model_config": None,
+                    "realtime_model_config": None,
                     "knowledge_config": None,
                 },
             ],

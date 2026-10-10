@@ -2,6 +2,7 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-10] `功能` `实验性`:** 智能体服务支持基于 WebRTC 的实时语音对话，文本与语音模式共享同一会话历史。
 - **[2026-09] `功能` `实验性`:** 支持 SOP（标准作业流程）—— 将多步骤任务按标准流程执行，框架与智能体服务均已支持。[文档](https://docs.agentscope.io/latest/zh/building-blocks/sop) | [服务](https://docs.agentscope.io/latest/zh/deploy/sop)
 - **[2026-09] `功能`:** 支持 `TeamPipeline` —— 由 leader 智能体向成员智能体分派任务。[文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/team)
 - **[2026-09] `集成`:** 通过 `MiniMaxChatModel` 支持 MiniMax 聊天模型（默认 MiniMax-M3）。

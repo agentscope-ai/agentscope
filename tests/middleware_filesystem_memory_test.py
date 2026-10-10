@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
+import asyncio
 import os
 import shutil
 import tempfile
@@ -105,6 +106,11 @@ class _DummyTool(ToolBase):
     is_external_tool: bool = False
     is_mcp: bool = False
 
+    def __init__(self, memory: AgenticMemoryMiddleware) -> None:
+        """Keep the middleware whose retrieval the call waits for."""
+        super().__init__()
+        self.memory = memory
+
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
@@ -139,6 +145,10 @@ class _DummyTool(ToolBase):
             `ToolChunk`:
                 The fixed tool output.
         """
+        # Let retrieval land before the next reasoning step polls it.
+        task = self.memory._retrieval_task  # pylint: disable=protected-access
+        if task is not None:
+            await asyncio.wait_for(task, timeout=10)
         return ToolChunk(content=[TextBlock(text="tool result")])
 
 
@@ -425,7 +435,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "what do you remember?"))
@@ -542,7 +552,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         await agent.reply(UserMsg("user", "recall memory"))
@@ -588,7 +598,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         await agent.reply(UserMsg("user", "recall my project"))
@@ -634,7 +644,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "ignore memories"))
@@ -676,7 +686,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "hello"))
@@ -786,7 +796,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "remember?"))
