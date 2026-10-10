@@ -3,6 +3,7 @@
 
 from ._inbox_middleware import InboxMiddleware
 from ._protocol import ProtocolMiddlewareBase, AGUIProtocolMiddleware
+from ._protocol import AISDKProtocolMiddleware, UI_MESSAGE_STREAM_HEADER
 from ._sop_step_middleware import SOPStepSubmitMiddleware
 from ._state_change_middleware import StateChangeMiddleware
 from ._team_member_middleware import TeamMemberLoopMiddleware
@@ -13,6 +14,8 @@ __all__ = [
     "InboxMiddleware",
     "ProtocolMiddlewareBase",
     "AGUIProtocolMiddleware",
+    "AISDKProtocolMiddleware",
+    "UI_MESSAGE_STREAM_HEADER",
     "SOPStepSubmitMiddleware",
     "StateChangeMiddleware",
     "ToolOffloadMiddleware",
