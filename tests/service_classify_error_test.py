@@ -135,6 +135,14 @@ class ClassifyErrorTest(unittest.TestCase):
         )
         self.assertEqual(_classify_type(ValueError("x")), ErrorType.UNKNOWN)
 
+    def test_framework_error_nested_in_exception_group(self) -> None:
+        """ExceptionGroup preserves INTERNAL classification."""
+        error = ExceptionGroup(
+            "tool calls failed",
+            [DeveloperOrientedException("boom")],
+        )
+        self.assertEqual(_classify_type(error), ErrorType.INTERNAL)
+
     def test_classify_error_returns_generic_message(self) -> None:
         """The ErrorInfo carries the generic per-type message, never the
         raw exception text."""
