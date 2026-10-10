@@ -358,6 +358,44 @@ def _flatten_json_schema(schema: dict) -> dict:
     if not defs:
         return schema
 
+    def _resolve_local_ref(ref_path: Any, visited: frozenset) -> Any:
+        """Inline a definition that a local pointer refers to, e.g.
+        ``#/$defs/Order``.
+
+        A value that is not such a pointer, or whose definition is unknown, is
+        returned unchanged, so that the caller's validation reports it rather
+        than the flattener inventing a schema.
+
+        Args:
+            ref_path (`Any`):
+                The candidate pointer, typically a string.
+            visited (`frozenset`):
+                The definitions already being expanded on this path.
+
+        Returns:
+            `Any`:
+                The resolved definition, or ``ref_path`` itself.
+        """
+        if not isinstance(ref_path, str) or not ref_path.startswith(
+            ("#/$defs/", "#/definitions/"),
+        ):
+            return ref_path
+
+        def_name = ref_path.split("/")[-1]
+        if def_name in visited:
+            logger.warning(
+                "Circular reference detected for '%s' in tool schema",
+                def_name,
+            )
+            return {
+                "type": "object",
+                "description": f"(circular: {def_name})",
+            }
+        if def_name not in defs:
+            return ref_path
+
+        return _resolve_ref(defs[def_name], visited | {def_name})
+
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
             return [_resolve_ref(item, visited) for item in obj]
@@ -398,6 +436,23 @@ def _flatten_json_schema(schema: dict) -> dict:
                     name: _resolve_ref(sub, visited)
                     for name, sub in value.items()
                 }
+            elif key == "discriminator" and isinstance(value, dict):
+                # A discriminated union carries its references as plain
+                # strings under `mapping`, where the walk below cannot see
+                # them, so those pointers would outlive the removed `$defs`.
+                mapping = value.get("mapping")
+                discriminator = (
+                    value
+                    if not isinstance(mapping, dict)
+                    else {
+                        **value,
+                        "mapping": {
+                            name: _resolve_local_ref(ref, visited)
+                            for name, ref in mapping.items()
+                        },
+                    }
+                )
+                resolved[key] = _resolve_ref(discriminator, visited)
             else:
                 resolved[key] = _resolve_ref(value, visited)
         return resolved

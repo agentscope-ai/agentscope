@@ -1027,6 +1027,82 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_resolves_discriminator_mapping(self) -> None:
+        """Mapping pointers are inlined, as their $ref siblings already are."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {
+                        "Ring": {"type": "object"},
+                        "Disc": {"type": "array"},
+                    },
+                    "properties": {
+                        "shape": {
+                            "oneOf": [
+                                {"$ref": "#/$defs/Ring"},
+                                {"$ref": "#/$defs/Disc"},
+                            ],
+                            "discriminator": {
+                                "propertyName": "kind",
+                                "mapping": {
+                                    "ring": "#/$defs/Ring",
+                                    "disc": "#/$defs/Disc",
+                                },
+                            },
+                        },
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "shape": {
+                        "oneOf": [{"type": "object"}, {"type": "array"}],
+                        "discriminator": {
+                            "propertyName": "kind",
+                            "mapping": {
+                                "ring": {"type": "object"},
+                                "disc": {"type": "array"},
+                            },
+                        },
+                    },
+                },
+            },
+        )
+
+    def test_flatten_keeps_unresolvable_discriminator_targets(self) -> None:
+        """Mapping values that are not local pointers are left alone."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Ring": {"type": "object"}},
+                    "properties": {
+                        "shape": {
+                            "discriminator": {
+                                "propertyName": "kind",
+                                "mapping": {
+                                    "missing": "#/$defs/Ghost",
+                                    "remote": "https://example.com/s.json",
+                                },
+                            },
+                        },
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "shape": {
+                        "discriminator": {
+                            "propertyName": "kind",
+                            "mapping": {
+                                "missing": "#/$defs/Ghost",
+                                "remote": "https://example.com/s.json",
+                            },
+                        },
+                    },
+                },
+            },
+        )
+
     def test_flatten_circular_ref_returns_placeholder(self) -> None:
         """Circular $ref produces a placeholder without infinite recursion."""
         self.assertEqual(
