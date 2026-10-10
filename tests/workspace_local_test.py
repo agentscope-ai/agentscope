@@ -40,6 +40,7 @@ from agentscope.message import (
     UserMsg,
     AssistantMsg,
     DataBlock,
+    HintBlock,
     Base64Source,
     URLSource,
     TextBlock,
@@ -348,6 +349,62 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             loaded_msg.model_dump_json(),
             expected_msg.model_dump_json(),
         )
+
+    async def test_offload_context_nested_media(self) -> None:
+        """Offload nested media without changing the caller's message."""
+        data = base64.b64encode(b"nested media").decode()
+        media = DataBlock(
+            id="media",
+            source=Base64Source(data=data, media_type="image/png"),
+            created_at="2026-01-01T00:00:00",
+        )
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolResultBlock(
+                    id="tool-call",
+                    name="get_media",
+                    output=[media],
+                    state=ToolResultState.SUCCESS,
+                    created_at="2026-01-01T00:00:00",
+                ),
+                HintBlock(
+                    id="hint",
+                    hint=[media],
+                    created_at="2026-01-01T00:00:00",
+                ),
+            ],
+            id="message",
+            created_at="2026-01-01T00:00:00",
+        )
+        original = msg.model_dump(mode="json")
+
+        path = await self.workspace.offload_context("nested-media", [msg])
+        saved = Msg.model_validate_json(
+            await self.workspace.get_backend().read_file(path),
+        )
+
+        url = (
+            "workspace:///data/"
+            f"{hashlib.sha256(data.encode()).hexdigest()}.png"
+        )
+        expected = msg.model_dump(mode="json")
+        for index, field in ((0, "output"), (1, "hint")):
+            expected["content"][index][field][0] = {
+                "type": "data",
+                "id": "media",
+                "source": {
+                    "type": "url",
+                    "url": url,
+                    "media_type": "image/png",
+                },
+                "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
+            }
+
+        self.assertEqual(saved.model_dump(mode="json"), expected)
+        self.assertEqual(msg.model_dump(mode="json"), original)
 
     async def test_offload_data_block_deduplication(self) -> None:
         """Test that duplicate DataBlocks are deduplicated.
