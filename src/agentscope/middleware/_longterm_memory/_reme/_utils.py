@@ -17,7 +17,8 @@ def _extract_query_text(inputs: Any) -> str | None:
     """Pull a single text query out of the agent inputs.
 
     Returns ``None`` for resumption events or empty/non-user inputs,
-    in which case the middleware skips both retrieval and write-back.
+    in which case the middleware skips retrieval. A tracked continuation
+    may still write its completed exchange using the original input boundary.
 
     Args:
         inputs (`Any`):
@@ -27,7 +28,7 @@ def _extract_query_text(inputs: Any) -> str | None:
     Returns:
         `str | None`:
             The joined text of all user messages, or ``None`` when there
-            is nothing to search/write.
+            is nothing to search.
     """
     if inputs is None:
         return None
