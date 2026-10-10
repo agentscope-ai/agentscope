@@ -85,6 +85,8 @@ async def enqueue_run_trigger(
     | UserInterruptEvent
     | Msg
     | None = None,
+    retry_attempt: int = 0,
+    retry_started_at: float | None = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
 
@@ -122,16 +124,29 @@ async def enqueue_run_trigger(
             should be ``None``) for ``wake``.  The function calls
             ``model_dump(mode="json")`` internally — callers pass the
             event object, not a pre-serialised dict.
+        retry_attempt (`int`):
+            How many times the dispatcher has already deferred this
+            trigger.  ``0`` for a first enqueue.  Carried so backoff
+            survives a queue round-trip.
+        retry_started_at (`float | None`):
+            ``time.time()`` when the first lock-held deferral began.
+            ``None`` for a first enqueue.  Carried so the retry
+            deadline is not reset on every re-queue.
     """
+    payload: dict = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "kind": kind,
+        "input": inputs.model_dump(mode="json") if inputs else None,
+    }
+    if retry_attempt:
+        payload["retry_attempt"] = retry_attempt
+    if retry_started_at is not None:
+        payload["retry_started_at"] = retry_started_at
     await bus.queue_push(
         MessageBusKeys.wakeup_queue(),
-        {
-            "user_id": user_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "kind": kind,
-            "input": inputs.model_dump(mode="json") if inputs else None,
-        },
+        payload,
     )
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
