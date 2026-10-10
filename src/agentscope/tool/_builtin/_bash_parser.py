@@ -140,6 +140,96 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
+# find predicates whose *next* argument is a value, not a predicate, so a
+# quoted value that merely spells a mutating predicate (``-name '-delete'``)
+# stays a value
+FIND_VALUE_PREDICATES: Set[str] = {
+    "-name",
+    "-iname",
+    "-path",
+    "-ipath",
+    "-lname",
+    "-ilname",
+    "-regex",
+    "-iregex",
+    "-regextype",
+    "-samefile",
+    "-newer",
+    "-anewer",
+    "-cnewer",
+    "-newermt",
+    "-newerat",
+    "-newerct",
+    "-type",
+    "-xtype",
+    "-user",
+    "-nouser",
+    "-group",
+    "-nogroup",
+    "-uid",
+    "-gid",
+    "-perm",
+    "-size",
+    "-links",
+    "-inum",
+    "-mtime",
+    "-mmin",
+    "-ctime",
+    "-cmin",
+    "-atime",
+    "-amin",
+    "-printf",
+    "-fprintf",
+    "-fls",
+    "-fprint",
+    "-fprint0",
+    "-maxdepth",
+    "-mindepth",
+    "-daystart",
+    "-follow",
+    "-mount",
+    "-xdev",
+    "-noleaf",
+    "-ignore_readdir_race",
+    "-noignore_readdir_race",
+    "-fstype",
+    "-help",
+}
+
+# tree-sitter-bash argument node types that carry quoted text; the shell
+# de-quotes them before handing the token to find
+FIND_QUOTED_NODE_TYPES: Set[str] = {
+    "string",
+    "raw_string",
+    "concatenation",
+    "ansi_c_string",
+    "translated_string",
+}
+
+
+def _dequote_find_token(node_type: str, text: str) -> str:
+    """Shell-dequote a quoted AST argument node.
+
+    Args:
+        node_type (`str`):
+            The tree-sitter node type of the argument.
+        text (`str`):
+            The raw source text of the argument, quotes included.
+
+    Returns:
+        `str`:
+            The token as the shell would pass it on argv.
+    """
+    if node_type in ("string", "raw_string", "ansi_c_string"):
+        if len(text) < 2:
+            return text
+        inner = text[1:-1]
+        if node_type == "string":
+            inner = re.sub(r"\\(.)", r"\1", inner)
+        return inner
+    # concatenation / translated_string: adjacent parts, some of them quoted
+    return text.replace('"', "").replace("'", "")
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -261,11 +351,35 @@ class BashCommandParser:
         if name_node is None or name_node.text.decode("utf8") != "find":
             return False
 
+        # Quoted arguments are ``string`` / ``raw_string`` / ``concatenation``
+        # nodes rather than ``word`` nodes, but the shell still de-quotes them,
+        # so ``find . "-delete"`` mutates as surely as the unquoted spelling.
+        # Word tokens keep their position-independent match; a quoted token is
+        # only a value (never a predicate) when it directly follows a
+        # value-taking predicate such as ``-name``.
+        expect_value = False
         for child in cmd_node.children:
+            if child.type == "command_name":
+                continue
             if child.type == "word":
                 text = child.text.decode("utf8")
                 if text in FIND_MUTATING_PREDICATES:
                     return True
+                expect_value = text in FIND_VALUE_PREDICATES
+                continue
+            if child.type in FIND_QUOTED_NODE_TYPES:
+                text = _dequote_find_token(
+                    child.type,
+                    child.text.decode("utf8"),
+                )
+                if text in FIND_MUTATING_PREDICATES:
+                    if expect_value:
+                        expect_value = False
+                        continue
+                    return True
+                expect_value = text in FIND_VALUE_PREDICATES
+                continue
+            expect_value = False
 
         return False
 
