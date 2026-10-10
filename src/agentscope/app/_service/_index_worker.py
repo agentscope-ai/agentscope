@@ -229,7 +229,8 @@ class IndexWorker:
            keeps the lease alive while parsing runs.
         4. **Finalise** — on success mark ``ready`` with the final
            chunk count; on failure mark ``error`` with a sanitised
-           message.  The lease is released regardless.
+           message.  The lease is released on completion, but left to
+           expire on cancellation so the sweeper can retry the document.
 
         Args:
             user_id (`str`):
@@ -265,6 +266,7 @@ class IndexWorker:
             self._heartbeat(user_id, knowledge_base_id, document_id),
             name=f"lease-renew:{document_id}",
         )
+        cancelled = False
         try:
             # Race the pipeline against the heartbeat: if the heartbeat
             # returns first, the lease was stolen mid-flight (e.g. the
@@ -299,6 +301,7 @@ class IndexWorker:
                 await heartbeat_task
             await pipeline_task
         except asyncio.CancelledError:
+            cancelled = True
             pipeline_task.cancel()
             heartbeat_task.cancel()
             await asyncio.gather(
@@ -315,15 +318,17 @@ class IndexWorker:
                 exc,
             )
         finally:
-            # Release is CAS-guarded server-side on ``processing_node``
-            # (storage._base.release_knowledge_document_lease) — calling
-            # it after a stolen lease is a safe no-op.
-            await self._storage.release_knowledge_document_lease(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                document_id=document_id,
-                processing_node=self._node_id,
-            )
+            # Cancellation leaves a non-terminal status: keep the lease
+            # so expiry makes the document visible to the sweeper.
+            if not cancelled:
+                # Release is CAS-guarded on ``processing_node`` — after
+                # a stolen lease this is a safe no-op.
+                await self._storage.release_knowledge_document_lease(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    document_id=document_id,
+                    processing_node=self._node_id,
+                )
 
     async def _guarded_pipeline(
         self,
