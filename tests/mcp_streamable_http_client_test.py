@@ -5,8 +5,9 @@ from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import FastMCP
-from mcp.types import EmbeddedResource, TextResourceContents
+from mcp.types import EmbeddedResource, ResourceLink, TextResourceContents
 
+from utils import AnyString
 from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.tool import ToolChunk
 
@@ -39,6 +40,26 @@ async def tool_2() -> list:
     ]
 
 
+async def tool_3() -> list:
+    """
+    A test tool function return the ResourceLink type
+    """
+    return [
+        ResourceLink(
+            type="resource_link",
+            uri="https://example.com/report.pdf",
+            name="quarterly report",
+            mimeType="application/pdf",
+            size=20480,
+        ),
+        ResourceLink(
+            type="resource_link",
+            uri="https://example.com/notes",
+            name="notes",
+        ),
+    ]
+
+
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("StreamableHTTP", port=8002)
@@ -46,6 +67,9 @@ def setup_server() -> None:
     sse_server.tool(
         description="A test tool function with embedded resource.",
     )(tool_2)
+    sse_server.tool(
+        description="A test tool function with resource links.",
+    )(tool_3)
     sse_server.run(transport="streamable-http")
 
 
@@ -144,4 +168,48 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
   "meta": null,
   "text": "test content"
 }""",
+        )
+
+    async def test_resource_link(self) -> None:
+        """Test the ResourceLink functionality."""
+        client = MCPClient(
+            name="test_resource_link",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/mcp",
+            ),
+        )
+
+        my_tool_3 = await client.get_tool("tool_3")
+        res: ToolChunk = await my_tool_3()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in res.content],
+            [
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.com/report.pdf",
+                        "media_type": "application/pdf",
+                    },
+                    "name": "quarterly report",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.com/notes",
+                        "media_type": "application/octet-stream",
+                    },
+                    "name": "notes",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
         )
