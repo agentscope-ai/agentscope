@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The grep tool in agentscope."""
 import fnmatch
+import os
 from typing import Any, List, Literal
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -220,7 +221,7 @@ class Grep(ToolBase):
         path = tool_input.get("path", "")
         if not path:
             path = await self._backend.getcwd()
-        return fnmatch.fnmatch(path, rule_content)
+        return fnmatch.fnmatch(os.path.normpath(path), rule_content)
 
     async def generate_suggestions(
         self,
