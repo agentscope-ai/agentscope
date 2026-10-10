@@ -2,6 +2,7 @@
 """Tests for the model router middleware."""
 from typing import Any, Mapping
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from pydantic import BaseModel
 
@@ -12,6 +13,7 @@ from agentscope.classifier import (
     ClassifierModelBase,
     ClassifierQuestion,
     ClassifierResponse,
+    RefusalAnswer,
 )
 from agentscope.credential import CredentialBase
 from agentscope.event import ModelCallStartEvent, ReplyStartEvent
@@ -336,6 +338,32 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
             [_["state"] for _ in classifier.calls],
             ["Error.", "Unknown."],
         )
+        self.assertDictEqual(
+            agent.state.middle_context,
+            {"ModelRouterMiddleware": {agent.state.reply_id: None}},
+        )
+
+    async def test_refusal_keeps_the_agents_model(self) -> None:
+        """A classifier refusal leaves the reply on the original model."""
+        middleware = ModelRouterMiddleware(
+            _MockClassifier([]),
+            self.candidates,
+        )
+        with patch.object(
+            _MockClassifier,
+            "__call__",
+            new=AsyncMock(
+                return_value=ClassifierResponse(
+                    model="classifier",
+                    content={"chat_model": RefusalAnswer()},
+                ),
+            ),
+        ):
+            agent, called = await self._reply(
+                middleware,
+                [TextBlock(text="Hi.")],
+            )
+        self.assertListEqual(called, ["primary"])
         self.assertDictEqual(
             agent.state.middle_context,
             {"ModelRouterMiddleware": {agent.state.reply_id: None}},
