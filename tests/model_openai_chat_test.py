@@ -25,7 +25,7 @@ from agentscope.message import (
     DataBlock,
     Base64Source,
 )
-from agentscope.model import OpenAIChatModel
+from agentscope.model import FinishedReason, OpenAIChatModel
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
 
@@ -52,6 +52,7 @@ def _mock_completion(
     reasoning: Any = None,
     response_id: str = "resp-1",
     audio: dict | None = None,
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
@@ -73,6 +74,7 @@ def _mock_completion(
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason
 
     resp = MagicMock()
     resp.id = response_id
@@ -91,6 +93,7 @@ def _make_stream_chunk(
     usage: dict | None = None,
     has_choices: bool = True,
     delta_audio: dict | None = None,
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
@@ -113,6 +116,7 @@ def _make_stream_chunk(
         delta.tool_calls = tool_calls
         choice = MagicMock()
         choice.delta = delta
+        choice.finish_reason = finish_reason
         chunk.choices = [choice]
     else:
         chunk.choices = []
@@ -197,6 +201,31 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "resp-1")
+
+    async def test_length_finish_reason_is_normalized(self) -> None:
+        """The provider reason is retained and mapped to LENGTH."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(finish_reason="length"),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(result.metadata, {"raw_finish_reason": "length"})
+
+    async def test_unknown_finish_reason_is_only_retained(self) -> None:
+        """Unknown reasons remain observable without changing behavior."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(finish_reason="future_reason"),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.COMPLETED)
+        self.assertEqual(
+            result.metadata,
+            {"raw_finish_reason": "future_reason"},
+        )
 
     async def test_default_thinking_enable_not_forwarded(
         self,
@@ -532,6 +561,25 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(responses[-1].id, "resp-1")
+
+    async def test_stream_length_reason_reaches_final_response(self) -> None:
+        """A reason-only terminal chunk survives stream accumulation."""
+        chunks = [
+            _make_stream_chunk(delta_text="partial"),
+            _make_stream_chunk(finish_reason="length"),
+        ]
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_MockAsyncStream(chunks),
+        )
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+
+        self.assertEqual(responses[-1].finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(
+            responses[-1].metadata,
+            {"raw_finish_reason": "length"},
+        )
 
     async def test_stream_thinking_and_text(
         self,

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Internal utilities for the model module."""
 import base64
+from collections.abc import Collection
+from enum import Enum
 from typing import Any, Self, TypeAlias
 
 from pydantic import Field
@@ -16,6 +18,7 @@ from ..message import (
     ToolCallBlock,
     URLSource,
 )
+from ..types import JSONSerializableObject
 
 
 class _AccTextBlock(TextBlock):
@@ -221,6 +224,9 @@ class _StreamAccumulator:
         self.finished_reason: FinishedReason = FinishedReason.COMPLETED
         """The finished reason to report in ``build``."""
 
+        self.metadata: dict[str, JSONSerializableObject] = {}
+        """The metadata merged from the deltas."""
+
     def append_chat_response(self, chat_response: ChatResponse) -> Self:
         """Collect one delta chunk in constant time per block.
 
@@ -263,6 +269,13 @@ class _StreamAccumulator:
         if chat_response.usage:
             self.usage = chat_response.usage
 
+        self.metadata.update(chat_response.metadata)
+
+        # Streaming chunks default to COMPLETED, so only an explicit
+        # non-default reason should replace the accumulated reason.
+        if chat_response.finished_reason != FinishedReason.COMPLETED:
+            self.finished_reason = chat_response.finished_reason
+
         return self
 
     def build(self) -> ChatResponse:
@@ -276,5 +289,32 @@ class _StreamAccumulator:
             is_last=True,
             usage=self.usage,
             finished_reason=self.finished_reason,
+            metadata=dict(self.metadata),
             **kwargs,
         )
+
+
+def _record_finish_reason(
+    response: ChatResponse,
+    raw_finish_reason: str | Enum | None,
+    length_reasons: Collection[str],
+) -> None:
+    """Record and normalize a finish reason already extracted by an adapter.
+
+    Args:
+        response (`ChatResponse`):
+            The response produced by the adapter's existing parser.
+        raw_finish_reason (`str | Enum | None`):
+            The raw finish reason read from the provider response.
+        length_reasons (`Collection[str]`):
+            Provider values that mean generation reached a length limit.
+    """
+    if isinstance(raw_finish_reason, Enum):
+        raw_finish_reason = raw_finish_reason.value
+
+    if not isinstance(raw_finish_reason, str) or not raw_finish_reason:
+        return
+
+    response.metadata["raw_finish_reason"] = raw_finish_reason
+    if raw_finish_reason in length_reasons:
+        response.finished_reason = FinishedReason.LENGTH

@@ -21,6 +21,7 @@ from agentscope.message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
+    ToolResultState,
     UserMsg,
 )
 from agentscope.types import ReplyFinishedReason
@@ -159,6 +160,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertIsNot(agent_1.context_config, agent_2.context_config)
         self.assertIsNot(agent_1.react_config, agent_2.react_config)
         self.assertIsNot(agent_1.injection_config, agent_2.injection_config)
+        self.assertFalse(agent_1.react_config.reject_truncated_tool_call)
 
         agent_1.model_config.max_retries = 3
         agent_1.context_config.tool_result_limit = 123
@@ -908,6 +910,197 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             tool_results[0].output[0].text,
             "Sequential result: x",
+        )
+
+    async def test_rejects_only_last_explicitly_truncated_tool_call(
+        self,
+    ) -> None:
+        """Only the incomplete final call is rejected on provider length."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent.react_config = ReActConfig(
+            max_iters=2,
+            reject_truncated_tool_call=True,
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="complete-call",
+                            name="mock_sequential_tool",
+                            input='{"input": "complete"}',
+                        ),
+                        ToolCallBlock(
+                            id="truncated-call",
+                            name="mock_sequential_tool",
+                            input='{"input": "truncated"',
+                        ),
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.LENGTH,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="second response")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(msg.finished_reason, ReplyFinishedReason.COMPLETED)
+        self.assertEqual(
+            [block.text for block in msg.get_content_blocks("text")],
+            ["second response"],
+        )
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
+        tool_results = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )
+        self.assertEqual(len(tool_results), 2)
+        self.assertEqual(tool_results[0].state, ToolResultState.SUCCESS)
+        self.assertEqual(
+            tool_results[0].output[0].text,
+            "Sequential result: complete",
+        )
+        self.assertEqual(tool_results[1].state, ToolResultState.ERROR)
+        self.assertEqual(
+            tool_results[1].output,
+            "The tool was not executed because the model response reached "
+            "a length limit and the tool arguments are incomplete JSON.",
+        )
+
+        # A tool block followed by other content is outside the truncated
+        # response tail, so the existing JSON repair behavior still applies.
+        self.model = MockModel()
+        self.agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=self.model,
+            toolkit=Toolkit(tools=[MockSequentialTool()]),
+            react_config=ReActConfig(
+                max_iters=2,
+                reject_truncated_tool_call=True,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="completed-call",
+                            name="mock_sequential_tool",
+                            input='{"input": "repaired by existing parser',
+                        ),
+                        TextBlock(text="truncated response tail"),
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.LENGTH,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        tool_result = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )[0]
+        self.assertEqual(tool_result.state, ToolResultState.SUCCESS)
+        self.assertEqual(
+            tool_result.output[0].text,
+            "Sequential result: repaired by existing parser",
+        )
+
+        # The length reason alone is insufficient: complete JSON still runs.
+        self.model = MockModel()
+        self.agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=self.model,
+            toolkit=Toolkit(tools=[MockSequentialTool()]),
+            react_config=ReActConfig(
+                max_iters=2,
+                reject_truncated_tool_call=True,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="complete-call",
+                            name="mock_sequential_tool",
+                            input='{"input": "complete"}',
+                        ),
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.LENGTH,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        tool_result = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )[0]
+        self.assertEqual(tool_result.state, ToolResultState.SUCCESS)
+        self.assertEqual(
+            tool_result.output[0].text,
+            "Sequential result: complete",
+        )
+
+        # The guard is opt-in: the default config preserves the existing
+        # repair and execution behavior.
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent.react_config = ReActConfig(max_iters=2)
+        self.assertFalse(
+            self.agent.react_config.reject_truncated_tool_call,
+        )
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="truncated-call",
+                            name="mock_sequential_tool",
+                            input='{"input": "legacy behavior',
+                        ),
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.LENGTH,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(msg.finished_reason, ReplyFinishedReason.COMPLETED)
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+        tool_result = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )[0]
+        self.assertEqual(tool_result.state, ToolResultState.SUCCESS)
+        self.assertEqual(
+            tool_result.output[0].text,
+            "Sequential result: legacy behavior",
         )
 
     async def test_thinking_only_response_continues_reasoning(self) -> None:

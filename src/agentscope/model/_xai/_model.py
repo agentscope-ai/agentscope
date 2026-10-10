@@ -9,6 +9,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ...credential import XAICredential
 from ...formatter import XAIChatFormatter
 from ...message import (
@@ -25,6 +26,30 @@ if TYPE_CHECKING:
 else:
     AsyncClient = Any
     Response = Any
+
+
+_LENGTH_FINISH_REASONS = frozenset(
+    {"REASON_MAX_LEN", "REASON_MAX_CONTEXT"},
+)
+
+
+def _extract_finish_reason(response: Any) -> str | None:
+    """Extract a meaningful xAI finish reason from the SDK response."""
+    proto = getattr(response, "proto", None)
+    outputs = getattr(proto, "outputs", None)
+    if not outputs:
+        return None
+
+    finish_reason = getattr(outputs[-1], "finish_reason", 0)
+    if not isinstance(finish_reason, int) or not finish_reason:
+        return None
+
+    from xai_sdk.proto import sample_pb2
+
+    try:
+        return sample_pb2.FinishReason.Name(finish_reason)
+    except ValueError:
+        return str(finish_reason)
 
 
 class XAIChatModel(ChatModelBase):
@@ -339,6 +364,11 @@ class XAIChatModel(ChatModelBase):
                     is_last=False,
                     id=response_id,
                 )
+                _record_finish_reason(
+                    delta_res,
+                    _extract_finish_reason(response),
+                    _LENGTH_FINISH_REASONS,
+                )
 
                 delta_thinking: str = chunk.reasoning_content or ""
                 if delta_thinking:
@@ -351,7 +381,7 @@ class XAIChatModel(ChatModelBase):
                 if delta_text:
                     delta_res.append_text(delta_text, block_id=text_id)
 
-                if delta_res.content:
+                if delta_res.content or delta_res.metadata:
                     yield delta_res
 
                 last_response = response
@@ -451,4 +481,10 @@ class XAIChatModel(ChatModelBase):
         if response_id:
             resp_kwargs["id"] = response_id
 
-        return ChatResponse(**resp_kwargs)
+        chat_response = ChatResponse(**resp_kwargs)
+        _record_finish_reason(
+            chat_response,
+            _extract_finish_reason(response),
+            _LENGTH_FINISH_REASONS,
+        )
+        return chat_response
