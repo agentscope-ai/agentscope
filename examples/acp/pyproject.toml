@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acp-example"
+version = "0.1.0"
+description = "ACP Agent (stdio) example for AgentScope"
+requires-python = ">=3.11"
+dependencies = [
+    # The ACP stdio peer. Pinned: the SDK is pre-1.0 and its schema moves.
+    "agent-client-protocol==0.12.0",
+    # The kernel. The example only uses public API.
+    "agentscope>=2.0.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.setuptools]
+packages = ["acp_example"]
