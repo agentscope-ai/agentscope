@@ -10,7 +10,7 @@ path (venv, python, script, glob helper, log) live on the workspace /
 base class, not here.
 """
 
-#: Default OpenSandbox image. The slim Python image is small but still
+#: Recommended image for explicit image-based creation. The slim image
 #: has enough package-manager support for installing curl, certificates,
 #: and ripgrep during bootstrap.
 DEFAULT_IMAGE = "python:3.11-slim"
@@ -43,4 +43,7 @@ GATEWAY_HOME = "/root/.agentscope"
 #: Sandbox metadata key used to map workspace_id to sandbox id. The
 #: workspace filters ``list_sandbox_infos`` by this key on cache miss to
 #: locate and resume an existing sandbox.
-METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"
+METADATA_WORKSPACE_ID_KEY = "agentscope-workspace-id"
+
+#: Existing image-backed workspaces retain their original metadata key.
+LEGACY_METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"

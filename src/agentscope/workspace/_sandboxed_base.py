@@ -169,6 +169,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
         return []
 
+    async def _initialize_prepared_workspace(self) -> bool:
+        """Return whether a provider restored a prepared fresh workspace.
+
+        The default keeps the normal initialization flow. Providers that
+        opt in must validate the prepared layout and a live gateway, bind
+        ``self._gateway``, and seed user-provided skills before returning
+        ``True``. Existing user workspaces require normal state restoration.
+        """
+        return False
+
     # ── lifecycle template methods ────────────────────────────────
 
     async def initialize(self) -> None:
@@ -191,19 +201,20 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             self._backend is not None
         ), "_provision_backend must set self._backend before returning"
 
-        # Restore MCP declarations from .mcp
-        self._mcp_specs = await self._restore_mcp_specs()
+        if not await self._initialize_prepared_workspace():
+            # Restore MCP declarations from .mcp
+            self._mcp_specs = await self._restore_mcp_specs()
 
-        # Set up the workspace layout
-        await self._ensure_workspace_layout()
+            # Set up the workspace layout
+            await self._ensure_workspace_layout()
 
-        # The gateway starts empty; each session registers its own
-        # MCPs on its first list_mcps.
-        await self._setup_mcp_gateway()
+            # The gateway starts empty; each session registers its own
+            # MCPs on its first list_mcps.
+            await self._setup_mcp_gateway()
 
-        # Set up the skills if not exists
-        await self._migrate_skill_layout()
-        await self._setup_skills()
+            # Set up the skills if not exists
+            await self._migrate_skill_layout()
+            await self._setup_skills()
 
         self.is_alive = True
 
