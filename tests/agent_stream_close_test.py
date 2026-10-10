@@ -12,7 +12,12 @@ from agentscope.event import (
     ToolResultEndEvent,
     ToolResultStartEvent,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    UserMsg,
+)
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.permission import (
@@ -132,7 +137,8 @@ class AgentStreamCloseTest(IsolatedAsyncioTestCase):
             results = [
                 result
                 for message in agent.state.context
-                for result in message.get_content_blocks("tool_result")
+                for result in message.content
+                if isinstance(result, ToolResultBlock)
             ]
             self.assertEqual(len(results), 2)
             self.assertTrue(
