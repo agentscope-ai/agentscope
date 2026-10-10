@@ -18,6 +18,7 @@ from agentscope.permission import (
 from agentscope.event import (
     ConfirmResult,
     ReplyEndEvent,
+    ReplyStartEvent,
     UserConfirmResultEvent,
 )
 from agentscope.tool import ToolBase, Toolkit, ToolChoice, ToolChunk
@@ -456,6 +457,49 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             agent.state.middle_context[middleware_key],
             {agent.state.reply_id: 43},
+        )
+
+    async def test_swallowed_reply_start_keeps_counting(self) -> None:
+        """A middleware that swallows the ReplyStartEvent, as one filtering
+        the events it forwards might, must not break the accounting of the
+        reply it hides the start of."""
+
+        class SwallowStartMiddleware(MiddlewareBase):
+            """Swallow every ReplyStartEvent, pass everything else."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Drop the ReplyStartEvent the reply starts with."""
+                async for item in next_handler(**input_kwargs):
+                    if isinstance(item, ReplyStartEvent):
+                        continue
+                    yield item
+
+        model = MockModel()
+        model.set_responses(
+            [_response("first answer", input_tokens=10, output_tokens=5)],
+        )
+
+        middleware = ReplyBudgetControlMiddleware(token_budget=1000)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=self.toolkit,
+            middlewares=[middleware, SwallowStartMiddleware()],
+        )
+
+        msg = await agent.reply(UserMsg("user", "hello"))
+
+        self.assertEqual(msg.get_text_content(), "first answer")
+        middleware_key = await middleware.get_middleware_key()
+        self.assertDictEqual(
+            agent.state.middle_context[middleware_key],
+            {agent.state.reply_id: 15},
         )
 
     async def test_token_accumulation_persists_across_hitl(self) -> None:
