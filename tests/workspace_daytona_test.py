@@ -1111,18 +1111,23 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         )
         self.assertIn("/home/daytona/src/app.py", glob_text)
 
-    async def test_mcp_add_remove_persists_mcp_file(self) -> None:
-        """Dynamic MCP changes are reflected in the sandbox ``.mcp`` file."""
+    async def test_mcp_add_returns_proxy_and_persists_mcp_file(self) -> None:
+        """Adding an MCP returns the stored gateway proxy and persists it."""
         mcp = MCPClient(
             name="demo",
             mcp_config=StdioMCPConfig(command="node", args=["server.js"]),
             is_stateful=True,
         )
 
-        await self.workspace.add_mcp(mcp, agent_id="a", session_id="s")
+        registered = await self.workspace.add_mcp(
+            mcp,
+            agent_id="a",
+            session_id="s",
+        )
 
         live = self.workspace._mcp_instances[("a", "s")]
-        self.assertIn("demo", live)
+        self.assertIs(registered, live["demo"])
+        self.assertIsNot(registered, mcp)
         raw = await self.workspace._backend.read_file("/home/daytona/.mcp")
         data = json.loads(raw.decode("utf-8"))
         self.assertEqual(data["mcps"]["a"]["s"][0]["name"], "demo")

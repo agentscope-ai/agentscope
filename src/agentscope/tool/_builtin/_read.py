@@ -166,7 +166,9 @@ Usage:
         super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
         self.model_input_types = (
-            model_input_types or _DEFAULT_MODEL_INPUT_TYPES
+            _DEFAULT_MODEL_INPUT_TYPES
+            if model_input_types is None
+            else model_input_types
         )
         """The media types the model accepts as input, see ``__init__``."""
         self._backend = backend or LocalBackend()

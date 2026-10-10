@@ -590,12 +590,20 @@ class Agent:
                 ),
             )
 
+        # Same time text as the runtime injection; keeps other braces intact
+        timezone = self.injection_config.timezone
+        now = datetime.now(_resolve_timezone(timezone))
+        compression_prompt = cfg.compression_prompt.replace(
+            "{current_time}",
+            f"{now.strftime(self.injection_config.time_format)} ({timezone})",
+        )
+
         messages = (
             msgs_system
             + msgs_to_compress
             + instruction_msgs
             + [
-                UserMsg(name="user", content=cfg.compression_prompt),
+                UserMsg(name="user", content=compression_prompt),
             ]
         )
 
@@ -650,7 +658,7 @@ class Agent:
                         + [
                             UserMsg(
                                 name="user",
-                                content=cfg.compression_prompt,
+                                content=compression_prompt,
                             ),
                         ]
                     )
@@ -3570,7 +3578,7 @@ class Agent:
             )
 
         elif required and not satisfied:
-            # Maybe the model needs futher reasoning-acting to
+            # Maybe the model needs further reasoning-acting to
             # generate the structured output
             tool_choice = None
             suffix = (

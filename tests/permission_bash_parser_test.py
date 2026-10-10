@@ -223,8 +223,6 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "git log",
             "git diff",
             "git show",
-            "git branch",
-            "git remote -v",
             "git log --oneline",
         ]
         for cmd in read_only_commands:
@@ -296,6 +294,32 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 self.assertFalse(
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_mutating_git_commands_are_not_read_only(self) -> None:
+        """Git subcommands that mutate by argument skip the fast path."""
+        expected = {
+            "git branch -D main": False,
+            "git branch -vD x": False,
+            "git tag -d v1": False,
+            "git remote add o u": False,
+            "git reflog expire --all": False,
+            "git grep -Otouch foo": False,
+            "git grep -iO touch foo": False,
+            "git grep '-Otouch' foo": False,
+            "git grep --open-files-in-pager=touch foo": False,
+            "git diff --output=/tmp/x": False,
+            "git log --output ~/.bashrc": False,
+            "git status": True,
+            "git log": True,
+            "git log --oneline -n 5": True,
+            "git grep -n foo": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
                 )
 
     async def test_single_read_only_docker_commands(self) -> None:
@@ -970,6 +994,91 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     self.parser.check_sed_constraints(
                         inline,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_short_option_with_attached_value(self) -> None:
+        """Attached short-option values match their separated forms."""
+        cases = [
+            (
+                "sed -e's/a/b/' notes.txt",
+                "sed -e 's/a/b/' notes.txt",
+                None,
+            ),
+            (
+                "sed -ne'5p' notes.txt",
+                "sed -n -e '5p' notes.txt",
+                None,
+            ),
+            (
+                "sed -e'/bin/sh/e' notes.txt",
+                "sed -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed -i.bak 's/x/y/' .env",
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -fscript.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+        ]
+        for attached, separated, expected in cases:
+            with self.subTest(attached=attached):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        attached,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_separated_backup_suffix(self) -> None:
+        """A separated dotted -i suffix is a backup suffix, not a script."""
+        cases = [
+            (
+                "sed -i .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .orig 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed --in-place .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -i bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                # A dot inside a script keeps the token unconsumed.
+                "sed -i '/example.com/d' notes.txt",
+                "sed expression '/example.com/d' not in allowlist",
+            ),
+        ]
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        cmd,
                         self.dangerous_files,
                     ),
                     expected,

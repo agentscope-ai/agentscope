@@ -189,6 +189,9 @@ class ProviderNameValues:
     MOONSHOT = "moonshot"
     """The moonshot provider name."""
 
+    MINIMAX = "minimax"
+    """The MiniMax provider name."""
+
     VOLCENGINE = "volcengine"
     """The Volcengine provider name."""
 

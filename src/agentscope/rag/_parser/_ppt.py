@@ -51,6 +51,28 @@ def _iter_shapes(shapes: Any) -> Iterator[Any]:
             yield shape
 
 
+def _normalise_breaks(text: str) -> str:
+    """Normalise PowerPoint line-break characters to ``\n``.
+
+    ``python-pptx`` renders an ``<a:br/>`` element - what the
+    PowerPoint UI produces for Shift+Enter - as a vertical tab, and
+    ``paragraph.text`` / ``cell.text`` hand that character straight
+    through. Left in place it both embeds a control character in the
+    extracted text and glues the two lines together, so they are
+    embedded as one token run.
+
+    Args:
+        text (`str`):
+            The raw text of a paragraph or a table cell.
+
+    Returns:
+        `str`:
+            The text with ``\r\n``, ``\r`` and ``\v``
+            replaced by ``\n``.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\v", "\n")
+
+
 def _extract_table_rows(table: Any) -> list[list[str]]:
     """Read a python-pptx table into a 2-D ``list[list[str]]``.
 
@@ -67,13 +89,7 @@ def _extract_table_rows(table: Any) -> list[list[str]]:
     for row in table.rows:
         cells: list[str] = []
         for cell in row.cells:
-            text = cell.text.strip()
-            text = (
-                text.replace("\r\n", "\n")
-                .replace("\r", "\n")
-                .replace("\v", "\n")
-            )
-            cells.append(text)
+            cells.append(_normalise_breaks(cell.text.strip()))
         rows.append(cells)
     return rows
 
@@ -90,17 +106,11 @@ def _extract_image_bytes(shape: Any) -> bytes | None:
             The raw image bytes, or ``None`` when ``shape`` is not a
             picture / the bytes are unreadable.
     """
-    try:
-        from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from pptx.shapes.picture import Picture
 
-        picture_type = MSO_SHAPE_TYPE.PICTURE
-    except ImportError:
-        # MSO_SHAPE_TYPE.PICTURE numeric value used as the fallback
-        # so the parser still works against pptx builds where the
-        # enum import path has moved.
-        picture_type = 13
-
-    if shape.shape_type != picture_type:
+    # PlaceholderPicture inherits Picture but reports PLACEHOLDER, not
+    # PICTURE. Empty placeholders do not inherit Picture.
+    if not isinstance(shape, Picture):
         return None
     try:
         return shape.image.blob
@@ -344,7 +354,7 @@ class PPTParser(ParserBase):
             if getattr(shape, "has_text_frame", False):
                 try:
                     parts = [
-                        para.text.strip()
+                        _normalise_breaks(para.text).strip()
                         for para in shape.text_frame.paragraphs
                         if para.text.strip()
                     ]

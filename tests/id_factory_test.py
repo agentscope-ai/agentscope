@@ -4,6 +4,7 @@ import re
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope import set_id_factory, set_timestamp_factory
+from agentscope.embedding import EmbeddingResponse
 from agentscope.event import ReplyStartEvent
 from agentscope.message import (
     AssistantMsg,
@@ -14,6 +15,7 @@ from agentscope.message import (
 )
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import Task
+from agentscope.tts import TTSResponse
 
 _HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -86,6 +88,10 @@ class IdFactoryTest(IsolatedAsyncioTestCase):
                 "structured_response": StructuredResponse(
                     content={},
                 ).created_at,
+                "embedding_response": EmbeddingResponse(
+                    embeddings=[],
+                ).created_at,
+                "tts_response": TTSResponse(content=None).created_at,
             },
             {
                 "block": "custom-timestamp",
@@ -97,6 +103,8 @@ class IdFactoryTest(IsolatedAsyncioTestCase):
                 "task": "custom-timestamp",
                 "chat_response": "custom-timestamp",
                 "structured_response": "custom-timestamp",
+                "embedding_response": "custom-timestamp",
+                "tts_response": "custom-timestamp",
             },
         )
 

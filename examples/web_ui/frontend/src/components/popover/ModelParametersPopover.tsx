@@ -5,6 +5,8 @@ import type {
 	ChatModelConfig,
 	CredentialView,
 	ModelCard,
+	RealtimeModelCard,
+	RealtimeModelConfig,
 	TTSModelCard,
 	TTSModelConfig,
 } from '@/api';
@@ -78,7 +80,7 @@ function resolveType(prop: ParameterProperty): ResolvedType {
 	return { type: 'string', enumValues: null };
 }
 
-/** Extract default values from a TTS model card's parameter schema. */
+/** Extract default values from a model card's parameter schema. */
 function extractDefaults(schema: ParameterSchema | undefined): Record<string, unknown> {
 	const defaults: Record<string, unknown> = {};
 	if (schema?.properties) {
@@ -117,8 +119,18 @@ function BooleanField({ id, label, prop, value, onChange }: FieldProps) {
 	);
 }
 
-function EnumField({ id, label, required, prop, value, onChange }: FieldProps) {
-	const enumValues = resolveType(prop).enumValues ?? [];
+function EnumField({
+	id,
+	label,
+	required,
+	prop,
+	value,
+	onChange,
+	excludedValues = [],
+}: FieldProps & { excludedValues?: unknown[] }) {
+	const enumValues = (resolveType(prop).enumValues ?? []).filter(
+		(option) => !excludedValues.includes(option),
+	);
 	// TODO: experiment with using prop.description as placeholder text
 	const displayValue = value !== undefined && value !== null ? String(value) : '';
 
@@ -218,9 +230,9 @@ function StringField({ id, label, required, prop, value, onChange }: FieldProps)
 
 interface Props {
 	/** Currently selected primary model — used to read the parameter schema. */
-	selectedModel: ChatModelConfig | null;
+	selectedModel: ChatModelConfig | RealtimeModelConfig | null;
 	/** Model card describing the primary model's parameter schema. */
-	modelCard: ModelCard | null;
+	modelCard: ModelCard | RealtimeModelCard | null;
 	/** Called when the user edits the primary model's parameters. */
 	onChange: (parameters: Record<string, unknown>) => void;
 	/** Currently selected fallback model. `null` means no fallback configured. `undefined` hides the section. */
@@ -237,6 +249,14 @@ interface Props {
 	 * whenever no primary model is selected.
 	 */
 	disabled?: boolean;
+	/** Prefix field ids when more than one parameter editor is rendered. */
+	idPrefix?: string;
+	/** Accessible label for the icon-only trigger. */
+	triggerLabel?: string;
+	/** Enum values unavailable in the current transport or UI. */
+	excludedEnumValues?: Record<string, unknown[]>;
+	/** Hide array fields when the caller has no array editor. */
+	hideArrayParameters?: boolean;
 }
 
 /**
@@ -257,6 +277,10 @@ export function ModelParametersPopover({
 	selectedTTSModel,
 	onTTSChange,
 	disabled: locked = false,
+	idPrefix = 'model',
+	triggerLabel,
+	excludedEnumValues,
+	hideArrayParameters = false,
 }: Props) {
 	const [values, setValues] = useState<Record<string, unknown>>({});
 	const { t } = useTranslation();
@@ -266,11 +290,13 @@ export function ModelParametersPopover({
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
 	const required = schema?.required ?? [];
-	const entries = Object.entries(properties);
+	const entries = Object.entries(properties).filter(
+		([, prop]) => !hideArrayParameters || resolveType(prop).type !== 'array',
+	);
 
 	useEffect(() => {
 		setValues(selectedModel?.parameters ?? {});
-	}, [selectedModel?.model]);
+	}, [selectedModel]);
 
 	const handleChange = useCallback(
 		(key: string, value: unknown) => {
@@ -307,7 +333,13 @@ export function ModelParametersPopover({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="ghost" size="icon-sm" disabled={disabled}>
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					disabled={disabled}
+					aria-label={triggerLabel}
+					title={triggerLabel}
+				>
 					<SlidersHorizontal />
 				</Button>
 			</DropdownMenuTrigger>
@@ -427,68 +459,76 @@ export function ModelParametersPopover({
 					<DropdownMenuSubTrigger>
 						{t('model-parameters.parametersLabel')}
 					</DropdownMenuSubTrigger>
-					<DropdownMenuSubContent className="w-80 max-h-96 overflow-y-auto p-3">
-						<div className="mb-3">
-							<p className="text-sm font-medium">{t('model-parameters.title')}</p>
-							<p className="text-muted-foreground text-xs">
-								{t('model-parameters.description')}
-							</p>
-						</div>
-						{entries.length === 0 ? (
-							<p className="text-muted-foreground text-xs">
-								{t('model-parameters.empty')}
-							</p>
-						) : (
-							<div
-								className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
-								onPointerDown={(e) => e.stopPropagation()}
-								onKeyDown={(e) => e.stopPropagation()}
-							>
-								{entries.map(([key, prop]) => {
-									const { type: effectiveType, enumValues } = resolveType(prop);
-									const label = prop.title ?? key;
-									const isRequired = required.includes(key);
-									const fieldProps: FieldProps = {
-										id: `param-${key}`,
-										label,
-										required: isRequired,
-										prop,
-										value: values[key],
-										onChange: (v) => handleChange(key, v),
-									};
-
-									let field: React.ReactNode;
-									if (effectiveType === 'boolean') {
-										field = <BooleanField {...fieldProps} />;
-									} else if (enumValues) {
-										field = <EnumField {...fieldProps} />;
-									} else if (
-										effectiveType === 'number' ||
-										effectiveType === 'integer'
-									) {
-										field = <NumberField {...fieldProps} />;
-									} else {
-										field = <StringField {...fieldProps} />;
-									}
-
-									return (
-										<Tooltip key={key}>
-											<TooltipTrigger asChild>
-												<div className="col-span-2 grid grid-cols-subgrid items-center">
-													{field}
-												</div>
-											</TooltipTrigger>
-											{prop.description && (
-												<TooltipContent side="left">
-													{prop.description}
-												</TooltipContent>
-											)}
-										</Tooltip>
-									);
-								})}
+					<DropdownMenuPortal>
+						<DropdownMenuSubContent className="w-80 max-h-(--radix-dropdown-menu-content-available-height) overflow-x-hidden overflow-y-auto p-3">
+							<div className="mb-3">
+								<p className="text-sm font-medium">{t('model-parameters.title')}</p>
+								<p className="text-muted-foreground text-xs">
+									{t('model-parameters.description')}
+								</p>
 							</div>
-						)}
-					</DropdownMenuSubContent>
+							{entries.length === 0 ? (
+								<p className="text-muted-foreground text-xs">
+									{t('model-parameters.empty')}
+								</p>
+							) : (
+								<div
+									className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+									onPointerDown={(e) => e.stopPropagation()}
+									onKeyDown={(e) => e.stopPropagation()}
+								>
+									{entries.map(([key, prop]) => {
+										const { type: effectiveType, enumValues } =
+											resolveType(prop);
+										const label = prop.title ?? key;
+										const isRequired = required.includes(key);
+										const fieldProps: FieldProps = {
+											id: `param-${idPrefix}-${key}`,
+											label,
+											required: isRequired,
+											prop,
+											value: values[key],
+											onChange: (v) => handleChange(key, v),
+										};
+
+										let field: React.ReactNode;
+										if (effectiveType === 'boolean') {
+											field = <BooleanField {...fieldProps} />;
+										} else if (enumValues) {
+											field = (
+												<EnumField
+													{...fieldProps}
+													excludedValues={excludedEnumValues?.[key]}
+												/>
+											);
+										} else if (
+											effectiveType === 'number' ||
+											effectiveType === 'integer'
+										) {
+											field = <NumberField {...fieldProps} />;
+										} else {
+											field = <StringField {...fieldProps} />;
+										}
+
+										return (
+											<Tooltip key={key}>
+												<TooltipTrigger asChild>
+													<div className="col-span-2 grid grid-cols-subgrid items-center">
+														{field}
+													</div>
+												</TooltipTrigger>
+												{prop.description && (
+													<TooltipContent side="left">
+														{prop.description}
+													</TooltipContent>
+												)}
+											</Tooltip>
+										);
+									})}
+								</div>
+							)}
+						</DropdownMenuSubContent>
+					</DropdownMenuPortal>
 				</DropdownMenuSub>
 
 				{/* ----- TTS ----- */}

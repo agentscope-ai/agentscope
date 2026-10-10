@@ -71,7 +71,7 @@ class ReconnectTest(IsolatedAsyncioTestCase):
                     "qwen-omni-turbo-realtime",
                     DashScopeCredential(api_key="sk-x"),
                 ),
-                [],
+                [{"type": "session.updated"}],
             ),
             (
                 XAIRealtimeModel(

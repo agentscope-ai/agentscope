@@ -11,6 +11,8 @@ from typing import Any, Literal
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
 from .._tool import (
+    SubmitHandover,
+    SubmitVerdict,
     AgentCreate,
     AgentInvite,
     TeamCreate,
@@ -52,6 +54,7 @@ async def get_toolkit(
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     team_role: Literal["leader", "worker"] | None = None,
     channel_tools: list[ToolBase] | None = None,
+    sop_dispatch: str | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -120,6 +123,9 @@ optional):
         team_role (`Literal["leader", "worker"] | None`, optional):
             The session's team role, resolved once by the caller.
             ``None`` means not in any team.
+        sop_dispatch (`str | None`, optional):
+            ``"<run id>:<step index>"`` when this turn is a SOP
+            step's, which gives it a submit tool.
         channel_tools (`list[ToolBase] | None`, optional):
             Platform tools of the originating channel, resolved once
             by the caller. ``None`` / empty when channel-less.
@@ -208,8 +214,10 @@ time or interval"
         invitable_pool = [
             view
             for view in visible_agents
-            if view.data.invite_config.invitable
-            and (view.data.invite_config.invite_description or "").strip()
+            if view.data.chat_config.invite_config.invitable
+            and (
+                view.data.chat_config.invite_config.invite_description or ""
+            ).strip()
         ]
         if invitable_pool:
             tools.append(
@@ -217,6 +225,28 @@ time or interval"
                     **team_tool_kwargs,
                     invitable_pool=invitable_pool,
                     resource_access_service=resource_access_service,
+                ),
+            )
+
+    # A step's turn gets one submit tool: handover until something has
+    # been handed over, verdict after.
+    if sop_dispatch is not None:
+        sop_run_id, _, step_index = sop_dispatch.rpartition(":")
+        run = await storage.get_sop_run(user_id, sop_run_id)
+        index = int(step_index)
+        if run is not None and index < len(run.state.steps):
+            submit_kwargs: dict[str, Any] = {
+                "storage": storage,
+                "user_id": user_id,
+                "sop_run_id": sop_run_id,
+                "step_index": index,
+            }
+            tools.append(
+                SubmitHandover(**submit_kwargs)
+                if run.state.steps[index].submission is None
+                else SubmitVerdict(
+                    **submit_kwargs,
+                    verifier=agent_record.data.name,
                 ),
             )
 

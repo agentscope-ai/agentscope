@@ -60,7 +60,10 @@ class LocalSkillLoader(SkillLoaderBase):
             async with aiofiles.open(
                 skill_md_path,
                 "r",
-                encoding="utf-8",
+                # ``utf-8-sig`` also accepts a byte order mark. Windows
+                # editors commonly write one, and it would otherwise hide
+                # the opening front matter delimiter.
+                encoding="utf-8-sig",
             ) as f:
                 content_str = await f.read()
                 content = frontmatter.loads(content_str)

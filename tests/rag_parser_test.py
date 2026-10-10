@@ -7,7 +7,9 @@ run anywhere ``agentscope[rag]`` is installed.
 """
 import base64
 import io
+import json
 import os
+import zipfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -304,6 +306,71 @@ def _make_docx_with_image() -> bytes:
     return buffer.getvalue()
 
 
+def _make_docx_with_image_in_table_cell() -> bytes:
+    """Build a DOCX whose 1x1 table cell contains text and an embedded
+    PNG image."""
+    from docx import Document as DocxDocument
+    from docx.shared import Inches
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before table")
+    table = doc.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)
+    cell.text = "see screenshot"
+    cell.add_paragraph().add_run().add_picture(
+        io.BytesIO(_PNG_PIXEL),
+        width=Inches(1),
+    )
+    doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_docx_with_image_in_table_text_box() -> bytes:
+    """Build a DOCX with an image nested in a table-cell text box."""
+    from docx import Document as DocxDocument
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls, qn
+    from docx.shared import Inches
+
+    doc = DocxDocument()
+    doc.add_paragraph("Before table")
+    cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+    outer_paragraph = cell.paragraphs[0]
+
+    image_paragraph = cell.add_paragraph()
+    image_paragraph.add_run().add_picture(
+        io.BytesIO(_PNG_PIXEL),
+        width=Inches(1),
+    )
+    image_element = image_paragraph._p  # pylint: disable=protected-access
+    image_element.getparent().remove(image_element)
+
+    text_box_run = parse_xml(
+        f"<w:r {nsdecls('w')} "
+        f'xmlns:v="urn:schemas-microsoft-com:vml">'
+        f"<w:pict><v:shape><v:textbox>"
+        f"<w:txbxContent/>"
+        f"</v:textbox></v:shape></w:pict>"
+        f"</w:r>",
+    )
+    text_box_content = text_box_run.find(
+        ".//" + qn("w:txbxContent"),
+    )
+    assert text_box_content is not None
+    text_box_content.append(image_element)
+    outer_paragraph._p.append(  # pylint: disable=protected-access
+        text_box_run,
+    )
+    doc.add_paragraph("After table")
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -463,6 +530,74 @@ class PDFParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await parser.parse(b"not a pdf", "broken.pdf")
 
+    async def test_password_protected_pdf_raises_value_error(self) -> None:
+        """Errors deferred until page iteration retain filename context."""
+        from pypdf import PdfWriter
+        from pypdf.errors import FileNotDecryptedError
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt("secret")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Failed to parse 'locked\.pdf' as PDF:",
+        ) as context:
+            await PDFParser().parse(buffer.getvalue(), "locked.pdf")
+        self.assertIsInstance(
+            context.exception.__cause__,
+            FileNotDecryptedError,
+        )
+
+    async def test_empty_user_password_pdf_remains_readable(self) -> None:
+        """An encrypted PDF that opens without a password is still parsed."""
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.encrypt(user_password="", owner_password="owner")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+
+        sections = await PDFParser().parse(buffer.getvalue(), "open.pdf")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "open.pdf",
+                    "metadata": {"page": 1},
+                },
+            ],
+        )
+
+    async def test_text_extraction_read_error_raises_value_error(self) -> None:
+        """Read errors raised after page enumeration are wrapped as well."""
+        from unittest.mock import patch
+        from pypdf import PageObject
+        from pypdf.errors import PdfReadError
+
+        error = PdfReadError("broken content stream")
+        with patch.object(PageObject, "extract_text", side_effect=error):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"Failed to parse 'broken-stream\.pdf' as PDF:",
+            ) as context:
+                await PDFParser().parse(
+                    _make_pdf(["Hello"]),
+                    "broken-stream.pdf",
+                )
+        self.assertIs(context.exception.__cause__, error)
+
     async def test_supported_extensions(self) -> None:
         """``.pdf`` is the only extension exposed to the file picker."""
         self.assertEqual(PDFParser.supported_extensions(), [".pdf"])
@@ -553,6 +688,95 @@ class ImageParserTest(IsolatedAsyncioTestCase):
 
 class PPTParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`PPTParser`."""
+
+    @staticmethod
+    def _deck_with_soft_break() -> bytes:
+        """Build a deck whose text frame has one soft line break."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        paragraph = box.text_frame.paragraphs[0]
+        paragraph.add_run().text = "one"
+        paragraph.add_line_break()
+        paragraph.add_run().text = "two"
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        return buffer.getvalue()
+
+    async def test_soft_line_break_becomes_a_newline(self) -> None:
+        """``add_line_break()`` shows up as ``\n``, not a control char."""
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(
+            self._deck_with_soft_break(),
+            "soft_break.pptx",
+        )
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "<slide index=1>\none\ntwo\n</slide>",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "soft_break.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
+    async def test_ordinary_newlines_are_preserved(self) -> None:
+        """A paragraph per line still yields newline-separated text."""
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(1),
+        )
+        frame = box.text_frame
+        frame.text = "one"
+        for line in ("two", "three"):
+            paragraph = frame.add_paragraph()
+            paragraph.text = line
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        parser = PPTParser(include_image=False)
+        sections = await parser.parse(buffer.getvalue(), "paras.pptx")
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": ("<slide index=1>\none\ntwo\nthree\n</slide>"),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "paras.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
 
     async def test_simple_deck_text_only(self) -> None:
         """A simple text-only deck round-trips through wrapping tags."""
@@ -877,6 +1101,67 @@ class PPTParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_picture_placeholder_emits_data_block(self) -> None:
+        """Pictures inserted into layout placeholders keep their content."""
+        from pptx import Presentation
+
+        presentation = Presentation()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[8])
+        slide.shapes.title.text = "Before picture"
+        slide.placeholders[1].insert_picture(io.BytesIO(_PNG_PIXEL))
+        slide.placeholders[2].text = "After picture"
+        # An unfilled picture placeholder must not be treated as an image.
+        presentation.slides.add_slide(presentation.slide_layouts[8])
+        buffer = io.BytesIO()
+        presentation.save(buffer)
+
+        parser = PPTParser(slide_prefix=None, slide_suffix=None)
+        sections = await parser.parse(buffer.getvalue(), "placeholder.pptx")
+
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before picture",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1},
+                },
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "placeholder.pptx",
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1, "media_type": "image/png"},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "After picture",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "placeholder.pptx",
+                    "metadata": {"slide": 1},
+                },
+            ],
+        )
+
     async def test_table_json_format(self) -> None:
         """``table_format="json"`` emits the JSON marker payload."""
         pptx_bytes = _make_pptx_rich()
@@ -1046,6 +1331,75 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
+
+    async def test_duplicate_and_blank_headers(self) -> None:
+        """Headers remain cell values, without pandas-generated labels."""
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        workbook.active.append(["Name", "Name", None])
+        workbook.active.append(["a", "b", "c"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+
+        for table_format in ("markdown", "json"):
+            for coordinates in (False, True):
+                with self.subTest(
+                    table_format=table_format,
+                    coordinates=coordinates,
+                ):
+                    parser = ExcelParser(
+                        table_format=table_format,
+                        include_cell_coordinates=coordinates,
+                        include_sheet_names=False,
+                    )
+                    sections = await parser.parse(
+                        buffer.getvalue(),
+                        "headers.xlsx",
+                    )
+                    self.assertEqual(len(sections), 1)
+                    text = sections[0].content.text
+                    if table_format == "markdown":
+                        expected = (
+                            "| [A1] Name | [B1] Name | [C1]  |\n"
+                            "| --- | --- | --- |\n"
+                            "| [A2] a | [B2] b | [C2] c |\n"
+                            if coordinates
+                            else "| Name | Name |  |\n"
+                            "| --- | --- | --- |\n"
+                            "| a | b | c |\n"
+                        )
+                        self.assertEqual(text, expected)
+                    else:
+                        rows = [
+                            json.loads(line) for line in text.splitlines()[1:]
+                        ]
+                        self.assertEqual(
+                            rows,
+                            [
+                                {"A1": "Name", "B1": "Name", "C1": ""},
+                                {"A2": "a", "B2": "b", "C2": "c"},
+                            ]
+                            if coordinates
+                            else [["Name", "Name", ""], ["a", "b", "c"]],
+                        )
+
+    async def test_invalid_input_errors(self) -> None:
+        """Missing paths and invalid workbooks use documented errors."""
+        parser = ExcelParser()
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/report.xlsx", "report.xlsx")
+
+        workbook = _make_xlsx_simple({"Data": [["value"]]})
+        with self.assertRaises(ValueError):
+            await parser.parse(workbook[: len(workbook) // 2], "bad.xlsx")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a workbook")
+        with self.assertRaises(ValueError):
+            await parser.parse(buffer.getvalue(), "bad.xlsx")
 
     async def test_header_only_sheet(self) -> None:
         """A sheet with only a header row is kept as a table."""
@@ -1218,6 +1572,168 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_text_and_na_like_values_kept(self) -> None:
+        """Text like ``"00123"`` and ``"NA"`` is not coerced by pandas."""
+        xlsx_bytes = _make_xlsx_simple(
+            {"Data": [["Code", "Status"], ["00123", "NA"]]},
+        )
+        sections = await ExcelParser().parse(xlsx_bytes, "demo.xlsx")
+
+        self.assertEqual(
+            [s.model_dump() for s in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": (
+                            "Sheet: Data\n"
+                            "| Code | Status |\n"
+                            "| --- | --- |\n"
+                            "| 00123 | NA |\n"
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "demo.xlsx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_native_error_cells_preserved(self) -> None:
+        """Stored Excel error values stay visible in both renderers.
+
+        pandas' openpyxl reader turns type ``e`` cells into NaN.  The
+        parser must copy those stored values back, while blanks, text,
+        numbers, and unevaluated formulas stay as they were.
+        """
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Errors"
+        sheet.append(["Case", "Value", "Note"])
+        sheet.append(["#NULL!", "text-after", 1])
+        sheet.append(["native_div0", "#DIV/0!", None])
+        sheet.append(["blank", None, "still-blank"])
+        sheet.append(["text_na", "NA", "00123"])
+        sheet.append(["integer", 42, None])
+        sheet.append(["literal", "#GETTING_DATA", "N/A"])
+        sheet.append(["formula", "=1/0", None])
+        sheet.append(["native_na", "#N/A", "#VALUE!"])
+        self.assertEqual(sheet["A2"].data_type, "e")
+        self.assertEqual(sheet["A2"].value, "#NULL!")
+        self.assertEqual(sheet["B3"].data_type, "e")
+        self.assertEqual(sheet["B3"].value, "#DIV/0!")
+        self.assertEqual(sheet["B9"].data_type, "e")
+        self.assertEqual(sheet["C9"].data_type, "e")
+        self.assertEqual(sheet["C9"].value, "#VALUE!")
+        self.assertEqual(sheet["B7"].data_type, "s")
+        self.assertEqual(sheet["B8"].data_type, "f")
+        self.assertIsNone(sheet["B4"].value)
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        workbook.close()
+        payload = buffer.getvalue()
+
+        rows = [
+            ["Case", "Value", "Note"],
+            ["#NULL!", "text-after", "1"],
+            ["native_div0", "#DIV/0!", ""],
+            ["blank", "", "still-blank"],
+            ["text_na", "NA", "00123"],
+            ["integer", "42", ""],
+            ["literal", "#GETTING_DATA", "N/A"],
+            ["formula", "", ""],
+            ["native_na", "#N/A", "#VALUE!"],
+        ]
+        markdown = (
+            "| Case | Value | Note |\n"
+            "| --- | --- | --- |\n"
+            "| #NULL! | text-after | 1 |\n"
+            "| native_div0 | #DIV/0! |  |\n"
+            "| blank |  | still-blank |\n"
+            "| text_na | NA | 00123 |\n"
+            "| integer | 42 |  |\n"
+            "| literal | #GETTING_DATA | N/A |\n"
+            "| formula |  |  |\n"
+            "| native_na | #N/A | #VALUE! |\n"
+        )
+        markdown_coords = (
+            "| [A1] Case | [B1] Value | [C1] Note |\n"
+            "| --- | --- | --- |\n"
+            "| [A2] #NULL! | [B2] text-after | [C2] 1 |\n"
+            "| [A3] native_div0 | [B3] #DIV/0! | [C3]  |\n"
+            "| [A4] blank | [B4]  | [C4] still-blank |\n"
+            "| [A5] text_na | [B5] NA | [C5] 00123 |\n"
+            "| [A6] integer | [B6] 42 | [C6]  |\n"
+            "| [A7] literal | [B7] #GETTING_DATA | [C7] N/A |\n"
+            "| [A8] formula | [B8]  | [C8]  |\n"
+            "| [A9] native_na | [B9] #N/A | [C9] #VALUE! |\n"
+        )
+
+        for table_format in ("markdown", "json"):
+            for coordinates in (False, True):
+                with self.subTest(
+                    table_format=table_format,
+                    coordinates=coordinates,
+                ):
+                    parser = ExcelParser(
+                        table_format=table_format,
+                        include_cell_coordinates=coordinates,
+                        include_sheet_names=False,
+                    )
+                    sections = await parser.parse(payload, "errors.xlsx")
+                    self.assertEqual(len(sections), 1)
+                    text = sections[0].content.text
+                    if table_format == "markdown":
+                        expected = markdown_coords if coordinates else markdown
+                    elif coordinates:
+                        body = "\n".join(
+                            json.dumps(
+                                {
+                                    f"{'ABC'[col]}{row + 1}": cell
+                                    for col, cell in enumerate(values)
+                                },
+                                ensure_ascii=False,
+                            )
+                            for row, values in enumerate(rows)
+                        )
+                        expected = (
+                            "<system-info>A table loaded as a JSON "
+                            f"array:</system-info>\n{body}"
+                        )
+                    else:
+                        body = "\n".join(
+                            json.dumps(values, ensure_ascii=False)
+                            for values in rows
+                        )
+                        expected = (
+                            "<system-info>A table loaded as a JSON "
+                            f"array:</system-info>\n{body}"
+                        )
+                    self.assertEqual(
+                        [section.model_dump() for section in sections],
+                        [
+                            {
+                                "content": {
+                                    "type": "text",
+                                    "text": expected,
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                "source": "errors.xlsx",
+                                "metadata": {},
+                            },
+                        ],
+                    )
+                    self.assertIn("#DIV/0!", text)
+                    self.assertIn("#N/A", text)
+                    self.assertIn("#VALUE!", text)
+                    self.assertIn("#NULL!", text)
 
     async def test_multi_sheet_merged_by_default(self) -> None:
         """``separate_sheet=False`` (default) merges sheets into one
@@ -1423,6 +1939,21 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
 class WordParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`WordParser`."""
 
+    async def test_invalid_input_errors(self) -> None:
+        """Missing paths and invalid documents use documented errors."""
+        parser = WordParser()
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/report.docx", "report.docx")
+
+        with self.assertRaises(ValueError):
+            await parser.parse(b"not a docx", "bad.docx")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a document")
+        with self.assertRaises(ValueError):
+            await parser.parse(buffer.getvalue(), "bad.docx")
+
     async def test_simple_paragraphs(self) -> None:
         """Plain paragraphs are merged into a single text Section."""
         docx_bytes = _make_docx_simple(["Hello", "World"])
@@ -1581,6 +2112,71 @@ class WordParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_omitted_table_cells_keep_column_alignment(self) -> None:
+        """Omitted cells must not shift columns or truncate later rows."""
+        # python-docx has no public setter for omitted grid positions.
+        # pylint: disable=protected-access
+        from docx import Document
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = Document()
+        table = doc.add_table(rows=4, cols=4)
+        values = [
+            ["unused", "B", "C", "unused"],
+            ["a", "b", "c", "d"],
+            ["unused", "wide", "unused", "last"],
+            ["unused", "unused", "tail", "unused"],
+        ]
+        for row, cells in zip(table.rows, values):
+            for cell, text in zip(row.cells, cells):
+                cell.text = text
+        table.cell(2, 1).merge(table.cell(2, 2)).text = "wide"
+        for row, (before, after) in zip(
+            table.rows,
+            [(1, 1), (0, 0), (1, 0), (2, 1)],
+        ):
+            for tag, count, index in (
+                ("w:gridBefore", before, 0),
+                ("w:gridAfter", after, -1),
+            ):
+                if count:
+                    for _ in range(count):
+                        row._tr.remove(row._tr.tc_lst[index])
+                    omitted = OxmlElement(tag)
+                    omitted.set(qn("w:val"), str(count))
+                    row._tr.get_or_add_trPr().append(omitted)
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        for table_format in ("markdown", "json"):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    table_format=table_format,
+                    separate_table=True,
+                ).parse(buffer.getvalue(), "omitted.docx")
+                self.assertEqual(len(sections), 1)
+                text = sections[0].content.text
+                if table_format == "markdown":
+                    self.assertEqual(
+                        text,
+                        "|  | B | C |  |\n"
+                        "| --- | --- | --- | --- |\n"
+                        "| a | b | c | d |\n"
+                        "|  | wide |  | last |\n"
+                        "|  |  | tail |  |\n",
+                    )
+                else:
+                    self.assertEqual(
+                        json.loads(text.split("\n", 1)[1]),
+                        [
+                            ["", "B", "C", ""],
+                            ["a", "b", "c", "d"],
+                            ["", "wide", "", "last"],
+                            ["", "", "tail", ""],
+                        ],
+                    )
+
     async def test_nested_table_text_is_kept(self) -> None:
         """Text inside a table nested in another cell must survive parsing."""
         docx_bytes = _make_docx_with_nested_table()
@@ -1720,6 +2316,90 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(ds.source, "rich.docx")
         self.assertEqual(ds.content.name, "rich.docx")
         self.assertIn("media_type", ds.metadata)
+
+    async def test_image_inside_table_cell_emits_data_block(self) -> None:
+        """Images pasted into table cells are not dropped."""
+        docx_bytes = _make_docx_with_image_in_table_cell()
+        parser = WordParser(include_image=True)
+        sections = await parser.parse(docx_bytes, "table.docx")
+
+        data_sections = [s for s in sections if s.content.type == "data"]
+        self.assertEqual(len(data_sections), 1)
+        ds = data_sections[0]
+        self.assertEqual(ds.source, "table.docx")
+        self.assertEqual(ds.metadata["media_type"], "image/png")
+
+        texts = [s.content.text for s in sections if s.content.type == "text"]
+        joined = "\n".join(texts)
+        self.assertIn("Before table", joined)
+        self.assertIn("see screenshot", joined)
+        self.assertIn("After table", joined)
+
+    async def test_image_in_table_text_box_emitted_once(self) -> None:
+        """An image in a nested text-box paragraph is emitted once."""
+        docx_bytes = _make_docx_with_image_in_table_text_box()
+        sections = await WordParser(include_image=True).parse(
+            docx_bytes,
+            "text-box.docx",
+        )
+
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "Before table\n|  |\n| --- |\n",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "text-box.docx",
+                    "metadata": {},
+                },
+                {
+                    "content": {
+                        "type": "data",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "source": {
+                            "type": "base64",
+                            "data": _PNG_PIXEL_B64,
+                            "media_type": "image/png",
+                        },
+                        "name": "text-box.docx",
+                    },
+                    "source": "text-box.docx",
+                    "metadata": {"media_type": "image/png"},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "After table",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "text-box.docx",
+                    "metadata": {},
+                },
+            ],
+        )
+
+    async def test_image_inside_table_cell_excluded_when_disabled(
+        self,
+    ) -> None:
+        """``include_image=False`` keeps only text sections."""
+        docx_bytes = _make_docx_with_image_in_table_cell()
+        parser = WordParser(include_image=False)
+        sections = await parser.parse(docx_bytes, "table.docx")
+
+        self.assertEqual([s.content.type for s in sections], ["text"])
+        self.assertIn(
+            "see screenshot",
+            "\n".join(s.content.text for s in sections),
+        )
 
     async def test_image_excluded_when_disabled(self) -> None:
         """``include_image=False`` keeps only text sections."""

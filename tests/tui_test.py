@@ -61,6 +61,7 @@ from agentscope.tui._ask_user import AskUserUI
 from agentscope.tui._chat import ComposerUI, HitlUI, _ComposerTextArea
 from agentscope.tui._launcher import _AgentScopeTUI, _RealtimeTUI
 from agentscope.tui._messages import (
+    _diff_stats,
     MessageUI,
     TextBlockUI,
     ThinkingUI,
@@ -413,6 +414,11 @@ class MessagesUITest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(message_widget, app.query_one(MessageUI))
             self.assertIs(text_widget, app.query_one(TextBlockUI))
             self.assertEqual(ui.messages[0].get_text_content(), "hello")
+
+    def test_diff_stats_counts_lines_starting_with_a_marker(self) -> None:
+        """A removed ``---`` and an added ``++counter;`` both count."""
+        diff = "--- a\n+++ b\n@@ -1 +1 @@\n----\n+++counter;\n"
+        self.assertEqual(_diff_stats(diff), (1, 1))
 
 
 class ChatUITest(unittest.IsolatedAsyncioTestCase):
