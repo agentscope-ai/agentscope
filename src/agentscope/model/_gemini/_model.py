@@ -296,16 +296,19 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable:
-            config["thinking_config"] = {
-                "include_thoughts": True,
-                "thinking_budget": self.parameters.thinking_budget or 1024,
-            }
-        else:
-            config["thinking_config"] = {
-                "include_thoughts": False,
-                "thinking_budget": 0,
-            }
+        # A caller-provided thinking_config wins over the parameter-derived
+        # default, like the thinking kwargs of the other providers.
+        if "thinking_config" not in config:
+            if self.parameters.thinking_enable:
+                config["thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_budget": self.parameters.thinking_budget or 1024,
+                }
+            else:
+                config["thinking_config"] = {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
