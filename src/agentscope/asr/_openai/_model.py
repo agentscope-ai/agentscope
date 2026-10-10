@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """OpenAI Audio Transcriptions API implementation."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from ...credential import OpenAICredential
 from ...message import TextBlock
-from .._base import ASRModelBase
-from .._response import ASRResponse
+from .._asr_base import ASRModelBase
+from .._asr_response import ASRResponse
 
 
 class OpenAIASRModel(ASRModelBase):
@@ -27,6 +27,10 @@ class OpenAIASRModel(ASRModelBase):
         )
 
     type: Literal["openai_asr"] = "openai_asr"
+    """The model implementation type discriminator."""
+
+    realtime: bool = False
+    """OpenAI Audio Transcriptions accepts complete audio files."""
 
     def __init__(
         self,
@@ -48,6 +52,7 @@ class OpenAIASRModel(ASRModelBase):
         self,
         audio: bytes,
         filename: str = "audio.wav",
+        **kwargs: Any,
     ) -> ASRResponse:
         """Transcribe in-memory audio, using ``filename`` for its format."""
         if not audio:
@@ -61,5 +66,6 @@ class OpenAIASRModel(ASRModelBase):
             model=self.model,
             response_format="json",
             **options,
+            **kwargs,
         )
         return ASRResponse(content=TextBlock(text=result.text))

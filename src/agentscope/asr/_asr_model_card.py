@@ -33,6 +33,12 @@ class ASRModelCard(BaseModel):
     )
     """The supported transcription output media types."""
 
+    realtime: bool = Field(
+        default=False,
+        description="Whether the model supports realtime streaming input.",
+    )
+    """Whether the model supports realtime streaming input."""
+
     parameter_schema: dict = Field(
         description="The JSON schema for provider-specific parameters.",
     )
@@ -52,5 +58,6 @@ class ASRModelCard(BaseModel):
             label=config["label"],
             input_types=config.get("input_types", []),
             output_types=config.get("output_types", ["text/plain"]),
+            realtime=config.get("realtime", False),
             parameter_schema=parameter_class.model_json_schema(),
         )

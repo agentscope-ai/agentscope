@@ -23,8 +23,13 @@ class ASRResponse(DictMixin):
     created_at: str = field(default_factory=_generate_timestamp)
     """The timestamp when the response was created."""
 
-    type: Literal["asr"] = "asr"
+    type: Literal["asr"] = field(default_factory=lambda: "asr")
     """The response type discriminator."""
 
-    metadata: dict[str, JSONSerializableObject] | None = None
+    metadata: dict[str, JSONSerializableObject] | None = field(
+        default_factory=lambda: None,
+    )
     """Optional provider-specific response metadata."""
+
+    is_last: bool = field(default_factory=lambda: True)
+    """Whether this is the last response in the transcription stream."""
