@@ -23,7 +23,7 @@ from ...message import (
     ToolResultState,
 )
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import BackendBase, _normalize_newlines, _split_lines
 
 _IMAGE_EXTENSIONS: dict[str, str] = {
     ".png": "image/png",
@@ -519,7 +519,7 @@ Usage:
                 # of the platform the file was written on (Windows text
                 # files use "\r\n").
                 content_str = _normalize_newlines(content_str)
-                lines = content_str.splitlines(keepends=True)
+                lines = _split_lines(content_str)
 
                 # Cache file if state is provided
                 if _agent_state is not None:

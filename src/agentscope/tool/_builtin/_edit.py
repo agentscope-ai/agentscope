@@ -19,7 +19,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import BackendBase, _normalize_newlines, _split_lines
 
 
 class Edit(ToolBase):
@@ -409,9 +409,7 @@ Usage:
         if _agent_state is not None:
             await _agent_state.tool_context.cache_file(
                 file_path=file_path,
-                lines=_normalize_newlines(updated_content).splitlines(
-                    keepends=True,
-                ),
+                lines=_split_lines(_normalize_newlines(updated_content)),
                 mtime=await self._backend.stat_mtime(file_path),
             )
 

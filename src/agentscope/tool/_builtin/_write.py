@@ -19,7 +19,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import BackendBase, _normalize_newlines, _split_lines
 
 
 class Write(ToolBase):
@@ -301,12 +301,12 @@ Usage:
         if _agent_state is not None:
             await _agent_state.tool_context.cache_file(
                 file_path=file_path,
-                lines=_normalize_newlines(content).splitlines(keepends=True),
+                lines=_split_lines(_normalize_newlines(content)),
                 mtime=await self._backend.stat_mtime(file_path),
             )
 
         # Count lines the way the ``Read`` tool numbers them
-        line_count = len(content.splitlines())
+        line_count = len(_split_lines(_normalize_newlines(content)))
 
         # Build the unified diff between previous and new content. When the
         # file is brand new, ``unified_diff`` over an empty old side naturally
