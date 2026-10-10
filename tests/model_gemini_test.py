@@ -152,6 +152,45 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_thinking_config_caller_kwarg_wins(self) -> None:
+        """A caller-provided thinking_config is sent as-is.
+
+        The parameter-derived default used to overwrite it with the exact
+        opposite values, so ``thinking_config={"include_thoughts": True}``
+        reached the API as ``include_thoughts=False, thinking_budget=0``.
+        """
+        caller_config = {"include_thoughts": True, "thinking_budget": 8192}
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        await self.model([], thinking_config=caller_config)
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(sent_config["thinking_config"], caller_config)
+
+    async def test_thinking_config_defaults_from_parameters(self) -> None:
+        """Without a caller kwarg, thinking parameters still apply."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(
+            sent_config["thinking_config"],
+            {"include_thoughts": False, "thinking_budget": 0},
+        )
+
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         parts = [
