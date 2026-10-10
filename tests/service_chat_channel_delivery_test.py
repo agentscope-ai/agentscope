@@ -25,6 +25,7 @@ from agentscope.app.channel import (
     ChannelStatus,
     ChannelTypeRegistry,
     ChatKind,
+    SlackChannel,
 )
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.event import ReplyEndEvent, ReplyStartEvent
@@ -151,12 +152,26 @@ class _Storage:
         """Accept persisted reply messages."""
 
 
+class _SlackWeb:
+    """Answer the one Web API lookup a Slack run makes before its tools."""
+
+    def __init__(self, **_: object) -> None:
+        """Accept the client's constructor arguments."""
+
+    async def conversations_info(self, channel: str) -> dict:
+        """Classify ``D...`` ids as direct messages, the rest as groups."""
+        return {"channel": {"is_im": channel.startswith("D")}}
+
+
 class _WorkspaceManager:
     """Return a minimal workspace handle."""
 
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
-        return SimpleNamespace(workdir="/tmp/agentscope-delivery-test")
+        return SimpleNamespace(
+            workdir="/tmp/agentscope-delivery-test",
+            get_backend=lambda: None,
+        )
 
 
 class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
@@ -166,8 +181,14 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         """Isolate the instances each test observes."""
         _RecordingChannel.instances.clear()
         _RecordingChannel.tool_user_ids.clear()
+        self.channel_tools: list = []
 
-    def _fixture(self, source: SessionOrigin) -> tuple:
+    def _fixture(
+        self,
+        source: SessionOrigin,
+        channel_type: str = "fake",
+        credentials: dict | None = None,
+    ) -> tuple:
         """Build a session of ``source`` plus its agent and channel."""
         user_id = "user-1"
         agent = AgentRecord(
@@ -196,9 +217,9 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         channel = ChannelRecord(
             id="chan-1",
-            channel_type="fake",
+            channel_type=channel_type,
             user_id=user_id,
-            credentials={"bot_id": "bot-1"},
+            credentials=credentials or {"bot_id": "bot-1"},
             routing=RoutingConfig(
                 bindings=[ChannelBinding(match_value="*", agent_id=agent.id)],
             ),
@@ -206,15 +227,24 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         return user_id, agent, session, channel
 
-    async def _run(self, source: SessionOrigin) -> ChannelClients:
+    async def _run(
+        self,
+        source: SessionOrigin,
+        channel_cls: type[ChannelBase] = _RecordingChannel,
+        credentials: dict | None = None,
+    ) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
-        user_id, agent, session, channel = self._fixture(source)
+        user_id, agent, session, channel = self._fixture(
+            source,
+            channel_cls.channel_type,
+            credentials,
+        )
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
         clients = ChannelClients(
             storage=storage,
             message_bus=bus,
-            type_registry=ChannelTypeRegistry([_RecordingChannel]),
+            type_registry=ChannelTypeRegistry([channel_cls]),
         )
 
         class _Agent:
@@ -241,7 +271,8 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                     finished_reason=ReplyFinishedReason.COMPLETED,
                 )
 
-        async def _get_toolkit(**_: object) -> object:
+        async def _get_toolkit(**kwargs: Any) -> object:
+            self.channel_tools = kwargs.get("channel_tools") or []
             return object()
 
         async def _get_model(*_: object, **__: object) -> object:
@@ -362,3 +393,47 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             self.assertListEqual(_RecordingChannel.tool_user_ids, [None])
         finally:
             await clients.__aexit__(None, None, None)
+
+    async def _run_slack(self, chat_id: str) -> Any:
+        """Drive a Slack-bound run and return the spy on its tool lookup."""
+        with (
+            patch("slack_sdk.web.async_client.AsyncWebClient", _SlackWeb),
+            patch.object(
+                SlackChannel,
+                "list_tools",
+                autospec=True,
+                side_effect=SlackChannel.list_tools,
+            ) as list_tools,
+        ):
+            clients = await self._run(
+                ChannelOrigin(
+                    channel_id="chan-1",
+                    chat_id=chat_id,
+                    channel_user_id="U1",
+                ),
+                SlackChannel,
+                {"app_id": "A1", "bot_token": "xoxb-x", "app_token": "xapp-x"},
+            )
+        await clients.__aexit__(None, None, None)
+        return list_tools
+
+    async def test_a_slack_private_chat_gets_the_slack_tools(self) -> None:
+        """ChatService passes the DM's user through to the Slack tools."""
+        list_tools = await self._run_slack("D1")
+        self.assertEqual(list_tools.call_args.args[2], "U1")
+        self.assertListEqual(
+            [tool.name for tool in self.channel_tools],
+            [
+                "ListChats",
+                "ListChatMembers",
+                "SendMessage",
+                "SendFile",
+                "SendImage",
+            ],
+        )
+
+    async def test_a_slack_group_chat_gets_the_slack_tools(self) -> None:
+        """A shared Slack channel gets the tools but no acting user."""
+        list_tools = await self._run_slack("C1")
+        self.assertIsNone(list_tools.call_args.args[2])
+        self.assertEqual(len(self.channel_tools), 5)
