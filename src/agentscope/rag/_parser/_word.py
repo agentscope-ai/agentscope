@@ -40,19 +40,30 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     VML shapes.
 
     Tries three methods in order:
-    1. All ``w:t`` elements in the paragraph XML (covers revisions,
+    1. Text and inline separators in the paragraph XML (covers revisions,
        hyperlinks, etc.).
     2. The standard ``para.text`` property.
     3. Text inside ``w:txbxContent`` and VML ``v:textbox`` elements.
     """
     from docx.oxml.ns import qn
 
-    text = ""
-    for t_elem in para._element.findall(".//" + qn("w:t")):
-        if t_elem.text:
-            text += t_elem.text
+    text_parts: list[str] = []
+    # Only run-level tabs are text; w:pPr/w:tabs/w:tab defines tab stops.
+    for element in para._element.xpath(
+        ".//w:t | .//w:r/w:tab | .//w:r/w:br | .//w:r/w:cr",
+    ):
+        if element.tag == qn("w:t"):
+            text_parts.append(element.text or "")
+        elif element.tag == qn("w:tab"):
+            text_parts.append("\t")
+        elif element.tag == qn("w:cr"):
+            text_parts.append("\n")
+        elif element.get(qn("w:type"), "textWrapping") == "textWrapping":
+            # Page and column breaks do not contribute text.
+            text_parts.append("\n")
+    text = "".join(text_parts)
 
-    if not text:
+    if not text.strip():
         text = para.text.strip()
 
     if not text:
