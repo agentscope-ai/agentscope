@@ -140,6 +140,34 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     return schema
 
 
+def _has_non_string_enum(schema: Any) -> bool:
+    """Check whether a schema needs Gemini's JSON Schema parameter field."""
+    if isinstance(schema, list):
+        return any(_has_non_string_enum(item) for item in schema)
+    if not isinstance(schema, dict):
+        return False
+    if any(not isinstance(value, str) for value in schema.get("enum", [])):
+        return True
+    for key in ("properties", "patternProperties", "$defs"):
+        if isinstance(schema.get(key), dict) and any(
+            _has_non_string_enum(value) for value in schema[key].values()
+        ):
+            return True
+    return any(
+        _has_non_string_enum(schema.get(key))
+        for key in (
+            "items",
+            "not",
+            "if",
+            "then",
+            "else",
+            "allOf",
+            "oneOf",
+            "anyOf",
+        )
+    )
+
+
 class GeminiChatModel(ChatModelBase):
     """The Google Gemini chat model."""
 
@@ -574,6 +602,10 @@ class GeminiChatModel(ChatModelBase):
                     func["parameters"] = _sanitize_schema_for_gemini(
                         _flatten_json_schema(func["parameters"]),
                     )
+                    # Gemini's OpenAPI Schema.enum only accepts strings.
+                    # JSON Schema preserves numeric and boolean choices.
+                    if _has_non_string_enum(func["parameters"]):
+                        func["parameters_json_schema"] = func.pop("parameters")
                 function_declarations.append(func)
             fmt_tools = [{"function_declarations": function_declarations}]
 

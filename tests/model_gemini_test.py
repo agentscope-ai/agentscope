@@ -6,15 +6,18 @@ Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
 import json
+from copy import deepcopy
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+from pydantic import BaseModel, Field
+
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
 from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
@@ -805,6 +808,165 @@ class TestGeminiFormatTools(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Tests for _sanitize_schema_for_gemini and _flatten_json_schema
 # ---------------------------------------------------------------------------
+
+
+class TestGeminiLiteralRequests(IsolatedAsyncioTestCase):
+    """Exercise real SDK validation and serialization without HTTP requests."""
+
+    async def _check_literal_requests(self, structured: bool) -> None:
+        try:
+            __import__("google.genai")
+        except ImportError:
+            self.skipTest("google-genai is not installed")
+
+        class IntegerLiteral(BaseModel):
+            """A numeric constant."""
+
+            value: Literal[1]
+
+        class IntegerEnum(BaseModel):
+            """Multiple numeric choices."""
+
+            value: Literal[1, 2]
+
+        class NumberEnum(BaseModel):
+            """Multiple floating-point choices."""
+
+            value: float = Field(json_schema_extra={"enum": [1.5, 2.5]})
+
+        class BooleanLiteral(BaseModel):
+            """A boolean constant."""
+
+            value: Literal[True]
+
+        class BooleanEnum(BaseModel):
+            """Multiple boolean choices."""
+
+            value: Literal[True, False]
+
+        class NestedLiteral(BaseModel):
+            """Literals behind a reference and array items."""
+
+            values: list[IntegerLiteral]
+
+        class StringLiteral(BaseModel):
+            """A string constant supported by the legacy schema field."""
+
+            value: Literal["v1"]
+
+        class StopHTTP(RuntimeError):
+            """Stop after the SDK has validated and serialized the request."""
+
+        cases: tuple[tuple[type[BaseModel], dict[str, Any]], ...] = (
+            (IntegerLiteral, {"type": "integer", "enum": [1]}),
+            (IntegerEnum, {"type": "integer", "enum": [1, 2]}),
+            (NumberEnum, {"type": "number", "enum": [1.5, 2.5]}),
+            (BooleanLiteral, {"type": "boolean", "enum": [True]}),
+            (BooleanEnum, {"type": "boolean", "enum": [True, False]}),
+            (NestedLiteral, {"type": "integer", "enum": [1]}),
+            (StringLiteral, {"type": "string", "enum": ["v1"]}),
+        )
+        for schema_type, expected in cases:
+            for stream in (False, True):
+                with self.subTest(schema=schema_type.__name__, stream=stream):
+                    model = _make_model(stream=stream)
+                    schema = schema_type.model_json_schema()
+                    original = deepcopy(schema)
+                    name = (
+                        "generate_structured_output"
+                        if structured
+                        else "literal_tool"
+                    )
+                    transport = AsyncMock(side_effect=StopHTTP)
+                    stream_transport = AsyncMock(side_effect=StopHTTP)
+                    model.client._api_client.async_request = transport
+                    model.client._api_client.async_request_streamed = (
+                        stream_transport
+                    )
+                    try:
+                        messages = [
+                            UserMsg(name="user", content="Produce a result"),
+                        ]
+                        with self.assertRaises(StopHTTP):
+                            if structured:
+                                await model.generate_structured_output(
+                                    messages,
+                                    schema,
+                                )
+                            else:
+                                result = await model(
+                                    messages,
+                                    tools=[
+                                        {
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "parameters": schema,
+                                            },
+                                        },
+                                    ],
+                                )
+                                if stream:
+                                    async for _ in result:
+                                        pass
+                        used = stream_transport if stream else transport
+                        unused = transport if stream else stream_transport
+                        used.assert_awaited_once()
+                        unused.assert_not_awaited()
+                        request = used.call_args.args[2]
+                        declaration = request["tools"][0][
+                            "functionDeclarations"
+                        ][0]
+                        if schema_type is StringLiteral:
+                            key = "parameters"
+                            self.assertNotIn(
+                                "parameters_json_schema",
+                                declaration,
+                            )
+                            self.assertNotIn(
+                                "parametersJsonSchema",
+                                declaration,
+                            )
+                        else:
+                            key = (
+                                "parameters_json_schema"
+                                if "parameters_json_schema" in declaration
+                                else "parametersJsonSchema"
+                            )
+                            self.assertNotIn("parameters", declaration)
+                        value_schema = declaration[key]["properties"]
+                        if schema_type is NestedLiteral:
+                            value_schema = value_schema["values"]["items"][
+                                "properties"
+                            ]
+                        value_schema = value_schema["value"]
+                        self.assertEqual(
+                            value_schema["type"].lower(),
+                            expected["type"],
+                        )
+                        self.assertEqual(
+                            value_schema["enum"],
+                            expected["enum"],
+                        )
+                        for actual, wanted in zip(
+                            value_schema["enum"],
+                            expected["enum"],
+                        ):
+                            self.assertIs(type(actual), type(wanted))
+                        self.assertEqual(schema, original)
+                    finally:
+                        if hasattr(model.client.aio, "aclose"):
+                            await model.client.aio.aclose()
+                        if hasattr(model.client, "close"):
+                            model.client.close()
+
+    async def test_tool_literals(self) -> None:
+        """Literal tool schemas survive both real SDK request paths."""
+        await self._check_literal_requests(structured=False)
+
+    async def test_structured_output_literals(self) -> None:
+        """Structured output retains numeric and boolean constraints."""
+        await self._check_literal_requests(structured=True)
 
 
 class TestGeminiSchemaUtils(unittest.TestCase):
