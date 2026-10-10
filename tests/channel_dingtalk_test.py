@@ -13,13 +13,12 @@ from uuid import UUID
 from agentscope.app.channel import DingTalkChannel
 from agentscope.app.channel._base import (
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChatKind,
 )
 from agentscope.app.channel._dingtalk._card import (
     _PENDING_LAYOUT,
-    _tool_call_id,
-    _tracking_id,
 )
 from agentscope.app.channel._dingtalk._openapi import _DingTalkOpenAPI
 from agentscope.app.channel._registry import ChannelTypeRegistry
@@ -499,6 +498,7 @@ async def _confirmation_event_stream() -> AsyncIterator[dict]:
         ),
         RequireUserConfirmEvent(
             reply_id=_REPLY_ID,
+            metadata={"channel_approval_ids": {"tool-1": "approval-1"}},
             tool_calls=[
                 ToolCallBlock(
                     id="tool-1",
@@ -516,7 +516,7 @@ def _card_callback(
     *,
     action: str = "approve",
     user_id: str = "user-1",
-    approver_id: str = "",
+    approval_id: str = "approval-1",
 ) -> dict[str, Any]:
     return {
         "type": "actionCallback",
@@ -527,11 +527,8 @@ def _card_callback(
                 "cardPrivateData": {
                     "params": {
                         "action": action,
-                        "toolCallId": "tool-1",
                         "chatId": "group:cid-group-1",
-                        "agentId": "agent-1",
-                        "sessionId": "session-1",
-                        "approverId": approver_id,
+                        "approvalId": approval_id,
                     },
                 },
             },
@@ -938,9 +935,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
     async def test_approval_card_value_fits_the_platform_cap(self) -> None:
         """A Chinese argument must not push a card value past 1KB."""
-        from agentscope.app.channel._dingtalk._card import (
-            _approval_card_data,
-        )
+        from agentscope.app.channel._dingtalk._card import _approval_card_data
 
         card_data = _approval_card_data(
             ToolCallBlock(
@@ -958,9 +953,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
 
     async def test_send_response_presents_tool_approval_card(self) -> None:
         channel, media_api = _channel_with_openapi()
-        event = _message_event(
-            metadata={"agent_id": "agent-1", "session_id": "session-1"},
-        )
+        event = _message_event()
 
         await channel.send_response(event, _confirmation_event_stream())
 
@@ -975,9 +968,8 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         self.assertEqual(chat_id, "group:cid-group-1")
         self.assertEqual(approver, "")
         self.assertEqual(template, "approval.schema")
-        # Unique per card, and the tool call reads off the end of it.
-        self.assertNotEqual(track, "tool-1")
-        self.assertEqual(_tool_call_id(track), "tool-1")
+        # DingTalk always echoes this id; it is the opaque approval lookup.
+        self.assertEqual(track, "approval-1")
         self.assertRegex(
             card_data["created_at"],
             r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$",
@@ -998,6 +990,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                 "input": '{"target":"user:user-2","text":"hello"}',
                 "created_at": card_data["created_at"],
                 "status": "pending",
+                "approvalId": "approval-1",
             },
         )
 
@@ -1010,7 +1003,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             channel,
             {
                 "type": "actionCallback",
-                "outTrackId": _tracking_id("call_c45eafeaa1ab"),
+                "outTrackId": "approval-1",
                 "userId": "staff-1",
                 "spaceType": "im",
                 "spaceId": "cidAAABBBCCCDDDEEE000111222333444==",
@@ -1018,7 +1011,10 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                     {
                         "cardPrivateData": {
                             "actionIds": ["single_button_node_ocljy2j7wg2"],
-                            "params": {"id": "agree", "text": "Approve"},
+                            "params": {
+                                "id": "agree",
+                                "text": "Approve",
+                            },
                         },
                     },
                 ),
@@ -1026,14 +1022,17 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].tool_call_id, "call_c45eafeaa1ab")
-        self.assertEqual(
-            received[0].chat_id,
-            "group:cidAAABBBCCCDDDEEE000111222333444==",
+        self.assertDictEqual(
+            received[0].model_dump(),
+            {
+                "channel_id": "ding-1",
+                "chat_id": "group:cidAAABBBCCCDDDEEE000111222333444==",
+                "channel_user_id": "staff-1",
+                "approved": True,
+                "actor": "staff-1",
+                "approval_id": "approval-1",
+            },
         )
-        self.assertEqual(received[0].channel_user_id, "staff-1")
-        self.assertEqual(received[0].agent_id, "")
-        self.assertTrue(received[0].approved)
 
     async def test_built_in_button_callback_routes_a_private_chat(
         self,
@@ -1044,20 +1043,34 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             channel,
             {
                 "type": "actionCallback",
-                "outTrackId": _tracking_id("call_deny"),
+                "outTrackId": "approval-1",
                 "userId": "user-7",
                 "spaceType": "im",
                 "spaceId": "user-7",
                 "content": json.dumps(
-                    {"cardPrivateData": {"params": {"id": "reject"}}},
+                    {
+                        "cardPrivateData": {
+                            "params": {
+                                "id": "reject",
+                            },
+                        },
+                    },
                 ),
             },
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].tool_call_id, "call_deny")
-        self.assertEqual(received[0].chat_id, "user:user-7")
-        self.assertFalse(received[0].approved)
+        self.assertDictEqual(
+            received[0].model_dump(),
+            {
+                "channel_id": "ding-1",
+                "chat_id": "user:user-7",
+                "channel_user_id": "user-7",
+                "approved": False,
+                "actor": "user-7",
+                "approval_id": "approval-1",
+            },
+        )
 
     async def test_approval_callback_emits_resume_event_and_updates_card(
         self,
@@ -1069,14 +1082,41 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         )
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0].tool_call_id, "tool-1")
-        self.assertEqual(received[0].chat_id, "group:cid-group-1")
-        self.assertEqual(received[0].agent_id, "agent-1")
-        self.assertEqual(received[0].session_id, "session-1")
-        self.assertFalse(received[0].approved)
-        self.assertEqual(received[0].actor, "user-1")
+        self.assertDictEqual(
+            received[0].model_dump(),
+            {
+                "channel_id": "ding-1",
+                "chat_id": "group:cid-group-1",
+                "channel_user_id": "user-1",
+                "approved": False,
+                "actor": "user-1",
+                "approval_id": "approval-1",
+            },
+        )
         self.assertEqual(media_api.card_updates[0][0], "track-1")
         self.assertEqual(media_api.card_updates[0][1]["status"], "denied")
+
+    async def test_unauthorized_click_keeps_shared_card_pending(self) -> None:
+        channel, media_api = _channel_with_openapi()
+
+        async def reject(
+            event: ChannelConfirmationResultEvent,
+        ) -> ChannelDecisionStatus:
+            del event
+            return ChannelDecisionStatus.UNAUTHORIZED
+
+        channel._emit = reject
+        await channel._on_card_callback(
+            _card_callback(user_id="other-user"),
+        )
+
+        self.assertEqual(media_api.card_updates, [])
+        self.assertEqual(len(media_api.text_calls), 1)
+        self.assertEqual(media_api.text_calls[0][0], "group:cid-group-1")
+        self.assertEqual(
+            media_api.text_calls[0][1],
+            "Only the requester can approve or deny this tool call.",
+        )
 
     async def test_approval_callback_accepts_approval_aliases(self) -> None:
         for action in ("approve", "agree", "approved"):

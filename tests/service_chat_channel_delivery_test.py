@@ -26,6 +26,7 @@ from agentscope.app.channel import (
     ChannelTypeRegistry,
     ChatKind,
 )
+from agentscope.app.channel._approval import load_reply_requester
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.event import ReplyEndEvent, ReplyStartEvent
 from agentscope.types import ReplyFinishedReason
@@ -291,6 +292,14 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
             self.assertEqual(len(_RecordingChannel.instances), 1)
             channel = _RecordingChannel.instances[0]
             await asyncio.wait_for(channel.done.wait(), timeout=2.0)
+            self.assertEqual(
+                await load_reply_requester(
+                    clients._bus,  # pylint: disable=protected-access
+                    session_id="session-1",
+                    reply_id="r-1",
+                ),
+                "u",
+            )
 
             assert channel.target is not None
             self.assertDictEqual(
