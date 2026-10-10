@@ -8,7 +8,7 @@ import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
-from agentscope.tool import ToolChunk, Read
+from agentscope.tool import ToolChunk, Read, Grep
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -620,6 +620,71 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunk.content[0].source.media_type, "application/pdf")
         trimmed = base64.b64decode(chunk.content[0].source.data)
         self.assertEqual(len(PdfReader(io.BytesIO(trimmed)).pages), 2)
+
+    async def test_line_numbers_count_only_newlines(self) -> None:
+        """Only ``\\n`` ends a line; other ``str.splitlines`` boundaries
+        stay inside the line, as in ``rg -n``, ``sed`` and ``wc -l``."""
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            delete=False,
+            suffix=".txt",
+        ) as f:
+            f.write(
+                "a\vb\nc\fd\ne\x1cf\x1dg\x1eh\n"
+                "i\x85j\nk\u2028l\u2029m\r\nlast",
+            )
+        self.addCleanup(os.unlink, f.name)
+
+        chunk = await self.read_tool(file_path=f.name)
+        self.assertEqual(
+            chunk.content[0].text,
+            "     1\ta\vb\n"
+            "     2\tc\fd\n"
+            "     3\te\x1cf\x1dg\x1eh\n"
+            "     4\ti\x85j\n"
+            "     5\tk\u2028l\u2029m\n"
+            "     6\tlast",
+        )
+
+        chunk = await self.read_tool(file_path=f.name, offset=5, limit=1)
+        self.assertEqual(chunk.content[0].text, "     5\tk\u2028l\u2029m")
+
+    async def test_offset_from_grep_reads_the_matching_line(self) -> None:
+        """A line number reported by ``Grep`` is the line ``Read`` shows at
+        that offset, even after a form feed."""
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            delete=False,
+            suffix=".py",
+        ) as f:
+            f.write(
+                "def first():\n    return 1\n\f\n"
+                "def second():\n    return 2  # needle\n",
+            )
+        self.addCleanup(os.unlink, f.name)
+
+        grep_chunk = await Grep()(
+            pattern="needle",
+            path=f.name,
+            output_mode="content",
+            n=True,
+        )
+        line_number = int(grep_chunk.content[0].text.split(":")[0])
+        self.assertEqual(line_number, 5)
+
+        chunk = await self.read_tool(
+            file_path=f.name,
+            offset=line_number,
+            limit=1,
+        )
+        self.assertEqual(
+            chunk.content[0].text,
+            "     5\t    return 2  # needle",
+        )
 
     async def test_read_unknown_extension_as_text(self) -> None:
         """Test files with unknown extensions are read as text."""

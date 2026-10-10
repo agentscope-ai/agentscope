@@ -136,6 +136,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             ("alpha\n", 1),
             ("alpha", 1),
             ("", 0),
+            ("alpha\fbeta\ngamma\u2028delta\n", 2),
         ]
         for index, (content, line_count) in enumerate(cases):
             file_path = os.path.join(self.temp_dir, f"count-{index}.txt")
