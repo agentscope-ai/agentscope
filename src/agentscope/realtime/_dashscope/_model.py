@@ -249,12 +249,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         """Ask for a reply, cancelling one already in flight first."""
         if self._item_id:
             await self.cancel_response()
-        await self._send(
-            {
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]},
-            },
-        )
+        await self._send({"type": "response.create"})
 
     async def cancel_response(self) -> None:
         """Cancel the reply in flight, if any."""
@@ -272,23 +267,26 @@ class DashScopeRealtimeModel(RealtimeModelBase):
     ) -> dict:
         """Build the ``session.update`` message."""
         p = self.parameters
-        session: dict[str, Any] = {
-            "instructions": instructions,
-            "modalities": ["audio", "text"],
-            "voice": p.voice,
-            "input_audio_format": f"pcm{self.input_sample_rate // 1000}",
-            "output_audio_format": f"pcm{self.output_sample_rate // 1000}",
-            "turn_detection": None
+        turn_detection = (
+            None
             if p.turn_detection == "none"
             else {
                 "type": p.turn_detection,
                 "threshold": p.vad_threshold,
                 "silence_duration_ms": p.vad_silence_duration_ms,
-            },
+            }
+        )
+        session: dict[str, Any] = {
+            "instructions": instructions,
+            "modalities": ["audio", "text"],
+            "voice": p.voice,
+            "input_audio_format": "pcm",
+            "output_audio_format": "pcm",
+            "turn_detection": turn_detection,
         }
         if p.input_audio_transcription:
             session["input_audio_transcription"] = {
-                "model": "gummy-realtime-v1",
+                "model": "qwen3-asr-flash-realtime",
             }
         if tools and self.card.supports_tools:
             session["tools"] = tools

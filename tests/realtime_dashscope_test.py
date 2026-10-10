@@ -27,6 +27,12 @@ from agentscope.message import (
 )
 
 CRED = DashScopeCredential(api_key="sk-x")
+WORKSPACE_HOST = "https://llm-workspace.cn-beijing.maas.aliyuncs.com"
+WORKSPACE_BASE_URL = f"{WORKSPACE_HOST}/compatible-mode/v1"
+WORKSPACE_CRED = DashScopeCredential(
+    api_key="sk-workspace",
+    base_url=WORKSPACE_BASE_URL,
+)
 TRANSCRIPTION_DONE = "conversation.item.input_audio_transcription.completed"
 AMBIENT_DELTA = "conversation.item.ambient_audio_transcription.delta"
 
@@ -63,7 +69,7 @@ class DashScopeCardsTest(unittest.TestCase):
     """Each adapter lists only its own cards, tagged with its type."""
 
     def test_omni_cards(self) -> None:
-        """The Omni adapter lists the four Omni cards."""
+        """The Omni adapter lists the five Omni cards."""
         self.assertListEqual(
             [
                 (
@@ -104,7 +110,51 @@ class DashScopeCardsTest(unittest.TestCase):
                     100,
                     "2026-03-30",
                 ),
+                (
+                    "qwen3.8-omni-flash-realtime",
+                    "dashscope_omni_realtime",
+                    True,
+                    100,
+                    None,
+                ),
             ],
+        )
+
+    def test_qwen38_card_limits(self) -> None:
+        """The Qwen3.8 card exposes the documented audio limits."""
+        card = next(
+            card
+            for card in DashScopeRealtimeModel.list_models()
+            if card.name == "qwen3.8-omni-flash-realtime"
+        )
+
+        self.assertDictEqual(
+            card.model_dump(
+                include={
+                    "name",
+                    "input_types",
+                    "output_types",
+                    "input_sample_rate",
+                    "output_sample_rate",
+                    "supports_tools",
+                    "max_context_tokens",
+                    "max_audio_turns",
+                    "max_audio_duration_s",
+                    "max_session_duration_s",
+                },
+            ),
+            {
+                "name": "qwen3.8-omni-flash-realtime",
+                "input_types": ["audio/pcm", "image/jpeg"],
+                "output_types": ["audio/pcm", "text/plain"],
+                "input_sample_rate": 16000,
+                "output_sample_rate": 24000,
+                "supports_tools": True,
+                "max_context_tokens": 196608,
+                "max_audio_turns": 100,
+                "max_audio_duration_s": 600,
+                "max_session_duration_s": 7200,
+            },
         )
 
     def test_audio_cards(self) -> None:
@@ -158,7 +208,7 @@ class DashScopeCardsTest(unittest.TestCase):
                     ],
                     "runtime_default": DashScopeRealtimeModel(
                         name,
-                        CRED,
+                        WORKSPACE_CRED,
                     ).parameters.voice,
                 }
                 for name in cards
@@ -207,6 +257,24 @@ class DashScopeCardsTest(unittest.TestCase):
                             "The voice used for spoken model responses."
                         ),
                         "enum": ["Tina", "Serena", "Ethan"],
+                        "title": "Voice",
+                        "type": "string",
+                    },
+                    "runtime_default": "Tina",
+                },
+                "qwen3.8-omni-flash-realtime": {
+                    "schema": {
+                        "default": "Tina",
+                        "description": (
+                            "The voice used for spoken model responses."
+                        ),
+                        "enum": [
+                            "Tina",
+                            "Serena",
+                            "Ryan",
+                            "Katerina",
+                            "longanlingxin",
+                        ],
                         "title": "Voice",
                         "type": "string",
                     },
@@ -333,6 +401,10 @@ class DashScopeCardsTest(unittest.TestCase):
                     "http://localhost:8080/custom/dashscope/path",
                     "model-x",
                 ),
+                _realtime_url(
+                    WORKSPACE_BASE_URL,
+                    "qwen3.8-omni-flash-realtime",
+                ),
             ],
             [
                 "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
@@ -342,6 +414,9 @@ class DashScopeCardsTest(unittest.TestCase):
                 "wss://llm-beijing.cn-beijing.maas.aliyuncs.com"
                 "/api-ws/v1/realtime?model=model-x",
                 "ws://localhost:8080/api-ws/v1/realtime?model=model-x",
+                "wss://llm-workspace.cn-beijing.maas.aliyuncs.com"
+                "/api-ws/v1/realtime"
+                "?model=qwen3.8-omni-flash-realtime",
             ],
         )
 
@@ -364,6 +439,7 @@ class DashScopeCardsTest(unittest.TestCase):
                 "qwen3-omni-flash-realtime": "DashScopeRealtimeModel",
                 "qwen3.5-omni-flash-realtime": "DashScopeRealtimeModel",
                 "qwen3.5-omni-plus-realtime": "DashScopeRealtimeModel",
+                "qwen3.8-omni-flash-realtime": "DashScopeRealtimeModel",
             },
         )
 
@@ -387,15 +463,15 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
                     "instructions": "be nice",
                     "modalities": ["audio", "text"],
                     "voice": "Tina",
-                    "input_audio_format": "pcm16",
-                    "output_audio_format": "pcm24",
+                    "input_audio_format": "pcm",
+                    "output_audio_format": "pcm",
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.5,
                         "silence_duration_ms": 800,
                     },
                     "input_audio_transcription": {
-                        "model": "gummy-realtime-v1",
+                        "model": "qwen3-asr-flash-realtime",
                     },
                     "tools": [{"type": "function"}],
                 },
@@ -407,6 +483,36 @@ class DashScopeSessionUpdateTest(unittest.TestCase):
         model = DashScopeRealtimeModel("qwen3-omni-flash-realtime", CRED)
         session = model._session_update("x", [{"type": "function"}])["session"]
         self.assertNotIn("tools", session)
+
+    def test_qwen38_payload(self) -> None:
+        """Qwen3.8 uses the shared Qwen-Omni wire format."""
+        model = DashScopeRealtimeModel(
+            "qwen3.8-omni-flash-realtime",
+            WORKSPACE_CRED,
+        )
+
+        self.assertDictEqual(
+            model._session_update("be nice", [{"type": "function"}]),
+            {
+                "type": "session.update",
+                "session": {
+                    "instructions": "be nice",
+                    "modalities": ["audio", "text"],
+                    "voice": "Tina",
+                    "input_audio_format": "pcm",
+                    "output_audio_format": "pcm",
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "silence_duration_ms": 800,
+                    },
+                    "input_audio_transcription": {
+                        "model": "qwen3-asr-flash-realtime",
+                    },
+                    "tools": [{"type": "function"}],
+                },
+            },
+        )
 
     def test_audio_payload_with_smart_turn(self) -> None:
         """Audio session.update with smart_turn and a voiceprint."""
@@ -688,6 +794,33 @@ class DashScopeParseTest(unittest.TestCase):
             ],
             [None, None, me.ModelErrorEvent(code="E1", message="boom")],
         )
+
+
+class DashScopeResponseControlTest(IsolatedAsyncioTestCase):
+    """Response requests follow each adapter's wire shape."""
+
+    async def test_omni_response_request_has_no_config(self) -> None:
+        """Qwen-Omni reads modalities from the session configuration."""
+        sent: list[dict] = []
+
+        async def capture(payload: dict) -> None:
+            sent.append(payload)
+
+        for card in DashScopeRealtimeModel.list_models():
+            with self.subTest(model=card.name):
+                model = DashScopeRealtimeModel(
+                    card.name,
+                    CRED,
+                    model_card=card,
+                )
+                model._send = capture  # type: ignore[method-assign]
+                await model.request_response()
+
+                self.assertListEqual(
+                    sent,
+                    [{"type": "response.create"}],
+                )
+                sent.clear()
 
 
 class DashScopeAudioTextInputTest(IsolatedAsyncioTestCase):
@@ -975,15 +1108,15 @@ class DashScopeDisconnectTest(IsolatedAsyncioTestCase):
                                 "instructions": "test",
                                 "modalities": ["audio", "text"],
                                 "voice": "Tina",
-                                "input_audio_format": "pcm16",
-                                "output_audio_format": "pcm24",
+                                "input_audio_format": "pcm",
+                                "output_audio_format": "pcm",
                                 "turn_detection": {
                                     "type": "server_vad",
                                     "threshold": 0.5,
                                     "silence_duration_ms": 800,
                                 },
                                 "input_audio_transcription": {
-                                    "model": "gummy-realtime-v1",
+                                    "model": "qwen3-asr-flash-realtime",
                                 },
                             },
                         },
