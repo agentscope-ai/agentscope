@@ -164,11 +164,11 @@ class SessionService:
           persisted ``AgentState.context`` tail, and only applies when
           no worker owns the run.
 
-        The ``RUNNING`` check is performed **before** loading the
-        persisted context: while a worker owns the run, the live
-        in-memory state supersedes the stored snapshot, and the parked
-        derivation would be stale. This also saves a storage round-trip
-        in the hot ``RUNNING`` case.
+        The user-scoped session lookup comes first to validate existence
+        and ownership. For a valid session, the ``RUNNING`` check is
+        performed **before** deriving the parked state: while a worker
+        owns the run, the live in-memory state supersedes the stored
+        snapshot, and the parked derivation would be stale.
 
         .. note::
             The run lease auto-expires after
@@ -190,14 +190,6 @@ class SessionService:
                 The unified status, or ``None`` if the session does
                 not exist or is not owned by the user.
         """
-        # RUNNING is checked first: while a worker owns the lease, the
-        # persisted context is by definition a stale snapshot, and we
-        # save a storage round-trip.
-        if await self._bus.is_locked(
-            MessageBusKeys.session_lock(session_id),
-        ):
-            return SessionStatus.RUNNING
-
         session = await self._storage.get_session(
             user_id,
             agent_id,
@@ -205,6 +197,13 @@ class SessionService:
         )
         if session is None:
             return None
+
+        # A run lock proves liveness, not ownership. Only inspect it after
+        # resolving the caller's session, before using its parked snapshot.
+        if await self._bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            return SessionStatus.RUNNING
 
         return self.derive_parked_status(session.state.context)
 
