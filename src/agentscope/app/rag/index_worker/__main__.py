@@ -87,7 +87,7 @@ def main() -> None:
     because backend selection is a deployment concern.
     """
     logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
+        level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     bootstrap_path = os.environ.get("AGENTSCOPE_WORKER_BOOTSTRAP")

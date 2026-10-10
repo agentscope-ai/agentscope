@@ -14,6 +14,7 @@ from agentscope.classifier import (
     ClassifierModelBase,
     ClassifierQuestion,
     ClassifierResponse,
+    RefusalAnswer,
     ScoreQuestion,
 )
 from agentscope.credential import CredentialBase
@@ -89,6 +90,13 @@ class ClassifierQuestionTest(TestCase):
 
 class ClassifierModelBaseTest(IsolatedAsyncioTestCase):
     """Test the classifier model contract."""
+
+    async def test_refusal_answer(self) -> None:
+        """A refusal carries no fabricated score or explanation."""
+        self.assertDictEqual(
+            asdict(RefusalAnswer()),
+            {"type": "refusal_answer"},
+        )
 
     async def test_call(self) -> None:
         """A call returns the typed answers keyed by question name."""

@@ -139,8 +139,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
                 if isinstance(block, ThinkingBlock):
                     # Preserve reasoning_content for multi-turn
-                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
-                    reasoning_parts.append(block.thinking)
+                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking).
+                    # Skip empty thinking: a redacted ThinkingBlock is
+                    # stored with ``thinking=""``, and emitting it
+                    # alone yields an assistant turn whose content is
+                    # null and which the API rejects.
+                    if block.thinking:
+                        reasoning_parts.append(block.thinking)
 
                 elif isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})

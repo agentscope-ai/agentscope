@@ -6,7 +6,9 @@ covers rule priority, rule pattern matching (Bash / file glob), dangerous
 path detection, suggestion generation, Bash read-only command analysis,
 and bypass-immune safety checks.
 """
+import os
 import sys
+import tempfile
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -438,6 +440,39 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         # Should NOT be a safety check
         self.assertNotIn("safety", decision.decision_reason.lower())
+
+    async def test_symlink_to_dangerous_file_still_asks(self) -> None:
+        """A symlink aliasing a sensitive file is judged by its target."""
+        with tempfile.TemporaryDirectory() as tmp:
+            real = os.path.join(tmp, ".bashrc")
+            with open(real, "w", encoding="utf-8") as f:
+                f.write("export PATH=/tmp\n")
+            link = os.path.join(tmp, "innocent.txt")
+            os.symlink(real, link)
+
+            decision = await self.engine.check_permission(
+                Write(),
+                {"file_path": link},
+            )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("safety", decision.decision_reason.lower())
+
+    async def test_symlink_into_dangerous_directory_asks(self) -> None:
+        """A symlinked path into ``.ssh`` is judged as dangerous too."""
+        with tempfile.TemporaryDirectory() as tmp:
+            real_dir = os.path.join(tmp, ".ssh")
+            os.mkdir(real_dir)
+            link = os.path.join(tmp, "innocent")
+            os.symlink(real_dir, link)
+
+            decision = await self.engine.check_permission(
+                Write(),
+                {"file_path": os.path.join(link, "authorized_keys")},
+            )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("safety", decision.decision_reason.lower())
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""

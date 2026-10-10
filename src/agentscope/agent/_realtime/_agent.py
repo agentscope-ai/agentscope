@@ -45,8 +45,10 @@ from ...event import (
 )
 from ...message import (
     Msg,
+    SystemMsg,
     TextBlock,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
     ToolResultState,
     Usage,
@@ -59,50 +61,32 @@ from ...types import ReplyFinishedReason
 
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
+_HISTORY_MAX_MESSAGES = 100
+_HISTORY_MAX_TEXT_CHARS = 32_000
 
 
 @dataclass
 class _Reply:
-    """One in-flight assistant turn, plus the text/audio alignment needed
-    to work out what the user actually heard."""
+    """One in-flight model response."""
 
     item_id: str
-    """The provider's response item; what playout and truncation refer to."""
+    """The provider's response item identifier."""
     reply_id: str
     """The agent's reply this response belongs to, as seen in events and
     context. A reply spans every response up to the next user turn, so
     one that calls tools has several responses."""
     text_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     audio_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    text: str = ""
-    final_text: str | None = None
-    """Set on a barge-in: the text block is truncated to this."""
-    audio_ms: float = 0.0
     text_started: bool = False
     audio_started: bool = False
-    marks: list[tuple[float, int]] = field(default_factory=list)
 
-    def on_audio(self, pcm: bytes, sample_rate: int) -> None:
-        """Account for one chunk of generated audio."""
-        self.audio_ms += len(pcm) / (sample_rate * 2) * 1000
 
-    def on_text(self, delta: str) -> None:
-        """Record a transcript delta against the audio generated so far."""
-        self.text += delta
-        self.marks.append((self.audio_ms, len(self.text)))
+@dataclass
+class _QueuedEvent:
+    """One outward event and its state at a persistence boundary."""
 
-    def spoken_prefix(self, played_ms: int) -> str:
-        """The transcript prefix matching *played_ms* of playback.
-
-        Transcript deltas usually run slightly ahead of the audio they
-        describe, so this errs towards keeping one word too many.
-        """
-        length = 0
-        for at_ms, text_len in self.marks:
-            if at_ms > played_ms:
-                break
-            length = text_len
-        return self.text[:length]
+    event: AgentEvent
+    checkpoint: AgentState | None = None
 
 
 class RealtimeAgent:
@@ -190,8 +174,10 @@ class RealtimeAgent:
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
-        self._out: asyncio.Queue = asyncio.Queue()
+        self._out: asyncio.Queue[_QueuedEvent] = asyncio.Queue()
+        self._yielded_checkpoint: tuple[str, AgentState] | None = None
         self._reply: _Reply | None = None
+        self._audio_pending = False
         self._finished_item = ""
         # The agent's open reply, and whether the next response continues
         # it (after tool results) rather than starting a new one.
@@ -210,6 +196,7 @@ class RealtimeAgent:
         # any transport, and reconnect bookkeeping.
         self._connected = False
         self._connected_event = asyncio.Event()
+        self._connection_generation = 0
         self._downlink: asyncio.Task | None = None
         self._backlog: list[bytes] = []
         self._retry_at = 0.0
@@ -234,6 +221,13 @@ class RealtimeAgent:
         if self._connected:
             return
 
+        if self._connection_generation:
+            async with self._barge_lock:
+                self._end_user_turn()
+                self._user_turn = ""
+                self._finish_reply(ReplyFinishedReason.ERROR)
+        self._connection_generation += 1
+
         instructions = self.system_prompt
         tools = None
         if self.toolkit is not None:
@@ -245,9 +239,9 @@ class RealtimeAgent:
                 tools = await self.toolkit.get_tool_schemas(groups)
 
         # TODO(realtime): tools and instructions are sent once, here.
-        # Activating a tool group or installing a skill mid-session —
-        # ResetTools, the meta tool — therefore has no effect until the
-        # next connect, even though the model is told it can do it.
+        #  Activating a tool group or installing a skill mid-session —
+        #  ResetTools, the meta tool — therefore has no effect until the
+        #  next connect, even though the model is told it can do it.
         #
         # Fix: a `RealtimeModelBase.update_session(instructions, tools)`
         # re-sent whenever `state.tool_context.activated_groups` changes.
@@ -257,23 +251,60 @@ class RealtimeAgent:
         # context. No provider documents whether the update applies
         # retroactively, so treat it as affecting future turns only. Do
         # not let it change `voice`: OpenAI locks it after first audio.
-        # Providers differ in whether prior turns can be seeded, so the
-        # transcript so far rides along in the instructions, which every
-        # provider takes. Only matters on reconnect; first connect is empty.
-        history = "\n".join(
-            f"{m.name}: {text}"
-            for m in self.state.context
-            if (text := m.get_text_content())
-        )
-        if history:
-            instructions = (
-                f"{instructions}\n\n## Conversation so far\n{history}"
+        history = [
+            message
+            for message in self.state.context
+            if message.id != self._reply_id
+            and (
+                message.role != "assistant"
+                or message.finished_reason is not ReplyFinishedReason.ERROR
             )
-        await self.model.connect(
-            instructions=instructions,
-            tools=tools,
-            turn_detection_disabled=self.vad is not None,
-        )
+        ][-_HISTORY_MAX_MESSAGES:]
+        summary = self.state.summary
+        if isinstance(summary, str):
+            summary_text = summary
+        else:
+            summary_text = "\n".join(
+                block.text for block in summary if isinstance(block, TextBlock)
+            )
+        if summary_text.strip():
+            history.insert(
+                0,
+                SystemMsg(name="summary", content=summary_text),
+            )
+        if history and not self.model.supports_history_replay:
+            lines = [
+                f"{message.name}: {text}"
+                for message in history
+                if (text := message.get_text_content())
+            ]
+            kept: list[str] = []
+            kept_chars = 0
+            for line in reversed(lines):
+                separator_chars = 1 if kept else 0
+                if (
+                    kept_chars + separator_chars + len(line)
+                    > _HISTORY_MAX_TEXT_CHARS
+                ):
+                    break
+                kept.append(line)
+                kept_chars += separator_chars + len(line)
+            fallback = "\n".join(reversed(kept))
+            if fallback:
+                instructions = (
+                    f"{instructions}\n\n## Conversation so far\n{fallback}"
+                )
+        try:
+            await self.model.connect(
+                instructions=instructions,
+                tools=tools,
+                turn_detection_disabled=self.vad is not None,
+            )
+            if history and self.model.supports_history_replay:
+                await self.model.replay_history(history)
+        except Exception:
+            await self.model.close()
+            raise
         if self.vad is not None:
             self.vad.reset()
         self.aggregator.reset()
@@ -404,7 +435,16 @@ class RealtimeAgent:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if getter in done:
-                    yield getter.result()
+                    queued = getter.result()
+                    self._yielded_checkpoint = (
+                        (queued.event.id, queued.checkpoint)
+                        if queued.checkpoint is not None
+                        else None
+                    )
+                    try:
+                        yield queued.event
+                    finally:
+                        self._yielded_checkpoint = None
                 else:
                     getter.cancel()
             # The transport is gone: cut off any reply still in flight so
@@ -413,7 +453,16 @@ class RealtimeAgent:
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
             while not self._out.empty():
-                yield self._out.get_nowait()
+                queued = self._out.get_nowait()
+                self._yielded_checkpoint = (
+                    (queued.event.id, queued.checkpoint)
+                    if queued.checkpoint is not None
+                    else None
+                )
+                try:
+                    yield queued.event
+                finally:
+                    self._yielded_checkpoint = None
             # A transport failure must not look like a clean disconnect.
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
@@ -539,7 +588,8 @@ class RealtimeAgent:
             self._start_user_turn()
             await self._barge_in()
         elif speech is SpeechTransition.ENDED:
-            self._end_user_turn()
+            if not self.model.input_transcription_enabled:
+                self._end_user_turn()
             now = time.monotonic()
             self._metrics.user_speech_end_at = now
             await self.model.commit_turn()
@@ -568,7 +618,7 @@ class RealtimeAgent:
     # ------------------------------------------------------------------
 
     async def _barge_in(self) -> None:
-        """Cut the reply short and correct both contexts to what was heard.
+        """Stop playback and any response that is still being generated.
 
         Whether a given overlap counts as an interruption is decided
         before this is called — by the provider when it owns turn
@@ -583,59 +633,16 @@ class RealtimeAgent:
 
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
-        reply = self._reply
-        if reply is None:
-            # Nothing playing, but a reply may be waiting on its tools.
-            self._finish_reply(ReplyFinishedReason.INTERRUPTED)
-            return
+        active_reply = self._reply
+        if self._transport is not None and self._audio_pending:
+            await self._transport.clear_audio()
+            self._audio_pending = False
 
-        spoken, played_ms = (
-            "",
-            0,
-        )  # nothing reaches the ear without a transport
-        if self._transport is not None:
-            position = await self._transport.clear_audio()
-            if position.item_id and position.item_id != reply.item_id:
-                logger.warning(
-                    "RealtimeAgent: playout reports %s but %s is open; "
-                    "not truncating.",
-                    position.item_id,
-                    reply.item_id,
-                )
-                return
-            played_ms = position.played_ms
-            spoken = reply.spoken_prefix(played_ms)
-
-        self._truncate_reply(spoken)
-        reply.final_text = spoken
-        if self._connected:
-            await self.model.truncate(reply.item_id, played_ms, spoken)
+        if active_reply is not None and self._connected:
             await self.model.cancel_response()
-        self._finish_reply(ReplyFinishedReason.INTERRUPTED)
 
-    def _truncate_reply(self, spoken: str) -> None:
-        """Rewrite the current reply in context to the part heard.
-
-        Non-text blocks stay: a tool call that already ran belongs in the
-        record even though the sentence around it was never heard.
-        """
-        if not self.state.context:
-            return
-        tail = self.state.context[-1]
-        if tail.role != "assistant" or tail.name != self.name:
-            return
-
-        others = (
-            []
-            if isinstance(tail.content, str)
-            else [_ for _ in tail.content if not isinstance(_, TextBlock)]
-        )
-        if spoken.strip():
-            tail.content = [TextBlock(text=spoken), *others]
-        elif others:
-            tail.content = others
-        else:
-            self.state.context.pop()
+        if self._reply_id:
+            self._finish_reply(ReplyFinishedReason.INTERRUPTED)
 
     # ------------------------------------------------------------------
     # Downlink: model -> transport + events (lives with the agent)
@@ -650,10 +657,16 @@ class RealtimeAgent:
         """
         while True:
             await self._connected_event.wait()
+            generation = self._connection_generation
             async for event in self.model.events():
                 await self._on_model_event(event)
-            self._mark_disconnected()
-            self._finish_reply(ReplyFinishedReason.ERROR)
+            async with self._barge_lock:
+                if generation != self._connection_generation:
+                    continue
+                self._mark_disconnected()
+                self._end_user_turn()
+                self._user_turn = ""
+                self._finish_reply(ReplyFinishedReason.ERROR)
             logger.info(
                 "RealtimeAgent: model session ended; keep talking and it "
                 "reconnects on the next audio.",
@@ -668,7 +681,8 @@ class RealtimeAgent:
                 await self._barge_in()
 
             case me.SpeechEndedEvent():
-                self._end_user_turn()
+                if not self.model.input_transcription_enabled:
+                    self._end_user_turn()
                 # With provider turn detection this is also its commit.
                 now = time.monotonic()
                 self._metrics.user_speech_end_at = now
@@ -677,6 +691,10 @@ class RealtimeAgent:
 
             case me.InputTranscriptionEvent():
                 self._on_transcription(event)
+
+            case me.InputTranscriptionFailedEvent():
+                self._end_user_turn()
+                self._user_turn = ""
 
             case me.ResponseCreatedEvent():
                 self._start_reply(event.item_id)
@@ -688,8 +706,8 @@ class RealtimeAgent:
                 reply = self._start_reply(event.item_id)
                 if reply is None:
                     return
-                reply.on_audio(event.pcm, rate)
                 await self._transport.send_audio(event.pcm, reply.item_id)
+                self._audio_pending = True
                 self._emit_audio(reply, event.pcm, rate)
                 self._metrics.backend_first_audio_at = (
                     self._metrics.backend_first_audio_at or time.monotonic()
@@ -699,7 +717,6 @@ class RealtimeAgent:
                 reply = self._start_reply(event.item_id)
                 if reply is None:
                     return
-                reply.on_text(event.delta)
                 self._emit_text(reply, event.delta)
 
             case me.ToolCallEvent():
@@ -708,24 +725,31 @@ class RealtimeAgent:
                     self.state.append_context(self.name, [event.tool_call])
 
             case me.ResponseDoneEvent():
-                self._metrics.input_tokens = event.input_tokens
-                self._metrics.output_tokens = event.output_tokens
-                tail = self.state.context[-1] if self.state.context else None
-                if tail is not None and tail.id == self._reply_id:
-                    tail.append_usage(
-                        Usage(
-                            input_tokens=event.input_tokens,
-                            output_tokens=event.output_tokens,
-                        ),
+                async with self._barge_lock:
+                    reply = self._reply
+                    if reply is None or reply.item_id != event.item_id:
+                        return
+                    self._metrics.input_tokens = event.input_tokens
+                    self._metrics.output_tokens = event.output_tokens
+                    tail = (
+                        self.state.context[-1] if self.state.context else None
                     )
-                if self._pending_tools and self.toolkit is not None:
-                    # The reply goes on: tools run, then the next response
-                    # answers with their results.
-                    self._finish_response()
-                    self._continuing = True
-                    self._schedule_tools()
-                else:
-                    self._finish_reply(ReplyFinishedReason.COMPLETED)
+                    if tail is not None and tail.id == self._reply_id:
+                        tail.append_usage(
+                            Usage(
+                                input_tokens=event.input_tokens,
+                                output_tokens=event.output_tokens,
+                            ),
+                        )
+                    if self._pending_tools and self.toolkit is not None:
+                        # The reply goes on: tools run, then the next
+                        # response answers with their results.
+                        reply_id = reply.reply_id
+                        self._finish_response()
+                        self._continuing = True
+                        self._schedule_tools(reply_id)
+                    else:
+                        self._finish_reply(ReplyFinishedReason.COMPLETED)
 
             case me.ModelErrorEvent():
                 logger.error(
@@ -733,7 +757,10 @@ class RealtimeAgent:
                     event.code,
                     event.message,
                 )
-                self._finish_reply(ReplyFinishedReason.ERROR)
+                async with self._barge_lock:
+                    self._end_user_turn()
+                    self._user_turn = ""
+                    self._finish_reply(ReplyFinishedReason.ERROR)
 
             case me.SessionEndedEvent():
                 # The events() iterator ends right after this.
@@ -759,7 +786,7 @@ class RealtimeAgent:
         )
 
     def _end_user_turn(self) -> None:
-        """Close the user's turn; the transcript may still be on its way."""
+        """Close the user reply once no transcript remains pending."""
         if not self._user_turn_open:
             return
         self._user_turn_open = False
@@ -777,6 +804,8 @@ class RealtimeAgent:
         turn = self.aggregator.take(event.text)
         if turn is None:
             logger.debug("RealtimeAgent: dropping %r", event.text)
+            self._end_user_turn()
+            self._user_turn = ""
             return
 
         # A transcript with no detected speech, e.g. after a reconnect,
@@ -793,8 +822,6 @@ class RealtimeAgent:
             ),
         )
         self._emit(TextBlockEndEvent(reply_id=reply_id, block_id=block_id))
-        self._end_user_turn()
-        self._user_turn = ""
 
         if not (
             self.aggregator.merges_with_previous() and self._merge_user(turn)
@@ -802,6 +829,8 @@ class RealtimeAgent:
             self.state.context.append(
                 UserMsg(name="user", content=turn, id=reply_id),
             )
+        self._end_user_turn()
+        self._user_turn = ""
 
     def _merge_user(self, text: str) -> bool:
         """Append *text* to the previous user turn that endpointing split.
@@ -868,6 +897,7 @@ class RealtimeAgent:
         reply = self._reply
         if reply is None:
             return
+        position = None
         if self._transport is not None:
             position = self._transport.playout()
             if position.item_id == reply.item_id:
@@ -877,7 +907,6 @@ class RealtimeAgent:
                 TextBlockEndEvent(
                     reply_id=reply.reply_id,
                     block_id=reply.text_block_id,
-                    text=reply.final_text,
                 ),
             )
         if reply.audio_started:
@@ -900,15 +929,19 @@ class RealtimeAgent:
     def _finish_reply(self, reason: ReplyFinishedReason) -> None:
         """Close the open reply, if any, response included."""
         self._finish_response()
+        self._pending_tools.clear()
         if not self._reply_id:
             return
-        self._emit(
-            ReplyEndEvent(
-                session_id=self.state.session_id,
-                reply_id=self._reply_id,
-                finished_reason=reason,
-            ),
+        event = ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self._reply_id,
+            finished_reason=reason,
         )
+        for message in reversed(self.state.context):
+            if message.id == self._reply_id:
+                message.append_event(event)
+                break
+        self._emit(event)
         self._reply_id = ""
         self._continuing = False
 
@@ -937,7 +970,10 @@ class RealtimeAgent:
         ):
             blocks[-1].text += delta
         else:
-            self.state.append_context(self.name, [TextBlock(text=delta)])
+            self.state.append_context(
+                self.name,
+                [TextBlock(id=reply.text_block_id, text=delta)],
+            )
         self._emit(
             TextBlockDeltaEvent(
                 reply_id=reply.reply_id,
@@ -969,35 +1005,63 @@ class RealtimeAgent:
 
     def _emit(self, event: AgentEvent) -> None:
         """Queue one event for :meth:`reply_stream`."""
-        self._out.put_nowait(event)
+        checkpoint = None
+        if isinstance(
+            event,
+            (
+                ReplyEndEvent,
+                RequireUserConfirmEvent,
+                ToolResultEndEvent,
+            ),
+        ):
+            checkpoint = self.state.model_copy(deep=True)
+        self._out.put_nowait(_QueuedEvent(event, checkpoint))
+
+    def checkpoint_snapshot(self, event: AgentEvent) -> AgentState | None:
+        """Return the immutable state paired with the yielded event."""
+        checkpoint = self._yielded_checkpoint
+        if checkpoint is None or checkpoint[0] != event.id:
+            return None
+        return checkpoint[1]
 
     # ------------------------------------------------------------------
     # Tools
     # ------------------------------------------------------------------
 
-    def _schedule_tools(self) -> None:
+    def _schedule_tools(self, reply_id: str) -> None:
         """Run the tool calls of the finished reply, then ask for more."""
-        if not self._pending_tools or self.toolkit is None:
+        if not reply_id or not self._pending_tools or self.toolkit is None:
             return
         calls = list(self._pending_tools.values())
         self._pending_tools.clear()
-        task = asyncio.create_task(self._run_tools(calls), name="rt-tools")
+        task = asyncio.create_task(
+            self._run_tools(reply_id, calls),
+            name="rt-tools",
+        )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _run_tools(self, calls: list[ToolCallBlock]) -> None:
+    async def _run_tools(
+        self,
+        reply_id: str,
+        calls: list[ToolCallBlock],
+    ) -> None:
         """Execute *calls* in order, then trigger the follow-up response."""
-        reply_id = self._reply_id
         try:
             for call in calls:
+                async with self._barge_lock:
+                    if self._reply_id != reply_id:
+                        return
                 await self._run_tool(reply_id, call)
             # Unless the user cut the reply short while the tools ran.
-            if self._reply_id == reply_id:
-                await self.model.request_response()
+            async with self._barge_lock:
+                if self._reply_id == reply_id:
+                    await self.model.request_response()
         except Exception:  # noqa: BLE001
             logger.exception("RealtimeAgent: tool execution failed")
-            if self._reply_id == reply_id:
-                self._finish_reply(ReplyFinishedReason.ERROR)
+            async with self._barge_lock:
+                if self._reply_id == reply_id:
+                    self._finish_reply(ReplyFinishedReason.ERROR)
 
     async def _run_tool(self, reply_id: str, call: ToolCallBlock) -> None:
         """Check permission for one call, run it, and report the result."""
@@ -1052,6 +1116,8 @@ class RealtimeAgent:
                 state=ToolResultState.DENIED,
             )
             return
+        else:
+            call.state = ToolCallState.ALLOWED
 
         self._emit(
             ToolResultStartEvent(
@@ -1113,6 +1179,7 @@ class RealtimeAgent:
     ) -> bool:
         """Ask the user to confirm *call* and wait for the answer."""
         call.suggested_rules = decision.suggested_rules or []
+        call.state = ToolCallState.ASKING
         self._emit(
             RequireUserConfirmEvent(reply_id=reply_id, tool_calls=[call]),
         )
@@ -1129,6 +1196,11 @@ class RealtimeAgent:
 
         for rule in result.rules or []:
             self._engine.add_rule(rule)
+        call.state = (
+            ToolCallState.ALLOWED
+            if result.confirmed
+            else ToolCallState.FINISHED
+        )
         return result.confirmed
 
     async def _report_tool(
@@ -1140,6 +1212,7 @@ class RealtimeAgent:
         started: bool = False,
     ) -> None:
         """Close the tool result lifecycle and send the output back."""
+        call.state = ToolCallState.FINISHED
         if not started:
             self._emit(
                 ToolResultStartEvent(
@@ -1155,13 +1228,6 @@ class RealtimeAgent:
                     delta=output,
                 ),
             )
-        self._emit(
-            ToolResultEndEvent(
-                reply_id=reply_id,
-                tool_call_id=call.id,
-                state=state,
-            ),
-        )
         block = ToolResultBlock(
             id=call.id,
             name=call.name,
@@ -1176,4 +1242,11 @@ class RealtimeAgent:
                 break
         else:
             self.state.append_context(self.name, [block])
+        self._emit(
+            ToolResultEndEvent(
+                reply_id=reply_id,
+                tool_call_id=call.id,
+                state=state,
+            ),
+        )
         await self.model.push_tool_result(block)

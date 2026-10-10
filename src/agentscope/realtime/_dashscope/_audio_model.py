@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The DashScope Qwen-Audio realtime model."""
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from pydantic import Field
 
@@ -10,10 +10,11 @@ from .. import _events as me
 from .._base import RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
+from ...message import Msg, TextBlock, ToolCallBlock, ToolResultBlock
 
 
 class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
-    """The Qwen-Audio-3.0-Realtime API over WebSocket.
+    """The Qwen-Audio-Realtime API over WebSocket.
 
     Same endpoint and framing as Qwen-Omni, but it accepts text turns,
     spells both PCM formats as ``"pcm"``, and offers ``smart_turn``
@@ -40,8 +41,14 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
 
     type = "dashscope_audio_realtime"
     supports_text_input = True
+    supports_history_replay = True
 
     parameters: "DashScopeAudioRealtimeModel.Parameters"
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Qwen Audio does not emit settled input transcription."""
+        return False
 
     @classmethod
     def list_models(
@@ -66,6 +73,112 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
             },
         )
         await self.request_response()
+
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Insert completed history without asking the model to respond."""
+        call_ids = {
+            block.id
+            for message in messages
+            for block in message.content
+            if isinstance(block, ToolCallBlock)
+        }
+        result_ids = {
+            block.id
+            for message in messages
+            for block in message.content
+            if isinstance(block, ToolResultBlock) and block.state != "running"
+        }
+        paired_ids = call_ids & result_ids
+
+        for message in messages:
+            text_parts: list[str] = []
+
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    if block.text:
+                        text_parts.append(block.text)
+                    continue
+
+                if text_parts:
+                    content_type = (
+                        "output_text"
+                        if message.role == "assistant"
+                        else "input_text"
+                    )
+                    await self._send(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "message",
+                                "role": message.role,
+                                "content": [
+                                    {
+                                        "type": content_type,
+                                        "text": "\n".join(text_parts),
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    text_parts.clear()
+                if isinstance(block, ToolCallBlock):
+                    if block.id not in paired_ids:
+                        continue
+                    await self._send(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call",
+                                "call_id": block.id,
+                                "name": block.name,
+                                "arguments": block.input,
+                            },
+                        },
+                    )
+                elif isinstance(block, ToolResultBlock):
+                    if block.id not in paired_ids:
+                        continue
+                    output = (
+                        block.output
+                        if isinstance(block.output, str)
+                        else "".join(
+                            part.text
+                            for part in block.output
+                            if isinstance(part, TextBlock)
+                        )
+                    )
+                    await self._send(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "function_call_output",
+                                "call_id": block.id,
+                                "output": output,
+                            },
+                        },
+                    )
+
+            if text_parts:
+                content_type = (
+                    "output_text"
+                    if message.role == "assistant"
+                    else "input_text"
+                )
+                await self._send(
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": message.role,
+                            "content": [
+                                {
+                                    "type": content_type,
+                                    "text": "\n".join(text_parts),
+                                },
+                            ],
+                        },
+                    },
+                )
 
     def _session_update(
         self,

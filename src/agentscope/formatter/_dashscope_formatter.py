@@ -459,6 +459,8 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 A list of dictionaries formatted for the DashScope API.
         """
 
+        self.assert_list_of_msgs(msgs)
+
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":

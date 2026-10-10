@@ -41,6 +41,12 @@ class InputTranscriptionEvent(ModelEvent):
     text: str
 
 
+class InputTranscriptionFailedEvent(ModelEvent):
+    """The provider could not transcribe one committed user turn."""
+
+    item_id: str = ""
+
+
 class ResponseCreatedEvent(ModelEvent):
     """The provider started producing a reply."""
 
