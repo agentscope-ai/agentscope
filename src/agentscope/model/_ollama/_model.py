@@ -64,6 +64,8 @@ class OllamaChatModel(ChatModelBase):
         context_size: int = 32768,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        stream_first_chunk_timeout: float | None = 120.0,
+        stream_idle_timeout: float | None = 30.0,
     ) -> None:
         """Initialize the Ollama chat model.
 
@@ -93,6 +95,11 @@ class OllamaChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to ``ollama.AsyncClient``
                 and onward to the underlying ``httpx.AsyncClient``
                 (e.g. ``timeout``, ``headers``, ``verify``).
+            stream_first_chunk_timeout (`float | None`, defaults to `120.0`):
+                Maximum seconds from call start to initial meaningful stream
+                content. Delay before first iteration counts toward it.
+            stream_idle_timeout (`float | None`, defaults to `30.0`):
+                Maximum seconds between meaningful chunks and stream end.
         """
         resolved_credential = credential or OllamaCredential()
 
@@ -104,6 +111,8 @@ class OllamaChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            stream_first_chunk_timeout=stream_first_chunk_timeout,
+            stream_idle_timeout=stream_idle_timeout,
         )
 
         self.formatter = formatter or OllamaChatFormatter()
