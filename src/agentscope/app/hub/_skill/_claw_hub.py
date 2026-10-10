@@ -19,7 +19,8 @@ import asyncio
 import json
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -176,7 +177,9 @@ class ClawSkillHub(SkillHubBase):
 
         Honors ``Retry-After`` first, then falls back to
         ``RateLimit-Reset`` (delay) and ``X-RateLimit-Reset`` (absolute
-        Unix epoch seconds), as documented by ClawHub.
+        Unix epoch seconds), as documented by ClawHub. A ``Retry-After``
+        value is either a number of seconds or an HTTP-date, and the date
+        form is an absolute instant read in UTC.
 
         Args:
             headers (`dict`):
@@ -195,7 +198,15 @@ class ClawSkillHub(SkillHubBase):
             try:
                 return max(0.0, float(retry_after))
             except ValueError:
-                pass
+                try:
+                    when = parsedate_to_datetime(retry_after)
+                    if when.tzinfo is None:
+                        # A zone-less HTTP-date is GMT, and a naive datetime
+                        # would be read in the machine's own zone.
+                        when = when.replace(tzinfo=timezone.utc)
+                    return max(0.0, when.timestamp() - time.time())
+                except ValueError:
+                    pass
 
         reset = headers.get("RateLimit-Reset") or headers.get(
             "ratelimit-reset",
