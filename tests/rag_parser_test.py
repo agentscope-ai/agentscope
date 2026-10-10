@@ -1242,6 +1242,62 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             PPTParser(table_format="csv")  # type: ignore[arg-type]
 
+    async def test_deferred_invalid_xml_raises_value_error(self) -> None:
+        """Malformed slide XML is wrapped after the deck opens."""
+        import tempfile
+        from xml.etree import ElementTree
+
+        from pptx import Presentation
+        from pptx.exc import InvalidXmlError
+
+        original = io.BytesIO(_make_pptx_simple(["Alpha", "Beta"]))
+        corrupted = io.BytesIO()
+        with zipfile.ZipFile(original) as source:
+            with zipfile.ZipFile(corrupted, "w") as target:
+                for member in source.infolist():
+                    data = source.read(member.filename)
+                    if member.filename == "ppt/slides/slide2.xml":
+                        root = ElementTree.fromstring(data)
+                        common_slide = root.find(
+                            "{http://schemas.openxmlformats.org/"
+                            "presentationml/2006/main}cSld",
+                        )
+                        assert common_slide is not None
+                        root.remove(common_slide)
+                        data = ElementTree.tostring(root)
+                    target.writestr(member, data)
+        pptx_bytes = corrupted.getvalue()
+
+        # The required child is only checked when slide shapes are accessed.
+        slides = list(Presentation(io.BytesIO(pptx_bytes)).slides)
+        self.assertEqual(len(slides), 2)
+        self.assertEqual(slides[0].shapes.title.text, "Alpha")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "corrupt.pptx")
+            with open(path, "wb") as fp:
+                fp.write(pptx_bytes)
+            for input_type, pptx_input in (
+                ("bytes", pptx_bytes),
+                ("path", path),
+            ):
+                with self.subTest(input_type=input_type):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        r"Failed to parse 'corrupt\.pptx' as PPTX:",
+                    ) as context:
+                        await PPTParser().parse(pptx_input, "corrupt.pptx")
+                    self.assertIsInstance(
+                        context.exception.__cause__,
+                        InvalidXmlError,
+                    )
+
+    async def test_invalid_slide_prefix_preserves_key_error(self) -> None:
+        """An unknown prefix placeholder remains a configuration error."""
+        parser = PPTParser(slide_prefix="{unknown}")
+        with self.assertRaisesRegex(KeyError, "unknown"):
+            await parser.parse(_make_pptx_simple(["Alpha"]), "demo.pptx")
+
     async def test_string_input_treated_as_path(self) -> None:
         """``str`` is interpreted as a filesystem path to the PPTX."""
         import tempfile

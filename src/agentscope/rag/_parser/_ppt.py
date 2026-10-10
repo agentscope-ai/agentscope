@@ -231,6 +231,7 @@ class PPTParser(ParserBase):
 
         try:
             from pptx import Presentation
+            from pptx.exc import InvalidXmlError
         except ImportError as e:
             raise ImportError(
                 "Please install python-pptx to use the PowerPoint "
@@ -247,10 +248,15 @@ class PPTParser(ParserBase):
             ) from e
 
         sections: list[Section] = []
-        for slide_idx, slide in enumerate(prs.slides):
-            sections.extend(
-                self._parse_slide(slide, slide_idx, filename),
-            )
+        try:
+            for slide_idx, slide in enumerate(prs.slides):
+                sections.extend(
+                    self._parse_slide(slide, slide_idx, filename),
+                )
+        except InvalidXmlError as e:
+            raise ValueError(
+                f"Failed to parse {filename!r} as PPTX: {e}",
+            ) from e
         return sections
 
     # ------------------------------------------------------------------
