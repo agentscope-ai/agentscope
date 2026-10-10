@@ -10,8 +10,8 @@ Two entry points are provided:
   credential through :class:`ResourceAccessService`, so shared
   credentials work.
 - :func:`build_embedding_model` — pure record-in, model-out helper.
-  Used by owner-internal paths (e.g. the knowledge-base manager, which
-  already holds the KB owner's :class:`CredentialRecord`) and by
+  Used by paths that already hold an authorized
+  :class:`CredentialRecord` (e.g. the knowledge-base manager) and by
   :func:`get_embedding_model` under the hood.
 """
 from fastapi import HTTPException, status
@@ -28,10 +28,9 @@ def build_embedding_model(
 ) -> EmbeddingModelBase:
     """Construct an embedding model from an already-resolved credential.
 
-    This is the record-in variant used by owner-internal paths (e.g.
-    the KB manager, which reads the credential directly from storage
-    since KB owner == credential owner). HTTP / cross-owner paths
-    should call :func:`get_embedding_model` instead.
+    Callers must first authorize the credential for its runtime user,
+    who may differ from the credential owner. Paths without an already
+    resolved record should call :func:`get_embedding_model` instead.
 
     Args:
         credential_record (`CredentialRecord`):
