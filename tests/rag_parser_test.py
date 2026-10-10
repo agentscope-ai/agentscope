@@ -1332,6 +1332,38 @@ class PPTParserTest(IsolatedAsyncioTestCase):
 class ExcelParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`ExcelParser`."""
 
+    async def test_corrupt_sheet_does_not_return_partial_content(self) -> None:
+        """A deferred worksheet error fails the whole workbook parse."""
+        from xml.etree.ElementTree import ParseError
+
+        xlsx_bytes = _make_xlsx_simple(
+            {
+                "Good": [["Key"], ["visible"]],
+                "Broken": [["Key"], ["must not disappear"]],
+            },
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(xlsx_bytes)) as source:
+            with zipfile.ZipFile(buffer, "w") as target:
+                for entry in source.infolist():
+                    data = source.read(entry.filename)
+                    if entry.filename == "xl/worksheets/sheet2.xml":
+                        data = data.replace(
+                            b"</sheetData>",
+                            b"</brokenSheetData>",
+                        )
+                    target.writestr(entry, data)
+
+        for separate_sheet in (False, True):
+            with self.subTest(separate_sheet=separate_sheet):
+                parser = ExcelParser(separate_sheet=separate_sheet)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Failed to parse sheet 'Broken' in 'corrupt.xlsx'",
+                ) as raised:
+                    await parser.parse(buffer.getvalue(), "corrupt.xlsx")
+                self.assertIsInstance(raised.exception.__cause__, ParseError)
+
     async def test_duplicate_and_blank_headers(self) -> None:
         """Headers remain cell values, without pandas-generated labels."""
         from openpyxl import Workbook
