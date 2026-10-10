@@ -17,12 +17,11 @@ SDK for the ``container`` CLI:
   layer — there is no host-side ``workdir`` parameter. Stopping the
   container discards state; volumes are not used by default.
 
-* **Bootstrap.** First-time provisioning installs uv + a gateway venv
-  + agentscope (``--no-deps``) and uploads the gateway script. The
-  probe + install loop lives on :class:`SandboxedWorkspaceBase`; this
-  subclass only supplies the container-specific shell commands via
-  :meth:`_bootstrap_commands`. Bootstrap runs at most once per
-  container lifetime.
+* **Bootstrap.** Ripgrep and the Glob helper are installed for
+  builtin Grep/Glob even when no MCP is configured. uv, the gateway
+  venv, and agentscope (``--no-deps``) are installed by
+  :meth:`_bootstrap_commands` only when an MCP server needs the
+  gateway.
 
 * **MCP gateway.** Identical to Docker/E2B: a FastAPI process inside
   the container. All host-side calls drive the gateway through
@@ -494,11 +493,20 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
 
     # ── internals: bootstrap ────────────────────────────────────
 
-    def _bootstrap_commands(self) -> list[str]:
-        """Shell commands that provision this container once.
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Install ripgrep for Grep, plus curl for a later uv install."""
+        return [
+            "apt-get update -qq "
+            "&& apt-get install -y --no-install-recommends "
+            "curl ripgrep "
+            "&& rm -rf /var/lib/apt/lists/*",
+        ]
 
-        Only runs when the gateway script is missing (fresh container
-        or prior interrupted bootstrap). Every step is idempotent.
+    def _bootstrap_commands(self) -> list[str]:
+        """Shell commands that provision the container MCP gateway venv.
+
+        Only runs when the gateway script is missing and an MCP server
+        needs the gateway. Every step is idempotent.
 
         ``--no-deps`` on agentscope is mandatory: the gateway only
         imports :class:`agentscope.mcp.MCPClient` whose transitive
@@ -509,15 +517,9 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
         return [
-            # 1. System deps + uv installer.
-            "apt-get update -qq "
-            "&& apt-get install -y --no-install-recommends "
-            "curl ripgrep "
-            "&& rm -rf /var/lib/apt/lists/*",
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 2. Gateway venv + base requirements + agentscope.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
             f"uv pip install --python {self._gateway_python} "

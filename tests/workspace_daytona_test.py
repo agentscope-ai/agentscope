@@ -518,6 +518,15 @@ def _install_fake_daytona_module() -> types.ModuleType:
     return mod
 
 
+def _stdio_mcp(name: str) -> MCPClient:
+    """Build a minimal stdio MCP client for gateway lifecycle tests."""
+    return MCPClient(
+        name=name,
+        mcp_config=StdioMCPConfig(command="python", args=["server.py"]),
+        is_stateful=True,
+    )
+
+
 class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
     """Bootstrap command rendering via ``_bootstrap_commands``."""
 
@@ -552,20 +561,23 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
             extra_pip=["extra-a", "extra-b"],
         )
 
+        system_commands = workspace._system_bootstrap_commands()
         commands = workspace._bootstrap_commands()
 
-        self.assertEqual(len(commands), 5)
-        self.assertIn("apt-get install", commands[0])
-        self.assertIn("ripgrep", commands[0])
-        self.assertIn("UV_INSTALL_DIR=/home/daytona/.local/bin", commands[1])
+        self.assertEqual(len(system_commands), 1)
+        self.assertIn("apt-get install", system_commands[0])
+        self.assertIn("ripgrep", system_commands[0])
+        self.assertNotIn("ripgrep", "\n".join(commands))
+        self.assertEqual(len(commands), 4)
+        self.assertIn("UV_INSTALL_DIR=/home/daytona/.local/bin", commands[0])
         self.assertEqual(
-            commands[2],
+            commands[1],
             "/home/daytona/.local/bin/uv venv "
             "/home/daytona/.agentscope/.venv",
         )
         for package in (*_GATEWAY_BASE_REQUIREMENTS, "extra-a", "extra-b"):
-            self.assertIn(package, commands[3])
-        self.assertIn("--no-deps 'agentscope'", commands[4])
+            self.assertIn(package, commands[2])
+        self.assertIn("--no-deps 'agentscope'", commands[3])
 
     async def test_bootstrap_commands_quote_shell_arguments(self) -> None:
         """SDK-derived paths and extra packages are shell-quoted."""
@@ -578,14 +590,14 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
 
         self.assertIn(
             "UV_INSTALL_DIR='/home/day tona/.local/bin'",
-            commands[1],
+            commands[0],
         )
         self.assertEqual(
-            commands[2],
+            commands[1],
             "'/home/day tona/.local/bin/uv' venv "
             "'/home/day tona/.agentscope/.venv'",
         )
-        self.assertIn("'bad; echo injected'", commands[3])
+        self.assertIn("'bad; echo injected'", commands[2])
 
 
 class _DaytonaWorkspaceMockBase(IsolatedAsyncioTestCase):
@@ -611,9 +623,16 @@ class _DaytonaWorkspaceMockBase(IsolatedAsyncioTestCase):
             return_value=[],
         )
         self.bootstrap_patch.start()
+        self.system_bootstrap_patch = patch.object(
+            DaytonaWorkspace,
+            "_system_bootstrap_commands",
+            return_value=[],
+        )
+        self.system_bootstrap_patch.start()
 
     async def asyncTearDown(self) -> None:
         """Undo patches."""
+        self.system_bootstrap_patch.stop()
         self.bootstrap_patch.stop()
         self.gateway_patch.stop()
         sys.modules.pop("daytona", None)
@@ -681,7 +700,8 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
 
         self.assertTrue(workspace.is_alive)
         self.assertEqual(len(_FakeDaytona.created_params), 1)
-        self.assertEqual(len(_FakeGateway.instances), 1)
+        self.assertEqual(len(_FakeGateway.instances), 0)
+        self.assertIsNone(workspace._gateway)
 
     async def test_empty_config_uses_sdk_environment_defaults(self) -> None:
         """No explicit connection config means ``AsyncDaytona()``."""
@@ -836,6 +856,7 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
         workspace = DaytonaWorkspace(
             workspace_id="wid-6",
             gateway_port=DEFAULT_GATEWAY_PORT,
+            default_mcps=[_stdio_mcp("seed")],
         )
 
         await workspace.initialize()
@@ -961,7 +982,10 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
             candidate.process = _FailingProcess()
             candidate.process.fs = candidate.fs
             _FakeDaytona.list_result[:] = [candidate]
-            workspace = DaytonaWorkspace(workspace_id="wid-bootstrap-error")
+            workspace = DaytonaWorkspace(
+                workspace_id="wid-bootstrap-error",
+                default_mcps=[_stdio_mcp("seed")],
+            )
 
             with patch.object(
                 DaytonaWorkspace,
@@ -985,7 +1009,10 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
         self,
     ) -> None:
         """``close`` uses graceful stop and releases host-side handles."""
-        workspace = DaytonaWorkspace(workspace_id="wid-10")
+        workspace = DaytonaWorkspace(
+            workspace_id="wid-10",
+            default_mcps=[_stdio_mcp("seed")],
+        )
         await workspace.initialize()
         sandbox = workspace._sandbox
         gateway = workspace._gateway
@@ -1001,6 +1028,232 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
         self.assertIsNone(workspace._gateway)
         self.assertIsNone(workspace._daytona)
         self.assertFalse(workspace.is_alive)
+
+
+class TestDaytonaMcpGatewayLazyInit(IsolatedAsyncioTestCase):
+    """MCP gateway starts only when a server is configured or added."""
+
+    async def asyncSetUp(self) -> None:
+        """Install the fake Daytona SDK and gateway client."""
+        _FakeDaytona.instances.clear()
+        _FakeDaytona.list_result.clear()
+        _FakeDaytona.created_params.clear()
+        _FakeDaytona.configs.clear()
+        _FakeGateway.instances.clear()
+        self.fake_daytona_mod = _install_fake_daytona_module()
+        self.gateway_patch = patch.object(
+            sandboxed_mod,
+            "GatewayClient",
+            _FakeGateway,
+        )
+        self.gateway_patch.start()
+
+    async def asyncTearDown(self) -> None:
+        """Drop the fake SDK."""
+        self.gateway_patch.stop()
+        sys.modules.pop("daytona", None)
+
+    async def test_initialize_without_mcp_skips_gateway(self) -> None:
+        """Empty MCP config installs the Glob helper and not the gateway."""
+        workspace = DaytonaWorkspace(workspace_id="wid-no-mcp")
+        await workspace.initialize()
+        try:
+            commands = "\n".join(workspace._sandbox.process.commands)
+            self.assertIsNone(workspace._gateway)
+            self.assertFalse(workspace._gateway_ready)
+            self.assertEqual(_FakeGateway.instances, [])
+            self.assertIn("ripgrep", commands)
+            self.assertNotIn("uv venv", commands)
+            self.assertNotIn("astral.sh/uv", commands)
+            self.assertNotIn("nohup", commands)
+            self.assertNotIn("_mcp_gateway_app.py", commands)
+            self.assertIn(
+                workspace._glob_helper_path,
+                workspace._sandbox.fs.files,
+            )
+            self.assertNotIn(
+                workspace._gateway_script,
+                workspace._sandbox.fs.files,
+            )
+            self.assertEqual(await workspace.list_mcps(), [])
+        finally:
+            await workspace.close()
+
+    async def test_empty_persisted_mcp_skips_gateway(self) -> None:
+        """An empty ``.mcp`` file does not start the gateway."""
+        candidate = _FakeSandbox("sandbox-empty-mcp")
+        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-empty-mcp"}
+        candidate.fs.files[
+            "/home/daytona/.mcp"
+        ] = b'{"version": 2, "mcps": {"agent": {"sess": []}}}'
+        _FakeDaytona.list_result[:] = [candidate]
+        workspace = DaytonaWorkspace(workspace_id="wid-empty-mcp")
+        await workspace.initialize()
+        try:
+            self.assertIsNone(workspace._gateway)
+            self.assertEqual(await workspace.list_mcps(), [])
+            commands = "\n".join(candidate.process.commands)
+            self.assertNotIn("uv venv", commands)
+            self.assertNotIn("nohup", commands)
+        finally:
+            await workspace.close()
+
+    async def test_default_mcps_start_gateway_during_initialize(self) -> None:
+        """Configured default MCPs still bootstrap and launch eagerly."""
+        workspace = DaytonaWorkspace(
+            workspace_id="wid-default-gateway",
+            default_mcps=[_stdio_mcp("seed")],
+        )
+        await workspace.initialize()
+        try:
+            commands = "\n".join(workspace._sandbox.process.commands)
+            self.assertIsNotNone(workspace._gateway)
+            self.assertTrue(workspace._gateway_ready)
+            self.assertEqual(len(_FakeGateway.instances), 1)
+            self.assertIn("ripgrep", commands)
+            self.assertIn("uv venv", commands)
+            self.assertIn("nohup", commands)
+            self.assertIn(
+                workspace._gateway_script,
+                workspace._sandbox.fs.files,
+            )
+        finally:
+            await workspace.close()
+
+    async def test_persisted_mcp_starts_gateway_during_initialize(
+        self,
+    ) -> None:
+        """A resumed sandbox with persisted MCPs restores the gateway."""
+        spec = _stdio_mcp("persisted").model_dump(mode="json")
+        payload = json.dumps(
+            {"version": 2, "mcps": {"agent": {"sess": [spec]}}},
+        ).encode("utf-8")
+        candidate = _FakeSandbox("sandbox-persisted-mcp")
+        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-persisted-mcp"}
+        candidate.fs.files["/home/daytona/.mcp"] = payload
+        _FakeDaytona.list_result[:] = [candidate]
+
+        workspace = DaytonaWorkspace(workspace_id="wid-persisted-mcp")
+        await workspace.initialize()
+        try:
+            self.assertIsNotNone(workspace._gateway)
+            self.assertEqual(
+                [mcp.name for mcp in workspace._mcp_specs[("agent", "sess")]],
+                ["persisted"],
+            )
+            self.assertIn("uv venv", "\n".join(candidate.process.commands))
+        finally:
+            await workspace.close()
+
+    async def test_add_mcp_starts_gateway_lazily(self) -> None:
+        """The first ``add_mcp`` bootstraps a gateway that init skipped."""
+        workspace = DaytonaWorkspace(workspace_id="wid-lazy-add")
+        await workspace.initialize()
+        try:
+            self.assertIsNone(workspace._gateway)
+            registered = await workspace.add_mcp(
+                _stdio_mcp("demo"),
+                agent_id="a",
+                session_id="s",
+            )
+            self.assertEqual(registered.name, "demo")
+            self.assertIsNotNone(workspace._gateway)
+            self.assertTrue(workspace._gateway_ready)
+            self.assertEqual(len(_FakeGateway.instances), 1)
+            commands = "\n".join(workspace._sandbox.process.commands)
+            self.assertIn("uv venv", commands)
+            self.assertIn("nohup", commands)
+            listed = await workspace.list_mcps(agent_id="a", session_id="s")
+            self.assertEqual([mcp.name for mcp in listed], ["demo"])
+        finally:
+            await workspace.close()
+
+    async def test_add_mcp_retries_after_bootstrap_failure(self) -> None:
+        """A failed gateway start does not block a later ``add_mcp``."""
+        workspace = DaytonaWorkspace(workspace_id="wid-retry")
+        await workspace.initialize()
+        calls = 0
+        original = DaytonaWorkspace._setup_mcp_gateway
+
+        async def _flaky(this: DaytonaWorkspace) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient gateway failure")
+            await original(this)
+
+        try:
+            with patch.object(
+                DaytonaWorkspace,
+                "_setup_mcp_gateway",
+                _flaky,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "transient gateway failure",
+                ):
+                    await workspace.add_mcp(_stdio_mcp("demo"))
+                self.assertIsNone(workspace._gateway)
+                self.assertFalse(workspace._gateway_ready)
+                registered = await workspace.add_mcp(_stdio_mcp("demo"))
+            self.assertEqual(calls, 2)
+            self.assertEqual(registered.name, "demo")
+            self.assertTrue(workspace._gateway_ready)
+        finally:
+            await workspace.close()
+
+    async def test_concurrent_add_mcp_bootstraps_once(self) -> None:
+        """Concurrent first registrations share a single gateway start."""
+        workspace = DaytonaWorkspace(workspace_id="wid-concurrent")
+        await workspace.initialize()
+        calls = 0
+        original = DaytonaWorkspace._setup_mcp_gateway
+
+        async def _slow(this: DaytonaWorkspace) -> None:
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.05)
+            await original(this)
+
+        try:
+            with patch.object(
+                DaytonaWorkspace,
+                "_setup_mcp_gateway",
+                _slow,
+            ):
+                first, second = await asyncio.gather(
+                    workspace.add_mcp(
+                        _stdio_mcp("one"),
+                        agent_id="a",
+                        session_id="s1",
+                    ),
+                    workspace.add_mcp(
+                        _stdio_mcp("two"),
+                        agent_id="a",
+                        session_id="s2",
+                    ),
+                )
+            self.assertEqual(calls, 1)
+            self.assertEqual(len(_FakeGateway.instances), 1)
+            self.assertEqual(first.name, "one")
+            self.assertEqual(second.name, "two")
+        finally:
+            await workspace.close()
+
+    async def test_remove_missing_and_close_without_gateway(self) -> None:
+        """``remove_mcp``, ``reset``, and ``close`` work with no gateway."""
+        workspace = DaytonaWorkspace(workspace_id="wid-no-gateway-ops")
+        await workspace.initialize()
+        self.assertIsNone(workspace._gateway)
+        await workspace.remove_mcp("missing", agent_id="a", session_id="s")
+        self.assertEqual(workspace._mcp_specs, {})
+        await workspace.reset()
+        self.assertIsNone(workspace._gateway)
+        self.assertTrue(workspace.is_alive)
+        await workspace.close()
+        self.assertFalse(workspace.is_alive)
+        self.assertIsNone(workspace._gateway)
+        await workspace.close()
 
 
 async def _tool_text(tool: Callable[..., Any], **kwargs: object) -> str:
@@ -1048,6 +1301,12 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
             return_value=[],
         )
         self.bootstrap_patch.start()
+        self.system_bootstrap_patch = patch.object(
+            DaytonaWorkspace,
+            "_system_bootstrap_commands",
+            return_value=[],
+        )
+        self.system_bootstrap_patch.start()
 
         self.workspace = DaytonaWorkspace(workspace_id="wid-tools")
         await self.workspace.initialize()
@@ -1058,6 +1317,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Close workspace and cleanup patches/temp files."""
         await self.workspace.close()
+        self.system_bootstrap_patch.stop()
         self.bootstrap_patch.stop()
         self.gateway_patch.stop()
         sys.modules.pop("daytona", None)

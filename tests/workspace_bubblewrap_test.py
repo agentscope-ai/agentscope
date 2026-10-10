@@ -39,6 +39,15 @@ from agentscope.workspace._mcp_gateway._mcp_gateway_app import (
 )
 
 
+def _stdio_mcp(name: str) -> MCPClient:
+    """Build a seed MCP client that only marks the gateway as required."""
+    return MCPClient(
+        name=name,
+        mcp_config=StdioMCPConfig(command="true"),
+        is_stateful=True,
+    )
+
+
 def _bubblewrap_available() -> bool:
     """Return ``True`` iff ``bwrap`` can run a trivial command."""
     if not sys.platform.startswith("linux"):
@@ -289,20 +298,25 @@ class TestBubblewrapWorkspaceInstructions(IsolatedAsyncioTestCase):
                 host_workdir=workdir.name,
                 host_tmpdir=tmpdir.name,
             )
-            commands = ws._bootstrap_commands()
-            joined = "\n".join(commands)
-            pip_commands = [cmd for cmd in commands if "uv pip install" in cmd]
+            system_commands = ws._system_bootstrap_commands()
+            gateway_commands = ws._bootstrap_commands()
+            system_joined = "\n".join(system_commands)
+            gateway_joined = "\n".join(gateway_commands)
+            pip_commands = [
+                cmd for cmd in gateway_commands if "uv pip install" in cmd
+            ]
             self.assertNotIn("ripgrep", "\n".join(pip_commands))
-            self.assertIn("github.com/BurntSushi/ripgrep", joined)
-            self.assertIn("sha256sum -c", joined)
-            self.assertIn("sha256=f84757b0", joined)
-            self.assertIn("sha256sum -c -", joined)
-            self.assertIn('mktemp "${asset}.tmp.XXXXXX"', joined)
-            self.assertIn('mv -f "$tmp_asset" "$asset"', joined)
-            self.assertNotIn('"$asset.sha256"', joined)
-            self.assertIn("tmp_installer=$(mktemp)", joined)
-            self.assertIn('sh "$tmp_installer"', joined)
-            self.assertNotIn("| env UV_INSTALL_DIR", joined)
+            self.assertNotIn("github.com/BurntSushi/ripgrep", gateway_joined)
+            self.assertIn("github.com/BurntSushi/ripgrep", system_joined)
+            self.assertIn("sha256sum -c", system_joined)
+            self.assertIn("sha256=f84757b0", system_joined)
+            self.assertIn("sha256sum -c -", system_joined)
+            self.assertIn('mktemp "${asset}.tmp.XXXXXX"', system_joined)
+            self.assertIn('mv -f "$tmp_asset" "$asset"', system_joined)
+            self.assertNotIn('"$asset.sha256"', system_joined)
+            self.assertIn("tmp_installer=$(mktemp)", gateway_joined)
+            self.assertIn('sh "$tmp_installer"', gateway_joined)
+            self.assertNotIn("| env UV_INSTALL_DIR", gateway_joined)
         finally:
             workdir.cleanup()
             tmpdir.cleanup()
@@ -833,8 +847,10 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
                 os.remove(path)
 
     async def test_initialize_gateway_and_tools(self) -> None:
-        """Initialization starts gateway and returns builtins."""
+        """Empty MCP config returns builtins without starting the gateway."""
         self.assertTrue(self.workspace.is_alive)
+        self.assertIsNone(self.workspace._gateway)
+        self.assertIsNone(self.workspace._gateway_process)
         self.assertListEqual(await self.workspace.list_mcps(), [])
         tools = await self.workspace.list_tools()
         self.assertSetEqual(
@@ -854,6 +870,7 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
             workspace_id=f"repair-first-{uuid.uuid4().hex[:8]}",
             host_workdir=workdir.name,
             host_cache_dir=cache_dir.name,
+            default_mcps=[_stdio_mcp("seed")],
         )
         second: BubblewrapWorkspace | None = None
         try:
@@ -873,6 +890,7 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
                 workspace_id=f"repair-second-{uuid.uuid4().hex[:8]}",
                 host_workdir=workdir.name,
                 host_cache_dir=cache_dir.name,
+                default_mcps=[_stdio_mcp("seed")],
             )
             await second.initialize()
             self.assertTrue(second.is_alive)
@@ -888,11 +906,13 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
             workdir.cleanup()
 
     async def test_bootstrap_tools_available(self) -> None:
-        """User-space bootstrap exposes uv and rg in PATH."""
-        uv = await self.workspace.get_backend().exec_shell(["uv", "--version"])
+        """Grep's rg is installed without the gateway; uv follows MCP."""
+        self.assertIsNone(self.workspace._gateway)
         rg = await self.workspace.get_backend().exec_shell(["rg", "--version"])
-        self.assertTrue(uv.ok(), uv.stderr.decode(errors="replace"))
         self.assertTrue(rg.ok(), rg.stderr.decode(errors="replace"))
+        await self.workspace._ensure_mcp_gateway()
+        uv = await self.workspace.get_backend().exec_shell(["uv", "--version"])
+        self.assertTrue(uv.ok(), uv.stderr.decode(errors="replace"))
 
     async def test_offload_context_and_datablock(self) -> None:
         """Offload writes session JSONL and decoded data."""
@@ -946,7 +966,10 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
         self.assertListEqual(await self.workspace.list_skills(), [])
 
     async def test_reset_clears_state_but_keeps_gateway(self) -> None:
-        """Reset clears user state while keeping the gateway usable."""
+        """Reset clears user state while keeping a started gateway usable."""
+        await self.workspace._ensure_mcp_gateway()
+        process = self.workspace._gateway_process
+        self.assertIsNotNone(process)
         await self.workspace.offload_context(
             "reset",
             [UserMsg(name="user", content="hi")],
@@ -964,6 +987,8 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
             ),
         )
         self.assertListEqual(await self.workspace.list_mcps(), [])
+        self.assertIs(self.workspace._gateway_process, process)
+        self.assertIsNone(process.returncode)
 
     async def test_close_is_idempotent(self) -> None:
         """Closing twice does not raise."""
@@ -971,7 +996,8 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
         await self.workspace.close()
 
     async def test_close_terminates_gateway_process(self) -> None:
-        """Closing a live workspace terminates its gateway process."""
+        """Closing a workspace terminates a gateway started for MCP."""
+        await self.workspace._ensure_mcp_gateway()
         process = self.workspace._gateway_process
         self.assertIsNotNone(process)
 
@@ -1059,11 +1085,13 @@ class TestBubblewrapWorkspaceConcurrency(IsolatedAsyncioTestCase):
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
             host_workdir=workdir1.name,
             host_cache_dir=self.cache_dir.name,
+            default_mcps=[_stdio_mcp("seed-a")],
         )
         ws2 = BubblewrapWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
             host_workdir=workdir2.name,
             host_cache_dir=self.cache_dir.name,
+            default_mcps=[_stdio_mcp("seed-b")],
         )
         try:
             await asyncio.gather(ws1.initialize(), ws2.initialize())
