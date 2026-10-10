@@ -323,8 +323,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
 				disabled: voiceDisabled,
 				variant: 'ghost',
-					onClick: onVoiceToggle,
-				};
+				onClick: onVoiceToggle,
+			};
 		})();
 
 		const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
