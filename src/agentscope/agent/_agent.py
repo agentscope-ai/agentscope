@@ -1718,18 +1718,23 @@ class Agent:
     ]:
         """Core reasoning logic. Yields chunks with is_last flag."""
 
-        yield ModelCallStartEvent(
-            reply_id=self.state.reply_id,
-            model_name=self.model.model,
-        )
-
         # Get the input arguments for the chat model, including messages and
         # tools
         kwargs = await self._prepare_model_input()
 
+        # Choose the model for this step, which allows to switch models
+        # dynamically according to the current context
+        model = await self._resolve_model(**kwargs)
+
+        yield ModelCallStartEvent(
+            reply_id=self.state.reply_id,
+            model_name=model.model,
+        )
+
         # Call the chat model
         res = await self._call_model(
             tool_choice=tool_choice,
+            model=model,
             **kwargs,
         )
 
@@ -3276,11 +3281,82 @@ class Agent:
             "tools": tools,
         }
 
+    async def _resolve_model(
+        self,
+        messages: list[Msg],
+        tools: list[dict],
+    ) -> ChatModelBase:
+        """Choose the chat model for the upcoming model call.
+
+        Without a ``model_router`` in the model config, the agent's own model
+        is always used. Otherwise the router decides, so that the model can
+        be switched per reasoning step, e.g. according to the user input or
+        the content the model returned in the previous step.
+
+        Args:
+            messages (`list[Msg]`):
+                The input messages to the model.
+            tools (`list[dict]`):
+                The function schemas of the tools.
+
+        Returns:
+            `ChatModelBase`:
+                The chat model to call.
+
+        Raises:
+            `ValueError`:
+                If the router returns a name that is absent from the
+                ``candidate_models`` of the model config.
+            `TypeError`:
+                If the router returns neither a `ChatModelBase`, a `str` nor
+                `None`.
+        """
+        router = self.model_config.model_router
+        if router is None:
+            return self.model
+
+        selected = await _execute_async_or_sync_func(
+            router,
+            agent=self,
+            messages=messages,
+            tools=tools,
+        )
+
+        if selected is None:
+            return self.model
+
+        if isinstance(selected, str):
+            candidates = self.model_config.candidate_models
+            if selected not in candidates:
+                raise ValueError(
+                    f"The model router of agent {self.name} returned "
+                    f"'{selected}', which is not in the candidate models "
+                    f"{sorted(candidates)}.",
+                )
+            selected = candidates[selected]
+
+        if not isinstance(selected, ChatModelBase):
+            raise TypeError(
+                f"The model router of agent {self.name} must return a "
+                f"ChatModelBase, a candidate model name or None, got "
+                f"{type(selected).__name__}.",
+            )
+
+        if selected is not self.model:
+            logger.info(
+                "Routed to model '%s' for agent %s",
+                selected.model,
+                self.name,
+            )
+
+        return selected
+
     async def _call_model(
         self,
         messages: list[Msg],
         tools: list[dict],
         tool_choice: ToolChoice | None = None,
+        model: ChatModelBase | None = None,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Perform model inference with retry logic and middleware support.
 
@@ -3291,6 +3367,9 @@ class Agent:
                 The function schemas of the tools.
             tool_choice (`ToolChoice | None`, optional):
                 The tool choice strategy for the model call.
+            model (`ChatModelBase | None`, optional):
+                The model to call, e.g. the one chosen by the model router.
+                Defaults to the agent's own model.
 
         Returns:
             `ChatResponse | AsyncGenerator[ChatResponse, None]`:
@@ -3298,7 +3377,7 @@ class Agent:
                 non-streaming models, or an async generator yielding
                 `ChatResponse` chunks for streaming models.
         """
-        models = [self.model]
+        models = [model or self.model]
 
         # Fallback to the secondary model if the primary model fails after
         # retries
@@ -3309,18 +3388,18 @@ class Agent:
         # ``max_retries`` is the number of retries on top of the initial
         # call (mirrors ``ChatModelBase.max_retries``), so total attempts
         # per model is ``max_retries + 1``.
-        for index, model in enumerate(models):
+        for index, cur_model in enumerate(models):
             if index > 0:
                 logger.info(
                     "Fallback to model '%s'",
-                    model.model,
+                    cur_model.model,
                 )
 
             for attempt in range(self.model_config.max_retries + 1):
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
+                        return await cur_model(
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
@@ -3329,7 +3408,7 @@ class Agent:
                         # pylint: disable=cell-var-from-loop
                         async def execute_chain(
                             index: int = 0,
-                            current_model: ChatModelBase = model,
+                            current_model: ChatModelBase = cur_model,
                             messages: list[Msg] = messages,
                             tools: list[dict] = tools,
                             tool_choice: ToolChoice = tool_choice,
@@ -3379,7 +3458,7 @@ class Agent:
                         logger.warning(
                             "Model %s call failed for agent %s. "
                             "Retrying (%d/%d)...",
-                            model.model,
+                            cur_model.model,
                             self.name,
                             attempt + 1,
                             self.model_config.max_retries,
@@ -3388,7 +3467,7 @@ class Agent:
                         logger.warning(
                             "Model %s exhausted all %d attempt(s) "
                             "for agent %s.",
-                            model.model,
+                            cur_model.model,
                             self.model_config.max_retries + 1,
                             self.name,
                         )
