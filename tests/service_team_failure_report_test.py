@@ -455,6 +455,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                     raise ValueError("awaiting confirmation, got no event")
                 self.state.context.append(
                     AssistantMsg(
+                        id=self.state.reply_id,
                         name=self.name,
                         content=[
                             ToolCallBlock(

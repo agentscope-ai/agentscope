@@ -625,6 +625,7 @@ class _AwaitingStorage:
                 reply_id="reply-1",
                 context=[
                     Msg(
+                        id="reply-1",
                         name="Friday",
                         role="assistant",
                         content=[
@@ -636,6 +637,11 @@ class _AwaitingStorage:
                                 state=ToolCallState.ASKING,
                             ),
                         ],
+                    ),
+                    Msg(
+                        name="Other",
+                        role="assistant",
+                        content=[TextBlock(text="Observed while waiting.")],
                     ),
                 ],
             ),
