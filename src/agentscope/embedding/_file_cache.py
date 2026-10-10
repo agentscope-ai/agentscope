@@ -4,6 +4,7 @@ embeddings in binary files."""
 import hashlib
 import json
 import os
+import tempfile
 from typing import Any, List
 
 import numpy as np
@@ -82,12 +83,30 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                     f"Path {path_file} exists but is not a file.",
                 )
 
-            if overwrite:
-                np.save(path_file, embeddings)
-                await self._maintain_cache_dir(path_file)
-        else:
-            np.save(path_file, embeddings)
-            await self._maintain_cache_dir(path_file)
+            if not overwrite:
+                return
+
+        # Publish only complete NPY files. Serializing directly to path_file
+        # truncates a previously valid entry even when serialization fails.
+        # The temporary file must be on the same filesystem for replacement,
+        # and closed first so publication also works on Windows.
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=self.cache_dir,
+                prefix=".embedding-",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_path = temp_file.name
+                np.save(temp_file, embeddings)
+            os.replace(temp_path, path_file)
+            temp_path = None
+        finally:
+            if temp_path is not None:
+                os.remove(temp_path)
+
+        await self._maintain_cache_dir(path_file)
 
     async def retrieve(
         self,
