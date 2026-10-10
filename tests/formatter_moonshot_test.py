@@ -359,6 +359,13 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_empty_thinking_only_yields_no_message(self) -> None:
+        """An empty ThinkingBlock alone must not be sent."""
+        res = await MoonshotChatFormatter().format(
+            [AssistantMsg("a", [ThinkingBlock(thinking="")])],
+        )
+        self.assertListEqual(res, [])
+
     async def test_chat_formatter_assistant_always_has_reasoning_content(
         self,
     ) -> None:
@@ -419,13 +426,52 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
+    async def test_chat_formatter_base64_video(self) -> None:
+        """Base64-encoded video is emitted as a video URL block."""
+        fmt = MoonshotChatFormatter(
+            input_types=["text/plain", "video/mp4"],
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="What happens in this video?"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZSB2aWRlbw==",
+                            media_type="video/mp4",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What happens in this video?",
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": (
+                                    "data:video/mp4;base64," "ZmFrZSB2aWRlbw=="
+                                ),
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """URL images in tool results are promoted to a follow-up user
         message."""
@@ -445,6 +491,7 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=URLSource(
                                     url=self.image_url,
                                     media_type="image/png",
@@ -818,6 +865,134 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "image_url",
                             "image_url": {"url": self.image_data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = MoonshotChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=URLSource(
+                                    url="https://example.com/shot.png",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        shot_output = (
+            "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "reasoning_content": "",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_shot",
+                            "type": "function",
+                            "function": {
+                                "name": "screenshot",
+                                "arguments": "{}",
+                            },
+                        },
+                        {
+                            "id": "call_title",
+                            "type": "function",
+                            "function": {
+                                "name": "get_title",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_shot",
+                    "content": shot_output,
+                    "name": "screenshot",
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_title",
+                    "content": "Example Domain",
+                    "name": "get_title",
+                },
+                {
+                    "role": "user",
+                    "name": "system-reminder",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>The multimodal data "
+                            "and their identifiers are listed as follows:",
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": self.image_data_uri},
+                        },
+                        {"type": "text", "text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "reasoning_content": "",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "The page is Example Domain.",
                         },
                     ],
                 },

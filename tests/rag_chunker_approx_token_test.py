@@ -218,3 +218,48 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_blank_sections_are_dropped(self) -> None:
+        """Empty and whitespace-only sections produce no chunk and leave
+        no gap in the numbering."""
+        chunker = ApproxTokenChunker(chunk_size=512, overlap=50)
+        sections = [
+            Section(content=TextBlock(text=""), source="scan.pdf"),
+            Section(content=TextBlock(text="page two"), source="scan.pdf"),
+            Section(content=TextBlock(text="  \n "), source="scan.pdf"),
+            Section(content=TextBlock(text="page four"), source="scan.pdf"),
+        ]
+
+        chunks = await chunker.chunk(sections)
+
+        self.assertListEqual(
+            _dump_chunks(chunks),
+            [
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "page two",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "scan.pdf",
+                    "chunk_index": 0,
+                    "total_chunks": 2,
+                    "metadata": {},
+                },
+                {
+                    "content": {
+                        "type": "text",
+                        "text": "page four",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                    "source": "scan.pdf",
+                    "chunk_index": 1,
+                    "total_chunks": 2,
+                    "metadata": {},
+                },
+            ],
+        )

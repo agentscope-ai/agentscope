@@ -96,7 +96,7 @@ class _FakeStorage:
         self.persisted_messages.append((user_id, session_id, message))
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the dispatcher.
 
     Implements the four primitives the dispatcher uses
@@ -247,6 +247,20 @@ class _FakeBus(MessageBus):
         ttl_secs: int | None = None,
     ) -> None:
         self.registries.setdefault(namespace, {})[field] = value
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        raise NotImplementedError
 
     async def registry_del(self, namespace: str, field: str) -> None:
         self.registries.get(namespace, {}).pop(field, None)

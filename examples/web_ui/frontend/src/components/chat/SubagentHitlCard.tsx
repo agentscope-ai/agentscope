@@ -37,7 +37,7 @@ export function SubagentHitlCard({
 	if (toolCalls.length === 0) return null;
 
 	return (
-		<div className="ring ring-border rounded-[28px] w-full p-3 space-y-3 bg-white">
+		<div className="ring ring-border rounded-[28px] w-full p-3 space-y-3 bg-card">
 			<div className="flex items-center gap-2 text-sm font-medium text-secondary-foreground px-2">
 				<Users className="size-4 shrink-0" />
 				<span>{t('chat.subagentConfirmTitle', { name: entry.worker_agent_name })}</span>

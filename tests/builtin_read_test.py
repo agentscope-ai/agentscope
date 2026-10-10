@@ -4,6 +4,7 @@ import base64
 import io
 import os
 import tempfile
+import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
@@ -178,7 +179,11 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
     async def test_read_nonexistent_file(self) -> None:
         """Test reading a non-existent file."""
-        chunk = await self.read_tool(file_path="/nonexistent/file.txt")
+        missing_path = os.path.join(
+            os.path.abspath(tempfile.gettempdir()),
+            f"agentscope-no-such-file-{uuid.uuid4().hex}.txt",
+        )
+        chunk = await self.read_tool(file_path=missing_path)
 
         self.assertEqual(chunk.state, "error")
         self.assertIn("does not exist", chunk.content[0].text)
@@ -290,6 +295,26 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_default_model_input_types_are_isolated(self) -> None:
+        """Changing one default tool must not affect other instances."""
+        existing = Read()
+        self.read_tool.model_input_types.append("image/bmp")
+        self.addCleanup(self.read_tool.model_input_types.remove, "image/bmp")
+
+        defaults = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        self.assertDictEqual(
+            {
+                "configured": self.read_tool.model_input_types,
+                "existing": existing.model_input_types,
+                "later": Read().model_input_types,
+            },
+            {
+                "configured": defaults + ["image/bmp"],
+                "existing": defaults,
+                "later": defaults,
+            },
+        )
+
     async def test_read_image_unsupported_type(self) -> None:
         """Test images outside ``model_input_types`` return an error."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".bmp") as f:
@@ -317,6 +342,18 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": AnyString(),
             },
+        )
+
+        # An explicit empty list means the model accepts no native media.
+        tool = Read(model_input_types=[])
+        self.assertListEqual(tool.model_input_types, [])
+        self.assertNotIn("read images", tool.description)
+        chunk = await tool(file_path=f.name)
+        self.assertEqual(chunk.state, "error")
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: Unsupported image type image/bmp, only none are "
+            "supported.",
         )
 
         # Model card style input types (non-image entries ignored) and glob

@@ -351,7 +351,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 )
 
         start_time = datetime.now()
-        response = self.client.models.embed_content(
+        response = await self.client.aio.models.embed_content(
             model=self.model,
             contents=texts,
             config=config,
@@ -423,7 +423,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         )
 
         start_time = datetime.now()
-        response = self.client.models.embed_content(
+        response = await self.client.aio.models.embed_content(
             model=self.model,
             contents=contents,
             config=config,

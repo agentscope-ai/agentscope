@@ -1,5 +1,14 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { ArrowUp, FileText, Loader2, Paperclip, Square, XIcon } from 'lucide-react';
+import {
+	AudioLines,
+	ArrowUp,
+	FileText,
+	Loader2,
+	Paperclip,
+	Square,
+	type LucideIcon,
+	XIcon,
+} from 'lucide-react';
 import mime from 'mime';
 import React, {
 	useState,
@@ -26,6 +35,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
 /**
@@ -76,6 +86,12 @@ interface TextInputProps {
 	/** Number of accepted user turns that have not started a reply yet. */
 	queuedCount?: number;
 	onInterrupt?: () => void;
+	/** Current browser realtime voice connection state. */
+	voiceState?: RealtimeConnectionState;
+	/** Starts or stops the browser realtime voice connection. */
+	onVoiceToggle?: () => void;
+	/** Prevents voice start when no realtime model is configured. */
+	voiceDisabled?: boolean;
 	/**
 	 * Content rendered directly above the input pill, inside the outer
 	 * wrapper that {@link className} styles (e.g. the working directory
@@ -134,6 +150,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			phase = 'idle',
 			queuedCount = 0,
 			onInterrupt,
+			voiceState = 'idle',
+			onVoiceToggle,
+			voiceDisabled = false,
 			headerSlot,
 		},
 		ref,
@@ -257,7 +276,56 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const replyActive = phase !== 'idle';
+		const voiceActive = voiceState === 'active' || voiceState === 'connecting';
 		const sendDisabled = disabled || !value.trim() || hasProcessing || submitting;
+
+		/**
+		 * The primary action controls realtime voice when it is connected,
+		 * otherwise it sends a normal or queued text turn. A running text
+		 * reply gets its own Stop button so sending remains available.
+		 */
+		const actionButton: {
+			icon: LucideIcon;
+			tooltip: string;
+			disabled: boolean;
+			variant: 'default' | 'ghost';
+			onClick: (() => void) | undefined;
+		} = (() => {
+			if (voiceState === 'connecting') {
+				return {
+					icon: Loader2,
+					tooltip: t('realtime.stop'),
+					disabled: false,
+					variant: 'default',
+					onClick: onVoiceToggle,
+				};
+			}
+			if (voiceState === 'active') {
+				return {
+					icon: Square,
+					tooltip: t('realtime.stop'),
+					disabled: false,
+					variant: 'default',
+					onClick: onVoiceToggle,
+				};
+			}
+			if (replyActive || value.trim()) {
+				return {
+					icon: submitting ? Loader2 : ArrowUp,
+					tooltip: replyActive ? t('textInput.queue') : t('textInput.send'),
+					disabled: sendDisabled,
+					variant: 'default',
+					onClick: () => void handleSend(),
+				};
+			}
+			return {
+				icon: AudioLines,
+				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
+				disabled: voiceDisabled,
+				variant: 'ghost',
+					onClick: onVoiceToggle,
+				};
+		})();
 
 		const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
 			if (!e.target.files) return;
@@ -483,7 +551,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							{/* Keep Stop and Send separate while a reply is active:
 							    users can enqueue another turn without losing the
 							    ability to interrupt the current generation. */}
-							{replyActive && (
+							{replyActive && !voiceActive && (
 								<Tooltip>
 									<TooltipTrigger asChild>
 										<Button
@@ -505,25 +573,31 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</Tooltip>
 							)}
 
+							{/* Voice or Send — driven by ``actionButton`` config. */}
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<Button
 										type="button"
-										onClick={() => void handleSend()}
-										disabled={sendDisabled}
+										variant={actionButton.variant}
+										onClick={actionButton.onClick}
+										disabled={actionButton.disabled}
 										size="icon-lg"
-										className="shrink-0 rounded-full"
-									>
-										{submitting ? (
-											<Loader2 className="h-4 w-4 animate-spin" />
-										) : (
-											<ArrowUp className="h-4 w-4" />
+										className={cn(
+											'relative shrink-0 rounded-full transition-colors',
+											voiceState === 'active' &&
+												'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
 										)}
+									>
+										<actionButton.icon
+											className={cn(
+												'h-4 w-4',
+												(voiceState === 'connecting' || submitting) &&
+													'animate-spin',
+											)}
+										/>
 									</Button>
 								</TooltipTrigger>
-								<TooltipContent>
-									{replyActive ? t('textInput.queue') : t('textInput.send')}
-								</TooltipContent>
+								<TooltipContent>{actionButton.tooltip}</TooltipContent>
 							</Tooltip>
 
 							{/* Hidden file input */}

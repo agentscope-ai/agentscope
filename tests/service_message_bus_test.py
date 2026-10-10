@@ -10,9 +10,12 @@ that are layered on top.
 """
 import asyncio
 from contextlib import AsyncExitStack
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
+from utils import AnyString
 
 from agentscope.app.message_bus import MessageBus, RedisMessageBus
 
@@ -105,6 +108,97 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
             [{"i": 3}, {"i": 2}],
         )
 
+    async def test_drain_reads_and_deletes_in_one_command(self) -> None:
+        """Reading and deleting as two commands lets a competing
+        consumer land in between, read the same entry and dispatch it a
+        second time (#1868)."""
+        await self.bus.queue_push("k", {"x": 1})
+
+        execute_command = self.fr.execute_command
+        issued: list[str] = []
+
+        async def recording_execute_command(*args: Any, **kwargs: Any) -> Any:
+            issued.append(args[0])
+            return await execute_command(*args, **kwargs)
+
+        self.fr.execute_command = recording_execute_command
+
+        self.assertListEqual(
+            await self.bus.queue_drain("k"),
+            [(AnyString(), {"x": 1})],
+        )
+        # One command, whatever it is — the contract is that the read
+        # and the delete cannot be observed apart.
+        self.assertEqual(len(issued), 1)
+
+
+class TestRegistryConditionalPrimitives(IsolatedAsyncioTestCase):
+    """Mode F — the compare-and-set and take-once registry ops."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_set_if_writes_only_on_the_expected_value(self) -> None:
+        """A caller whose read is stale loses, and changes nothing."""
+        await self.bus.registry_set("ns", "f", "v1")
+
+        self.assertFalse(
+            await self.bus.registry_set_if(
+                "ns",
+                "f",
+                "v2",
+                expected="stale",
+            ),
+        )
+        self.assertEqual(await self.bus.registry_get("ns", "f"), "v1")
+
+        self.assertTrue(
+            await self.bus.registry_set_if("ns", "f", "v2", expected="v1"),
+        )
+        self.assertEqual(await self.bus.registry_get("ns", "f"), "v2")
+
+    async def test_set_if_refreshes_the_expiry_only_when_it_writes(
+        self,
+    ) -> None:
+        """A losing caller must not extend someone else's lifetime."""
+        await self.bus.registry_set("ns", "f", "v1", ttl_secs=1000)
+
+        await self.bus.registry_set_if(
+            "ns",
+            "f",
+            "v2",
+            expected="stale",
+            ttl_secs=5000,
+        )
+        self.assertLessEqual(await self.fr.ttl("ns"), 1000)
+
+        await self.bus.registry_set_if(
+            "ns",
+            "f",
+            "v2",
+            expected="v1",
+            ttl_secs=5000,
+        )
+        self.assertGreater(await self.fr.ttl("ns"), 1000)
+
+    async def test_pop_hands_the_value_to_exactly_one_caller(self) -> None:
+        """Whatever races for it, only the first take succeeds."""
+        await self.bus.registry_set("ns", "f", "v1")
+
+        self.assertEqual(await self.bus.registry_pop("ns", "f"), "v1")
+        self.assertIsNone(await self.bus.registry_pop("ns", "f"))
+        self.assertIsNone(await self.bus.registry_get("ns", "f"))
+
+    async def test_pop_of_an_absent_field_is_not_an_error(self) -> None:
+        """An expired session reads as gone, not as a failure."""
+        self.assertIsNone(await self.bus.registry_pop("missing", "f"))
+
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
     """Mode C — replay log: append / read with cursor / trim."""
@@ -180,6 +274,37 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await self.bus.publish("ch", {"i": 2})
         await asyncio.wait_for(task, timeout=2.0)
         self.assertEqual([p["i"] for p in received], [1, 2])
+
+    async def test_subscribe_cleanup_survives_cancellation(self) -> None:
+        """A consumer cancelled again while closing the pubsub must not
+        abort the close, otherwise the connection leaks from the pool."""
+        ready, closing = asyncio.Event(), asyncio.Event()
+        finish, released = asyncio.Event(), asyncio.Event()
+        pubsub = self.fr.pubsub()
+        original_aclose = pubsub.aclose
+
+        async def _slow_aclose() -> None:
+            closing.set()
+            await finish.wait()
+            await original_aclose()
+            released.set()
+
+        async def _consumer() -> None:
+            async for _ in self.bus.subscribe("ch", on_ready=ready.set):
+                pass
+
+        pubsub.aclose = _slow_aclose
+        with patch.object(self.fr, "pubsub", return_value=pubsub):
+            task = asyncio.create_task(_consumer())
+            await asyncio.wait_for(ready.wait(), timeout=2.0)
+            task.cancel()
+            await asyncio.wait_for(closing.wait(), timeout=2.0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        finish.set()
+        await asyncio.wait_for(released.wait(), timeout=2.0)
 
 
 class TestLockPrimitive(IsolatedAsyncioTestCase):

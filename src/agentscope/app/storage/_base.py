@@ -17,12 +17,15 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
+from ...sop import SOPPhase, SOPRunState
 from ...state import AgentState
 
 
@@ -370,9 +373,11 @@ class StorageBase(ABC):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
@@ -388,11 +393,14 @@ class StorageBase(ABC):
             session_id (`str | None`, optional): If provided, update the
                 existing session with this id. If ``None``, create a new
                 session.
-            source (`SessionSource`, optional): The source that created this
-                session. Defaults to ``SessionSource.USER``.
-            source_schedule_id (`str | None`, optional): The schedule that
-                created this session. When set, the session is indexed under
-                the schedule for execution history queries.
+            origin (`SessionOrigin | None`, optional): How the session came
+                to exist — a :class:`ScheduleOrigin` also indexes it under
+                its schedule. Defaults to :class:`UserOrigin`.
+            source / source_schedule_id / source_chat_id /
+                source_chat_name / source_channel_id: **Deprecated** —
+                the flat shape ``origin`` replaced. Passing any of them
+                still builds the matching origin, so callers written
+                against the old signature keep working.
 
         Returns:
             `SessionRecord`: The created or updated record.
@@ -605,10 +613,11 @@ class StorageBase(ABC):
     # ------------------------------------------------------------------
     # Channel persistence
     #
-    # Optional capability: channels require the distributed message bus
-    # (locks / pub-sub / queues), so only bus-backed stores (Redis)
-    # implement these. Other backends inherit the NotImplementedError
-    # default.
+    # Optional capability. Note it is orthogonal to the message bus:
+    # running channels across several nodes needs a *distributed bus*,
+    # but the storage backend is a separate injection — SQL storage
+    # with a Redis bus is the normal production shape. A backend that
+    # does not implement these inherits the NotImplementedError default.
     # ------------------------------------------------------------------
 
     async def upsert_channel(
@@ -734,14 +743,31 @@ class StorageBase(ABC):
     ) -> None:
         """Persist a message to the session's message list.
 
-        If the last message in the list has the same ``id`` as *msg*, it is
-        replaced (merge/overwrite for the same reply_id across continuation
-        calls).  Otherwise, *msg* is appended as a new entry.
+        If a message in the list has the same ``id`` as *msg*, it is replaced
+        in place. Otherwise, *msg* is appended as a new entry.
 
         Args:
             user_id (`str`): The owner user id.
             session_id (`str`): The session id.
             msg (`Msg`): The message to persist.
+        """
+
+    @abstractmethod
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete one message from a session.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            message_id (`str`): The message id to delete.
+
+        Returns:
+            `bool`: Whether a matching message was deleted.
         """
 
     @abstractmethod
@@ -791,6 +817,168 @@ class StorageBase(ABC):
             chronological order, has_more). ``has_more`` is ``True``
             when older messages exist before the returned page.
         """
+
+    # ------------------------------------------------------------------
+    # SOP persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Create or overwrite a procedure.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`SOPRecord`):
+                The procedure to store.
+
+        Returns:
+            `SOPRecord`:
+                The stored record, with its timestamps refreshed.
+        """
+        raise NotImplementedError
+
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure; owner-scoped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure id.
+
+        Returns:
+            `SOPRecord | None`:
+                The record, or ``None`` if the user has no such one.
+        """
+        raise NotImplementedError
+
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """List the user's procedures.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[SOPRecord]`:
+                Every procedure the user owns.
+        """
+        raise NotImplementedError
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure, every run of it, and their conversations.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str`):
+                The procedure id.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+        raise NotImplementedError
+
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Create or overwrite a run.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`SOPRunRecord`):
+                The run to store.
+
+        Returns:
+            `SOPRunRecord`:
+                The stored record, with its timestamps refreshed.
+        """
+        raise NotImplementedError
+
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run; owner-scoped.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+
+        Returns:
+            `SOPRunRecord | None`:
+                The record, or ``None`` if the user has no such one.
+        """
+        raise NotImplementedError
+
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """List the user's runs, newest first.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_id (`str | None`, optional):
+                Only runs of this procedure. ``None`` means all of them.
+            phase (`SOPPhase | None`, optional):
+                Only runs in this phase. ``None`` means all of them.
+
+        Returns:
+            `list[SOPRunRecord]`:
+                The matching runs.
+        """
+        raise NotImplementedError
+
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Update a run's state (and sessions), leaving its definition.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+            state (`SOPRunState`):
+                How the run is going now.
+            sessions (`dict[str, str] | None`, optional):
+                The run's conversations. ``None`` leaves them as is.
+
+        Raises:
+            `KeyError`:
+                If the user has no such run.
+        """
+        raise NotImplementedError
+
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run and the conversations it opened.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            sop_run_id (`str`):
+                The run id.
+
+        Returns:
+            `bool`:
+                Whether there was one to delete.
+        """
+        raise NotImplementedError
 
     # ------------------------------------------------------------------
     # Team persistence
@@ -858,7 +1046,8 @@ class StorageBase(ABC):
              is fully removed because it was spawned solely for this
              team.
            - ``role == "invited"`` — call :meth:`delete_session` for
-             the borrowed team-scoped session only. The invited
+             the borrowed team-scoped session under the team owner's
+             namespace only. The invited
              agent's :class:`AgentRecord` and any other sessions it
              owns survive the team's dissolution.
         2. Clear ``team_id`` on the leader session referenced by

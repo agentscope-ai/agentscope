@@ -21,7 +21,7 @@ from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
 from .._document import Section
 from ._base import ParserBase
-from ._utils import _guess_image_media_type
+from ._utils import _format_markdown_table_cell, _guess_image_media_type
 
 
 def _get_excel_column_name(col_index: int) -> str:
@@ -46,7 +46,7 @@ def _get_excel_column_name(col_index: int) -> str:
 
 
 def _extract_table_data(df: Any) -> list[list[str]]:
-    """Extract table data from a pandas DataFrame.
+    """Extract table data from a DataFrame read with ``header=None``.
 
     NaN values are converted to empty strings, and Windows-style line
     breaks (``\\r\\n``) are normalised to ``\\n``.
@@ -62,8 +62,7 @@ def _extract_table_data(df: Any) -> list[list[str]]:
     """
     import pandas as pd
 
-    header = [str(col).strip() for col in df.columns]
-    rows: list[list[str]] = [header]
+    rows: list[list[str]] = []
     for _, row in df.iterrows():
         cells: list[str] = []
         for val in row:
@@ -75,6 +74,72 @@ def _extract_table_data(df: Any) -> list[list[str]]:
                 cells.append(text)
         rows.append(cells)
     return rows
+
+
+def _restore_native_excel_errors(
+    df: Any,
+    excel_file: Any,
+    sheet_name: str,
+) -> None:
+    """Restore native Excel error text that pandas converted to NaN.
+
+    The openpyxl reader maps cells of Excel type ``e`` (``#DIV/0!``,
+    ``#N/A``, and the other stored error values) to NaN before
+    ``dtype=object`` and ``keep_default_na=False`` can preserve them.
+    Those values are copied back from the workbook pandas already
+    opened, and only into cells that are still missing.  Blanks, text,
+    and numbers are left as pandas read them.  Formulas are not
+    evaluated, and ``.xls`` workbooks are left unchanged.
+
+    Args:
+        df (`pandas.DataFrame`):
+            Sheet data read with ``header=None``.
+        excel_file (`pandas.ExcelFile`):
+            The open Excel file whose ``book`` holds the worksheet.
+        sheet_name (`str`):
+            Name of the sheet ``df`` was read from.
+    """
+    import pandas as pd
+
+    if df.empty or not df.isna().any().any():
+        return
+
+    # ``sheetnames`` is openpyxl-only.  xlrd books (``.xls``) are skipped
+    # rather than guessing which NaNs are errors.
+    book = getattr(excel_file, "book", None)
+    if book is None:
+        return
+    sheetnames = getattr(book, "sheetnames", None)
+    if sheetnames is None or sheet_name not in sheetnames:
+        return
+
+    worksheet = book[sheet_name]
+    if not hasattr(worksheet, "iter_rows"):
+        return
+
+    # Local import: openpyxl is an optional RAG dependency.
+    from openpyxl.cell.cell import TYPE_ERROR
+
+    n_rows, n_cols = df.shape
+    for row in worksheet.iter_rows():
+        for cell in row:
+            # Empty padding cells use data type "n", not TYPE_ERROR.
+            if getattr(cell, "data_type", None) != TYPE_ERROR:
+                continue
+            value = getattr(cell, "value", None)
+            if not isinstance(value, str) or not value:
+                continue
+            row_idx = getattr(cell, "row", 0) - 1
+            col_idx = getattr(cell, "column", 0) - 1
+            if (
+                row_idx < 0
+                or col_idx < 0
+                or row_idx >= n_rows
+                or col_idx >= n_cols
+            ):
+                continue
+            if pd.isna(df.iat[row_idx, col_idx]):
+                df.iat[row_idx, col_idx] = value
 
 
 def _extract_images_from_worksheet(
@@ -134,7 +199,8 @@ class ExcelParser(ParserBase):
 
     Each sheet is scanned for tabular data and (optionally) images.
     Tables are rendered as Markdown pipe-tables or JSON arrays; images
-    are emitted as standalone :class:`DataBlock` sections.
+    are emitted as standalone :class:`DataBlock` sections, including on
+    sheets without cell values. Header-only tables are preserved.
 
     When ``separate_sheet=True`` each sheet becomes a batch of
     sections that never intermix with other sheets, making it possible
@@ -249,9 +315,15 @@ class ExcelParser(ParserBase):
             ) from e
 
         if isinstance(file, str):
-            excel_file = pd.ExcelFile(file)
-        else:
+            with open(file, "rb") as fp:
+                file = fp.read()
+
+        try:
             excel_file = pd.ExcelFile(io.BytesIO(file))
+        except Exception as e:  # pylint: disable=broad-except
+            raise ValueError(
+                f"Failed to parse {filename!r} as Excel: {e}",
+            ) from e
 
         workbook = None
         try:
@@ -305,29 +377,47 @@ class ExcelParser(ParserBase):
         sheet_sections: list[Section] = []
 
         try:
-            df = excel_file.parse(sheet_name=sheet_name)
+            # Keep cell text as-is instead of letting pandas infer types or NAs
+            df = excel_file.parse(
+                sheet_name=sheet_name,
+                header=None,
+                dtype=object,
+                keep_default_na=False,
+            )
         except Exception as e:
             logger.warning("Failed to parse sheet '%s': %s", sheet_name, e)
             return sheet_sections
 
-        if df.empty:
-            return sheet_sections
+        # Keep the first row as cell data: pandas column labels would rename
+        # duplicate headers and replace blank headers with "Unnamed: ...".
+        if not df.empty:
+            # Pandas turns native Excel error cells into NaN.  Copy the
+            # stored error text back before those NaNs are rendered as
+            # blanks.  Other missing cells stay empty.
+            try:
+                _restore_native_excel_errors(df, excel_file, sheet_name)
+            except Exception as e:
+                logger.warning(
+                    "Failed to restore native Excel errors in sheet '%s': "
+                    "%s",
+                    sheet_name,
+                    e,
+                )
+            table_data = _extract_table_data(df)
 
-        table_data = _extract_table_data(df)
+            if self.table_format == "markdown":
+                table_text = self._table_to_markdown(table_data, sheet_name)
+            else:
+                table_text = self._table_to_json(table_data, sheet_name)
 
-        if self.table_format == "markdown":
-            table_text = self._table_to_markdown(table_data, sheet_name)
-        else:
-            table_text = self._table_to_json(table_data, sheet_name)
-
-        if table_text:
-            sheet_sections.append(
-                Section(
-                    content=TextBlock(text=table_text),
-                    source=filename,
-                    metadata={"sheet": sheet_name},
-                ),
-            )
+            if table_text:
+                sheet_sections.append(
+                    Section(
+                        content=TextBlock(text=table_text),
+                        source=filename,
+                        metadata={"sheet": sheet_name},
+                    ),
+                )
 
         if self.include_image and workbook is not None:
             try:
@@ -416,7 +506,7 @@ class ExcelParser(ParserBase):
         num_cols = len(table_data[0])
 
         def _fmt(cell: str, row_idx: int, col_idx: int) -> str:
-            escaped = cell.replace("|", "\\|")
+            escaped = _format_markdown_table_cell(cell)
             if self.include_cell_coordinates:
                 coord = f"{_get_excel_column_name(col_idx)}{row_idx + 1}"
                 return f"[{coord}] {escaped}"

@@ -13,6 +13,7 @@ constructor arguments:
 - ``path="/path/to/db"`` — in-process, persisted to local disk
 - ``url="http://localhost:6333"`` — remote Qdrant server / cloud
 """
+import math
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -313,9 +314,12 @@ class QdrantStore(VectorStoreBase):
             with_payload=True,
             query_filter=self._build_metadata_filter(metadata_filter),
         )
+        # ``Euclid`` / ``Manhattan`` are distances, so negate them to
+        # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
+        sign = -1 if self._distance in ("Euclid", "Manhattan") else 1
         return [
             VectorSearchResult(
-                score=point.score,
+                score=sign * point.score,
                 document_id=point.payload["document_id"],
                 chunk=Chunk.model_validate(point.payload["chunk"]),
             )
@@ -488,12 +492,24 @@ class QdrantStore(VectorStoreBase):
 
         from qdrant_client import models
 
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=f"chunk.metadata.{key}",
+        conditions = []
+        for key, value in metadata_filter.items():
+            field = f"chunk.metadata.{key}"
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    raise ValueError(
+                        "Metadata filter float values must be finite.",
+                    )
+                # MatchValue supports only strings, integers, and booleans.
+                condition = models.FieldCondition(
+                    key=field,
+                    range=models.Range(gte=value, lte=value),
+                )
+            else:
+                condition = models.FieldCondition(
+                    key=field,
                     match=models.MatchValue(value=value),
                 )
-                for key, value in metadata_filter.items()
-            ],
-        )
+            conditions.append(condition)
+
+        return models.Filter(must=conditions)

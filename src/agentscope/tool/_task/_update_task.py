@@ -235,6 +235,11 @@ Set up task dependencies:
             # Update the status
             updated_fields.append("status")
             _agent_state.tasks_context.tasks[index].state = status
+            # A completed task no longer blocks its dependents
+            if status == "completed":
+                for task in _agent_state.tasks_context.tasks:
+                    if task_id in task.blocked_by:
+                        task.blocked_by.remove(task_id)
 
         if owner is not None:
             updated_fields.append("owner")

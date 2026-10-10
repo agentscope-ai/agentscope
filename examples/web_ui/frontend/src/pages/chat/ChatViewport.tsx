@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
 	ChatModelConfig,
 	PermissionMode,
+	RealtimeModelConfig,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
 	UpdateSessionRequest,
@@ -34,6 +35,7 @@ import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBa
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { RealtimeModelSelect } from '@/components/select/RealtimeModelSelect';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -49,13 +51,19 @@ import {
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
+import { useRealtimeVoice } from '@/hooks/useRealtimeVoice';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+
+const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
+	turn_detection: ['none'],
+};
 
 interface ChatViewportProps {
 	/**
@@ -70,12 +78,12 @@ interface ChatViewportProps {
 	 */
 	sessionId: string | null;
 	/**
-	 * Optional hook invoked when a team membership change arrives on
-	 * this viewport's SSE stream. The outer page owns the session list
-	 * that backs the team sidebar, so it must be told to refetch too;
-	 * passing this callback wires that signal up.
+	 * Optional hook invoked when a server-side change to this session
+	 * or its team arrives on the SSE stream. The outer page owns the
+	 * session list that backs the sidebar, so it must be told to
+	 * refetch too; passing this callback wires that signal up.
 	 */
-	onTeamUpdated?: () => void;
+	onSessionsChanged?: () => void;
 }
 
 /** Maximum number of panels stacked in a single dock column. */
@@ -168,21 +176,24 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatViewportProps) {
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
+	const { groups: realtimeGroups } = useAvailableRealtimeModels();
 
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<RealtimeModelConfig | null>(
+		null,
+	);
 	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
 		useState<SessionKnowledgeConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
-	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [configPending, setConfigPending] = useState(false);
@@ -212,18 +223,43 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			// close a panel the user already has open.
 			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
 		}
-		onTeamUpdated?.();
-	}, [refetchSessions, sessionId, onTeamUpdated]);
+		onSessionsChanged?.();
+	}, [refetchSessions, sessionId, onSessionsChanged]);
 
-	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
-		if (value.tasks_context) {
-			setTasksContext(value.tasks_context as TaskContext);
-		}
-		if (value.permission_context) {
-			setPermissionContext(value.permission_context as PermissionContext);
-		}
-	}, []);
+	// Auto-naming replaced the session's placeholder name. The outer
+	// page shares this cached list whenever both are looking at the same
+	// agent; when they are not — drilled into a team member — it needs
+	// its own nudge.
+	const handleSessionUpdated = useCallback(async () => {
+		await refetchSessions();
+		onSessionsChanged?.();
+	}, [refetchSessions, onSessionsChanged]);
 
+	// Surface the plan panel the first time a session's tasks arrive over
+	// the stream, and only then — reopening it on every update would undo
+	// the user closing it. `state_updated` also fires for permission-only
+	// changes and always carries `tasks_context`, hence gating on a
+	// non-empty task list rather than the field being present.
+	const taskPanelOpenedForRef = useRef<string | null>(null);
+	const handleStateUpdated = useCallback(
+		(value: Record<string, unknown>) => {
+			if (value.tasks_context) {
+				const incoming = value.tasks_context as TaskContext;
+				setTasksContext(incoming);
+				if (incoming.tasks.length > 0 && taskPanelOpenedForRef.current !== sessionId) {
+					taskPanelOpenedForRef.current = sessionId;
+					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+				}
+			}
+			if (value.permission_context) {
+				setPermissionContext(value.permission_context as PermissionContext);
+			}
+		},
+		[sessionId],
+	);
+
+	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
+	const voiceBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
 	const {
 		msgs,
 		loading: messagesLoading,
@@ -243,6 +279,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
+		onSessionUpdated: handleSessionUpdated,
+		isRealtimeAudioActive: () => voiceBusy,
+		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
 	});
 	const {
 		mcps,
@@ -472,14 +511,13 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		],
 	);
 
-	// ChatViewport keeps its own `useSessions(agentId)` instance (the
-	// outer page has a separate one). Its built-in fetch only fires on
-	// `agentId` change, so when the outer page creates a new session
-	// under the same agent, this list doesn't auto-refresh. Without
-	// this refetch, `view` would stay `null` for the brand-new session
-	// id and every effect below would early-return on `!view`,
-	// leaving the model select and friends pinned to whatever the
-	// previously-viewed session had configured.
+	// Safety net for a `view` that never arrives. A session created from
+	// the outer page reaches this list on its own, since both mount the
+	// same cached query — but not when the two are looking at different
+	// agents (drilled into a team member), and not for a write that
+	// happened outside either. Without a `view` every effect below
+	// early-returns on `!view`, leaving the model select and friends
+	// pinned to whatever the previously-viewed session had configured.
 	useEffect(() => {
 		if (!sessionId) return;
 		if (view) return;
@@ -495,6 +533,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedRealtimeModel(null);
 		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
 
@@ -508,6 +547,22 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 		return null;
 	}, [groups, selectedModel?.type, selectedModel?.model]);
+
+	const selectedRealtimeModelCard = useMemo(() => {
+		if (!selectedRealtimeModel) return null;
+		for (const items of Object.values(realtimeGroups)) {
+			for (const { credential, models } of items) {
+				if (credential.id !== selectedRealtimeModel.credential_id) continue;
+				const card = models.find(
+					(model) =>
+						model.model_type === selectedRealtimeModel.type &&
+						model.name === selectedRealtimeModel.model,
+				);
+				if (card) return card;
+			}
+		}
+		return null;
+	}, [realtimeGroups, selectedRealtimeModel]);
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -602,6 +657,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedRealtimeModel(view.session.config.realtime_model_config ?? null);
 		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
 
@@ -658,6 +714,22 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		await patchConfig({ tts_model_config: config }, () => setSelectedTTSModel(config));
 	};
 
+	/** Persist the model used by browser realtime voice mode. */
+	const handleRealtimeModelChange = async (config: RealtimeModelConfig | null) => {
+		await patchConfig({ realtime_model_config: config }, () =>
+			setSelectedRealtimeModel(config),
+		);
+	};
+
+	/** Persist parameters for the browser realtime voice model. */
+	const handleRealtimeParametersChange = async (parameters: Record<string, unknown>) => {
+		if (!selectedRealtimeModel) return;
+		const updated = { ...selectedRealtimeModel, parameters };
+		await patchConfig({ realtime_model_config: updated }, () =>
+			setSelectedRealtimeModel(updated),
+		);
+	};
+
 	/**
 	 * Persist a permission-mode change.
 	 *
@@ -702,10 +774,50 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div className="flex flex-row items-center gap-x-1">
+								<div className="flex min-w-0 flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
+									{/* The open session, named opposite its own
+									    settings. The sidebar is the only other
+									    place the name appears, and it collapses
+									    on mobile — so on a narrow screen this is
+									    the only thing saying which conversation
+									    is on screen.
+
+									    Withheld until the session has something
+									    in it: an untouched one is still named
+									    after the timestamp it was created at,
+									    and a date is worse than no title at all.
+									    The first reply replaces that with a real
+									    one. */}
+									{msgs.length > 0 && (
+										<span
+											className="truncate px-2 text-sm text-muted-foreground"
+											title={view?.session.config.name}
+										>
+											{view?.session.config.name}
+										</span>
+									)}
 								</div>
-								<div className="flex flex-row gap-x-1">
+								{/* Never squeezed by a long session name: the
+								    name truncates instead. */}
+								<div className="flex shrink-0 flex-row gap-x-1">
+									<RealtimeModelSelect
+										value={selectedRealtimeModel}
+										onChange={handleRealtimeModelChange}
+										onAddCredential={() => setCredentialOpen(true)}
+										disabled={configPending || voiceBusy}
+										className="text-muted-foreground hover:text-foreground"
+									/>
+									<ModelParametersPopover
+										selectedModel={selectedRealtimeModel}
+										modelCard={selectedRealtimeModelCard}
+										onChange={handleRealtimeParametersChange}
+										idPrefix="realtime"
+										triggerLabel={t('realtime.parameters')}
+										disabled={configPending || voiceBusy}
+										hideArrayParameters
+										excludedEnumValues={REALTIME_EXCLUDED_ENUM_VALUES}
+									/>
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
@@ -713,7 +825,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										refetchTrigger={credentialRefetchTrigger}
 										disabled={configPending}
 									/>
 									<ModelParametersPopover
@@ -813,7 +924,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									queuedCount={queuedCount}
 									queuedItems={queuedItems}
 									queueReorderDisabled={queueReorderDisabled}
-									disabled={selectedModel === null}
+									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
@@ -821,6 +932,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									onDeleteQueued={deleteQueued}
 									onMoveQueued={moveQueued}
 									onReorderQueued={reorderQueued}
+									voiceState={realtimeVoice.state}
+									onVoiceToggle={() => void realtimeVoice.toggle()}
+									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard
@@ -901,11 +1015,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
 			</main>
-			<CreateCredentialDialog
-				open={credentialOpen}
-				onOpenChange={setCredentialOpen}
-				onCreated={() => setCredentialRefetchTrigger((n) => n + 1)}
-			/>
+			<CreateCredentialDialog open={credentialOpen} onOpenChange={setCredentialOpen} />
 		</>
 	);
 }

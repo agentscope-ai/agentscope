@@ -295,8 +295,12 @@ class Toolkit:
 
         # Async function
         try:
-            # Prepare keyword arguments
-            kwargs = _json_loads_with_repair(tool_call.input)
+            # Prepare keyword arguments, repairing the argument types
+            # against the tool schema when the model got them wrong.
+            kwargs = _json_loads_with_repair(
+                tool_call.input,
+                tool_func.input_schema,
+            )
 
             # State injection
             if (

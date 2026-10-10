@@ -20,6 +20,7 @@ import { DiffStats } from '@/components/chat/tool-renderers/_shared';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button';
+import { Marker, MarkerContent } from '@/components/ui/marker';
 import {
 	MessageScroller,
 	MessageScrollerButton,
@@ -31,10 +32,35 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
 /** How long a load may run before it is worth showing a spinner. */
 const SPINNER_DELAY_MS = 150;
+
+/**
+ * A gap this long between two messages gets a marker stamping when the
+ * conversation resumed — long enough that it *was* resumed, rather than
+ * merely paused to read the last reply.
+ */
+const TIME_MARKER_GAP_MS = 10 * 60 * 1000;
+
+/**
+ * Stamp for a resumed conversation. The time alone is enough while the
+ * marker and the message above it share a day; once the gap crosses
+ * midnight the date has to come with it. Both come from `Intl`, so
+ * "Aug 13, 13:03" and "8月13日 13:03" fall out of the active language
+ * rather than out of a hand-written pattern per locale.
+ */
+function markerStamp(at: Date, previous: Date, language: string): string {
+	const sameDay = at.toDateString() === previous.toDateString();
+	return new Intl.DateTimeFormat(language, {
+		...(sameDay ? {} : { month: 'short', day: 'numeric' }),
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	}).format(at);
+}
 
 interface ChatContentProps {
 	msgs: Msg[];
@@ -47,7 +73,7 @@ interface ChatContentProps {
 	/**
 	 * Reply lifecycle phase from ``useMessages`` — forwarded to
 	 * ``TextInput`` so it can show a separate Stop action while keeping
-	 * Send available for queued turns.
+	 * Send available for queued turns and coordinate realtime voice.
 	 */
 	phase: ReplyPhase;
 	/** Number of locally submitted user turns waiting to start. */
@@ -70,6 +96,9 @@ interface ChatContentProps {
 	onDeleteQueued: (itemId: string) => Promise<void>;
 	onMoveQueued: (itemId: string, direction: -1 | 1) => Promise<void>;
 	onReorderQueued: (itemIds: string[]) => Promise<void>;
+	voiceState?: RealtimeConnectionState;
+	onVoiceToggle?: () => void;
+	voiceDisabled?: boolean;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -113,6 +142,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onDeleteQueued,
 	onMoveQueued,
 	onReorderQueued,
+	voiceState,
+	onVoiceToggle,
+	voiceDisabled,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -123,7 +155,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	git,
 	onRefreshGit,
 }) => {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
@@ -175,15 +207,35 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					<MessageScroller>
 						<MessageScrollerViewport>
 							<MessageScrollerContent>
-								{msgs.map((message) => (
-									<MessageScrollerItem key={message.id} messageId={message.id}>
-										<ASMessageBubble
+								{msgs.map((message, index) => {
+									const previous = msgs[index - 1];
+									const at = new Date(message.created_at);
+									const previousAt = previous
+										? new Date(previous.finished_at ?? previous.created_at)
+										: at;
+									return (
+										<MessageScrollerItem
 											key={message.id}
-											message={message}
-											onUserConfirm={onUserConfirm}
-										/>
-									</MessageScrollerItem>
-								))}
+											messageId={message.id}
+										>
+											{at.getTime() - previousAt.getTime() >
+												TIME_MARKER_GAP_MS && (
+												<Marker
+													variant="separator"
+													className="mb-6 font-mono text-xs"
+												>
+													<MarkerContent>
+														{markerStamp(at, previousAt, i18n.language)}
+													</MarkerContent>
+												</Marker>
+											)}
+											<ASMessageBubble
+												message={message}
+												onUserConfirm={onUserConfirm}
+											/>
+										</MessageScrollerItem>
+									);
+								})}
 								{msgs.length > 0 &&
 									msgs[msgs.length - 1].finished_reason ===
 										ReplyFinishedReason.EXCEED_MAX_ITERS &&
@@ -276,6 +328,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						phase={phase}
 						queuedCount={queuedCount}
 						onInterrupt={onInterrupt}
+						voiceState={voiceState}
+						onVoiceToggle={onVoiceToggle}
+						voiceDisabled={voiceDisabled}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
 								<WorkingDirectoryDialog

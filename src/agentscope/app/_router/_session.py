@@ -42,9 +42,11 @@ from .._service import (
 )
 from ..storage import (
     ChatModelConfig,
+    RealtimeModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionConfig,
+    SessionNaming,
     SessionRecord,
     StorageBase,
     TeamRecord,
@@ -58,6 +60,7 @@ from ..workspace_manager import WorkspaceManagerBase
 
 async def _build_team_detail(
     storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     team: TeamRecord,
 ) -> TeamDetailResponse:
@@ -68,6 +71,8 @@ async def _build_team_detail(
         storage (`StorageBase`):
             Application storage. Used to look up the leader session,
             each member agent, and each member's session.
+        access (`ResourceAccessService`):
+            Resolves roster agents against the viewer's current grants.
         user_id (`str`):
             The owner user id.
         team (`TeamRecord`):
@@ -90,8 +95,8 @@ async def _build_team_detail(
 
     members: list[TeamMemberView] = []
     for member in await _ensure_team_members(storage, user_id, team):
-        agent = await storage.get_agent(member.owner_id, member.agent_id)
-        if agent is None:
+        agent = await access.try_resolve_agent(user_id, member.agent_id)
+        if agent is None or agent.user_id != member.owner_id:
             continue
         # Use the member's team-scoped session id directly; an invited
         # agent has multiple sessions and only ``member.session_id``
@@ -126,7 +131,7 @@ session_router = APIRouter(
 async def _ensure_credential_exists(
     access: ResourceAccessService,
     user_id: str,
-    config: ChatModelConfig | TTSModelConfig | None,
+    config: ChatModelConfig | RealtimeModelConfig | TTSModelConfig | None,
 ) -> None:
     """Validate that the credential referenced by ``config`` is visible to
     the given user (own or shared). No-op when ``config`` is ``None``.
@@ -134,8 +139,8 @@ async def _ensure_credential_exists(
     Args:
         access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
-        config (`ChatModelConfig | TTSModelConfig | None`): Model config to
-            validate. Pass ``None`` to skip the check.
+        config (`ChatModelConfig | RealtimeModelConfig | TTSModelConfig | \
+            None`): Model config to validate. Pass ``None`` to skip the check.
 
     Raises:
         `HTTPException`: 404 if the credential does not exist or is not
@@ -242,6 +247,7 @@ async def list_sessions(
             if team_record is not None:
                 team_detail = await _build_team_detail(
                     storage,
+                    access,
                     user_id,
                     team_record,
                 )
@@ -325,6 +331,11 @@ async def create_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await _ensure_credential_exists(
+        access,
+        user_id,
+        body.realtime_model_config,
+    )
     await _ensure_knowledge_bases_exist(
         access,
         user_id,
@@ -336,7 +347,7 @@ async def create_session(
     # flows to force sharing); otherwise defer to the manager's
     # isolation policy — see ``WorkspaceManagerBase.assign_workspace_id``.
     resolved_workspace_id = body.workspace_id or (
-        workspace_manager.assign_workspace_id(
+        await workspace_manager.assign_workspace_id(
             user_id=user_id,
             agent_id=body.agent_id,
             session_id=_generate_id(),
@@ -351,7 +362,12 @@ async def create_session(
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
+            realtime_model_config=body.realtime_model_config,
             knowledge_config=body.knowledge_config,
+            # A caller that named the session owns that name; anything
+            # else starts on the creation timestamp and is the server's
+            # to replace once the conversation says what it is about.
+            naming=SessionNaming(auto=body.name is None),
             **({"name": body.name} if body.name is not None else {}),
         ),
     )
@@ -505,6 +521,11 @@ async def update_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await _ensure_credential_exists(
+        access,
+        user_id,
+        body.realtime_model_config,
+    )
     await _ensure_knowledge_bases_exist(
         access,
         user_id,
@@ -537,6 +558,14 @@ async def update_session(
         exclude_unset=True,
         exclude={"permission_mode"},
     )
+
+    # An explicit rename settles the name for good — auto-naming must
+    # not overwrite what the user just typed.
+    if "name" in config_updates:
+        config_updates["naming"] = {
+            **existing.config.naming.model_dump(),
+            "auto": False,
+        }
 
     return await storage.upsert_session(
         user_id=user_id,
@@ -602,7 +631,8 @@ async def list_messages(
         message_bus: Injected message bus.
 
     Returns:
-        Messages, running status, and whether more pages exist.
+        Messages, their replay cursor, running status, and whether more
+        pages exist.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -616,15 +646,35 @@ async def list_messages(
     if offset is not None:
         extra["offset"] = offset
 
-    messages, has_more = await storage.list_messages(
-        user_id,
-        session_id,
-        limit=limit,
-        before=before,
-        **extra,
-    )
+    event_cursor = None
+    if before is not None or offset is not None:
+        messages, has_more = await storage.list_messages(
+            user_id,
+            session_id,
+            limit=limit,
+            before=before,
+            **extra,
+        )
+    else:
+        checkpoint_key = MessageBusKeys.session_event_checkpoint(session_id)
+        async with message_bus.acquire_lock(
+            MessageBusKeys.session_event_checkpoint_lock(session_id),
+            ttl_secs=(MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS),
+        ):
+            event_cursor = await message_bus.registry_get(
+                checkpoint_key,
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            )
+            messages, has_more = await storage.list_messages(
+                user_id,
+                session_id,
+                limit=limit,
+                before=before,
+                **extra,
+            )
     return ListMessagesResponse(
         messages=messages,
+        event_cursor=event_cursor,
         is_running=await message_bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ),
@@ -698,6 +748,7 @@ async def get_session_status(
 # ----------------------------------------------------------------------
 
 _HEARTBEAT_INTERVAL_SECS = 30
+_SUBSCRIBE_TIMEOUT_SECS = 5.0
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
@@ -764,6 +815,11 @@ async def _worker_still_asking(
 async def stream_session_events(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
+    after: str
+    | None = Query(
+        None,
+        description=("Replay only events after this checkpoint cursor."),
+    ),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
@@ -786,6 +842,8 @@ async def stream_session_events(
         agent_id (`str`):
             The agent that owns the session (used for ownership
             validation).
+        after (`str | None`):
+            Persisted replay cursor returned by the messages endpoint.
         user_id (`str`):
             Injected authenticated user id.
         storage (`StorageBase`):
@@ -805,62 +863,8 @@ async def stream_session_events(
         )
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
-        # 1. Replay buffered events from the current run (if any).
-        for _entry_id, event in await message_bus.log_read(
-            MessageBusKeys.session_events(session_id),
-            max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
-        ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-        # 1b. Inject pending subagent HITL cards projected onto this
-        #     session as a team leader (design §3.5). These live in a
-        #     durable Redis hash — NOT in the replay log (trimmed per
-        #     run) nor in the leader's own Msg history — so a fresh
-        #     reconnect after the worker parked still surfaces them.
-        #
-        #     Reconcile-on-read: the worker session's own context is the
-        #     SSOT. Inject only when the worker is still ASKING; drop and
-        #     delete ghosts (worker resolved/cancelled without clearing).
-        projection = SessionProjection(message_bus)
-        for payload in await projection.list(
-            session_id,
-            SubagentHitlProjector.KIND,
-        ):
-            if not await _worker_still_asking(
-                storage,
-                user_id,
-                payload["worker_agent_id"],
-                payload["worker_session_id"],
-                payload["reply_id"],
-            ):
-                await projection.delete(
-                    session_id,
-                    SubagentHitlProjector.KIND,
-                    SubagentHitlProjector.entry_id(
-                        payload["worker_session_id"],
-                        payload["reply_id"],
-                    ),
-                )
-                continue
-            custom = CustomEvent(
-                name=SubagentHitlProjector.EVT_REQUIRE,
-                value=payload,
-            )
-            data = json.dumps(
-                custom.model_dump(mode="json"),
-                ensure_ascii=False,
-            )
-
-            yield f"data: {data}\n\n"
-
-        # 2. Live subscribe via a background feeder task that pushes
-        #    events into a queue. The main loop reads from the queue
-        #    with a timeout so we can interleave heartbeat frames.
-        #
-        #    We avoid calling ``wait_for(__anext__())`` on the async
-        #    generator directly because cancelling a suspended
-        #    ``__anext__`` leaves the generator in a "running" state
-        #    that prevents ``aclose()`` from working.
+        events_key = MessageBusKeys.session_events(session_id)
+        ready = asyncio.Event()
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
         async def _feeder() -> None:
@@ -871,11 +875,10 @@ async def stream_session_events(
             """
             try:
                 async for evt in message_bus.subscribe(
-                    MessageBusKeys.session_events(session_id),
+                    events_key,
+                    on_ready=ready.set,
                 ):
-                    await queue.put(
-                        {k: v for k, v in evt.items() if k != "_entry_id"},
-                    )
+                    await queue.put(evt)
             except asyncio.CancelledError:
                 pass
             finally:
@@ -887,6 +890,55 @@ async def stream_session_events(
         )
 
         try:
+            # Subscribe first, then replay. Events arriving across that
+            # seam are present in both paths and deduplicated by entry id.
+            await asyncio.wait_for(
+                ready.wait(),
+                timeout=_SUBSCRIBE_TIMEOUT_SECS,
+            )
+            seen_entry_ids: set[str] = set()
+            for entry_id, event in await message_bus.log_read(
+                events_key,
+                since=after,
+                max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
+            ):
+                seen_entry_ids.add(str(entry_id))
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            # Inject pending subagent HITL cards projected onto this
+            # session as a team leader. These live in a durable registry,
+            # outside the replay log.
+            projection = SessionProjection(message_bus)
+            for payload in await projection.list(
+                session_id,
+                SubagentHitlProjector.KIND,
+            ):
+                if not await _worker_still_asking(
+                    storage,
+                    user_id,
+                    payload["worker_agent_id"],
+                    payload["worker_session_id"],
+                    payload["reply_id"],
+                ):
+                    await projection.delete(
+                        session_id,
+                        SubagentHitlProjector.KIND,
+                        SubagentHitlProjector.entry_id(
+                            payload["worker_session_id"],
+                            payload["reply_id"],
+                        ),
+                    )
+                    continue
+                custom = CustomEvent(
+                    name=SubagentHitlProjector.EVT_REQUIRE,
+                    value=payload,
+                )
+                data = json.dumps(
+                    custom.model_dump(mode="json"),
+                    ensure_ascii=False,
+                )
+                yield f"data: {data}\n\n"
+
             while True:
                 try:
                     item = await asyncio.wait_for(
@@ -895,7 +947,18 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    entry_id = item.get("_entry_id")
+                    if entry_id is not None:
+                        entry_id = str(entry_id)
+                        if entry_id in seen_entry_ids:
+                            continue
+                    payload = {
+                        key: value
+                        for key, value in item.items()
+                        if key != "_entry_id"
+                    }
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:

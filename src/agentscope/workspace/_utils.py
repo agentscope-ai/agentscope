@@ -74,6 +74,7 @@ personal environment, but treat credentials as if they could leak.
 project:
 ```shell
 uv venv && uv pip install ...
+```
 - Never install packages into a shared or global environment — each project \
 must manage its own dependencies to avoid conflicts.</workspace>"""
 

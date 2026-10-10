@@ -9,6 +9,7 @@ from typing import Any, TYPE_CHECKING, Self
 from pydantic import BaseModel
 
 from ._base import StorageBase
+from ._model._session import _origin_kwargs
 from ._model import (
     AgentRecord,
     ChannelRecord,
@@ -20,13 +21,18 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    ChannelOrigin,
+    ScheduleOrigin,
+    SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
 from ...message import Msg
+from ...sop import SOPPhase, SOPRunState
 from ...state import AgentState
 
 if TYPE_CHECKING:
@@ -91,6 +97,9 @@ class RedisStorage(StorageBase):
         messages: str = (
             "agentscope:user:{user_id}:session:{session_id}:messages"
         )
+        message_index: str = (
+            "agentscope:user:{user_id}:session:{session_id}:message_ids"
+        )
 
         schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
         schedule_index: str = "agentscope:user:{user_id}:schedules"
@@ -110,6 +119,13 @@ class RedisStorage(StorageBase):
         channel_session_index: str = (
             "agentscope:user:{user_id}:channel:{channel_id}:sessions"
         )
+
+        sop: str = "agentscope:user:{user_id}:sop:{sop_id}"
+        sop_index: str = "agentscope:user:{user_id}:sops"
+        sop_run: str = "agentscope:user:{user_id}:sop_run:{sop_run_id}"
+        sop_run_index: str = "agentscope:user:{user_id}:sop_runs"
+        # Per-procedure run index.
+        sop_run_sop_index: str = "agentscope:user:{user_id}:sop:{sop_id}:runs"
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
         team_index: str = "agentscope:user:{user_id}:teams"
@@ -872,9 +888,11 @@ class RedisStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
@@ -906,10 +924,14 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source,
-            source_schedule_id=source_schedule_id,
-            source_chat_id=source_chat_id,
-            source_channel_id=source_channel_id,
+            **_origin_kwargs(
+                origin,
+                source,
+                source_schedule_id,
+                source_channel_id,
+                source_chat_id,
+                source_chat_name,
+            ),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -926,19 +948,19 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
 
-        if source_schedule_id:
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=source_schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.sadd(schedule_session_key, record.id)
 
-        if source_channel_id:
+        if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
                 self.key_config.channel_session_index,
                 user_id=user_id,
-                channel_id=source_channel_id,
+                channel_id=record.origin.channel_id,
             )
             await self._client.sadd(channel_session_key, record.id)
 
@@ -1093,23 +1115,28 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             session_id=session_id,
         )
+        msg_index_key = self._key(
+            self.key_config.message_index,
+            user_id=user_id,
+            session_id=session_id,
+        )
         await self._client.delete(key)
         await self._client.srem(index_key, session_id)
-        await self._client.delete(msg_key)
+        await self._client.delete(msg_key, msg_index_key)
 
-        if record.source_schedule_id:
+        if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
                 self.key_config.schedule_session_index,
                 user_id=user_id,
-                schedule_id=record.source_schedule_id,
+                schedule_id=record.origin.schedule_id,
             )
             await self._client.srem(schedule_session_key, session_id)
 
-        if record.source_channel_id:
+        if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
                 self.key_config.channel_session_index,
                 user_id=user_id,
-                channel_id=record.source_channel_id,
+                channel_id=record.origin.channel_id,
             )
             await self._client.srem(channel_session_key, session_id)
 
@@ -1422,6 +1449,14 @@ class RedisStorage(StorageBase):
             session_id=session_id,
         )
 
+    def _message_index_key(self, user_id: str, session_id: str) -> str:
+        """Return the Redis Set key for a session's message IDs."""
+        return self._key(
+            self.key_config.message_index,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
     async def upsert_message(
         self,
         user_id: str,
@@ -1430,15 +1465,66 @@ class RedisStorage(StorageBase):
     ) -> None:
         """Persist a message to the session's message list."""
         key = self._message_key(user_id, session_id)
-        last_raw = await self._client.lindex(key, -1)
-        if last_raw:
-            last_msg = Msg.model_validate_json(last_raw)
-            if last_msg.id == msg.id:
-                await self._client.lset(key, -1, msg.model_dump_json())
-                await self._refresh_key_ttl(key)
+        index_key = self._message_index_key(user_id, session_id)
+
+        async with self._client.pipeline(transaction=False) as pipe:
+            pipe.exists(index_key)
+            pipe.sismember(index_key, msg.id)
+            index_exists, message_exists = await pipe.execute()
+        message_exists = bool(message_exists)
+        if not index_exists:
+            raw_messages = await self._client.lrange(key, 0, -1)
+            message_ids = {
+                Msg.model_validate_json(raw).id for raw in raw_messages
+            }
+            message_exists = msg.id in message_ids
+            if message_ids:
+                await self._client.sadd(index_key, *message_ids)
+
+        payload = msg.model_dump_json()
+        if message_exists:
+            index = await self._find_message_index(key, msg.id)
+            if index is not None:
+                async with self._client.pipeline(transaction=True) as pipe:
+                    pipe.lset(key, index, payload)
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                        pipe.expire(index_key, self.key_ttl)
+                    await pipe.execute()
                 return
-        await self._client.rpush(key, msg.model_dump_json())
-        await self._refresh_key_ttl(key)
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.rpush(key, payload)
+            pipe.sadd(index_key, msg.id)
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+                pipe.expire(index_key, self.key_ttl)
+            await pipe.execute()
+
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete the stored message matching ``message_id``."""
+        key = self._message_key(user_id, session_id)
+        index_key = self._message_index_key(user_id, session_id)
+        index = await self._find_message_index(key, message_id)
+        if index is None:
+            return False
+        raw = await self._client.lindex(key, index)
+        if raw is None:
+            return False
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.lrem(key, 0, raw)
+            pipe.srem(index_key, message_id)
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+                pipe.expire(index_key, self.key_ttl)
+            results = await pipe.execute()
+        deleted = bool(results[0])
+        return deleted
 
     async def get_message(
         self,
@@ -1546,6 +1632,182 @@ class RedisStorage(StorageBase):
         raw_list = await self._client.lrange(key, start, end)
         has_more = start > 0
         return [Msg.model_validate_json(raw) for raw in raw_list], has_more
+
+    # ------------------------------------------------------------------
+    # SOP persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Persist a procedure and index it under the user."""
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(
+            self._key(self.key_config.sop, user_id=user_id, sop_id=record.id),
+            record.model_dump_json(),
+        )
+        await self._client.sadd(
+            self._key(self.key_config.sop_index, user_id=user_id),
+            record.id,
+        )
+        return record
+
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure by id."""
+        raw = await self._client.get(
+            self._key(self.key_config.sop, user_id=user_id, sop_id=sop_id),
+        )
+        return SOPRecord.model_validate_json(raw) if raw else None
+
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """Return every procedure in the user's index that still exists."""
+        ids = await self._client.smembers(
+            self._key(self.key_config.sop_index, user_id=user_id),
+        )
+        records = []
+        for sop_id in ids:
+            record = await self.get_sop(user_id, sop_id)
+            if record is not None:
+                records.append(record)
+        return records
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure and every run of it."""
+        for run in await self.list_sop_runs(user_id, sop_id=sop_id):
+            await self.delete_sop_run(user_id, run.id)
+        await self._client.delete(
+            self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=sop_id,
+            ),
+        )
+        await self._client.srem(
+            self._key(self.key_config.sop_index, user_id=user_id),
+            sop_id,
+        )
+        deleted = await self._client.delete(
+            self._key(self.key_config.sop, user_id=user_id, sop_id=sop_id),
+        )
+        return bool(deleted)
+
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Persist a run and index it under the user and its procedure."""
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(
+            self._key(
+                self.key_config.sop_run,
+                user_id=user_id,
+                sop_run_id=record.id,
+            ),
+            record.model_dump_json(),
+        )
+        await self._client.sadd(
+            self._key(self.key_config.sop_run_index, user_id=user_id),
+            record.id,
+        )
+        await self._client.sadd(
+            self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=record.sop_id,
+            ),
+            record.id,
+        )
+        return record
+
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run by id."""
+        raw = await self._client.get(
+            self._key(
+                self.key_config.sop_run,
+                user_id=user_id,
+                sop_run_id=sop_run_id,
+            ),
+        )
+        return SOPRunRecord.model_validate_json(raw) if raw else None
+
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """Return the user's runs, newest first. ``phase`` is filtered
+        after reading, since Redis has no index for it."""
+        index_key = (
+            self._key(self.key_config.sop_run_index, user_id=user_id)
+            if sop_id is None
+            else self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=sop_id,
+            )
+        )
+        records = []
+        for run_id in await self._client.smembers(index_key):
+            record = await self.get_sop_run(user_id, run_id)
+            if record is not None and phase in (None, record.state.phase):
+                records.append(record)
+        return sorted(records, key=lambda _: _.created_at, reverse=True)
+
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Read-modify-write the run record; raises if absent."""
+        record = await self.get_sop_run(user_id, sop_run_id)
+        if record is None:
+            raise KeyError(f"SOP run {sop_run_id!r} not found.")
+        record.state = state
+        if sessions is not None:
+            record.sessions = sessions
+        await self.upsert_sop_run(user_id, record)
+
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run, its sessions, and both index entries."""
+        record = await self.get_sop_run(user_id, sop_run_id)
+        if record is None:
+            return False
+        for session_id in record.sessions.values():
+            # Redis keys sessions by id alone; the agent id comes back
+            # off the record.
+            session = await self.get_session(user_id, "", session_id)
+            if session is not None:
+                await self.delete_session(
+                    user_id,
+                    session.agent_id,
+                    session_id,
+                )
+        await self._client.srem(
+            self._key(self.key_config.sop_run_index, user_id=user_id),
+            sop_run_id,
+        )
+        await self._client.srem(
+            self._key(
+                self.key_config.sop_run_sop_index,
+                user_id=user_id,
+                sop_id=record.sop_id,
+            ),
+            sop_run_id,
+        )
+        await self._client.delete(
+            self._key(
+                self.key_config.sop_run,
+                user_id=user_id,
+                sop_run_id=sop_run_id,
+            ),
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Team persistence
@@ -1698,7 +1960,8 @@ class RedisStorage(StorageBase):
              worker's session.
            - ``role == "invited"`` — the member is a pre-existing
              user-owned agent that was borrowed via ``AgentInvite``.
-             Only remove the team-scoped session via
+             Only remove the team-scoped session from the team owner's
+             namespace via
              :meth:`delete_session`; the underlying
              :class:`AgentRecord` and its other sessions must survive.
 
@@ -1745,7 +2008,7 @@ class RedisStorage(StorageBase):
                 await self.delete_agent(member.owner_id, member.agent_id)
             else:  # invited
                 await self.delete_session(
-                    member.owner_id,
+                    user_id,
                     member.agent_id,
                     member.session_id,
                 )

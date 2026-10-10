@@ -3,7 +3,6 @@
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
@@ -297,13 +296,8 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """Base64 images in tool results are promoted to a follow-up user
         message with images list."""
@@ -323,6 +317,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=Base64Source(
                                     data=self.image_b64,
                                     media_type="image/png",
@@ -375,6 +370,103 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": "Here is the map of Tokyo.",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "screenshot", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "get_title", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "screenshot",
+                    "content": (
+                        "Screenshot taken.\n"
+                        "<system-reminder>A(n) image file is returned and "
+                        "will be presented to you with the identifier "
+                        f"[{_FIXED_ID}].</system-reminder>"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_title",
+                    "content": "Example Domain",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "<system-reminder>The multimodal data "
+                        "and their identifiers are listed as follows:\n"
+                        f"- {_FIXED_ID} (image file): \n"
+                        "</system-reminder>"
+                    ),
+                    "images": [self.image_b64],
+                },
+                {
+                    "role": "assistant",
+                    "content": "The page is Example Domain.",
                 },
             ],
             res,

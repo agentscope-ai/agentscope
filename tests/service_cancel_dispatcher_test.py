@@ -16,6 +16,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import Mock
 
 from agentscope.app._manager import (
     BackgroundTaskManager,
@@ -27,7 +28,7 @@ from agentscope.app.message_bus import MessageBus
 from agentscope.message import ToolResultState
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the dispatcher.
 
     Only the cancel-broadcast channel is exercised here; the other
@@ -156,6 +157,20 @@ class _FakeBus(MessageBus):
     ) -> None:
         self._registries.setdefault(namespace, {})[field] = value
 
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        raise NotImplementedError
+
     async def registry_del(self, namespace: str, field: str) -> None:
         if namespace in self._registries:
             self._registries[namespace].pop(field, None)
@@ -268,6 +283,29 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         # sess-B BG task is left running until shutdown cancels it.
         self.assertFalse(bg_task_b.cancelled())
         bg_task_b.cancel()
+
+    async def test_cancel_signal_closes_local_realtime_run(self) -> None:
+        """A session cancel reaches the local WebRTC runner."""
+        bus = _FakeBus()
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+        realtime_runner = Mock()
+
+        async with bg_manager, registry, CancelDispatcher(
+            message_bus=bus,
+            registry=registry,
+            bg_manager=bg_manager,
+            realtime_connections={
+                ("alice", "sess-A"): realtime_runner,
+            },
+        ):
+            await bus.session_publish_cancel("sess-A")
+            for _ in range(50):
+                if realtime_runner.request_close.called:
+                    break
+                await asyncio.sleep(0.01)
+
+        realtime_runner.request_close.assert_called_once_with()
 
     async def test_cancel_signal_for_remote_session_is_noop(self) -> None:
         """Broadcast for a session held on another process is silently

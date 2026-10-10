@@ -305,7 +305,7 @@ yourself and pass `Mem0Middleware` into its `middlewares=[...]`. For
 production deployments via `agentscope.app` (the FastAPI service
 layer), the `user_id` already flows through the framework from the
 `X-User-ID` HTTP header. Hook in through the
-[`extra_agent_middlewares`](../../../../src/agentscope/app/_types.py)
+[`extra_agent_middlewares`](../../../src/agentscope/app/_types.py)
 factory:
 
 ```python

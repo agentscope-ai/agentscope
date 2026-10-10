@@ -48,7 +48,7 @@ class ChatRunRegistry:
         Args:
             coro (`Coroutine`):
                 A coroutine — typically ``chat_service.run(...)`` — to
-                run as a background task.
+                run as a background task. Closed if the spawn is rejected.
             session_id (`str`):
                 The session this run belongs to. Used as the registry
                 key for later cancel lookup.
@@ -71,6 +71,7 @@ class ChatRunRegistry:
         """
         existing = self._tasks.get(session_id)
         if existing is not None and not existing.done():
+            coro.close()
             raise RuntimeError(
                 f"Session {session_id!r} already has an active chat run "
                 "in this process.",

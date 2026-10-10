@@ -29,7 +29,7 @@ from agentscope.app._service import IndexTaskConsumer
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the consumer.
 
     Implements the primitives the consumer actually uses
@@ -173,6 +173,20 @@ class _FakeBus(MessageBus):
         *,
         ttl_secs: int | None = None,
     ) -> None:
+        raise NotImplementedError
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
         raise NotImplementedError
 
     async def registry_del(self, namespace: str, field: str) -> None:

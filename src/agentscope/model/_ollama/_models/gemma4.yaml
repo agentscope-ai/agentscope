@@ -1,0 +1,21 @@
+name: gemma4
+label: Gemma 4 E4B
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 131072
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192

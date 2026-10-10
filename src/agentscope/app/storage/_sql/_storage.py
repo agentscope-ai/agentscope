@@ -20,8 +20,10 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
 from .._base import StorageBase
+from .._model._session import _origin_kwargs
 from .._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
@@ -30,8 +32,10 @@ from .._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
-    SessionSource,
+    SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
 )
 from .._utils import _dump_with_secrets
@@ -39,6 +43,7 @@ from ._mappers import _from_record, _to_record
 from ._tables import (
     _Base,
     AgentRow,
+    ChannelRow,
     CredentialRow,
     KnowledgeBaseRow,
     KnowledgeDocumentRow,
@@ -47,10 +52,13 @@ from ._tables import (
     ScheduleRow,
     SessionRow,
     SkillRow,
+    SOPRow,
+    SOPRunRow,
     TeamRow,
 )
 from ....credential import CredentialBase
 from ....message import Msg
+from ....sop import SOPPhase, SOPRunState
 from ....state import AgentState
 
 if TYPE_CHECKING:
@@ -332,6 +340,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         record: Any,
         *,
         preserve_created_at: bool = True,
+        extra: dict[str, Any] | None = None,
     ) -> Any:
         """Atomically insert-or-update *record* via *row_cls*.
 
@@ -355,6 +364,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 original one on an update) is read back into the
                 returned record.  Set `False` on pure-create paths
                 where no prior row can exist, to skip that read.
+            extra (`dict[str, Any] | None`, optional):
+                Column values that are not record fields, so the
+                generic mapper cannot produce them (e.g. a channel's
+                ``platform_bot_id``).  Written and refreshed on
+                conflict alongside the promoted columns.
 
         Returns:
             `Any`:
@@ -369,11 +383,14 @@ class AsyncSQLAlchemyStorage(StorageBase):
         record.created_at = _to_naive_utc(record.created_at)
         new_row = _from_record(row_cls, record)
         indexed = tuple(row_cls.get_indexed_fields())
+        indexed += tuple(row_cls.get_index_paths())
         values = {
             col: getattr(new_row, col)
             for col in ("id", "created_at", "updated_at", "payload") + indexed
         }
+        values.update(extra or {})
         update_cols = ("updated_at", "payload") + indexed
+        update_cols += tuple(extra or ())
 
         async with self._session() as sess:
             await sess.execute(
@@ -633,7 +650,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
             else:  # invited — only the borrowed session goes
                 await self._delete_session_impl(
                     sess,
-                    member.owner_id,
+                    user_id,
                     member.agent_id,
                     member.session_id,
                 )
@@ -1038,6 +1055,158 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return ok
 
     # ------------------------------------------------------------------
+    # SOPs
+    # ------------------------------------------------------------------
+
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Persist a procedure (create or overwrite)."""
+        _ = user_id  # scoping is enforced by the caller
+        return await self._write_row(SOPRow, record)
+
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRow, sop_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, SOPRecord)
+
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """Return the user's procedures."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(SOPRow).where(SOPRow.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, SOPRecord) for r in rows]
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure, its runs and their sessions atomically."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            row = await sess.get(SOPRow, sop_id)
+            if row is None or row.user_id != user_id:
+                return False
+            runs = (
+                (
+                    await sess.execute(
+                        select(SOPRunRow).where(
+                            SOPRunRow.user_id == user_id,
+                            SOPRunRow.sop_id == sop_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in runs:
+                await self._delete_sop_run_impl(sess, user_id, run)
+            await sess.delete(row)
+            await sess.commit()
+        return True
+
+    async def _delete_sop_run_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        row: Any,
+    ) -> None:
+        """Delete a run row and the sessions it opened, on *sess*."""
+        record = _to_record(row, SOPRunRecord)
+        for session_id in record.sessions.values():
+            session_row = await sess.get(SessionRow, session_id)
+            if session_row is not None:
+                await self._delete_session_impl(
+                    sess,
+                    user_id,
+                    session_row.agent_id,
+                    session_id,
+                )
+        await sess.delete(row)
+
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Persist a run (create or overwrite)."""
+        _ = user_id  # scoping is enforced by the caller
+        return await self._write_row(SOPRunRow, record)
+
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRunRow, sop_run_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, SOPRunRecord)
+
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """Return the user's runs, newest first, filtered in the database."""
+        from sqlalchemy import select
+
+        stmt = select(SOPRunRow).where(SOPRunRow.user_id == user_id)
+        if sop_id is not None:
+            stmt = stmt.where(SOPRunRow.sop_id == sop_id)
+        if phase is not None:
+            stmt = stmt.where(SOPRunRow.phase == phase.value)
+        stmt = stmt.order_by(SOPRunRow.created_at.desc())
+
+        async with self._session() as sess:
+            rows = (await sess.execute(stmt)).scalars().all()
+        return [_to_record(r, SOPRunRecord) for r in rows]
+
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Read-modify-write on the payload; raises if absent."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRunRow, sop_run_id)
+            if row is None or row.user_id != user_id:
+                raise KeyError(f"SOP run {sop_run_id!r} not found.")
+            record = _to_record(row, SOPRunRecord)
+            record.state = state
+            if sessions is not None:
+                record.sessions = sessions
+            record.updated_at = _utcnow()
+            new_row = _from_record(SOPRunRow, record)
+            row.payload = new_row.payload
+            row.updated_at = new_row.updated_at
+            row.phase = new_row.phase
+            await sess.commit()
+
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run and its sessions in one transaction."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRunRow, sop_run_id)
+            if row is None or row.user_id != user_id:
+                return False
+            await self._delete_sop_run_impl(sess, user_id, row)
+            await sess.commit()
+        return True
+
+    # ------------------------------------------------------------------
     # Sessions
     # ------------------------------------------------------------------
 
@@ -1048,9 +1217,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
-        source: SessionSource = SessionSource.USER,
+        origin: SessionOrigin | None = None,
+        source: str | None = None,
         source_schedule_id: str | None = None,
         source_chat_id: str | None = None,
+        source_chat_name: str | None = None,
         source_channel_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session — same shape as the Redis backend."""
@@ -1070,10 +1241,14 @@ class AsyncSQLAlchemyStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
-            source=source,
-            source_schedule_id=source_schedule_id,
-            source_chat_id=source_chat_id,
-            source_channel_id=source_channel_id,
+            **_origin_kwargs(
+                origin,
+                source,
+                source_schedule_id,
+                source_channel_id,
+                source_chat_id,
+                source_chat_name,
+            ),
             state=state if state is not None else AgentState(),
             **new_id_kwargs,
         )
@@ -1219,10 +1394,12 @@ class AsyncSQLAlchemyStorage(StorageBase):
     ) -> list[SessionRecord]:
         """Sessions derived from *channel_id* — newest first.
 
-        ``source_channel_id`` lives in the JSON payload (not a promoted
-        column), so it is matched inside the payload.
+        The channel id lives in the JSON payload rather than a column,
+        and in two shapes: nested under ``source`` since that became a
+        tagged union, flat for rows written before. Both are matched, so
+        no backfill is needed.
         """
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
 
         async with self._session() as sess:
             rows = (
@@ -1231,8 +1408,16 @@ class AsyncSQLAlchemyStorage(StorageBase):
                         select(SessionRow)
                         .where(
                             SessionRow.user_id == user_id,
-                            SessionRow.payload["source_channel_id"].as_string()
-                            == channel_id,
+                            or_(
+                                SessionRow.payload["origin"][
+                                    "channel_id"
+                                ].as_string()
+                                == channel_id,
+                                SessionRow.payload[
+                                    "source_channel_id"
+                                ].as_string()
+                                == channel_id,
+                            ),
                         )
                         .order_by(SessionRow.created_at.desc()),
                     )
@@ -1313,6 +1498,177 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return [_to_record(r, ScheduleRecord) for r in rows]
 
     # ------------------------------------------------------------------
+    # Channels
+    #
+    # ``platform_bot_id`` is a promoted column rather than a record
+    # field, so the bot-uniqueness index the Redis backend keeps as a
+    # separate key is just a UNIQUE constraint here.
+    # ------------------------------------------------------------------
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,
+    ) -> str:
+        """Persist a channel record and its bot-uniqueness column.
+
+        Args:
+            record (`ChannelRecord`):
+                The channel record to store.
+            platform_bot_id (`str`):
+                The platform-side bot identifier, extracted from the
+                credentials by the caller. Globally unique: a bot drives
+                at most one channel.
+
+        Returns:
+            `str`:
+                The id of the stored record.
+
+        Raises:
+            `ValueError`:
+                If another channel already drives this bot. Checked here
+                rather than left to the UNIQUE constraint, because
+                MySQL's ``ON DUPLICATE KEY UPDATE`` fires on *any*
+                unique-key conflict — the write would silently overwrite
+                the holder instead of failing, and the same call would
+                behave differently per dialect.
+
+                Neither this check nor `ChannelService.create`'s is
+                atomic with the write, so two creates racing for one bot
+                can both pass. The constraint then decides, and how it
+                surfaces depends on the dialect: Postgres and SQLite
+                raise `IntegrityError`, while on MySQL the duplicate-key
+                update lands on the holder's row and the read-back of
+                the new id then raises `NoResultFound`, rolling the
+                transaction back. Either way nothing is committed.
+        """
+        holder = await self.get_channel_id_by_platform_bot_id(
+            platform_bot_id,
+        )
+        if holder is not None and holder != record.id:
+            raise ValueError(
+                f"Bot {platform_bot_id!r} already drives channel "
+                f"{holder!r}.",
+            )
+        await self._write_row(
+            ChannelRow,
+            record,
+            extra={"platform_bot_id": platform_bot_id},
+        )
+        return record.id
+
+    async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Fetch a channel record by its global id.
+
+        Args:
+            channel_id (`str`):
+                The channel id.
+
+        Returns:
+            `ChannelRecord | None`:
+                The record, or ``None`` if not found.
+        """
+        async with self._session() as sess:
+            row = await sess.get(ChannelRow, channel_id)
+        return None if row is None else _to_record(row, ChannelRecord)
+
+    async def list_channels(self, user_id: str) -> list[ChannelRecord]:
+        """Return all channel records owned by *user_id*.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[ChannelRecord]`:
+                Every channel record for that user.
+        """
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(ChannelRow).where(
+                            ChannelRow.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, ChannelRecord) for r in rows]
+
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Every channel across every user.
+
+        Returns:
+            `list[ChannelRecord]`:
+                All channel records in the store, which reconcile reads
+                to decide what this node should be running.
+        """
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (await sess.execute(select(ChannelRow))).scalars().all()
+        return [_to_record(r, ChannelRecord) for r in rows]
+
+    async def delete_channel(
+        self,
+        channel_id: str,
+        platform_bot_id: str,
+    ) -> bool:
+        """Delete a channel record.
+
+        Args:
+            channel_id (`str`):
+                The id of the channel to delete.
+            platform_bot_id (`str`):
+                Unused, and accepted only for parity with the Redis
+                backend, which keeps the bot index in a separate key.
+                Here the UNIQUE column goes with the row.
+
+        Returns:
+            `bool`:
+                ``True`` if a record was deleted, ``False`` if none
+                matched.
+        """
+        from sqlalchemy import delete
+
+        _ = platform_bot_id
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(ChannelRow).where(ChannelRow.id == channel_id),
+            )
+            await sess.commit()
+        return result.rowcount > 0
+
+    async def get_channel_id_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> str | None:
+        """Return the channel bound to a platform bot, if any.
+
+        Args:
+            platform_bot_id (`str`):
+                The platform-side bot identifier.
+
+        Returns:
+            `str | None`:
+                The bound channel id, or ``None``.
+        """
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            return (
+                await sess.execute(
+                    select(ChannelRow.id).where(
+                        ChannelRow.platform_bot_id == platform_bot_id,
+                    ),
+                )
+            ).scalar_one_or_none()
+
+    # ------------------------------------------------------------------
     # Messages
     # ------------------------------------------------------------------
 
@@ -1322,14 +1678,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         session_id: str,
         msg: Msg,
     ) -> None:
-        """Insert-or-update by ``(session_id, msg_id)``.
-
-        Semantics mirror :meth:`RedisStorage.upsert_message` closely
-        enough for every caller in the codebase — the Redis version
-        only replaces when the *tail* message matches; ours replaces
-        on any matching id.  The looser rule is safe because callers
-        never reuse a message id across turns.
-        """
+        """Insert-or-update by ``(session_id, msg_id)``."""
         _ = user_id  # scoping enforced by caller
         now = _utcnow()
         payload = msg.model_dump(mode="json")
@@ -1353,6 +1702,26 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 ),
             )
             await sess.commit()
+
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete one message by ``(session_id, message_id)``."""
+        _ = user_id
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(MessageRow).where(
+                    MessageRow.session_id == session_id,
+                    MessageRow.msg_id == message_id,
+                ),
+            )
+            await sess.commit()
+        return bool(result.rowcount)
 
     async def get_message(
         self,

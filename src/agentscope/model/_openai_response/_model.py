@@ -4,6 +4,7 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, List, TYPE_CHECKING, Type
 
+import openai
 from pydantic import BaseModel, Field
 
 from ..._utils._common import _generate_id
@@ -26,6 +27,27 @@ else:
 
 # kwargs accepted by Chat Completions but NOT by the Responses API.
 _RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
+
+
+def _dump_reasoning_item(item: Any) -> dict[str, Any]:
+    """Serialize a Responses API reasoning item for history replay.
+
+    ``exclude_none=True`` avoids emitting optional response-only fields as
+    explicit ``null`` values, which some Responses-compatible APIs reject
+    when the item is replayed as input.
+
+    Args:
+        item (`Any`):
+            The reasoning item returned by the OpenAI SDK.
+
+    Returns:
+        `dict[str, Any]`:
+            The JSON-safe item dictionary.
+    """
+    return item.model_dump(
+        mode="json",
+        exclude_none=True,
+    )
 
 
 class OpenAIResponseModel(ChatModelBase):
@@ -132,8 +154,6 @@ class OpenAIResponseModel(ChatModelBase):
         self.formatter = formatter or OpenAIResponseFormatter()
         self.client_kwargs = client_kwargs or {}
 
-        import openai
-
         self.client: openai.AsyncClient = openai.AsyncClient(
             api_key=self.credential.api_key.get_secret_value(),
             organization=self.credential.organization,
@@ -143,8 +163,6 @@ class OpenAIResponseModel(ChatModelBase):
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
-        import openai
-
         return (
             openai.APIConnectionError,
             openai.APITimeoutError,
@@ -156,8 +174,6 @@ class OpenAIResponseModel(ChatModelBase):
     def _get_structured_output_fallback_exceptions(
         cls,
     ) -> tuple[Type[Exception], ...]:
-        import openai
-
         return (openai.BadRequestError,)
 
     async def _call_api(
@@ -265,8 +281,8 @@ class OpenAIResponseModel(ChatModelBase):
         """
         usage: ChatUsage | None = None
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
-        thinking_id: str = _generate_id()
+        text_block_ids: dict[tuple[str, int], str] = {}
+        reasoning_block_ids: dict[str, dict[tuple[str, int], str]] = {}
         # Mapping from Responses API item id (fc_xxx) to (call_id, name)
         # so subsequent argument deltas can be routed to the right tool
         # call block.
@@ -275,24 +291,61 @@ class OpenAIResponseModel(ChatModelBase):
         async with response as stream:
             async for event in stream:
                 event_type = event.type
+                # The SDK doesn't raise on these events, so surface them here
+                if event_type in ("response.failed", "error"):
+                    error = (
+                        event.response.error
+                        if event_type == "response.failed"
+                        else event
+                    )
+                    raise openai.APIError(
+                        message=error.message if error else "Response failed",
+                        request=stream.response.request,
+                        body=error.model_dump() if error else None,
+                    )
+
                 delta_res = ChatResponse(
                     content=[],
                     is_last=False,
                     id=response_id,
                 )
 
-                if event_type == "response.reasoning_summary_text.delta":
-                    # Reasoning summary text is NOT emitted by all models.
-                    # As of 2026-05, o1 and o4-mini do not stream reasoning
-                    # summary deltas. This handler exists for forward
-                    # compatibility with models that do expose it.
+                if event_type in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_text.delta",
+                }:
+                    # Summary and raw reasoning are distinct representations
+                    # and can both contain multiple parts for the same item.
+                    part_index = (
+                        event.summary_index
+                        if event_type
+                        == "response.reasoning_summary_text.delta"
+                        else event.content_index
+                    )
                     delta_res.append_thinking(
                         event.delta,
-                        block_id=thinking_id,
+                        block_id=reasoning_block_ids.setdefault(
+                            event.item_id,
+                            {},
+                        ).setdefault(
+                            (event_type, part_index),
+                            _generate_id(),
+                        ),
                     )
 
-                elif event_type == "response.output_text.delta":
-                    delta_res.append_text(event.delta, block_id=text_id)
+                elif event_type in (
+                    "response.output_text.delta",
+                    "response.refusal.delta",
+                ):
+                    # Keep message content parts separate while accumulating
+                    # fragmented deltas into their original ordered blocks.
+                    delta_res.append_text(
+                        event.delta,
+                        block_id=text_block_ids.setdefault(
+                            (event.item_id, event.content_index),
+                            _generate_id(),
+                        ),
+                    )
 
                 elif event_type == "response.output_item.added":
                     item = event.item
@@ -353,11 +406,22 @@ class OpenAIResponseModel(ChatModelBase):
                                 None,
                             )
                             if reasoning_item_id:
-                                delta_res.append_thinking(
-                                    thinking="",
-                                    block_id=thinking_id,
-                                    reasoning_item_id=reasoning_item_id,
+                                block_ids = reasoning_block_ids.setdefault(
+                                    reasoning_item_id,
+                                    {},
                                 )
+                                if not block_ids:
+                                    block_ids[("metadata", 0)] = _generate_id()
+                                reasoning_item_raw = _dump_reasoning_item(
+                                    output_item,
+                                )
+                                for block_id in block_ids.values():
+                                    delta_res.append_thinking(
+                                        thinking="",
+                                        block_id=block_id,
+                                        reasoning_item_id=reasoning_item_id,
+                                        reasoning_item_raw=reasoning_item_raw,
+                                    )
 
                 if delta_res.content or usage:
                     delta_res.usage = usage
@@ -387,19 +451,33 @@ class OpenAIResponseModel(ChatModelBase):
 
             if item_type == "reasoning":
                 reasoning_item_id = getattr(item, "id", None)
-                combined_summary = " ".join(
-                    getattr(s, "text", "")
-                    for s in getattr(item, "summary", [])
-                    if getattr(s, "text", "")
-                )
+                reasoning_item_raw = _dump_reasoning_item(item)
+                # Serialize once to handle both SDK content objects and
+                # provider-specific content dictionaries uniformly. Keep
+                # summary and raw reasoning in separate thinking blocks.
+                summary_parts = [
+                    part["text"]
+                    for part in reasoning_item_raw.get("summary", []) or []
+                    if part.get("text")
+                ]
+                reasoning_parts = [
+                    part["text"]
+                    for part in reasoning_item_raw.get("content", []) or []
+                    if part.get("type") == "reasoning_text"
+                    and part.get("text")
+                ]
+                thinking_texts = summary_parts + reasoning_parts
                 # Keep even empty-summary reasoning items: the API requires
                 # reasoning_item_id to be echoed back in multi-turn history.
-                if combined_summary or reasoning_item_id:
+                if not thinking_texts and reasoning_item_id:
+                    thinking_texts = [""]
+                for thinking in thinking_texts:
                     content_blocks.append(
                         ThinkingBlock(
                             type="thinking",
-                            thinking=combined_summary,
+                            thinking=thinking,
                             reasoning_item_id=reasoning_item_id,
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
                     )
 
@@ -408,6 +486,10 @@ class OpenAIResponseModel(ChatModelBase):
                     if getattr(part, "type", None) == "output_text":
                         content_blocks.append(
                             TextBlock(type="text", text=part.text),
+                        )
+                    elif getattr(part, "type", None) == "refusal":
+                        content_blocks.append(
+                            TextBlock(type="text", text=part.refusal),
                         )
 
             elif item_type == "function_call":

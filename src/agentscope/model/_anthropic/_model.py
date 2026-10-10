@@ -184,6 +184,36 @@ class AnthropicChatModel(ChatModelBase):
             return self.parameters.thinking_mode
         return "enabled" if self.parameters.thinking_enable else None
 
+    def _build_thinking_config(
+        self,
+        max_tokens: int,
+    ) -> tuple[dict[str, Any] | None, int]:
+        """Build the provider-specific thinking configuration."""
+        mode = self._thinking_mode()
+        if mode is None:
+            return None, max_tokens
+
+        thinking: dict[str, Any] = {"type": mode}
+        if mode == "enabled":
+            # Anthropic requires max_tokens > budget_tokens strictly.
+            budget = self.parameters.thinking_budget or (max_tokens // 2)
+            if budget >= max_tokens:
+                # Auto-expand max_tokens to satisfy the inequality.
+                max_tokens = budget + 1024
+            thinking["budget_tokens"] = budget
+
+        # ``display`` is invalid alongside ``type: "disabled"``.
+        if mode != "disabled" and self.parameters.thinking_display:
+            thinking["display"] = self.parameters.thinking_display
+
+        return thinking, max_tokens
+
+    def _build_output_config(self) -> dict[str, Any] | None:
+        """Build the provider-specific output configuration."""
+        if self.parameters.reasoning_effort:
+            return {"effort": self.parameters.reasoning_effort}
+        return None
+
     async def _call_api(
         self,
         model_name: str,
@@ -226,27 +256,20 @@ class AnthropicChatModel(ChatModelBase):
             **generate_kwargs,
         }
 
-        mode = self._thinking_mode()
-        if mode is not None and "thinking" not in kwargs:
-            thinking: dict[str, Any] = {"type": mode}
-            if mode == "enabled":
-                # Anthropic requires max_tokens > budget_tokens strictly.
-                budget = self.parameters.thinking_budget or (max_tokens // 2)
-                if budget >= max_tokens:
-                    # Auto-expand max_tokens to satisfy the inequality.
-                    max_tokens = budget + 1024
-                    kwargs["max_tokens"] = max_tokens
-                thinking["budget_tokens"] = budget
-            # ``display`` is invalid alongside ``type: "disabled"``.
-            if mode != "disabled" and self.parameters.thinking_display:
-                thinking["display"] = self.parameters.thinking_display
-            kwargs["thinking"] = thinking
+        if "thinking" not in kwargs:
+            thinking, expanded_max_tokens = self._build_thinking_config(
+                max_tokens,
+            )
+            if thinking is not None:
+                kwargs["thinking"] = thinking
+            if expanded_max_tokens != max_tokens:
+                kwargs["max_tokens"] = expanded_max_tokens
 
         # Effort travels inside ``output_config``, not as a top-level field.
-        if self.parameters.reasoning_effort and "output_config" not in kwargs:
-            kwargs["output_config"] = {
-                "effort": self.parameters.reasoning_effort,
-            }
+        if "output_config" not in kwargs:
+            output_config = self._build_output_config()
+            if output_config is not None:
+                kwargs["output_config"] = output_config
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
         if fmt_tools:
@@ -412,10 +435,12 @@ class AnthropicChatModel(ChatModelBase):
 
         usage = None
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
-        thinking_id: str = _generate_id()
+        # Keep text and thinking blocks distinct, including their signatures.
+        block_id_mapping: dict[int, str] = {}
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        # The indexes of the tool calls that received argument text
+        tool_call_with_input: set[int] = set()
 
         async with response as stream:
             async for event in stream:
@@ -453,7 +478,10 @@ class AnthropicChatModel(ChatModelBase):
                         )
 
                 elif event.type == "content_block_start":
-                    if event.content_block.type == "tool_use":
+                    if event.content_block.type in ("text", "thinking"):
+                        block_id_mapping[event.index] = _generate_id()
+
+                    elif event.content_block.type == "tool_use":
                         tool_block = event.content_block
                         # Record the id and name
                         tool_call_mapping[event.index] = (
@@ -484,13 +512,16 @@ class AnthropicChatModel(ChatModelBase):
 
                     # Text block
                     if delta.type == "text_delta":
-                        delta_res.append_text(delta.text, block_id=text_id)
+                        delta_res.append_text(
+                            delta.text,
+                            block_id=block_id_mapping[block_index],
+                        )
 
                     # Thinking block
                     elif delta.type == "thinking_delta":
                         delta_res.append_thinking(
                             delta.thinking,
-                            block_id=thinking_id,
+                            block_id=block_id_mapping[block_index],
                         )
 
                     # Special handling for Anthropic API that requires
@@ -498,7 +529,7 @@ class AnthropicChatModel(ChatModelBase):
                     elif delta.type == "signature_delta":
                         delta_res.append_thinking(
                             "",
-                            block_id=thinking_id,
+                            block_id=block_id_mapping[block_index],
                             signature=delta.signature,
                         )
 
@@ -508,15 +539,39 @@ class AnthropicChatModel(ChatModelBase):
                         and block_index in tool_call_mapping
                     ):
                         block_id, name = tool_call_mapping[block_index]
+                        if delta.partial_json:
+                            tool_call_with_input.add(block_index)
                         delta_res.append_tool_call(
                             block_id=block_id,
                             name=name,
                             input=delta.partial_json or "",
                         )
 
+                # A call without arguments streams no JSON text, so close it
+                # with the empty object the non-streaming response carries
+                elif (
+                    event.type == "content_block_stop"
+                    and event.index in tool_call_mapping
+                    and event.index not in tool_call_with_input
+                ):
+                    block_id, name = tool_call_mapping[event.index]
+                    delta_res.append_tool_call(
+                        block_id=block_id,
+                        name=name,
+                        input="{}",
+                    )
+
                 elif event.type == "message_delta":
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens
+                        # ``usage`` was stamped when ``message_start``
+                        # arrived, i.e. at time-to-first-token. Refresh it
+                        # here so ``time`` spans the whole generation, as
+                        # every other provider (and this model's
+                        # non-streaming path) already does.
+                        usage.time = (
+                            datetime.now() - start_datetime
+                        ).total_seconds()
 
                 if delta_res.content:
                     delta_res.usage = usage

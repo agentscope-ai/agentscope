@@ -126,6 +126,18 @@ ALL_PROVIDERS: list[Provider] = [
         description="Anthropic Claude models",
     ),
     Provider(
+        name="minimax",
+        env_var="MINIMAX_API_KEY",
+        file_prefix="minimax",
+        supported_tests=[
+            "call",
+            "multiagent",
+            "multimodal",
+            "multiagent_multimodal",
+        ],
+        description="MiniMax M-series models",
+    ),
+    Provider(
         name="dashscope",
         env_var="DASHSCOPE_API_KEY",
         file_prefix="dashscope",
@@ -167,6 +179,13 @@ ALL_PROVIDERS: list[Provider] = [
             "multiagent_multimodal",
         ],
         description="Moonshot AI (Kimi) models",
+    ),
+    Provider(
+        name="volcengine",
+        env_var="VOLCENGINE_API_KEY",
+        file_prefix="volcengine",
+        supported_tests=["call", "multiagent"],
+        description="Volcengine Ark / Doubao models",
     ),
     Provider(
         name="xai",

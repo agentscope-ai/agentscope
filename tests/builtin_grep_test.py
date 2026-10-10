@@ -2,10 +2,12 @@
 """Grep tool test case."""
 import os
 import tempfile
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.message import ToolResultState
-from agentscope.tool import Grep
+from agentscope.tool import ExecResult, Grep, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -94,6 +96,65 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test.txt", content)
 
+    async def test_dash_prefixed_paths(self) -> None:
+        """Relative paths must not be interpreted as ripgrep options."""
+        backend = LocalBackend()
+        grep = Grep(backend=backend)
+        exec_shell = backend.exec_shell
+
+        async def exec_in_temp(
+            command: list[str],
+            **kwargs: Any,
+        ) -> ExecResult:
+            return await exec_shell(command, cwd=self.temp_dir, **kwargs)
+
+        for name in ("-notes.txt", "--help", "-folder"):
+            target = os.path.join(self.temp_dir, name)
+            if name == "-folder":
+                os.makedirs(target)
+                target = os.path.join(target, "notes.txt")
+            with open(target, "w", encoding="utf-8") as stream:
+                stream.write("-needle\n")
+
+            for pattern in ("needle", "-needle"):
+                with self.subTest(path=name, pattern=pattern):
+                    with patch.object(
+                        backend,
+                        "exec_shell",
+                        side_effect=exec_in_temp,
+                    ):
+                        chunk = await grep(
+                            pattern=pattern,
+                            path=name,
+                            output_mode="content",
+                            n=False,
+                        )
+                    expected_text = "-needle"
+                    if name == "-folder":
+                        expected_text = (
+                            os.path.join("-folder", "notes.txt") + ":-needle"
+                        )
+                    self.assertEqual(
+                        chunk.model_dump(
+                            exclude={
+                                "id": True,
+                                "content": {"__all__": {"id", "created_at"}},
+                            },
+                        ),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": expected_text,
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": ToolResultState.SUCCESS,
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    )
+
     async def test_content_mode(self) -> None:
         """Test grep with content output mode."""
         chunk = await self.grep_tool(
@@ -108,6 +169,31 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Should show matching lines
         self.assertIn("def hello", content)
         self.assertIn("def goodbye", content)
+
+    async def test_pagination_is_stable(self) -> None:
+        """Pages taken with offset/head_limit follow the path order."""
+        pages = []
+        for offset in range(3):
+            chunk = await self.grep_tool(
+                pattern="def",
+                path=self.temp_dir,
+                output_mode="files_with_matches",
+                head_limit=1,
+                offset=offset,
+            )
+            pages.append(chunk.content[0].text)
+
+        self.assertListEqual(
+            pages,
+            [
+                os.path.join(self.temp_dir, "subdir", "nested.py")
+                + "\n\n[Showing results with pagination = limit: 1]",
+                os.path.join(self.temp_dir, "test1.py")
+                + "\n\n[Showing results with pagination = limit: 1, "
+                "offset: 1]",
+                os.path.join(self.temp_dir, "test2.py"),
+            ],
+        )
 
     async def test_case_insensitive(self) -> None:
         """Test case-insensitive search."""

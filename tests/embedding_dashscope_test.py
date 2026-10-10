@@ -2,6 +2,7 @@
 # pylint: disable=protected-access,unused-argument
 """Unit tests for DashScopeEmbeddingModel."""
 from dataclasses import asdict
+from threading import get_ident
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -61,6 +62,28 @@ def _mock_resp(embeddings: list[list[float]]) -> EmbeddingResponse:
 
 class DashScopeListModelsTest(IsolatedAsyncioTestCase):
     """Test list_models for DashScope."""
+
+    def test_multimodal_capability(self) -> None:
+        """Instances expose the multimodal capability of their model cards."""
+        self.assertDictEqual(
+            {
+                card.name: DashScopeEmbeddingModel(
+                    credential=_cred(),
+                    model=card.name,
+                    dimensions=card.dimensions,
+                ).supports_multimodal
+                for card in DashScopeEmbeddingModel.list_models()
+            },
+            {
+                "text-embedding-v4": False,
+                "tongyi-embedding-vision-flash": True,
+                "qwen3-vl-embedding": True,
+                "qwen2.5-vl-embedding": True,
+                "text-embedding-v3": False,
+                "multimodal-embedding-v1": True,
+                "tongyi-embedding-vision-plus": True,
+            },
+        )
 
     async def test_list_models(self) -> None:
         """Should list 7 models (text + multimodal)."""
@@ -136,6 +159,26 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
                 "source": "api",
             },
         )
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_sdk_thread(self, mock_api: Any) -> None:
+        """The SDK executes on a worker instead of the event loop thread."""
+        loop_thread = get_ident()
+        on_loop_thread: list[bool] = []
+
+        def record_thread(**_kwargs: Any) -> MagicMock:
+            """Capture the thread that executes the SDK request."""
+            on_loop_thread.append(get_ident() == loop_thread)
+            return _text_resp([[1.0]])
+
+        mock_api.side_effect = record_thread
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="text-embedding-v4",
+            dimensions=1,
+        )
+        await model(["hello"])
+        self.assertListEqual(on_loop_thread, [False])
 
     @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_text_rejects_datablock(self, mock_api: Any) -> None:

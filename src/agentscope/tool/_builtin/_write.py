@@ -2,7 +2,6 @@
 """The write tool in agentscope."""
 import difflib
 import fnmatch
-from pathlib import Path
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -20,7 +19,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Write(ToolBase):
@@ -254,7 +253,13 @@ Usage:
             await self._backend.file_exists(file_path)
             and _agent_state is not None
         ):
-            cache = await _agent_state.tool_context.get_cache(file_path)
+            # Take the mtime from the backend that reads the file, so the
+            # cache also works for sandbox-only paths.
+            mtime = await self._backend.stat_mtime(file_path)
+            cache = await _agent_state.tool_context.get_cache(
+                file_path,
+                mtime=mtime,
+            )
             if cache is None:
                 return ToolChunk(
                     content=[
@@ -286,20 +291,22 @@ Usage:
                 # render a best-effort "add" diff in the UI.
                 previous_content = ""
 
-        # Create parent directories if they don't exist
-        parent_dir = Path(file_path).parent
-        await self._backend.exec_shell(
-            ["mkdir", "-p", str(parent_dir)],
-        )
-
         # Write content to file (backend handles parent dir creation)
         await self._backend.write_file(
             file_path,
             content.encode("utf-8"),
         )
 
-        # Count lines in content
-        line_count = len(content.split("\n"))
+        # Refresh the read cache so a later Edit doesn't require a re-read
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(content).splitlines(keepends=True),
+                mtime=await self._backend.stat_mtime(file_path),
+            )
+
+        # Count lines the way the ``Read`` tool numbers them
+        line_count = len(content.splitlines())
 
         # Build the unified diff between previous and new content. When the
         # file is brand new, ``unified_diff`` over an empty old side naturally

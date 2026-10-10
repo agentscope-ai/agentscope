@@ -28,6 +28,11 @@ scripts/model_examples/
 ├── anthropic_multimodal.py
 ├── anthropic_multiagent_multimodal.py
 │
+├── minimax_call.py                 # MiniMax M-series
+├── minimax_multiagent.py
+├── minimax_multimodal.py
+├── minimax_multiagent_multimodal.py
+│
 ├── dashscope_call.py               # Alibaba DashScope / Qwen
 ├── dashscope_multiagent.py
 ├── dashscope_multimodal.py
@@ -45,6 +50,9 @@ scripts/model_examples/
 ├── moonshot_multiagent.py
 ├── moonshot_multimodal.py
 ├── moonshot_multiagent_multimodal.py
+│
+├── volcengine_call.py               # Volcengine Ark / Doubao
+├── volcengine_multiagent.py
 │
 ├── xai_call.py                     # xAI Grok
 ├── xai_multiagent.py
@@ -77,10 +85,12 @@ scripts/model_examples/
 | `openai_chat` | `OPENAI_API_KEY` | Chat Completions API – gpt-4.1, etc. |
 | `openai_response` | `OPENAI_API_KEY` | Responses API – o1, o3, o4-mini, etc. |
 | `anthropic` | `ANTHROPIC_API_KEY` | Claude models, supports extended thinking |
+| `minimax` | `MINIMAX_API_KEY` | MiniMax M-series via the Anthropic-compatible API |
 | `dashscope` | `DASHSCOPE_API_KEY` | Qwen series, supports `thinking_enable` |
 | `deepseek` | `DEEPSEEK_API_KEY` | Supports only `call` / `multiagent` (no multimodal) |
 | `gemini` | `GEMINI_API_KEY` | Gemini models, supports `thinking_budget` |
 | `moonshot` | `MOONSHOT_API_KEY` | Moonshot AI kimi-k2.6, etc. |
+| `volcengine` | `VOLCENGINE_API_KEY` | Volcengine Ark / Doubao models |
 | `xai` | `XAI_API_KEY` | Grok models, supports `reasoning_effort` |
 | `ollama` | *(none – auto-detect)* | Local server, default `http://localhost:11434` |
 
@@ -95,10 +105,12 @@ Set the environment variables for the providers you want to test:
 ```bash
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
+export MINIMAX_API_KEY="sk-..."
 export DASHSCOPE_API_KEY="sk-..."
 export DEEPSEEK_API_KEY="sk-..."
 export GEMINI_API_KEY="AIza..."
 export MOONSHOT_API_KEY="sk-..."
+export VOLCENGINE_API_KEY="..."
 export XAI_API_KEY="xai-..."
 ```
 
@@ -215,7 +227,8 @@ Each script typically defines two or more async functions:
 - `example_structured_output()` – force a Pydantic-validated JSON output (in `_call.py` variants, uses a thinking-enabled model)
 - `example_image_url()` / `example_image_local_path()` / `example_image_base64()` – image + text input (in `_multimodal.py` variants)
 - `example_audio()` – audio input (e.g. `openai_chat_multimodal.py`, `dashscope_multimodal.py`)
-- `example_video()` – video input (e.g. `dashscope_multimodal.py`)
+- `example_video()` / `example_video_url()` – video input (e.g.
+  `dashscope_multimodal.py`, `minimax_multimodal.py`)
 
 ---
 
@@ -228,4 +241,3 @@ Ollama runs locally and requires no API key, but you must:
 3. If the service runs on a non-default address, set: `export OLLAMA_HOST=http://your-host:11434`
 
 `run_tests.py` pings the Ollama host before running any test. If the server is unreachable, all Ollama tests are automatically skipped.
-

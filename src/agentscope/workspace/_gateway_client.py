@@ -182,6 +182,7 @@ class GatewayMCPClient(MCPClient):
       is never called — no stdio context manager is built).
     * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
     * ``close`` deregisters via ``DELETE /mcps/{name}``.
+    * ``set_runtime_headers`` updates the registered live client.
     * ``list_raw_tools`` / ``get_tool`` fetch and wrap upstream tools.
     """
 
@@ -252,6 +253,10 @@ class GatewayMCPClient(MCPClient):
             )
         assert self._gateway is not None
         body = self.model_dump(mode="json")
+        if self._runtime_headers:
+            # model_dump cannot carry them, and the gateway connects to
+            # the MCP server inside this request.
+            body["runtime_headers"] = self._runtime_headers
         status, resp_body = await self._gateway.exec_request(
             "POST",
             "/mcps",
@@ -301,6 +306,58 @@ class GatewayMCPClient(MCPClient):
             if not ignore_errors:
                 raise
         self._is_connected = False
+
+    async def set_runtime_headers(
+        self,
+        headers: dict[str, str],
+    ) -> None:
+        """Replace headers on the registered gateway-side MCP client.
+
+        Unlike a local client, the proxy must already be connected so that
+        the live client exists in the workspace. :meth:`connect` sends them
+        with the registration, so they survive a reconnect.
+
+        Args:
+            headers (`dict[str, str]`):
+                The complete runtime header map. An empty dict clears it.
+
+        Raises:
+            `ValueError`:
+                The gateway rejects an invalid or unsupported header update.
+            `RuntimeError`:
+                The proxy is not connected or the gateway request fails.
+        """
+        if not self._is_connected:
+            raise RuntimeError(
+                f"MCP {self.name!r} is not connected. Call connect() first.",
+            )
+        assert self._gateway is not None
+        status, body = await self._gateway.exec_request(
+            "PUT",
+            f"/mcps/{self.name}/runtime-headers",
+            params={
+                "agent_id": self._agent_id,
+                "session_id": self._session_id,
+            },
+            body={"headers": headers},
+        )
+        if status == 404:
+            raise RuntimeError(
+                f"gateway has no runtime-headers route, or no live client "
+                f"for MCP {self.name!r}: the workspace image may predate "
+                f"the endpoint, or the gateway has restarted",
+            )
+        if status == 400:
+            raise ValueError(
+                f"gateway rejected runtime headers for "
+                f"MCP {self.name!r}: {_safe_detail(status, body)}",
+            )
+        if status >= 400:
+            raise RuntimeError(
+                f"gateway failed to update runtime headers for "
+                f"MCP {self.name!r}: {_safe_detail(status, body)}",
+            )
+        self._runtime_headers = dict(headers)
 
     # ── tool discovery ────────────────────────────────────────────
 

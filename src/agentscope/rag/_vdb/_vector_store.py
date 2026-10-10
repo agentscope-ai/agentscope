@@ -60,8 +60,10 @@ class VectorSearchResult(BaseModel):
     """
 
     score: float
-    """Similarity score.  Higher = more similar for cosine /
-    dot-product; lower = more similar for L2 distance."""
+    """Relevance score, always higher-is-better.  Backends whose
+    metric is a distance (lower-is-better) negate it before returning,
+    so the value is comparable within one store but not across stores
+    using different metrics."""
 
     document_id: str
     """The ID of the source document the matched chunk belongs to —
@@ -253,7 +255,10 @@ class VectorStoreBase(ABC):
 
         Returns:
             `list[VectorSearchResult]`:
-                Results ordered by descending similarity score.
+                Results ordered by descending
+                :attr:`VectorSearchResult.score`.  Implementations must
+                normalize a distance metric into that higher-is-better
+                score, e.g. by negating it.
         """
 
     # ------------------------------------------------------------------

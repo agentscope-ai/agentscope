@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 """File cache test case for Read/Write/Edit tools."""
+import asyncio
 import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
-from agentscope.state import AgentState
+from agentscope.state import AgentState, ToolContext
+from agentscope.state._state import ReadCacheEntry
 from agentscope.tool import Read, Write, Edit
 
 
-class FileCacheTest(IsolatedAsyncioTestCase):
+class FileCacheTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Test file cache functionality for Read/Write/Edit tools."""
 
     async def asyncSetUp(self) -> None:
@@ -245,6 +250,31 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         self.assertIn(files[2], cached_paths)
         self.assertIn(files[3], cached_paths)
 
+    async def test_oversized_file_is_not_cached(self) -> None:
+        """An oversized entry must not exceed the cache byte limit."""
+        context = ToolContext()
+        context.max_cache_bytes = 1.0
+
+        await context.cache_file(
+            file_path="small.txt",
+            lines=["a" * 512],
+            mtime=1.0,
+        )
+        await context.cache_file(
+            file_path="oversized.txt",
+            lines=["b" * 2048],
+            mtime=1.0,
+        )
+
+        self.assertEqual(
+            [entry.file_path for entry in context.read_file_cache],
+            ["small.txt"],
+        )
+        self.assertLessEqual(
+            sum(entry.bytes for entry in context.read_file_cache),
+            context.max_cache_bytes,
+        )
+
     async def test_cache_hit_refreshes_lru_recency(self) -> None:
         """Test cache hits keep recently used files from being evicted."""
         self.state.tool_context.max_cache_files = 3
@@ -279,6 +309,81 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         self.assertNotIn(files[1], cached_paths)
         self.assertIn(files[2], cached_paths)
         self.assertIn(files[3], cached_paths)
+
+    async def test_concurrent_cache_hits_preserve_lru_entries(self) -> None:
+        """Concurrent hits must not duplicate or evict cache entries."""
+        context = ToolContext(
+            read_file_cache=[
+                {
+                    "lines": ["a"],
+                    "updated_at": 1.0,
+                    "bytes": 1.0,
+                    "file_path": "a",
+                },
+                {
+                    "lines": ["b"],
+                    "updated_at": 1.0,
+                    "bytes": 1.0,
+                    "file_path": "b",
+                },
+            ],
+        )
+        both_started = asyncio.Event()
+        calls = 0
+
+        async def synchronized_getmtime(_: str) -> float:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                both_started.set()
+            await both_started.wait()
+            return 1.0
+
+        with patch(
+            "agentscope.state._state.aiofiles.os.path.getmtime",
+            side_effect=synchronized_getmtime,
+        ):
+            results = list(
+                await asyncio.gather(
+                    context.get_cache("a"),
+                    context.get_cache("a"),
+                ),
+            )
+
+        self.assertListEqual(
+            results,
+            [
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
+        )
+        self.assertListEqual(
+            context.read_file_cache,
+            [
+                ReadCacheEntry(
+                    lines=["b"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="b",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
+        )
 
     async def test_cache_without_state(self) -> None:
         """Test tools work without state (fallback mode)."""
@@ -397,8 +502,42 @@ class FileCacheTest(IsolatedAsyncioTestCase):
             content = f.read()
         self.assertEqual(content, "Hello Python\nThis is a test\n")
 
-    async def test_write_invalidates_cache(self) -> None:
-        """Test that Write updates the cache so Edit can use it afterwards."""
+    async def test_edit_then_edit_without_reread(self) -> None:
+        """Test consecutive Edits succeed after a single Read."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("alpha\nbeta\ngamma\n")
+
+        # Read to populate the cache
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        # First edit succeeds and refreshes the cache
+        first_edit = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="alpha",
+            new_string="ALPHA",
+            _agent_state=self.state,
+        )
+        self.assertEqual(first_edit.state, "running")
+
+        # Second edit passes the staleness gate without a fresh Read
+        second_edit = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="beta",
+            new_string="BETA",
+            _agent_state=self.state,
+        )
+        self.assertEqual(second_edit.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "ALPHA\nBETA\ngamma\n")
+
+    async def test_write_then_edit_without_reread(self) -> None:
+        """Test Write updates the cache so Edit can use it afterwards."""
         with open(self.test_file, "w", encoding="utf-8") as f:
             f.write("original content\n")
 
@@ -408,7 +547,7 @@ class FileCacheTest(IsolatedAsyncioTestCase):
             _agent_state=self.state,
         )
 
-        # Overwrite with Write (mtime changes, old cache becomes stale)
+        # Overwrite with Write (mtime changes, cache is refreshed)
         write_chunk = await self.write_tool(
             file_path=self.test_file,
             content="new content\n",
@@ -416,15 +555,18 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(write_chunk.state, "running")
 
-        # The old cache entry is now stale; Edit should require a new Read
+        # Edit should succeed against the written content
         edit_chunk = await self.edit_tool(
             file_path=self.test_file,
             old_string="new content",
             new_string="updated content",
             _agent_state=self.state,
         )
-        self.assertEqual(edit_chunk.state, "error")
-        self.assertIn("must first read", edit_chunk.content[0].text)
+        self.assertEqual(edit_chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "updated content\n")
 
     async def test_write_cache_stale_then_reread(self) -> None:
         """Test workflow: Read -> Write -> Read -> Edit works correctly."""

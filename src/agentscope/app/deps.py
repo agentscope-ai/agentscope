@@ -4,7 +4,7 @@ from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
 from .channel import (
-    ChannelLifecycleDispatcher,
+    ChannelClients,
     ChannelTypeRegistry,
 )
 from ._manager import (
@@ -14,8 +14,11 @@ from ._manager import (
 )
 from ._service import (
     ChannelService,
+    CredentialBindingService,
     ChatService,
+    SOPService,
     KnowledgeBaseService,
+    RealtimeService,
     ResourceAccessService,
     SessionService,
     WorkspaceService,
@@ -88,6 +91,11 @@ async def get_chat_service(request: Request) -> ChatService:
         `ChatService`: The chat service instance stored in ``app.state``.
     """
     return request.app.state.chat_service
+
+
+async def get_realtime_service(request: Request) -> RealtimeService:
+    """Return the application-wide realtime agent assembly service."""
+    return request.app.state.realtime_service
 
 
 async def get_resource_access_service(
@@ -169,6 +177,18 @@ async def get_background_task_manager(
         ``app.state``.
     """
     return request.app.state.background_task_manager
+
+
+async def get_sop_service(request: Request) -> SOPService:
+    """Return the application-wide SOP service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `SOPService`: The SOP service instance stored in ``app.state``.
+    """
+    return request.app.state.sop_service
 
 
 async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
@@ -419,19 +439,38 @@ async def get_channel_service(request: Request) -> ChannelService:
     return request.app.state.channel_service
 
 
-async def get_channel_dispatcher(
+async def get_credential_binding_service(
     request: Request,
-) -> ChannelLifecycleDispatcher:
-    """Return this node's channel lifecycle dispatcher.
+) -> CredentialBindingService:
+    """Return the application-wide credential-binding service.
+
+    Present in every process: a binding session lives in the bus, so any
+    replica can serve any step of it.
 
     Args:
         request (`Request`): The incoming FastAPI request.
 
     Returns:
-        `ChannelLifecycleDispatcher`: The dispatcher stored in
-        ``app.state``, source of per-channel runtime status.
+        `CredentialBindingService`: The service stored in ``app.state``.
     """
-    return request.app.state.channel_dispatcher
+    return request.app.state.credential_binding_service
+
+
+async def get_channel_clients(
+    request: Request,
+) -> ChannelClients:
+    """Return the factory for unconnected channel instances.
+
+    Present in every process, whether or not this one holds the
+    channels' long connections.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChannelClients`: The factory stored in ``app.state``.
+    """
+    return request.app.state.channel_clients
 
 
 async def get_channel_type_registry(

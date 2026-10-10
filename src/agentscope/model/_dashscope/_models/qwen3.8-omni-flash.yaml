@@ -1,0 +1,29 @@
+name: qwen3.8-omni-flash
+label: Qwen3.8-Omni-Flash
+status: active
+
+input_types:
+  - text/plain
+  - image/bmp
+  - image/jpeg
+  - image/png
+  - image/tiff
+  - image/webp
+  - image/heic
+  - audio/mp3
+  - audio/wav
+  - audio/flac
+  - video/mp4
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 131072
+
+parameter_overrides:
+  max_tokens: {"maximum": 131072}
+  # Text-only output: this omni model cannot speak, so hide the voice field.
+  voice:
+    hidden: true

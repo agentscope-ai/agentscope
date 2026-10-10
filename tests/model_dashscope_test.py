@@ -581,6 +581,56 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
             frames = wav.readframes(wav.getnframes())
         self.assertEqual(frames, pcm_full)
 
+    async def test_stream_audio_transcript_yields_text(
+        self,
+    ) -> None:
+        """An omni audio transcript is emitted as text, not dropped.
+
+        Omni models send the spoken text in ``delta.audio.transcript``
+        instead of ``delta.content``, so the parser has to pick it up for
+        the agent to receive what the model said.
+        """
+        pcm = bytes([1, 2, 3, 4])
+        chunks = [
+            _make_stream_chunk(
+                delta_audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello",
+                },
+            ),
+            _make_stream_chunk(
+                delta_audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello",
+                },
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 5, "completion_tokens": 3},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        self.mock_client.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        # The transcript is folded into the same text block, so the final
+        # response carries it concatenated.
+        final = responses[-1]
+        self.assertTrue(final.is_last)
+        texts = [b.text for b in final.content if isinstance(b, TextBlock)]
+        self.assertEqual("".join(texts), "HelloHello")
+
+        # The audio stream itself is untouched: one stable id across chunks.
+        audio_ids = {
+            b.id
+            for r in responses
+            for b in r.content
+            if isinstance(b, DataBlock)
+        }
+        self.assertEqual(len(audio_ids), 1)
+
 
 # ---------------------------------------------------------------------------
 # _format_tools tests

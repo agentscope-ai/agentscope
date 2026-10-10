@@ -386,8 +386,25 @@ class DashScopeChatModel(ChatModelBase):
                     delta_audio = getattr(delta, "audio", None)
                     if isinstance(delta_audio, dict):
                         audio_chunk = delta_audio.get("data", "")
+                        transcript_chunk = (
+                            delta_audio.get("transcript", "") or ""
+                        )
                     else:
                         audio_chunk = getattr(delta_audio, "data", "")
+                        transcript_chunk = (
+                            getattr(delta_audio, "transcript", "") or ""
+                        )
+
+                    # Omni models deliver the spoken text in
+                    # ``delta.audio.transcript`` rather than in
+                    # ``delta.content``. Append it to the same text block id
+                    # so the agent receives the text as well as the audio,
+                    # mirroring the OpenAI Chat model.
+                    if transcript_chunk:
+                        delta_res.append_text(
+                            block_id=text_id,
+                            text=transcript_chunk,
+                        )
 
                     if audio_chunk:
                         pcm_bytes = base64.b64decode(audio_chunk)

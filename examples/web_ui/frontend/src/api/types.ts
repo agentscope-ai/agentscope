@@ -20,6 +20,13 @@ export interface TTSModelConfig {
 	parameters: Record<string, unknown>;
 }
 
+export interface RealtimeModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	parameters: Record<string, unknown>;
+}
+
 export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;
@@ -40,13 +47,21 @@ export interface InviteConfig {
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
+/** Settings that apply when the agent talks in text. */
+export interface ChatConfig {
+	context_config: ContextConfig;
+	react_config: ReActConfig;
+	invite_config: InviteConfig;
+}
+
+/** Partial text-mode settings accepted by create and update requests. */
+export type ChatConfigInput = Partial<ChatConfig>;
+
 export interface AgentData {
 	id: string;
 	name: string;
 	system_prompt: string;
-	context_config: ContextConfig;
-	react_config: ReActConfig;
-	invite_config: InviteConfig;
+	chat_config: ChatConfig;
 }
 
 export interface AgentView extends RecordBase {
@@ -62,8 +77,12 @@ export interface AgentView extends RecordBase {
 export interface CreateAgentRequest {
 	name: string;
 	system_prompt?: string;
+	chat_config?: ChatConfigInput;
+	/** @deprecated Use `chat_config.context_config`. */
 	context_config?: ContextConfig;
+	/** @deprecated Use `chat_config.react_config`. */
 	react_config?: ReActConfig;
+	/** @deprecated Use `chat_config.invite_config`. */
 	invite_config?: InviteConfig;
 }
 
@@ -74,8 +93,12 @@ export interface CreateAgentResponse {
 export interface UpdateAgentRequest {
 	name?: string;
 	system_prompt?: string;
+	chat_config?: ChatConfigInput;
+	/** @deprecated Use `chat_config.context_config`. */
 	context_config?: ContextConfig;
+	/** @deprecated Use `chat_config.react_config`. */
 	react_config?: ReActConfig;
+	/** @deprecated Use `chat_config.invite_config`. */
 	invite_config?: InviteConfig;
 }
 
@@ -99,11 +122,10 @@ export interface AgentSchemaResponse {
 /**
  * Response of `GET /agent/schema/v2`. `schema` is the full `AgentData`
  * JSON Schema (with `$ref`s inlined, `id` filtered out, and
- * `context_config.summary_schema` filtered out). The frontend derives
- * its section grouping directly from `schema.properties`:
+ * `chat_config.context_config.summary_schema` filtered out). The
+ * frontend derives its section grouping directly from `schema`:
  *   - top-level scalar/textarea/boolean properties → "identity" section
- *   - top-level `object`-typed properties (currently `context_config`,
- *     `react_config`, and `invite_config`) → one section each
+ *   - each object under a mode block (`chat_config`) → one section
  */
 export interface AgentSchemaV2Response {
 	schema: JSONSchema;
@@ -111,15 +133,32 @@ export interface AgentSchemaV2Response {
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule' | 'channel';
+/** How a session came to exist — fixed when it is created. */
+export type SessionOrigin =
+	| { type: 'user' }
+	| { type: 'schedule'; schedule_id: string }
+	| {
+			type: 'channel';
+			channel_id: string;
+			chat_id: string;
+			chat_name: string | null;
+	  }
+	| { type: 'team' };
+
+/** The tag of a {@link SessionOrigin}. */
+export type SessionSourceKind = SessionOrigin['type'];
 
 export interface SessionConfig {
 	name: string;
+	/** Who owns `name` — see the backend's `SessionNaming`. */
+	naming: { auto: boolean };
 	chat_model_config: ChatModelConfig;
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** Realtime voice model configuration. null disables voice mode. */
+	realtime_model_config: RealtimeModelConfig | null;
 	/** Knowledge bases attached to this session + KB middleware parameters. */
 	knowledge_config: SessionKnowledgeConfig | null;
 	workspace_id: string;
@@ -137,9 +176,7 @@ export type AgentState = Record<string, unknown>;
 export interface SessionRecord extends RecordBase {
 	user_id: string;
 	agent_id: string;
-	source: SessionSource;
-	source_schedule_id: string | null;
-	source_channel_id: string | null;
+	origin: SessionOrigin;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called
@@ -159,6 +196,8 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional realtime voice model. Omit (or pass null) for none. */
+	realtime_model_config?: RealtimeModelConfig | null;
 	/** Optional knowledge base attachment. Omit (or null) for none. */
 	knowledge_config?: SessionKnowledgeConfig | null;
 }
@@ -188,6 +227,8 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/** New realtime voice model, or null to disable voice mode. */
+	realtime_model_config?: RealtimeModelConfig | null;
 	/**
 	 * New knowledge base attachment. PATCH semantics:
 	 *   - omit the field → leave unchanged
@@ -798,6 +839,53 @@ export interface ListModelResponse {
 	total: number;
 }
 
+export interface RealtimeModelCard {
+	type: 'realtime_model';
+	model_type: string;
+	name: string;
+	label: string;
+	status: 'active' | 'deprecated' | 'sunset';
+	deprecated_at: string | null;
+	input_types: string[];
+	output_types: string[];
+	input_sample_rate: number;
+	output_sample_rate: number;
+	supports_tools: boolean;
+	max_context_tokens: number | null;
+	max_audio_turns: number | null;
+	max_audio_duration_s: number | null;
+	max_session_duration_s: number | null;
+	parameter_schema: Record<string, unknown>;
+	parameter_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListRealtimeModelResponse {
+	models: RealtimeModelCard[];
+	total: number;
+}
+
+export interface RealtimeIceServer {
+	urls: string | string[];
+	username?: string;
+	credential?: string;
+	credentialType?: 'password' | 'oauth';
+}
+
+export interface RealtimeConfigResponse {
+	ice_servers: RealtimeIceServer[];
+}
+
+export interface RealtimeOfferRequest {
+	agent_id: string;
+	sdp: string;
+	type: 'offer';
+}
+
+export interface RealtimeOfferResponse {
+	sdp: string;
+	type: 'answer';
+}
+
 // ─── Embedding ────────────────────────────────────────────────────────────────
 
 export interface EmbeddingModelConfig {
@@ -1166,7 +1254,9 @@ export interface ChannelRecord {
 export interface CreateChannelRequest {
 	channel_type: string;
 	name?: string | null;
-	credentials: Record<string, unknown>;
+	credentials?: Record<string, unknown>;
+	/** Completed binding to take the credentials from, instead of sending them. */
+	credential_binding_id?: string | null;
 	platform_config?: Record<string, unknown>;
 	routing: RoutingConfig;
 	session: SessionSettings;
@@ -1189,6 +1279,19 @@ export interface ChannelTypeSchema {
 	credentials_schema: Record<string, unknown>;
 	config_schema: Record<string, unknown>;
 	platform_bot_id_field?: string;
+	/** Whether the platform can hand its credentials over interactively. */
+	supports_credential_binding?: boolean;
+}
+
+export type BindingState = 'pending' | 'authorized' | 'failed' | 'cancelled';
+
+export interface BindingView {
+	binding_id: string;
+	state: BindingState;
+	/** Where the operator must approve; rendered as a QR code. */
+	verification_url: string;
+	error: string;
+	retry_after_secs: number;
 }
 
 export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';

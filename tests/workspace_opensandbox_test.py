@@ -38,7 +38,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         Verifies:
         1. The workspace initializes without raising.
-        2. ``list_mcps`` returns at least the seeded MCP (browser-use).
+        2. ``list_mcps`` returns at least the seeded MCP (playwright).
         3. Each MCP exposes at least one tool via ``list_raw_tools``.
         4. ``close`` (sandbox pause) completes without raising.
         """
@@ -47,7 +47,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             api_key=_API_KEY,
             default_mcps=[
                 MCPClient(
-                    name="browser-use",
+                    name="playwright",
                     mcp_config=StdioMCPConfig(
                         command="npx",
                         args=["@playwright/mcp@latest"],
