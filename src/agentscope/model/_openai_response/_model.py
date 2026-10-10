@@ -287,6 +287,8 @@ class OpenAIResponseModel(ChatModelBase):
         # so subsequent argument deltas can be routed to the right tool
         # call block.
         tool_call_mapping: dict = OrderedDict()
+        # The item ids of the function calls that received argument text
+        tool_calls_with_input: set[str] = set()
 
         async with response as stream:
             async for event in stream:
@@ -356,7 +358,8 @@ class OpenAIResponseModel(ChatModelBase):
                         # Only record the mapping here — do NOT emit an
                         # empty-input delta so downstream consumers don't see
                         # a leading no-op chunk. The block is created on the
-                        # first argument delta below.
+                        # first argument delta below, or on the arguments-done
+                        # event when the call carries no arguments at all.
                         tool_call_mapping[item.id] = (
                             item.call_id,
                             getattr(item, "name", "") or "unknown",
@@ -366,10 +369,27 @@ class OpenAIResponseModel(ChatModelBase):
                     item_id = event.item_id
                     if item_id in tool_call_mapping:
                         call_id, name = tool_call_mapping[item_id]
+                        tool_calls_with_input.add(item_id)
                         delta_res.append_tool_call(
                             block_id=call_id,
                             name=name,
                             input=event.delta or "",
+                        )
+
+                elif event_type == "response.function_call_arguments.done":
+                    # A call without arguments streams no argument deltas, so
+                    # the block would never be created above; close it with
+                    # the empty object the non-streaming response carries.
+                    item_id = event.item_id
+                    if (
+                        item_id in tool_call_mapping
+                        and item_id not in tool_calls_with_input
+                    ):
+                        call_id, name = tool_call_mapping[item_id]
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=name,
+                            input=event.arguments or "{}",
                         )
 
                 elif event_type == "response.completed":
