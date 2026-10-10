@@ -14,13 +14,21 @@ other's internals.
      - Append an event to the session replay log and fan it out live.
    * - :func:`enqueue_run_trigger`
      - Enqueue a typed run trigger and signal dispatchers.
+   * - :func:`enqueue_chat_input`
+     - Append an ordinary user turn to a per-session FIFO.
    * - :func:`enqueue_index_task`
      - Enqueue a knowledge-document indexing task and signal consumers.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+import asyncio
+import json
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import AsyncGenerator, TYPE_CHECKING, Literal
 
+from ..event import CustomEvent
 from .message_bus._keys import MessageBusKeys
 
 if TYPE_CHECKING:
@@ -35,6 +43,139 @@ if TYPE_CHECKING:
 
 
 # ── publish_session_event ──────────────────────────────────────────────
+
+
+class ChatQueueFullError(RuntimeError):
+    """Raised when a session has reached its pending-turn limit."""
+
+
+class ChatQueueBusyError(RuntimeError):
+    """Raised when a short queue mutation lock cannot be acquired."""
+
+
+class ChatQueuePayloadTooLargeError(RuntimeError):
+    """Raised when one serialized queued turn exceeds its byte limit."""
+
+
+@asynccontextmanager
+async def chat_input_mutation(
+    bus: "MessageBus",
+    session_id: str,
+    *,
+    timeout_secs: float | None = None,
+) -> AsyncGenerator[None, None]:
+    """Acquire a short-lived queue mutation lock with bounded waiting.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus that owns the distributed lock.
+        session_id (`str`):
+            Session whose pending-input queue will be mutated.
+        timeout_secs (`float | None`, optional):
+            Maximum time to wait for the lock. ``None`` uses the configured
+            queue-mutation timeout.
+
+    Yields:
+        `None`:
+            Control while the session mutation lock is held.
+
+    Raises:
+        `ChatQueueBusyError`:
+            The lock could not be acquired before the timeout.
+    """
+    timeout = (
+        MessageBusKeys.CHAT_INPUT_MUTATION_TIMEOUT_SECS
+        if timeout_secs is None
+        else timeout_secs
+    )
+    try:
+        async with asyncio.timeout(timeout):
+            async with bus.acquire_lock(
+                MessageBusKeys.chat_input_mutation_lock(session_id),
+                ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+            ):
+                yield
+    except TimeoutError as exc:
+        raise ChatQueueBusyError(
+            "The pending message queue is busy; retry shortly.",
+        ) from exc
+
+
+@asynccontextmanager
+async def _chat_input_user_quota(
+    bus: "MessageBus",
+    user_id: str,
+) -> AsyncGenerator[None, None]:
+    """Serialize the bounded per-user quota check performed by enqueue.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus that owns the distributed lock.
+        user_id (`str`):
+            User whose aggregate pending-input quota is being checked.
+
+    Yields:
+        `None`:
+            Control while the per-user quota lock is held.
+
+    Raises:
+        `ChatQueueBusyError`:
+            The quota lock could not be acquired before the timeout.
+    """
+    try:
+        async with asyncio.timeout(
+            MessageBusKeys.CHAT_INPUT_MUTATION_TIMEOUT_SECS,
+        ):
+            async with bus.acquire_lock(
+                MessageBusKeys.chat_input_user_quota_lock(user_id),
+                ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+            ):
+                yield
+    except TimeoutError as exc:
+        raise ChatQueueBusyError(
+            "The pending message quota is busy; retry shortly.",
+        ) from exc
+
+
+def _serialized_input(
+    inputs: "Msg | list[Msg]",
+) -> dict | list[dict]:
+    """Serialize and enforce the per-turn queue payload limit.
+
+    Args:
+        inputs (`Msg | list[Msg]`):
+            One message or a non-empty ordered message list.
+
+    Returns:
+        `dict | list[dict]`:
+            JSON-compatible message payload suitable for the bus.
+
+    Raises:
+        `ValueError`:
+            ``inputs`` is an empty list.
+        `ChatQueuePayloadTooLargeError`:
+            The serialized turn exceeds the configured byte limit.
+    """
+    if isinstance(inputs, list) and not inputs:
+        raise ValueError("A queued message list must not be empty.")
+    serialized = (
+        [msg.model_dump(mode="json") for msg in inputs]
+        if isinstance(inputs, list)
+        else inputs.model_dump(mode="json")
+    )
+    size = len(
+        json.dumps(
+            serialized,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8"),
+    )
+    if size > MessageBusKeys.CHAT_INPUT_MAX_BYTES:
+        raise ChatQueuePayloadTooLargeError(
+            "The queued message is too large "
+            f"({size} bytes; limit {MessageBusKeys.CHAT_INPUT_MAX_BYTES}).",
+        )
+    return serialized
 
 
 async def publish_session_event(
@@ -79,14 +220,16 @@ async def enqueue_run_trigger(
         "wake",
         "resume",
         "message",
+        "queued_message",
     ] = MessageBusKeys.WAKEUP_KIND_WAKE,
     inputs: UserConfirmResultEvent
     | ExternalExecutionResultEvent
     | UserInterruptEvent
     | Msg
     | None = None,
+    signal: bool = True,
 ) -> None:
-    """Enqueue a typed run trigger and signal dispatchers.
+    """Enqueue a typed run trigger and optionally signal dispatchers.
 
     ``kind`` selects how the dispatcher handles the entry:
 
@@ -101,6 +244,8 @@ async def enqueue_run_trigger(
       inbound channel message).  Like ``resume`` it carries input and is
       re-queued rather than dropped while the session is running; the run
       persists it and reasons over it as a real user turn.
+    - ``queued_message`` — signal that a session's ordinary browser-input
+      FIFO should be drained. ``inputs`` must be ``None``.
 
     The payload is serialised to a plain dict before being pushed to the
     wakeup queue; the ``MessageBus`` transport layer never sees event
@@ -118,10 +263,14 @@ async def enqueue_run_trigger(
         kind:
             Trigger kind.  Defaults to ``"wake"``.
         inputs:
-            The input event for ``resume`` triggers.  Ignored (and
-            should be ``None``) for ``wake``.  The function calls
-            ``model_dump(mode="json")`` internally — callers pass the
-            event object, not a pre-serialised dict.
+            The input for ``resume`` and ``message`` triggers. Ignored (and
+            should be ``None``) for ``wake`` and ``queued_message``. The
+            function calls ``model_dump(mode="json")`` internally — callers
+            pass the model object, not a pre-serialised dict.
+        signal:
+            Whether to publish the shared wakeup signal after pushing.
+            Recovery sweeps pass ``False`` to batch many durable triggers
+            behind one signal.
     """
     await bus.queue_push(
         MessageBusKeys.wakeup_queue(),
@@ -133,7 +282,509 @@ async def enqueue_run_trigger(
             "input": inputs.model_dump(mode="json") if inputs else None,
         },
     )
-    await bus.publish(MessageBusKeys.wakeup_signal(), {})
+    if signal:
+        await bus.publish(MessageBusKeys.wakeup_signal(), {})
+
+
+async def enqueue_chat_input(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    inputs: Msg | list[Msg],
+) -> dict:
+    """Append an ordinary user turn to a session FIFO and wake its pump.
+
+    The input and its wake-up marker are deliberately separate: the
+    per-session queue owns ordering, while the shared trigger queue only
+    nudges an available dispatcher. Duplicate ``queued_message`` triggers
+    are harmless because the per-session queue is consumed exactly once.
+
+    Args:
+        bus:
+            Application message bus.
+        user_id:
+            Owning user id.
+        session_id:
+            Target session id.
+        agent_id:
+            Agent that owns the session.
+        inputs:
+            One user message or a non-empty ordered message list.
+
+    Returns:
+        `dict`:
+            Public queue item containing ``id``, ``created_at``, and
+            serialized ``input``.
+
+    Raises:
+        `ValueError`:
+            ``inputs`` is an empty list.
+        `ChatQueueFullError`:
+            The session queue or aggregate per-user quota is full.
+        `ChatQueuePayloadTooLargeError`:
+            The serialized turn exceeds the configured byte limit.
+        `ChatQueueBusyError`:
+            A queue or quota mutation lock cannot be acquired promptly.
+    """
+    serialized = _serialized_input(inputs)
+    item = {
+        # Queue identity is independent from message identity. Clients may
+        # legitimately retry/replay the same Msg.id; management operations
+        # still need one unambiguous id per pending turn.
+        "id": uuid.uuid4().hex,
+        "user_id": user_id,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "input": serialized,
+    }
+    async with _chat_input_user_quota(bus, user_id):
+        if (
+            await _count_user_chat_inputs(bus, user_id)
+            >= MessageBusKeys.CHAT_INPUT_USER_MAX_LEN
+        ):
+            raise ChatQueueFullError(
+                "Your pending message quota is full; wait for a message "
+                "to finish or remove one before sending another.",
+            )
+        async with chat_input_mutation(bus, session_id):
+            existing = await bus.queue_read(
+                MessageBusKeys.chat_inputs(session_id),
+                max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
+            )
+            if len(existing) >= MessageBusKeys.CHAT_INPUT_MAX_LEN:
+                raise ChatQueueFullError(
+                    "The pending message queue is full; wait for a message "
+                    "to start or remove one before sending another.",
+                )
+            # Register before pushing. If the process dies between these two
+            # operations recovery sees a harmless stale marker and removes it;
+            # the inverse order could leave an unindexed queue permanently
+            # stranded after a lost trigger.
+            await bus.registry_set(
+                MessageBusKeys.chat_input_pending_registry(),
+                session_id,
+                json.dumps(
+                    {
+                        "user_id": user_id,
+                        "agent_id": agent_id,
+                    },
+                ),
+            )
+            await bus.queue_push(
+                MessageBusKeys.chat_inputs(session_id),
+                item,
+            )
+            await _publish_chat_queue_changed(bus, session_id)
+    await enqueue_run_trigger(
+        bus,
+        user_id=user_id,
+        session_id=session_id,
+        agent_id=agent_id,
+        kind=MessageBusKeys.WAKEUP_KIND_QUEUED_MESSAGE,
+    )
+    return _public_chat_input(item)
+
+
+async def list_chat_inputs(
+    bus: "MessageBus",
+    session_id: str,
+) -> list[dict]:
+    """Return editable pending turns for a session in FIFO order.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose pending queue should be inspected.
+
+    Returns:
+        `list[dict]`:
+            Public queue items ordered from the next turn to the last.
+
+    Raises:
+        `ChatQueueBusyError`:
+            The session mutation lock cannot be acquired promptly.
+    """
+    async with chat_input_mutation(bus, session_id):
+        entries = await bus.queue_read(
+            MessageBusKeys.chat_inputs(session_id),
+            max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
+        )
+        return [_public_chat_input(payload) for _entry_id, payload in entries]
+
+
+async def update_chat_input(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    item_id: str,
+    inputs: Msg | list[Msg],
+) -> list[dict]:
+    """Replace one still-pending turn and return the updated queue.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        user_id (`str`):
+            User that must own the pending item.
+        session_id (`str`):
+            Session that owns the pending queue.
+        agent_id (`str`):
+            Agent that must own the pending item.
+        item_id (`str`):
+            Stable business id of the item to update.
+        inputs (`Msg | list[Msg]`):
+            Replacement message or non-empty ordered message list.
+
+    Returns:
+        `list[dict]`:
+            Complete public queue snapshot after the update.
+
+    Raises:
+        `ValueError`:
+            ``inputs`` is an empty list.
+        `LookupError`:
+            The item is no longer pending or is not owned by the caller.
+        `ChatQueuePayloadTooLargeError`:
+            The replacement turn exceeds the configured byte limit.
+        `ChatQueueBusyError`:
+            The session mutation lock cannot be acquired promptly.
+    """
+    serialized = _serialized_input(inputs)
+    async with chat_input_mutation(bus, session_id):
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        item = _owned_chat_input(
+            payloads,
+            user_id,
+            session_id,
+            agent_id,
+            item_id,
+        )
+        item["input"] = serialized
+        await bus.queue_replace(
+            MessageBusKeys.chat_inputs(session_id),
+            payloads,
+        )
+        return await _publish_chat_queue_changed(bus, session_id, payloads)
+
+
+async def delete_chat_input(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    item_id: str,
+) -> list[dict]:
+    """Delete one still-pending turn and return the updated queue.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        user_id (`str`):
+            User that must own the pending item.
+        session_id (`str`):
+            Session that owns the pending queue.
+        agent_id (`str`):
+            Agent that must own the pending item.
+        item_id (`str`):
+            Stable business id of the item to delete.
+
+    Returns:
+        `list[dict]`:
+            Complete public queue snapshot after deletion.
+
+    Raises:
+        `LookupError`:
+            The item is no longer pending or is not owned by the caller.
+        `ChatQueueBusyError`:
+            The session mutation lock cannot be acquired promptly.
+    """
+    async with chat_input_mutation(bus, session_id):
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        item = _owned_chat_input(
+            payloads,
+            user_id,
+            session_id,
+            agent_id,
+            item_id,
+        )
+        payloads.remove(item)
+        await bus.queue_replace(
+            MessageBusKeys.chat_inputs(session_id),
+            payloads,
+        )
+        return await _publish_chat_queue_changed(bus, session_id, payloads)
+
+
+async def reorder_chat_inputs(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    item_ids: list[str],
+) -> list[dict]:
+    """Atomically replace the pending queue order.
+
+    ``item_ids`` must be an exact permutation of the queue snapshot. If a
+    turn started or another client changed the queue in the meantime the
+    operation fails instead of silently dropping or duplicating an item.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        user_id (`str`):
+            User whose owned items may be reordered.
+        session_id (`str`):
+            Session that owns the pending queue.
+        agent_id (`str`):
+            Agent whose owned items may be reordered.
+        item_ids (`list[str]`):
+            Exact desired permutation of the caller-owned pending item ids.
+
+    Returns:
+        `list[dict]`:
+            Complete public queue snapshot after reordering.
+
+    Raises:
+        `ValueError`:
+            The supplied ids contain duplicates or are not an exact
+            permutation of the current owned snapshot.
+        `ChatQueueBusyError`:
+            The session mutation lock cannot be acquired promptly.
+    """
+    async with chat_input_mutation(bus, session_id):
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        owned = [
+            payload
+            for payload in payloads
+            if payload.get("user_id") == user_id
+            and payload.get("session_id") == session_id
+            and payload.get("agent_id") == agent_id
+        ]
+        current_ids = [str(payload.get("id")) for payload in owned]
+        if (
+            len(item_ids) != len(set(item_ids))
+            or set(item_ids) != set(current_ids)
+            or len(item_ids) != len(current_ids)
+        ):
+            raise ValueError(
+                "The pending queue changed; refresh it before reordering.",
+            )
+        by_id = {str(payload["id"]): payload for payload in owned}
+        reordered_owned = iter(by_id[item_id] for item_id in item_ids)
+        # Preserve payloads outside this caller's ownership at their exact
+        # positions. They indicate corrupt/legacy state, but a defensive
+        # reorder must never erase them.
+        reordered = [
+            next(reordered_owned)
+            if (
+                payload.get("user_id") == user_id
+                and payload.get("session_id") == session_id
+                and payload.get("agent_id") == agent_id
+            )
+            else payload
+            for payload in payloads
+        ]
+        await bus.queue_replace(
+            MessageBusKeys.chat_inputs(session_id),
+            reordered,
+        )
+        return await _publish_chat_queue_changed(
+            bus,
+            session_id,
+            reordered,
+        )
+
+
+async def _read_chat_input_payloads(
+    bus: "MessageBus",
+    session_id: str,
+) -> list[dict]:
+    """Read raw chat-input payloads while the caller holds the lock.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose raw queue payloads should be read.
+
+    Returns:
+        `list[dict]`:
+            Raw oldest-first queue payloads, including routing metadata.
+    """
+    entries = await bus.queue_read(
+        MessageBusKeys.chat_inputs(session_id),
+        max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
+    )
+    return [payload for _entry_id, payload in entries]
+
+
+async def _count_user_chat_inputs(
+    bus: "MessageBus",
+    user_id: str,
+) -> int:
+    """Count one user's pending and claimed turns across all sessions.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        user_id (`str`):
+            User whose aggregate queue usage should be counted.
+
+    Returns:
+        `int`:
+            Pending and distinct in-flight turns, capped once the configured
+            per-user quota is reached.
+    """
+    pending_sessions = await bus.registry_getall(
+        MessageBusKeys.chat_input_pending_registry(),
+    )
+    seen_ids: set[str] = set()
+    count = 0
+    for session_id, raw_routing in pending_sessions.items():
+        try:
+            routing = json.loads(raw_routing)
+        except (TypeError, ValueError):
+            continue
+        if routing.get("user_id") != user_id:
+            continue
+        entries = await bus.queue_read(
+            MessageBusKeys.chat_inputs(session_id),
+            max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
+        )
+        for _entry_id, payload in entries:
+            if payload.get("user_id") != user_id:
+                continue
+            item_id = str(payload.get("id", ""))
+            if item_id:
+                seen_ids.add(item_id)
+            count += 1
+            if count >= MessageBusKeys.CHAT_INPUT_USER_MAX_LEN:
+                return count
+
+    claims = await bus.registry_getall(
+        MessageBusKeys.chat_input_inflight_registry(),
+    )
+    for raw_claim in claims.values():
+        try:
+            claim = json.loads(raw_claim)
+            payload = claim["payload"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        item_id = str(payload.get("id", ""))
+        if payload.get("user_id") != user_id or item_id in seen_ids:
+            continue
+        count += 1
+        if count >= MessageBusKeys.CHAT_INPUT_USER_MAX_LEN:
+            return count
+    return count
+
+
+def _owned_chat_input(
+    payloads: list[dict],
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    item_id: str,
+) -> dict:
+    """Resolve an owned pending item or report that it already started.
+
+    Args:
+        payloads (`list[dict]`):
+            Raw pending queue snapshot.
+        user_id (`str`):
+            User that must own the item.
+        session_id (`str`):
+            Session that must own the item.
+        agent_id (`str`):
+            Agent that must own the item.
+        item_id (`str`):
+            Stable business id to resolve.
+
+    Returns:
+        `dict`:
+            Matching mutable raw payload from ``payloads``.
+
+    Raises:
+        `LookupError`:
+            No matching, caller-owned pending item exists.
+    """
+    for payload in payloads:
+        if (
+            payload.get("id") == item_id
+            and payload.get("user_id") == user_id
+            and payload.get("session_id") == session_id
+            and payload.get("agent_id") == agent_id
+        ):
+            return payload
+    raise LookupError(
+        f"Queued message '{item_id}' is no longer pending.",
+    )
+
+
+def _public_chat_input(payload: dict) -> dict:
+    """Strip routing metadata from one queue item returned to clients.
+
+    Args:
+        payload (`dict`):
+            Raw queue payload containing identity, routing, and input data.
+
+    Returns:
+        `dict`:
+            Client-safe ``id``, ``created_at``, and ``input`` fields.
+    """
+    return {
+        "id": payload["id"],
+        "created_at": payload["created_at"],
+        "input": payload["input"],
+    }
+
+
+async def _publish_chat_queue_changed(
+    bus: "MessageBus",
+    session_id: str,
+    payloads: list[dict] | None = None,
+) -> list[dict]:
+    """Publish a complete queue snapshot and return its public items.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus used for the live fan-out.
+        session_id (`str`):
+            Session whose subscribers receive the snapshot.
+        payloads (`list[dict] | None`, optional):
+            Raw snapshot to publish. ``None`` reads the current queue and
+            therefore requires the caller to hold the mutation lock.
+
+    Returns:
+        `list[dict]`:
+            Public queue items included in the live event.
+    """
+    if payloads is None:
+        payloads = await _read_chat_input_payloads(bus, session_id)
+    if not payloads and not await bus.registry_exists(
+        MessageBusKeys.chat_input_inflight_registry(),
+        session_id,
+    ):
+        await bus.registry_del(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+    items = [_public_chat_input(payload) for payload in payloads]
+    event = CustomEvent(name="chat_queue_changed", value={"items": items})
+    # Queue state is an ephemeral projection backed by GET /chat/queue.
+    # Publishing it live avoids O(n²) replay-log growth and stale snapshots
+    # temporarily rolling the UI backwards after an SSE reconnect.
+    await bus.publish(
+        MessageBusKeys.session_events(session_id),
+        event.model_dump(mode="json"),
+    )
+    return items
 
 
 # ── session inbox hand-off ─────────────────────────────────────────────

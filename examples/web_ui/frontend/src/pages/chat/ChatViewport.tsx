@@ -264,7 +264,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		msgs,
 		loading: messagesLoading,
 		phase,
+		queuedCount,
+		queuedItems,
+		queueReorderDisabled,
 		send,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
 		onUserConfirm,
 		onSubagentConfirm,
 		subagentHitl,
@@ -914,20 +921,20 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
+									queuedCount={queuedCount}
+									queuedItems={queuedItems}
+									queueReorderDisabled={queueReorderDisabled}
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
+									onUpdateQueued={updateQueued}
+									onDeleteQueued={deleteQueued}
+									onMoveQueued={moveQueued}
+									onReorderQueued={reorderQueued}
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}
 									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
-									// cwd={
-									// 	{cwd: view?.session.config.cwd, git: {
-									// 		branch: 'main',
-									// 		deletion: 0,
-									// 		addition: 0,
-									// 	}}
-									// }
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard

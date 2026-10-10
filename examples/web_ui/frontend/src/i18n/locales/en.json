@@ -99,8 +99,25 @@
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
-		"stop": "Stop generating",
-		"stopping": "Stopping ..."
+		"queue": "Add to queue",
+		"queued_one": "{{count}} message queued",
+		"queued_other": "{{count}} messages queued",
+		"stop": "Stop current reply",
+		"stopping": "Stopping current reply ..."
+	},
+	"chatQueue": {
+		"title_one": "Pending message ({{count}})",
+		"title_other": "Pending messages ({{count}})",
+		"attachmentOnly": "Attachment message",
+		"drag": "Drag to reorder",
+		"moveUp": "Move up",
+		"moveDown": "Move down",
+		"edit": "Edit",
+		"delete": "Delete",
+		"save": "Save",
+		"cancel": "Cancel",
+		"processFailed": "The queued message could not be processed.",
+		"processingCancelled": "Queued message processing was interrupted."
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",

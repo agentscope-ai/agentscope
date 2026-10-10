@@ -86,6 +86,28 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         self.assertEqual([p["i"] for _id, p in first], [0, 1, 2])
         self.assertEqual([p["i"] for _id, p in rest], [3, 4])
 
+    async def test_queue_read_is_non_destructive(self) -> None:
+        """Queue management can inspect entries without consuming them."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2})
+        first = await self.bus.queue_read("k", max_count=10)
+        second = await self.bus.queue_read("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in first],
+            [{"i": 1}, {"i": 2}],
+        )
+        self.assertEqual(first, second)
+
+    async def test_queue_replace_preserves_new_order(self) -> None:
+        """An editable Redis queue is transactionally replaced."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_replace("k", [{"i": 3}, {"i": 2}])
+        entries = await self.bus.queue_drain("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in entries],
+            [{"i": 3}, {"i": 2}],
+        )
+
     async def test_drain_reads_and_deletes_in_one_command(self) -> None:
         """Reading and deleting as two commands lets a competing
         consumer land in between, read the same entry and dispatch it a

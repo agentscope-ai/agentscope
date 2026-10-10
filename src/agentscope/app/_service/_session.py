@@ -658,6 +658,17 @@ class SessionService:
         await self._bus.queue_delete(
             MessageBusKeys.inbox(session_id),
         )
+        await self._bus.queue_delete(
+            MessageBusKeys.chat_inputs(session_id),
+        )
+        await self._bus.registry_del(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+        await self._bus.registry_del(
+            MessageBusKeys.chat_input_inflight_registry(),
+            session_id,
+        )
         await self._bus.registry_drop(
             MessageBusKeys.inbox_consumer(session_id),
         )
