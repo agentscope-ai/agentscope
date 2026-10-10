@@ -9,6 +9,7 @@ import warnings
 
 from asyncio import Queue
 from copy import deepcopy
+from contextlib import AsyncExitStack, aclosing
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
@@ -321,13 +322,13 @@ class Agent:
             agent won't re-send the requiring events for the unconfirmed
             or unexecuted tool calls.
         """
-        async for chunk in self._reply(
-            inputs=inputs,
-            structured_schema=structured_schema,
-        ):
-            if isinstance(chunk, Msg) and not yield_final_msg:
-                continue
-            yield chunk
+        async with aclosing(
+            self._reply(inputs=inputs, structured_schema=structured_schema),
+        ) as stream:
+            async for chunk in stream:
+                if isinstance(chunk, Msg) and not yield_final_msg:
+                    continue
+                yield chunk
 
     async def reply(
         self,
@@ -911,11 +912,13 @@ class Agent:
         exits only after its ``ReplyEndEvent`` escapes the middleware chain,
         so an ``on_reply`` middleware can swallow the event (receive it
         without yielding) to force another reasoning-acting round."""
+        streams = AsyncExitStack()
         if not self._reply_middlewares:
             agen = self._reply_impl(
                 inputs=inputs,
                 structured_schema=structured_schema,
             )
+            streams.push_async_callback(agen.aclose)
         else:
 
             async def execute_chain(
@@ -929,10 +932,12 @@ class Agent:
                 structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(
+                    stream = self._reply_impl(
                         inputs=inputs,
                         structured_schema=structured_schema,
-                    ):
+                    )
+                    streams.push_async_callback(stream.aclose)
+                    async for item in stream:
                         yield item
                 else:
                     mw = self._reply_middlewares[index]
@@ -941,31 +946,38 @@ class Agent:
                         "structured_schema": structured_schema,
                     }
 
-                    async def next_handler(
+                    def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(
+                        stream = execute_chain(
                             index + 1,
                             **{**input_kwargs, **kwargs},
-                        ):
-                            yield item
+                        )
+                        streams.push_async_callback(stream.aclose)
+                        return stream
 
-                    async for item in mw.on_reply(
+                    stream = mw.on_reply(
                         agent=self,
                         input_kwargs=input_kwargs,
                         next_handler=next_handler,
-                    ):
+                    )
+                    streams.push_async_callback(stream.aclose)
+                    async for item in stream:
                         yield item
 
             agen = execute_chain()
+            streams.push_async_callback(agen.aclose)
 
         self._receive_reply_end = False
-        async for item in agen:
-            # Set before the yield: the suspended `_reply_impl` checks the
-            # flag once resumed by the next pull
-            if isinstance(item, ReplyEndEvent):
-                self._receive_reply_end = True
-            yield item
+        # Own downstream streams even when middleware only forwards events
+        # and does not explicitly close the generator returned by its handler.
+        async with streams:
+            async for item in agen:
+                # Set before the yield: the suspended `_reply_impl` checks the
+                # flag once resumed by the next pull
+                if isinstance(item, ReplyEndEvent):
+                    self._receive_reply_end = True
+                yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -1235,24 +1247,25 @@ class Agent:
 
                             break_execution_for_hitl = False
                             break_execution_for_interruption = False
-                            async for evt in evt_generator:
-                                yield evt
-                                if isinstance(
-                                    evt,
-                                    (
-                                        RequireUserConfirmEvent,
-                                        RequireExternalExecutionEvent,
-                                    ),
-                                ):
-                                    break_execution_for_hitl = True
+                            async with aclosing(evt_generator):
+                                async for evt in evt_generator:
+                                    yield evt
+                                    if isinstance(
+                                        evt,
+                                        (
+                                            RequireUserConfirmEvent,
+                                            RequireExternalExecutionEvent,
+                                        ),
+                                    ):
+                                        break_execution_for_hitl = True
 
-                                elif (
-                                    isinstance(evt, ToolResultEndEvent)
-                                    and evt.state
-                                    == ToolResultState.INTERRUPTED
-                                ):
-                                    # Handle the interruption event
-                                    break_execution_for_interruption = True
+                                    elif (
+                                        isinstance(evt, ToolResultEndEvent)
+                                        and evt.state
+                                        == ToolResultState.INTERRUPTED
+                                    ):
+                                        # Handle the interruption event
+                                        break_execution_for_interruption = True
 
                             if break_execution_for_interruption:
                                 # Handled by the CancelledError branch below
@@ -1267,6 +1280,14 @@ class Agent:
                 # or an external execution, leaves the round unfinished
                 if not self.state.get_unfinished_tool_calls(self.name):
                     self.state.cur_iter += 1
+
+        except GeneratorExit:
+            # Closing a stream has no consumer for interruption events.
+            # Finish context cleanup without yielding during aclose().
+            end_event = None
+            async for _ in self._close_unfinished_tool_calls():
+                pass
+            raise
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
@@ -2305,6 +2326,15 @@ class Agent:
             # :meth:`_execute_sequential_tool_calls`.
             asyncio.current_task().uncancel()
             return
+        finally:
+            # GeneratorExit (aclose) must also cancel and join the workers.
+            # Unlike task cancellation, closing cannot flush queued events.
+            if not gather_task.done():
+                gather_task.cancel()
+            try:
+                await gather_task
+            except asyncio.CancelledError:
+                pass
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
