@@ -51,7 +51,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # ------------ Model APIs ------------
-model-gemini = ["google-genai"]
+model-gemini = ["google-genai>=1.21.0"]
 model-ollama = ["ollama>=0.5.4"]
 model-xai = ["xai-sdk"]
 classifier-jev = ["typesafe-sdk>=0.7"]
