@@ -24,6 +24,7 @@ import jsonschema
 from pydantic import BaseModel
 
 from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
+from ._context_retention import ContextRetentionPolicy
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -131,6 +132,7 @@ class Agent:
         context_config: ContextConfig | None = None,
         react_config: ReActConfig | None = None,
         injection_config: InjectionConfig | None = None,
+        context_retention_policy: ContextRetentionPolicy | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -167,11 +169,17 @@ class Agent:
                 The runtime state injection config, which controls how the
                 time, (plan) tasks and context usage are injected into the
                 context to help the agent better reason and act.
+            context_retention_policy (`ContextRetentionPolicy | None`, \
+            optional):
+                Runtime policy for partitioning context before compression.
+                None preserves the existing recency-based policy. Supply
+                the policy again when restoring serialized agent state.
         """
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
         self.state = state or AgentState()
+        self.context_retention_policy = context_retention_policy
 
         self.model_config = model_config or ModelConfig()
         self.context_config = context_config or ContextConfig()
@@ -506,17 +514,37 @@ class Agent:
         """
         cfg: ContextConfig = context_config or self.context_config
 
+        # Policies work on an independent snapshot. In particular an image
+        # limit or a failed pin check must not partially rewrite live state.
+        original_context = (
+            deepcopy(self.state.context)
+            if self.context_retention_policy is not None
+            else None
+        )
+        original_summary = deepcopy(self.state.summary)
+        context = (
+            deepcopy(original_context)
+            if original_context is not None
+            else self.state.context
+        )
+
         # Limit the number of images in the context first, so that the token
         # counting below reflects the images that actually remain
-        await self._limit_context_images(cfg)
+        await self._limit_context_images(cfg, context=context)
 
         # Count the current tokens
-        kwargs = await self._prepare_model_input()
+        kwargs = await self._prepare_model_input(context=context)
         estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
         if estimated_tokens < threshold:
+            if original_context is not None:
+                self._check_context_snapshot(
+                    original_context,
+                    original_summary,
+                )
+                self.state.context = context
             return
 
         logger.info(
@@ -531,9 +559,9 @@ class Agent:
             # The system prompt and the summary (if exists) exceeds the
             # threshold, which cannot be compressed, raise the error to the
             # developer!
-            suffix = ""
-            if self.state.summary:
-                suffix = "and the compression summary "
+            suffix = (
+                "and the compression summary " if self.state.summary else ""
+            )
             raise RuntimeError(
                 f"The system prompt {suffix}exceed(s) the compression "
                 f"threshold ({threshold} tokens), cannot be compressed.",
@@ -548,9 +576,18 @@ class Agent:
         ) = await self._split_context_for_compression(
             cfg.reserve_ratio * self.model.context_size,
             tools,
+            context=context,
+            prefix=kwargs["messages"][
+                : len(kwargs["messages"]) - len(context)
+            ],
         )
 
         if len(msgs_to_compress) == 0:
+            if self.context_retention_policy is not None:
+                raise ValueError(
+                    "Retained context exceeds the compression threshold "
+                    "and has no compressible messages.",
+                )
             # The reserve ratio is too large so that although it exceeds the
             # trigger threshold, the context to be compressed is empty
             # Fallback by lowering the reserve ratio to compress more context.
@@ -572,14 +609,19 @@ class Agent:
             # length, which we have handled before.
 
         # Prepare the messages to compress
-        msgs_system = [
-            SystemMsg(
-                name="system",
-                content=await self._get_system_prompt(),
-            ),
-        ]
-        if self.state.summary:
-            msgs_system.append(UserMsg("user", self.state.summary))
+        if self.context_retention_policy is not None:
+            msgs_system = deepcopy(
+                kwargs["messages"][: len(kwargs["messages"]) - len(context)],
+            )
+        else:
+            msgs_system = [
+                SystemMsg(
+                    name="system",
+                    content=await self._get_system_prompt(),
+                ),
+            ]
+            if self.state.summary:
+                msgs_system.append(UserMsg("user", self.state.summary))
 
         instruction_msgs: list[Msg] = []
         if instructions is not None:
@@ -651,6 +693,14 @@ class Agent:
                     "Trying to compress by removing the oldest context.",
                 )
                 for i in range(1, len(msgs_to_compress) + 1):
+                    if (
+                        self.context_retention_policy is not None
+                        and not self._is_tool_pair_boundary(
+                            msgs_to_compress,
+                            i,
+                        )
+                    ):
+                        continue
                     messages = (
                         msgs_system
                         + msgs_to_compress[i:]
@@ -740,6 +790,22 @@ class Agent:
                 elif offload_reminder not in new_summary:
                     new_summary += f"\n{offload_reminder}"
 
+            if self.context_retention_policy is not None:
+                # The generated summary (including the offload reminder)
+                # may cost more than the previous one. Validate before any
+                # live context, usage or read-cache changes are applied.
+                await self._check_retention_budget(
+                    kwargs["messages"][0],
+                    new_summary,
+                    msgs_to_reserve,
+                    tools,
+                    threshold,
+                )
+                self._check_context_snapshot(
+                    original_context,
+                    original_summary,
+                )
+
             # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
@@ -789,7 +855,11 @@ class Agent:
             await apply_task
             raise
 
-    async def _limit_context_images(self, cfg: ContextConfig) -> None:
+    async def _limit_context_images(
+        self,
+        cfg: ContextConfig,
+        context: list[Msg] | None = None,
+    ) -> None:
         """Limit the number of images in the context according to
         ``cfg.max_image_num``. The oldest images exceeding the limit are
         offloaded to the workspace (if an offloader is provided) and replaced
@@ -805,6 +875,8 @@ class Agent:
         Args:
             cfg (`ContextConfig`):
                 The context config that provides ``max_image_num``.
+            context (`list[Msg] | None`, optional):
+                Prepared context to modify, or the live context by default.
         """
         max_image_num = cfg.max_image_num
 
@@ -818,7 +890,7 @@ class Agent:
         # Collect all the image data blocks in chronological order, recorded
         # as (container list, index, block, is_top_level, role)
         images: list[tuple[list, int, DataBlock, bool, str]] = []
-        for msg in self.state.context:
+        for msg in self.state.context if context is None else context:
             for i, block in enumerate(msg.content):
                 if _is_image(block):
                     images.append((msg.content, i, block, True, msg.role))
@@ -1726,6 +1798,20 @@ class Agent:
         # Get the input arguments for the chat model, including messages and
         # tools
         kwargs = await self._prepare_model_input()
+
+        if self.context_retention_policy is not None and (
+            await self.model.count_tokens(**kwargs)
+            >= self.context_config.trigger_ratio * self.model.context_size
+        ):
+            await self.compress_context()
+            kwargs = await self._prepare_model_input()
+            if self.context_retention_policy is not None and (
+                await self.model.count_tokens(**kwargs)
+                >= self.context_config.trigger_ratio * self.model.context_size
+            ):
+                raise ValueError(
+                    "Prepared input still exceeds the compression threshold.",
+                )
 
         # Call the chat model
         res = await self._call_model(
@@ -2875,10 +2961,61 @@ class Agent:
     # Context management related methods
     # =======================================================================
 
+    def _check_context_snapshot(
+        self,
+        context: list[Msg] | None,
+        summary: str | list | None,
+    ) -> None:
+        """Reject a stale partition instead of losing concurrent input."""
+        if context is not None and (
+            self.state.context != context or self.state.summary != summary
+        ):
+            raise RuntimeError(
+                "Context changed during retention; retry compression.",
+            )
+
+    @staticmethod
+    def _is_tool_pair_boundary(messages: list[Msg], index: int) -> bool:
+        """Reject retry cuts that separate a tool call from its result."""
+        before = {
+            (msg.name, block.id)
+            for msg in messages[:index]
+            for block in msg.content
+            if isinstance(block, (ToolCallBlock, ToolResultBlock))
+        }
+        after = {
+            (msg.name, block.id)
+            for msg in messages[index:]
+            for block in msg.content
+            if isinstance(block, (ToolCallBlock, ToolResultBlock))
+        }
+        return not before & after
+
+    async def _check_retention_budget(
+        self,
+        system_msg: Msg,
+        summary: str | list,
+        messages: list[Msg],
+        tools: list[dict],
+        threshold: float,
+    ) -> None:
+        """Validate the generated summary before changing live state."""
+        retained_tokens = await self.model.count_tokens(
+            [system_msg, UserMsg("user", summary)] + messages,
+            tools,
+        )
+        if retained_tokens >= threshold:
+            raise ValueError(
+                "Summary and retained context exceed the "
+                "compression threshold; state is unchanged.",
+            )
+
     async def _split_context_for_compression(
         self,
         to_reserved_tokens: float,
         tools: list[dict],
+        context: list[Msg] | None = None,
+        prefix: list[Msg] | None = None,
     ) -> tuple[list[Msg], list[Msg]]:
         """Split context into parts to compress and parts to keep recent.
 
@@ -2887,6 +3024,10 @@ class Agent:
                 The tokens to be reserved.
             tools (`list[dict]`):
                 The tools JSON schemas used for token counting.
+            context (`list[Msg] | None`, optional):
+                An independent context snapshot, or the live context.
+            prefix (`list[Msg] | None`, optional):
+                Frozen system prompt and summary used for input accounting.
 
         Returns:
             `tuple[list[Msg], list[Msg]]`:
@@ -2894,16 +3035,47 @@ class Agent:
                 context compression.
         """
 
-        # The system prompt
-        system_msg = [
-            SystemMsg(name="system", content=await self._get_system_prompt()),
-        ]
+        context = self.state.context if context is None else context
 
-        # Append the current summary if exists
-        if self.state.summary:
-            system_msg.append(
-                UserMsg("user", self.state.summary),
+        # The system prompt
+        if self.context_retention_policy is not None and prefix is not None:
+            system_msg = deepcopy(prefix)
+        else:
+            system_msg = [
+                SystemMsg(
+                    name="system",
+                    content=await self._get_system_prompt(),
+                ),
+            ]
+
+            # Append the current summary if exists
+            if self.state.summary:
+                system_msg.append(
+                    UserMsg("user", self.state.summary),
+                )
+
+        if self.context_retention_policy is not None:
+            fixed_prefix = deepcopy(
+                prefix if prefix is not None else system_msg,
             )
+            model = self.model
+
+            async def count_tokens(messages: list[Msg]) -> int:
+                """Count a candidate partition with fixed input overhead."""
+                return await model.count_tokens(fixed_prefix + messages, tools)
+
+            result = await self.context_retention_policy.split(
+                context,
+                token_budget=to_reserved_tokens,
+                count_tokens=count_tokens,
+                unfinished_tool_call_ids=frozenset(
+                    block.id
+                    for block in self.state.get_unfinished_tool_calls(
+                        self.name,
+                    )
+                ),
+            )
+            return result.msgs_to_compress, result.msgs_to_reserve
 
         msg_index = len(self.state.context) - 1
         while msg_index >= 0:
@@ -3238,7 +3410,10 @@ class Agent:
 
         return result
 
-    async def _prepare_model_input(self) -> dict[str, Any]:
+    async def _prepare_model_input(
+        self,
+        context: list[Msg] | None = None,
+    ) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
         the current context.
 
@@ -3256,7 +3431,7 @@ class Agent:
                 UserMsg(name="user", content=self.state.summary),
             )
         # The conversation context
-        messages.extend(self.state.context)
+        messages.extend(self.state.context if context is None else context)
 
         # Equip the compression tool, whose registration is kept across
         # replies so that its schema is stable for prompt caching
