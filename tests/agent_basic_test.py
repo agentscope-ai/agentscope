@@ -207,6 +207,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ),
             )
 
+    async def test_summary_template_fields_must_exist_in_schema(self) -> None:
+        """A summary template cannot reference fields absent from its schema."""
+        summary_schema = ContextConfig().summary_schema
+        summary_schema["properties"].pop("next_steps")
+
+        with self.assertRaisesRegex(ValueError, "next_steps"):
+            ContextConfig(summary_schema=summary_schema)
+
     async def test_deprecated_context_buffer_ratio_is_migrated(self) -> None:
         """The buffer ratio of the injection config still takes effect, and
         overrides the one in the context config."""
