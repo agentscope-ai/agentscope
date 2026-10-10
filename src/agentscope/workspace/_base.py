@@ -1219,7 +1219,10 @@ class WorkspaceBase:
                 continue
             try:
                 raw = await backend.read_file(md_path)
-                doc = fm.loads(raw.decode("utf-8"))
+                # ``utf-8-sig`` also accepts a byte order mark. Windows
+                # editors commonly write one, and it would otherwise hide
+                # the opening front matter delimiter.
+                doc = fm.loads(raw.decode("utf-8-sig"))
                 name = doc.get("name")
                 desc = doc.get("description")
                 if not name or not desc:
