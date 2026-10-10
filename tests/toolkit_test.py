@@ -1435,6 +1435,20 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             decision,
         )
 
+    async def test_base_generate_suggestions_suggests_nothing(self) -> None:
+        """The base generate_suggestions must not suggest a tool-wide rule.
+
+        Regression test for https://github.com/agentscope-ai/agentscope/issues/3115:
+        the old default suggested a tool-name-level ALLOW rule, so accepting
+        it (as the human-in-the-loop docs example did) turned the approval
+        of one call into approval of every future call of the tool.
+        """
+        tool = FunctionTool(lambda: "ok")
+
+        suggestions = await tool.generate_suggestions({"arg": "value"})
+
+        self.assertEqual(suggestions, [])
+
 
 class ToolGroupTest(IsolatedAsyncioTestCase):
     """The tool group test case."""

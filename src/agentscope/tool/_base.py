@@ -17,7 +17,6 @@ from ..permission import (
     PermissionContext,
     PermissionDecision,
     PermissionRule,
-    PermissionBehavior,
 )
 from ._response import ToolChunk
 from ._utils import _remove_title_field
@@ -358,9 +357,12 @@ class ToolBase(ABC):
     ) -> List[PermissionRule]:
         """Generate suggested permission rules for the tool input.
 
-        .. note:: Suggest a single tool-name-level rule (``rule_content=None``)
-        that allows all invocations of this tool. Tools can override this to
-        provide finer-grained suggestions.
+        .. note:: The base implementation suggests nothing. A tool-name-level
+        rule (``rule_content=None``) allows all invocations of the tool,
+        whatever the arguments — suggesting it by default would turn the
+        approval of one call into approval of every future call, including
+        calls the user has not been shown yet. Tools can override this to
+        provide finer-grained suggestions scoped to the input.
 
         For example:
         - File tools (Read/Write/Edit): suggest a glob pattern covering the
@@ -378,14 +380,7 @@ class ToolBase(ABC):
                 List of suggested permission rules (usually 1, max 5 for
                 compound operations)
         """
-        return [
-            PermissionRule(
-                tool_name=self.name,
-                rule_content=None,
-                behavior=PermissionBehavior.ALLOW,
-                source="suggested",
-            ),
-        ]
+        return []
 
     def _path_in_allowed_working_path(
         self,
