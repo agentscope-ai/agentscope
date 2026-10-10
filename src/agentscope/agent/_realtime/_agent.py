@@ -179,10 +179,9 @@ class RealtimeAgent:
         self._reply: _Reply | None = None
         self._audio_pending = False
         self._finished_item = ""
-        # The agent's open reply, and whether the next response continues
-        # it (after tool results) rather than starting a new one.
+        # The agent's open logical reply. Multiple provider responses may
+        # belong to it when tools are involved.
         self._reply_id = ""
-        self._continuing = False
         # The user's turn in flight, reported as a reply of its own.
         self._user_turn = ""
         self._user_turn_open = False
@@ -452,6 +451,7 @@ class RealtimeAgent:
             # events that produced (the interrupted ReplyEnd) before the
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
+            self._end_user_turn()
             while not self._out.empty():
                 queued = self._out.get_nowait()
                 self._yielded_checkpoint = (
@@ -746,7 +746,6 @@ class RealtimeAgent:
                         # response answers with their results.
                         reply_id = reply.reply_id
                         self._finish_response()
-                        self._continuing = True
                         self._schedule_tools(reply_id)
                     else:
                         self._finish_reply(ReplyFinishedReason.COMPLETED)
@@ -866,7 +865,7 @@ class RealtimeAgent:
         if self._reply is not None:
             self._finish_response()
 
-        if not self._continuing:
+        if not self._reply_id:
             # The agent takes the turn; the reply is named by its first
             # response so that every event of the turn shares one id.
             self._reply_id = item_id
@@ -882,7 +881,6 @@ class RealtimeAgent:
                     name=self.name,
                 ),
             )
-        self._continuing = False
         self._reply = _Reply(item_id=item_id, reply_id=self._reply_id)
         self._emit(
             ModelCallStartEvent(
@@ -943,7 +941,6 @@ class RealtimeAgent:
                 break
         self._emit(event)
         self._reply_id = ""
-        self._continuing = False
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
         """Emit a transcript delta, opening the block on first use."""

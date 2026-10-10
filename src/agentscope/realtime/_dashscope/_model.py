@@ -40,18 +40,39 @@ class DashScopeRealtimeModel(RealtimeModelBase):
     class Parameters(RealtimeModelBase.Parameters):
         """Tuneables surfaced to the UI."""
 
-        voice: str = Field(default="Cherry", title="Voice")
+        voice: str = Field(
+            default="Cherry",
+            title="Voice",
+            description="The voice used for spoken model responses.",
+        )
         turn_detection: Literal["server_vad", "semantic_vad", "none"] = Field(
             default="server_vad",
             title="Turn Detection",
-            description="``none`` hands endpointing to the caller.",
+            description=(
+                "How the model detects when the user has finished speaking."
+            ),
         )
-        vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-        vad_silence_duration_ms: int = Field(default=800, ge=0)
+        vad_threshold: float = Field(
+            default=0.5,
+            ge=0.0,
+            le=1.0,
+            description=(
+                "Speech detection sensitivity. Lower values detect quieter "
+                "speech."
+            ),
+        )
+        vad_silence_duration_ms: int = Field(
+            default=800,
+            ge=0,
+            description=(
+                "Silence required before the model considers the user's "
+                "turn complete."
+            ),
+        )
         input_audio_transcription: bool = Field(
             default=True,
             title="Transcribe Input",
-            description="Whether to transcribe the user's speech.",
+            description=("Whether to show a transcript of the user's speech."),
         )
 
     type = "dashscope_omni_realtime"

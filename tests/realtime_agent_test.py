@@ -540,6 +540,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "monk.",
                 ("user_start", "u2"),
                 ("reply_end", "interrupted"),
+                ("reply_end", "completed"),
             ],
         )
         self.assertEqual(
@@ -1289,6 +1290,63 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
     """Verify user reply boundaries around delayed transcription."""
 
+    async def test_transcription_after_transport_end_keeps_turn(self) -> None:
+        """A late transcript stays in the user reply already closed."""
+        model = ScriptedModel(
+            [
+                [
+                    me.SpeechStartedEvent(item_id="u1"),
+                    me.SpeechEndedEvent(item_id="u1"),
+                ],
+            ],
+            input_audio_transcription=True,
+        )
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async def _collect() -> list[tuple[Any, ...]]:
+            transport = FakeTransport(frames=1)
+            async with transport:
+                return [
+                    (
+                        event.type,
+                        getattr(event, "role", None),
+                        getattr(event, "delta", None),
+                        getattr(event, "finished_reason", None),
+                    )
+                    async for event in agent.reply_stream(transport)
+                    if getattr(event, "reply_id", None) == "u1"
+                ]
+
+        async with agent:
+            first_events = await _collect()
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id="u1", text="hello"),
+            )
+            next_events = await _collect()
+
+        self.assertEqual(
+            {
+                "first_events": first_events,
+                "next_events": next_events,
+                "context": [
+                    (message.role, message.id, message.get_text_content())
+                    for message in agent.state.context
+                ],
+            },
+            {
+                "first_events": [
+                    ("REPLY_START", "user", None, None),
+                    ("REPLY_END", None, None, "completed"),
+                ],
+                "next_events": [
+                    ("TEXT_BLOCK_START", None, None, None),
+                    ("TEXT_BLOCK_DELTA", None, "hello", None),
+                    ("TEXT_BLOCK_END", None, None, None),
+                ],
+                "context": [("user", "u1", "hello")],
+            },
+        )
+
     async def test_user_reply_ends_after_transcription_result(self) -> None:
         """Success and failure both close their delayed user replies."""
         model = ScriptedModel(
@@ -1743,8 +1801,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         pcm=b"\x01\x00",
                         sample_rate=24000,
                     ),
+                    me.ResponseCreatedEvent(item_id="r2"),
                     me.ToolCallEvent(
-                        item_id="r1",
+                        item_id="r2",
                         tool_call=ToolCallBlock(
                             id="c1",
                             name="stream_tool",
@@ -1752,23 +1811,23 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         ),
                     ),
                     me.ResponseDoneEvent(
-                        item_id="r1",
+                        item_id="r2",
                         input_tokens=5,
                         output_tokens=2,
                     ),
                     "WAIT",
-                    me.ResponseCreatedEvent(item_id="r2"),
+                    me.ResponseCreatedEvent(item_id="r3"),
                     me.TranscriptDeltaEvent(
-                        item_id="r2",
+                        item_id="r3",
                         delta="It is sunny.",
                     ),
                     me.AudioDeltaEvent(
-                        item_id="r2",
+                        item_id="r3",
                         pcm=b"\x01\x00",
                         sample_rate=24000,
                     ),
                     me.ResponseDoneEvent(
-                        item_id="r2",
+                        item_id="r3",
                         input_tokens=9,
                         output_tokens=3,
                     ),
@@ -1827,6 +1886,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
                 ("TEXT_BLOCK_END", "r1", None, None, None, None),
                 ("DATA_BLOCK_END", "r1", None, None, None, None),
+                ("MODEL_CALL_END", "r1", None, None, None, "completed"),
+                ("MODEL_CALL_START", "r1", None, None, None, None),
                 ("MODEL_CALL_END", "r1", None, None, None, "completed"),
                 ("TOOL_CALL_START", "r1", None, None, "c1", None),
                 (
