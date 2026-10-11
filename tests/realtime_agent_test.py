@@ -1631,12 +1631,7 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
         destroying them.
         """
         # pylint: disable=protected-access
-        from agentscope.message import (
-            Base64Source,
-            DataBlock,
-            TextBlock,
-            UserMsg,
-        )
+        from agentscope.message import Base64Source, DataBlock
 
         agent = RealtimeAgent("friday", "be brief", None)
 
@@ -1674,11 +1669,7 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
     ) -> None:
         """A merge target without a trailing text block gains a new one."""
         # pylint: disable=protected-access
-        from agentscope.message import (
-            Base64Source,
-            DataBlock,
-            UserMsg,
-        )
+        from agentscope.message import Base64Source, DataBlock
 
         agent = RealtimeAgent("friday", "be brief", None)
         agent._on_transcription(
