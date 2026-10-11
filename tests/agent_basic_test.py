@@ -107,7 +107,9 @@ class MockConcurrentTool(ToolBase):
         )
 
 
-class AgentBasicTest(IsolatedAsyncioTestCase):
+class AgentBasicTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The basic test of the agent class."""
 
     async def asyncSetUp(self) -> None:
