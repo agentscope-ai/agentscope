@@ -1306,7 +1306,8 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         events = [
             evt
             async for evt in (
-                self.agent._convert_chat_response_to_event(  # pylint: disable=protected-access
+                # pylint: disable=protected-access
+                self.agent._convert_chat_response_to_event(
                     block_ids,
                     chunk,
                     single_response=True,
