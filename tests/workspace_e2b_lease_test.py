@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Lease renewal for long E2B turns (issue #3208, E2B backend wiring).
 
 A turn longer than ``timeout_seconds`` previously lost its sandbox

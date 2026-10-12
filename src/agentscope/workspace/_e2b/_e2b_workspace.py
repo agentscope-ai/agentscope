@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """E2BWorkspace — sandboxed workspace backed by an E2B cloud sandbox.
 
 Architecture
@@ -54,7 +53,6 @@ from ._constants import (
     SANDBOX_WORKDIR,
 )
 from ._e2b_backend import E2BBackend
-
 
 # ── the workspace ──────────────────────────────────────────────────
 
@@ -438,6 +436,5 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             # 2. Gateway venv + base requirements + agentscope.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
-            f"uv pip install --python {self._gateway_python} "
-            f"--no-deps 'agentscope'",
+            f"uv pip install --python {self._gateway_python} --no-deps 'agentscope'",
         ]
