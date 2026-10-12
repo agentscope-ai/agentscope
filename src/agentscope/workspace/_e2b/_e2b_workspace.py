@@ -146,6 +146,84 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         # ── runtime state (E2B-only) ────────────────────────────
         self._sandbox: Any = None  # e2b.AsyncSandbox
         self._backend: E2BBackend | None = None
+        # Lease renewal window: half the lease, so a call arriving just
+        # before expiry still renews in time. ``0`` renews every call.
+        self.renew_interval_seconds = max(
+            0.0,
+            float(timeout_seconds) * 0.5,
+        )
+        # Lease renewal bookkeeping. ``None`` means the next use must
+        # renew; a set timestamp means the lease is inside its window.
+        self._last_renew_attempt_at: float | None = None
+        self._lease_lost = False
+        self._renew_lock = asyncio.Lock()
+        # Injectable clock: tests advance it instead of sleeping.
+        self._clock = asyncio.get_event_loop().time
+
+    async def prepare_for_reuse(self) -> bool:
+        """Renew the sandbox lease before this workspace is used again.
+
+        Long turns can outlive ``timeout_seconds``: without renewal, the
+        provider reclaims the sandbox mid-turn and every later tool call
+        fails against a dead handle. Renewal rides the existing usage —
+        at most one attempt per ``renew_interval_seconds`` (half the
+        lease by default), so bursts of calls do not produce a renewal
+        storm. Cancellation does not consume the interval.
+
+        Returns:
+            `bool`:
+                ``False`` only when the sandbox handle is missing or the
+                SDK reports the sandbox as gone (``NotFoundException``).
+                Transient failures keep the existing connection and
+                return ``True`` — this is not a health guarantee.
+        """
+        if self._sandbox is None:
+            return False
+        if self._lease_lost:
+            return False
+        async with self._renew_lock:
+            if self._lease_lost:
+                return False
+            now = self._clock()
+            last = self._last_renew_attempt_at
+            if last is not None and now - last < self.renew_interval_seconds:
+                return True
+            try:
+                await self._sandbox.set_timeout(self.timeout_seconds)
+            except Exception as exc:  # noqa: BLE001
+                status = getattr(exc, "status_code", None)
+                if status is not None and int(status) == 404:
+                    # Conclusive: the provider says the sandbox is gone.
+                    # Duck-typed on status_code (mirrors NotFound) so the
+                    # check is testable without importing the SDK.
+                    self._lease_lost = True
+                    logger.warning(
+                        "E2BWorkspace: sandbox %r is gone "
+                        "(lease renewal returned not found); marking "
+                        "the workspace unavailable",
+                        self.sandbox_id,
+                    )
+                    return False
+                # Transient failure — keep the existing connection and
+                # let the next call retry after the interval.
+                logger.warning(
+                    "E2BWorkspace: lease renewal failed for "
+                    "workspace_id=%r; keeping the existing connection: %s",
+                    self.workspace_id,
+                    exc,
+                )
+            self._last_renew_attempt_at = self._clock()
+            return True
+
+    def _note_lease_granted(self) -> None:
+        """Record that create/connect just granted a fresh lease.
+
+        ``create`` applies ``timeout_seconds`` itself and ``connect``
+        resumes with the remaining lease, so the first tool call should
+        not renew until the interval elapses.
+        """
+        self._last_renew_attempt_at = self._clock()
+        self._lease_lost = False
 
     # ── lifecycle hooks ─────────────────────────────────────────
 
@@ -164,6 +242,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         so an interrupted bootstrap re-runs cleanly.
         """
         await self._attach_or_create_sandbox()
+        self._note_lease_granted()
         self._backend = E2BBackend(self._sandbox, workdir=SANDBOX_WORKDIR)
 
     async def _teardown_backend(self) -> None:
@@ -179,6 +258,8 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             except Exception as e:
                 logger.warning("E2BWorkspace: pause failed: %s", e)
             self._sandbox = None
+        self._last_renew_attempt_at = None
+        self._lease_lost = False
 
     # ── instructions ────────────────────────────────────────────
 
