@@ -267,6 +267,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         if status_code is None:
             response = getattr(exc, "response", None)
             status_code = getattr(response, "status_code", None)
+        if status_code is None:
+            return False
         try:
             return int(status_code) == 404
         except (TypeError, ValueError):
