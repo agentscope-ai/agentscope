@@ -4,7 +4,6 @@ import inspect
 import json
 import re
 from contextlib import AbstractAsyncContextManager
-from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
@@ -21,6 +20,8 @@ from ._response import ToolChunk
 from ._utils import (
     _extract_func_description,
     _extract_input_schema,
+    _get_callable_docstring,
+    _get_callable_name,
     _remove_title_field,
 )
 from .._logging import logger
@@ -93,9 +94,9 @@ class FunctionTool(ToolBase):
                 user will be asked to confirm the tool call.
         """
         super().__init__(middlewares=middlewares)
-        self.name = name or func.__name__
+        self.name = name or _get_callable_name(func)
         self.description = description or _extract_func_description(
-            func.__doc__ or "",
+            _get_callable_docstring(func),
         )
         if isinstance(input_schema, type) and issubclass(
             input_schema,
@@ -253,11 +254,11 @@ class MCPTool(ToolBase):
 
         self.description = tool.description or ""
 
-        # Preserve the full inputSchema (including $defs, anyOf, oneOf, etc.)
-        # rather than only copying "properties" and "required", which would
-        # silently drop any nested type definitions that the LLM needs to
-        # resolve $ref pointers.
-        _schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        # Preserve the full input_schema (including $defs, anyOf, oneOf,
+        # etc.) rather than only copying "properties" and "required",
+        # which would silently drop any nested type definitions that the
+        # LLM needs to resolve $ref pointers.
+        _schema = dict(tool.input_schema) if tool.input_schema else {}
         _schema.setdefault("type", "object")
         _schema.setdefault("properties", {})
         _schema.setdefault("required", [])
@@ -269,8 +270,8 @@ class MCPTool(ToolBase):
 
         # Extract is_read_only from MCP tool annotations
         self.is_read_only = False
-        if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
-            self.is_read_only = tool.annotations.readOnlyHint or False
+        if tool.annotations:
+            self.is_read_only = tool.annotations.read_only_hint or False
 
         # Store MCP tool and connection info
         self._tool = tool
@@ -278,7 +279,7 @@ class MCPTool(ToolBase):
         self._session = session
 
         if timeout:
-            self._timeout = timedelta(seconds=timeout)
+            self._timeout = float(timeout)
         else:
             self._timeout = None
 
@@ -350,7 +351,7 @@ class MCPTool(ToolBase):
         return ToolChunk(
             content=self._convert_mcp_content_to_blocks(result.content),
             state=ToolResultState.ERROR
-            if result.isError
+            if result.is_error
             else ToolResultState.RUNNING,
         )
 
@@ -380,7 +381,7 @@ class MCPTool(ToolBase):
                     DataBlock(
                         source=Base64Source(
                             type="base64",
-                            media_type=content.mimeType,
+                            media_type=content.mime_type,
                             data=content.data,
                         ),
                     ),
@@ -407,7 +408,7 @@ class MCPTool(ToolBase):
                 as_content.append(
                     DataBlock(
                         source=URLSource(
-                            media_type=content.mimeType,
+                            media_type=content.mime_type,
                             url=content.uri,
                         ),
                     ),

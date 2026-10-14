@@ -285,7 +285,7 @@ class GeminiChatModel(ChatModelBase):
         """
         formatted_messages = await self.formatter.format(messages)
 
-        config: dict[str, Any] = {**config_kwargs}
+        config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
             config["max_output_tokens"] = self.parameters.max_tokens
@@ -306,6 +306,9 @@ class GeminiChatModel(ChatModelBase):
                 "include_thoughts": False,
                 "thinking_budget": 0,
             }
+
+        # Per-call config takes precedence over model-level defaults.
+        config.update(config_kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

@@ -333,7 +333,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
 
         ``--no-deps`` on agentscope is mandatory: the gateway only
         imports :class:`agentscope.mcp.MCPClient` whose transitive
-        needs (``mcp / pydantic / httpx``) are already installed via
+        needs (``mcp / pydantic / httpx / httpx2``) are installed via
         the gateway base requirements. Pulling the full dep tree
         drags in heavy / Rust-built packages the E2B image cannot
         compile.

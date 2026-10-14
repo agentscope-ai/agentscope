@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for OllamaEmbeddingModel."""
+import os
 from dataclasses import asdict
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyValue
 
 from agentscope.credential import OllamaCredential
 from agentscope.embedding import (
+    FileEmbeddingCache,
     OllamaEmbeddingModel,
     EmbeddingResponse,
     EmbeddingUsage,
@@ -104,3 +108,112 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(call_count, 2)
+
+
+class OllamaEmbeddingCacheHostTest(IsolatedAsyncioTestCase):
+    """The embedding cache must not be shared across Ollama hosts."""
+
+    def _assert_response(
+        self,
+        response: EmbeddingResponse,
+        embeddings: list[list[float]],
+        source: str,
+    ) -> None:
+        """Assert the complete embedding response structure."""
+        usage_value = 0 if source == "cache" else A
+        self.assertDictEqual(
+            asdict(response),
+            {
+                "embeddings": embeddings,
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {
+                    "tokens": usage_value,
+                    "time": usage_value,
+                    "type": "embedding",
+                },
+                "source": source,
+            },
+        )
+
+    def _make_model(
+        self,
+        cache: FileEmbeddingCache,
+        host: str | None,
+        vector: list[float],
+    ) -> OllamaEmbeddingModel:
+        """Create an Ollama model with a mocked embedding response."""
+        model = OllamaEmbeddingModel(
+            credential=OllamaCredential(host=host),
+            model="embed",
+            dimensions=2,
+            embedding_cache=cache,
+        )
+        self.addAsyncCleanup(model.client._client.aclose)
+        model.client = SimpleNamespace(
+            embed=AsyncMock(
+                return_value=SimpleNamespace(embeddings=[vector]),
+            ),
+        )
+        return model
+
+    async def test_cache_is_isolated_by_host(self) -> None:
+        """Two hosts serving the same model name must not reuse each
+        other's cached vectors."""
+        with TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            model_a = self._make_model(
+                cache,
+                "http://host-a:11434",
+                [1.0, 0.0],
+            )
+            model_b = self._make_model(
+                cache,
+                "http://host-b:11434",
+                [0.0, 1.0],
+            )
+
+            res_a = await model_a(["hello"])
+            res_b = await model_b(["hello"])
+
+            self._assert_response(res_a, [[1.0, 0.0]], "api")
+            self._assert_response(res_b, [[0.0, 1.0]], "api")
+            model_b.client.embed.assert_awaited_once()
+            # The endpoint must stay out of the Ollama request payload.
+            self.assertNotIn(
+                "endpoint",
+                model_b.client.embed.await_args.kwargs,
+            )
+
+    async def test_cache_uses_host_from_environment(self) -> None:
+        """The resolved OLLAMA_HOST must isolate cached vectors."""
+        with TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            with patch.dict(
+                os.environ,
+                {"OLLAMA_HOST": "http://host-a:11434"},
+            ):
+                model_a = self._make_model(cache, None, [1.0, 0.0])
+            with patch.dict(
+                os.environ,
+                {"OLLAMA_HOST": "http://host-b:11434"},
+            ):
+                model_b = self._make_model(cache, None, [0.0, 1.0])
+            with patch.dict(
+                os.environ,
+                {"OLLAMA_HOST": "http://host-a:11434/"},
+            ):
+                model_a_again = self._make_model(cache, None, [0.5, 0.5])
+
+            res_a = await model_a(["hello"])
+            res_b = await model_b(["hello"])
+            res_a_again = await model_a_again(["hello"])
+
+            self.assertEqual(model_a._cache_endpoint, "http://host-a:11434")
+            self.assertEqual(model_b._cache_endpoint, "http://host-b:11434")
+            self._assert_response(res_a, [[1.0, 0.0]], "api")
+            self._assert_response(res_b, [[0.0, 1.0]], "api")
+            model_b.client.embed.assert_awaited_once()
+            self._assert_response(res_a_again, [[1.0, 0.0]], "cache")
+            model_a_again.client.embed.assert_not_awaited()

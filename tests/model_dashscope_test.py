@@ -6,6 +6,7 @@ Tests cover both non-streaming and streaming modes.
 """
 import base64
 import io
+import struct
 import wave
 from typing import Any
 import unittest
@@ -574,10 +575,19 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
             b for b in final.content if isinstance(b, DataBlock)
         )
         wav_bytes = base64.b64decode(final_audio.source.data)
+        self.assertEqual(
+            struct.unpack("<I", wav_bytes[4:8])[0],
+            36 + len(pcm_full),
+        )
+        self.assertEqual(
+            struct.unpack("<I", wav_bytes[40:44])[0],
+            len(pcm_full),
+        )
         with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
             self.assertEqual(wav.getnchannels(), 1)
             self.assertEqual(wav.getsampwidth(), 2)
             self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm_full) // 2)
             frames = wav.readframes(wav.getnframes())
         self.assertEqual(frames, pcm_full)
 

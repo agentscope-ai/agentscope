@@ -81,6 +81,10 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         import ollama
 
         self.client: ollama.AsyncClient = ollama.AsyncClient(host=self.host)
+        self._cache_endpoint: str = str(
+            # Ollama resolves OLLAMA_HOST and its default URL here.
+            self.client._client.base_url,  # pylint: disable=protected-access
+        )
 
     async def _call_api(
         self,
@@ -105,9 +109,16 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             **kwargs,
         }
 
+        # Two Ollama endpoints can serve different weights under the same
+        # model name, so the resolved endpoint is part of the cache key but
+        # not of the request payload.
+        cache_identifier: dict[str, Any] = {
+            "endpoint": self._cache_endpoint,
+            "api_kwargs": api_kwargs,
+        }
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
             if cached:
                 return EmbeddingResponse(
@@ -122,7 +133,7 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
 
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
                 embeddings=response.embeddings,
             )
 
