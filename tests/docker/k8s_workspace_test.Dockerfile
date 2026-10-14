@@ -37,11 +37,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh \
 ENV GATEWAY_HOME=/root/.agentscope
 
 # Gateway venv + base runtime requirements
-# (mirrors ``_GATEWAY_BASE_REQUIREMENTS`` in _sandboxed_base.py)
+# (mirrors ``_GATEWAY_BASE_REQUIREMENTS`` in _utils.py)
 RUN mkdir -p "${GATEWAY_HOME}" \
  && uv venv "${GATEWAY_HOME}/.venv" \
  && uv pip install --python "${GATEWAY_HOME}/.venv/bin/python" \
-        'mcp<2.0.0' uvicorn fastapi httpx
+        'mcp>=2.0.0' uvicorn fastapi httpx 'httpx2>=2.5.0'
 
 # Install agentscope itself from the local checkout.
 # Build context is repo root, so pyproject.toml + src/ are visible at /src.

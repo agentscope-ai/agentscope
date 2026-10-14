@@ -956,12 +956,23 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                 app.query_one(".as-ask-user-preview", Static).display,
             )
 
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 0)
+            self.assertListEqual(observed, [])
+
             await pilot.press("enter")
             await pilot.pause()
             self.assertIn(
                 "Enable the render pipeline.",
                 str(options.get_option_at_index(0).prompt),
             )
+            await pilot.press("left")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 0)
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 1)
             await pilot.press("enter", "down", "down", "down", "enter")
             await pilot.pause()
 

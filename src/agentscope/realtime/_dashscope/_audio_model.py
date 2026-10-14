@@ -180,6 +180,17 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
                     },
                 )
 
+    async def request_response(self) -> None:
+        """Ask for a reply with the Qwen-Audio modality override."""
+        if self._item_id:
+            await self.cancel_response()
+        await self._send(
+            {
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]},
+            },
+        )
+
     def _session_update(
         self,
         instructions: str,

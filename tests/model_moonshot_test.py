@@ -63,7 +63,7 @@ def _mock_completion(
     resp.choices = [choice]
     resp.usage.prompt_tokens = 10
     resp.usage.completion_tokens = 5
-    resp.usage.cached_tokens = 0
+    resp.usage.prompt_tokens_details.cached_tokens = 0
     return resp
 
 
@@ -83,7 +83,10 @@ def _make_stream_chunk(
         chunk.usage = MagicMock()
         chunk.usage.prompt_tokens = usage.get("prompt_tokens", 0)
         chunk.usage.completion_tokens = usage.get("completion_tokens", 0)
-        chunk.usage.cached_tokens = usage.get("cached_tokens", 0)
+        chunk.usage.prompt_tokens_details.cached_tokens = usage.get(
+            "cached_tokens",
+            0,
+        )
     else:
         chunk.usage = None
 
@@ -169,6 +172,52 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "kimi-1")
+
+    async def test_usage_cache_input_tokens_from_nested_details(self) -> None:
+        """Read cached tokens from nested usage details."""
+        resp = _mock_completion(text="Hello!")
+        resp.usage.prompt_tokens = 1000
+        resp.usage.completion_tokens = 20
+        resp.usage.prompt_tokens_details.cached_tokens = 832
+        mock_create = AsyncMock(return_value=resp)
+        self.mock_client.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 1000,
+                "output_tokens": 20,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 832,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
+
+    async def test_usage_cache_input_tokens_absent_details(self) -> None:
+        """Default cached tokens to zero without usage details."""
+        resp = _mock_completion(text="Hello!")
+        del resp.usage.prompt_tokens_details
+        mock_create = AsyncMock(return_value=resp)
+        self.mock_client.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
 
     async def test_extra_body_is_not_mutated(self) -> None:
         """Defaulting thinking.type leaves the caller's extra_body intact."""
@@ -329,6 +378,40 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                     ],
                 ),
             ],
+        )
+
+    async def test_stream_usage_cache_input_tokens_from_nested_details(
+        self,
+    ) -> None:
+        """Read cached tokens from a streaming usage chunk."""
+        chunks = [
+            _make_stream_chunk(delta_text="Hi"),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={
+                    "prompt_tokens": 1000,
+                    "completion_tokens": 20,
+                    "cached_tokens": 832,
+                },
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        self.mock_client.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertEqual(
+            dict(responses[-1].usage),
+            {
+                "input_tokens": 1000,
+                "output_tokens": 20,
+                "time": responses[-1].usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 832,
+                "type": "chat",
+                "metadata": None,
+            },
         )
 
     async def test_stream_thinking_then_text(

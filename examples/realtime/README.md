@@ -50,6 +50,28 @@ REALTIME_MODEL=qwen3.5-omni-flash-realtime python examples/realtime/local_mic.py
 
 An unknown name prints the available ones.
 
+`qwen3.8-omni-flash-realtime` requires the endpoint bound to the same
+DashScope workspace as the API key. Set `DASHSCOPE_BASE_URL` to the HTTPS
+Chat Completions base URL (not the WebSocket URL):
+
+```bash
+export DASHSCOPE_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+REALTIME_MODEL=qwen3.8-omni-flash-realtime python examples/realtime/local_mic.py
+```
+
+The credential uses that URL for Chat Completions. For realtime sessions,
+the adapter keeps the same workspace host and derives this WebSocket URL:
+
+```text
+wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen3.8-omni-flash-realtime
+```
+
+For the Singapore region, use the corresponding workspace URL:
+
+```bash
+export DASHSCOPE_BASE_URL=https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+```
+
 ### Tools
 
 The example registers `Bash`, `Edit`, `Write` and `Read`. When the model calls
@@ -81,8 +103,9 @@ an unanswered one after five minutes.
   transcript so far appended to the system prompt so the model keeps the
   thread.
 - **Model limits are per turn, not per token.** `qwen3-omni-flash-realtime`
-  remembers eight turns, `qwen-audio-3.0-realtime-*` fifty; older turns are
-  dropped silently on the provider side. The cards under
+  remembers eight turns, `qwen3.8-omni-flash-realtime` one hundred turns or
+  six hundred seconds of audio, and `qwen-audio-3.0-realtime-*` fifty turns;
+  older turns are dropped silently on the provider side. The cards under
   `agentscope/realtime/_dashscope/` list each model's limits.
 - **Typed input** only works on models that accept text
   (`qwen-audio-3.0-realtime-*`); the Omni models are audio-in only, and the

@@ -7,16 +7,16 @@ Two library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no ma
 | [`index_and_search.py`](./index_and_search.py) | The minimal pipeline: parse → chunk → embed → insert, then `KnowledgeBase.search`. Start here. |
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
 
-Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
+Both examples use an in-memory Qdrant store (`location=":memory:"`), so no external vector database is required. They use the DashScope `text-embedding-v4` model and require DashScope API access and a `DASHSCOPE_API_KEY`. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
 
 ## Install
 
 ```bash
 # From PyPI
-uv pip install "agentscope[rag]"
+uv pip install "agentscope[rag,vdb-qdrant]"
 
 # Or from source (repo root)
-uv pip install -e ".[rag]"
+uv pip install -e ".[rag,vdb-qdrant]"
 ```
 
 ### Milvus Lite (local persistence)
@@ -230,7 +230,7 @@ store = ElasticsearchStore(
 
 | | Qdrant (default) | Milvus Lite | MongoDB | Elasticsearch |
 | --- | --- | --- | --- | --- |
-| Install extra | `agentscope[rag]` | `agentscope[vdb-milvus]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
+| Install extra | `agentscope[vdb-qdrant]` | `agentscope[vdb-milvus]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
 | External service | No | No | Yes | Yes |
 | Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (server) | Yes (server) |
 | Best for | Quick start / tests | Local dev with persistence | Teams already on MongoDB | Teams already on Elastic or needing distributed kNN search |

@@ -166,7 +166,7 @@ Usage:
         super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
         self.model_input_types = (
-            _DEFAULT_MODEL_INPUT_TYPES
+            _DEFAULT_MODEL_INPUT_TYPES.copy()
             if model_input_types is None
             else model_input_types
         )

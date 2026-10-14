@@ -295,6 +295,26 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_default_model_input_types_are_isolated(self) -> None:
+        """Changing one default tool must not affect other instances."""
+        existing = Read()
+        self.read_tool.model_input_types.append("image/bmp")
+        self.addCleanup(self.read_tool.model_input_types.remove, "image/bmp")
+
+        defaults = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        self.assertDictEqual(
+            {
+                "configured": self.read_tool.model_input_types,
+                "existing": existing.model_input_types,
+                "later": Read().model_input_types,
+            },
+            {
+                "configured": defaults + ["image/bmp"],
+                "existing": defaults,
+                "later": defaults,
+            },
+        )
+
     async def test_read_image_unsupported_type(self) -> None:
         """Test images outside ``model_input_types`` return an error."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".bmp") as f:

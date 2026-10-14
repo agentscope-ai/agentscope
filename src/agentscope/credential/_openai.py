@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..asr import ASRModelBase
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
     from ..realtime import RealtimeModelBase
@@ -63,6 +64,13 @@ class OpenAICredential(CredentialBase):
         from ..tts import OpenAITTSModel
 
         return [OpenAITTSModel]
+
+    @classmethod
+    def get_asr_model_classes(cls) -> list[Type["ASRModelBase"]]:
+        """Return the OpenAI transcription implementation."""
+        from ..asr import OpenAIASRModel
+
+        return [OpenAIASRModel]
 
     @classmethod
     def get_realtime_model_classes(cls) -> list[Type["RealtimeModelBase"]]:
