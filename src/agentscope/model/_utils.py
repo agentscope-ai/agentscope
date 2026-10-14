@@ -8,6 +8,7 @@ from pydantic import Field
 from ._model_response import ChatResponse, FinishedReason
 from ._model_usage import ChatUsage
 from .._logging import logger
+from .._utils._audio import _finalize_streaming_wav
 from ..message import (
     Base64Source,
     DataBlock,
@@ -125,8 +126,13 @@ class _AccBase64Source(Base64Source):
 
     def build(self) -> Base64Source:
         """Join the raw bytes and base64-encode them once."""
+        data = b"".join(self.data)
+        if self.media_type == "audio/wav":
+            # The stream began with the placeholder WAV header; now that
+            # the buffer is complete, declare its real chunk sizes.
+            data = _finalize_streaming_wav(data)
         return Base64Source(
-            data=base64.b64encode(b"".join(self.data)).decode("ascii"),
+            data=base64.b64encode(data).decode("ascii"),
             media_type=self.media_type,
         )
 

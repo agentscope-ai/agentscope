@@ -1,0 +1,9 @@
+name: gpt-4o-mini-transcribe
+label: GPT-4o Mini Transcribe
+input_types:
+  - audio/flac
+  - audio/mpeg
+  - audio/mp4
+  - audio/ogg
+  - audio/wav
+  - audio/webm

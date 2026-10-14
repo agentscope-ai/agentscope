@@ -152,6 +152,47 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_call_config_overrides_parameter_defaults(self) -> None:
+        """Per-call config overrides model-level defaults."""
+        self.model.parameters.max_tokens = 1024
+        self.model.parameters.temperature = 0.2
+        self.model.parameters.top_p = 0.3
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        default_config = {
+            "max_output_tokens": 1024,
+            "temperature": 0.2,
+            "top_p": 0.3,
+            "thinking_config": {
+                "include_thoughts": False,
+                "thinking_budget": 0,
+            },
+        }
+        cases = {
+            "max_output_tokens": 2048,
+            "temperature": 0.8,
+            "top_p": 0.9,
+            "thinking_config": {
+                "include_thoughts": True,
+                "thinking_budget": 8192,
+            },
+        }
+
+        for key, value in cases.items():
+            with self.subTest(key=key):
+                await self.model([], **{key: value})
+
+                call_args = (
+                    self.mock_client.aio.models.generate_content.call_args
+                )
+                sent_config = call_args.kwargs["config"]
+                self.assertEqual(
+                    sent_config,
+                    {**default_config, key: value},
+                )
+
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         parts = [

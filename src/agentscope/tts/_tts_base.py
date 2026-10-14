@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The TTS model base class."""
 import inspect
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ._tts_model_card import TTSModelCard
 
 
-class TTSModelBase:
+class TTSModelBase(ABC):
     """Base class for TTS models in AgentScope.
 
     This base class provides a unified abstraction for both non-realtime and

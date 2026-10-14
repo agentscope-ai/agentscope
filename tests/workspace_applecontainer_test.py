@@ -299,9 +299,9 @@ _GATEWAY_PYTHON = f"{GATEWAY_HOME}/{DEFAULT_GATEWAY_VENV}/bin/python"
 _ECHO_MCP_SERVER_SCRIPT = '''\
 # -*- coding: utf-8 -*-
 """Minimal echo MCP server for live-test verification."""
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
-mcp = FastMCP("EchoServer")
+mcp = MCPServer("EchoServer")
 
 
 @mcp.tool()

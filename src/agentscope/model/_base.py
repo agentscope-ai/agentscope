@@ -283,6 +283,14 @@ class ChatModelBase:
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
+            finally:
+                # Closing this wrapper does not close the delegated iterator.
+                # Wait for provider cleanup before ``aclose`` returns.
+                aclose = getattr(res, "aclose", None)
+                if aclose is not None:
+                    maybe_awaitable = aclose()
+                    if inspect.isawaitable(maybe_awaitable):
+                        await maybe_awaitable
 
             if yield_acc_res:
                 yield acc_res.build()

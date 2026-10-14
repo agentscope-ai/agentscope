@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from .._utils._common import _generate_id
 
 if TYPE_CHECKING:
+    from ..asr import ASRModelBase, ASRModelCard
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase, ModelCard
     from ..realtime import RealtimeModelBase, RealtimeModelCard
@@ -54,6 +55,19 @@ class CredentialBase(BaseModel):
                 The TTS model classes, or an empty list.
         """
         return []
+
+    @classmethod
+    def get_asr_model_classes(cls) -> list[Type["ASRModelBase"]]:
+        """Return supported speech recognition implementations."""
+        return []
+
+    @classmethod
+    def list_asr_models(cls) -> list["ASRModelCard"]:
+        """List candidate ASR models for this credential."""
+        cards: list["ASRModelCard"] = []
+        for asr_cls in cls.get_asr_model_classes():
+            cards.extend(asr_cls.list_models())
+        return cards
 
     @classmethod
     def list_tts_models(cls) -> list["TTSModelCard"]:
