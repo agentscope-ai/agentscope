@@ -5,7 +5,8 @@ import json
 from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from mcp.server import FastMCP
+from mcp.server import MCPServer
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
 from agentscope.mcp import MCPClient, HttpMCPConfig
@@ -28,9 +29,12 @@ async def tool_1(arg1: str, arg2: list[int]) -> str:
 
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
-    sse_server = FastMCP("SSE", port=8003)
-    sse_server.tool(description="A test tool function.")(tool_1)
-    sse_server.run(transport="sse")
+    sse_server = MCPServer("SSE")
+    sse_server.tool(
+        description="A test tool function.",
+        annotations=ToolAnnotations(read_only_hint=True),
+    )(tool_1)
+    sse_server.run(transport="sse", port=8003)
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +62,9 @@ async def tool_with_model(name: str, config: _ItemConfig) -> str:
 def setup_defs_server() -> None:
     """Set up an SSE MCP server that exposes a tool with Pydantic
     sub-models."""
-    server = FastMCP("DefsSSE", port=8005)
+    server = MCPServer("DefsSSE")
     server.tool()(tool_with_model)
-    server.run(transport="sse")
+    server.run(transport="sse", port=8005)
 
 
 class SseMCPClientTest(IsolatedAsyncioTestCase):
@@ -123,6 +127,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         mcp_tool_1 = await stateless_client.get_tool("tool_1")
+        self.assertTrue(mcp_tool_1.is_read_only)
         # Repeat to ensure idempotency
         res_1: ToolChunk = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
         res_2: ToolChunk = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
@@ -313,8 +318,8 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
     """End-to-end tests for $defs preservation in MCP tool schemas.
 
-    These tests start a real FastMCP server that exposes a tool whose
-    parameter is a Pydantic sub-model.  FastMCP generates an inputSchema with
+    These tests start a real MCPServer that exposes a tool whose parameter is
+    a Pydantic sub-model. MCPServer generates an inputSchema with
     ``$defs`` for the sub-model.  We verify that the schema returned by
     ``await toolkit.get_tool_schemas()`` preserves those ``$defs`` and that
     Pydantic-generated ``title`` fields inside ``$defs`` are stripped.
@@ -332,7 +337,7 @@ class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
                 "type": "function",
                 "function": {
                     "name": "mcp__test_defs_client__tool_with_model",
-                    # FastMCP forwards the tool's ``__doc__`` verbatim;
+                    # MCPServer forwards the tool's ``__doc__`` verbatim;
                     # deriving the expectation from it keeps the test
                     # correct under Python 3.13+, where the compiler
                     # strips common leading whitespace from docstrings.

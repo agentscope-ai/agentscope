@@ -2,10 +2,122 @@
 """The tool module utils."""
 import inspect
 import typing
+from functools import partial
 from typing import Any, Dict, Callable
 
 from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
+
+
+def _get_callable_name(tool_func: Callable) -> str:
+    """Get the effective name of a callable."""
+    named_func = tool_func
+
+    while isinstance(named_func, partial):
+        explicit_name = vars(named_func).get("__name__")
+        if explicit_name is not None:
+            return explicit_name
+
+        named_func = named_func.func
+
+    return named_func.__name__
+
+
+def _get_callable_docstring(tool_func: Callable) -> str:
+    """Get the effective docstring of a callable.
+
+    An explicitly assigned partial docstring takes precedence. Otherwise,
+    unwrap partial objects to avoid using ``functools.partial``'s generic
+    documentation.
+    """
+    documented_func = tool_func
+
+    while isinstance(documented_func, partial):
+        if "__doc__" in vars(documented_func):
+            return documented_func.__doc__ or ""
+
+        documented_func = documented_func.func
+
+    return documented_func.__doc__ or ""
+
+
+def _resolve_annotation(
+    annotation: Any,
+    globalns: dict[str, Any] | None,
+) -> Any:
+    """Resolve one annotation with the provided global namespace."""
+
+    def _annotation_holder() -> None:
+        pass
+
+    _annotation_holder.__annotations__ = {
+        "value": annotation,
+    }
+    return typing.get_type_hints(
+        _annotation_holder,
+        globalns=globalns,
+        include_extras=True,
+    )["value"]
+
+
+def _resolve_partial_type_hints(
+    partial_func: partial,
+    globalns: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Resolve each annotation on a partial independently."""
+    raw_annotations = getattr(
+        partial_func,
+        "__annotations__",
+        {},
+    )
+    if not isinstance(raw_annotations, dict):
+        return {}
+
+    type_hints = {}
+    for name, annotation in raw_annotations.items():
+        try:
+            type_hints[name] = _resolve_annotation(
+                annotation,
+                globalns,
+            )
+        except Exception:
+            continue
+
+    return type_hints
+
+
+def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
+    """Resolve and merge annotations from a callable and its partials.
+
+    Annotations are merged from the underlying callable to the outermost
+    partial, allowing each partial to override selected annotations.
+    """
+    partial_funcs = []
+    annotated_func = tool_func
+
+    while isinstance(annotated_func, partial):
+        partial_funcs.append(annotated_func)
+        annotated_func = annotated_func.func
+
+    try:
+        type_hints = typing.get_type_hints(
+            annotated_func,
+            include_extras=True,
+        )
+    except Exception:
+        type_hints = {}
+
+    globalns = getattr(annotated_func, "__globals__", None)
+
+    for partial_func in reversed(partial_funcs):
+        type_hints.update(
+            _resolve_partial_type_hints(
+                partial_func,
+                globalns,
+            ),
+        )
+
+    return type_hints
 
 
 def _remove_title_field(schema: dict) -> dict:
@@ -95,18 +207,13 @@ def _extract_input_schema(
         `dict`:
             The extracted input JSON schema.
     """
-    docstring = parse(tool_func.__doc__ or "")
+    docstring = parse(_get_callable_docstring(tool_func))
     params_docstring = {_.arg_name: _.description for _ in docstring.params}
 
     # Under PEP 563 (`from __future__ import annotations`) the annotations
     # in the signature are raw strings, which pydantic cannot resolve
     # outside the function's own module. Resolve them here instead.
-    try:
-        type_hints = typing.get_type_hints(tool_func, include_extras=True)
-    except Exception:
-        # e.g. `functools.partial` objects, or annotations referencing
-        # TYPE_CHECKING-only names; fall back to the raw annotations
-        type_hints = {}
+    type_hints = _resolve_type_hints(tool_func)
 
     # Create a dynamic model with the function signature
     fields = {}

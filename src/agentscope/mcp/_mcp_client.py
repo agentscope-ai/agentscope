@@ -10,7 +10,7 @@ from contextlib import (
 from typing import Any, AsyncGenerator, ClassVar, TYPE_CHECKING
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 import mcp.types
 from mcp import ClientSession, stdio_client, StdioServerParameters
 from mcp.client.sse import sse_client
@@ -78,7 +78,7 @@ class MCPClient(BaseModel):
 
     """
 
-    # httpx derives these from the request URL and body with setdefault,
+    # httpx2 derives these from the request URL and body with setdefault,
     # so a client-level value silently wins and breaks routing or framing.
     # The headers MCP itself sends are set per request and need no guard.
     _RESERVED_HEADERS: ClassVar[frozenset[str]] = frozenset(
@@ -128,8 +128,8 @@ class MCPClient(BaseModel):
     _stack: AsyncExitStack | None = PrivateAttr(default=None)
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
-    _http_client: httpx.AsyncClient | None = PrivateAttr(default=None)
-    _static_headers: httpx.Headers | None = PrivateAttr(default=None)
+    _http_client: httpx2.AsyncClient | None = PrivateAttr(default=None)
+    _static_headers: httpx2.Headers | None = PrivateAttr(default=None)
     _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @property
@@ -238,13 +238,13 @@ class MCPClient(BaseModel):
         client = create_mcp_http_client(
             headers=config.headers,
             timeout=(
-                httpx.Timeout(config.timeout)
+                httpx2.Timeout(config.timeout)
                 if config.timeout is not None
                 else None
             ),
         )
         # Snapshot before overlaying: clearing runtime headers restores it.
-        self._static_headers = httpx.Headers(client.headers)
+        self._static_headers = httpx2.Headers(client.headers)
         client.headers.update(self._runtime_headers)
         self._http_client = client
 
@@ -276,7 +276,7 @@ class MCPClient(BaseModel):
         Streamable HTTP session, whose headers are fixed when the stream
         is established. Headers MCP sends itself (``mcp-session-id``,
         ``content-type``, ...) are set per request and always win over
-        the ones set here; the few httpx derives from the URL and body
+        the ones set here; the few httpx2 derives from the URL and body
         are rejected outright.
 
         Args:
@@ -295,7 +295,7 @@ class MCPClient(BaseModel):
         if not isinstance(headers, dict):
             raise ValueError("Runtime headers must be a dict.")
 
-        # httpx accepts illegal names and CRLF in values, and only h11
+        # httpx2 accepts illegal names and CRLF in values, and only h11
         # rejects them mid-request, so validate before storing.
         for name, value in headers.items():
             if (
@@ -312,7 +312,7 @@ class MCPClient(BaseModel):
 
         self._runtime_headers = dict(headers)
         if self._http_client is not None:
-            merged = httpx.Headers(self._static_headers)
+            merged = httpx2.Headers(self._static_headers)
             merged.update(self._runtime_headers)
             self._http_client.headers = merged
 
