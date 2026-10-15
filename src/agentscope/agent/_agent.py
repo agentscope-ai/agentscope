@@ -64,7 +64,7 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import AgentOrientedException, ContentBlockedError
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -3315,7 +3315,7 @@ class Agent:
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
+                        result = await model(
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
@@ -3363,9 +3363,21 @@ class Agent:
                                     next_handler=next_handler,
                                 )
 
-                        return await execute_chain()
+                        result = await execute_chain()
+
+                    if inspect.isasyncgen(result):
+                        return self._observe_model_stream(result, model)
+                    return result
                 except Exception as e:
                     last_exception = e
+                    if isinstance(e, ContentBlockedError):
+                        logger.warning(
+                            "Model %s blocked content for agent %s; "
+                            "skipping retries with the same payload.",
+                            model.model,
+                            self.name,
+                        )
+                        break
                     # Only log a "Retrying" message when there's actually a
                     # next attempt left for this model. When ``max_retries=0``
                     # or the last retry has been used, the outer loop either
@@ -3389,11 +3401,33 @@ class Agent:
                         )
 
         if last_exception:
-            raise last_exception from None
+            raise last_exception
 
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    async def _observe_model_stream(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+        model: ChatModelBase,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Log content blocks raised while a model stream is consumed."""
+        try:
+            async for chunk in stream:
+                yield chunk
+        except ContentBlockedError:
+            logger.warning(
+                "Model %s blocked content for agent %s during stream "
+                "consumption; middleware recovery is unavailable, "
+                "exhausted, or unsafe. Agent-level retries and fallback "
+                "model switching are not attempted.",
+                model.model,
+                self.name,
+            )
+            raise
+        finally:
+            await stream.aclose()
 
     def _update_tool_call_state(
         self,

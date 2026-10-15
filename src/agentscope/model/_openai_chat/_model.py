@@ -13,9 +13,14 @@ from ..._utils._audio import (
 )
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _normalize_openai_compatible_content_error,
+    _openai_compatible_response_block_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
+from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
     Msg,
@@ -123,6 +128,7 @@ class OpenAIChatModel(ChatModelBase):
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
         extra_body: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the OpenAI chat model.
 
@@ -153,6 +159,9 @@ class OpenAIChatModel(ChatModelBase):
             extra_body (`dict[str, Any] | None`, defaults to `None`):
                 Additional request body fields forwarded to
                 OpenAI-compatible APIs.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit OpenAI refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         super().__init__(
             credential=credential,
@@ -162,6 +171,7 @@ class OpenAIChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or OpenAIChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -194,6 +204,16 @@ class OpenAIChatModel(ChatModelBase):
         import openai
 
         return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize structured OpenAI content-filter errors."""
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="openai",
+            blocked_codes={"content_filter"},
+            phase=ContentBlockedPhase.INPUT,
+        )
+        return normalized or error
 
     async def _call_api(
         self,
@@ -336,6 +356,7 @@ class OpenAIChatModel(ChatModelBase):
         audio_id: str = _generate_id()
         # The mapping from index to (tool call id, tool call name)
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -372,6 +393,19 @@ class OpenAIChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    provider="openai",
+                    request_id=response_id,
+                    partial_output=has_output,
+                    include_refusal=getattr(
+                        self,
+                        "raise_on_refusal",
+                        False,
+                    ),
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking
@@ -386,6 +420,9 @@ class OpenAIChatModel(ChatModelBase):
 
                 # Text
                 delta_text = getattr(delta, "content", None) or ""
+                refusal = getattr(delta, "refusal", None)
+                if not delta_text and isinstance(refusal, str):
+                    delta_text = refusal
 
                 # Audio (delta.audio.data / delta.audio.transcript). Omni
                 # models deliver text via ``delta.audio.transcript`` rather
@@ -455,6 +492,7 @@ class OpenAIChatModel(ChatModelBase):
 
                 if delta_res.content or usage:
                     delta_res.usage = usage
+                    has_output = has_output or bool(delta_res.content)
                     yield delta_res
 
     def _parse_completion_response(
@@ -484,6 +522,18 @@ class OpenAIChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                provider="openai",
+                request_id=getattr(response, "id", None),
+                include_refusal=getattr(
+                    self,
+                    "raise_on_refusal",
+                    False,
+                ),
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if not isinstance(reasoning, str):
                 reasoning = getattr(choice.message, "reasoning", None)
@@ -492,6 +542,14 @@ class OpenAIChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
+
+            refusal = getattr(choice.message, "refusal", None)
+            if (
+                not choice.message.content
+                and isinstance(refusal, str)
+                and refusal
+            ):
+                content_blocks.append(TextBlock(text=refusal))
 
             # Extract audio output (message.audio.data /
             # message.audio.transcript)

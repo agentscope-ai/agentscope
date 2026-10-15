@@ -198,6 +198,32 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "resp-1")
 
+    async def test_refusal_only_fills_missing_content(self) -> None:
+        """Prefer content when compatible providers also supply refusal."""
+        for content in ("Cannot help.", "Primary answer.", None, ""):
+            with self.subTest(content=content):
+                response = _mock_completion(text=content)
+                response.choices[0].message.refusal = "Cannot help."
+                self.mock_client.chat.completions.create = AsyncMock(
+                    return_value=response,
+                )
+
+                result = await self.model([])
+
+                self.assertEqual(
+                    (result.is_last, result.content),
+                    (
+                        True,
+                        [
+                            TextBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                text=content or "Cannot help.",
+                            ),
+                        ],
+                    ),
+                )
+
     async def test_default_thinking_enable_not_forwarded(
         self,
     ) -> None:
@@ -532,6 +558,40 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(responses[-1].id, "resp-1")
+
+    async def test_stream_refusal_only_fills_missing_content(self) -> None:
+        """Do not duplicate refusal text in deltas or the final response."""
+        for content in ("Cannot help.", "Primary answer.", None, ""):
+            with self.subTest(content=content):
+                chunk = _make_stream_chunk(delta_text=content)
+                chunk.choices[0].delta.refusal = "Cannot help."
+                self.mock_client.chat.completions.create = AsyncMock(
+                    return_value=_MockAsyncStream([chunk]),
+                )
+
+                responses = [
+                    response async for response in await self.model([])
+                ]
+
+                self.assertEqual(
+                    [
+                        (response.is_last, response.content)
+                        for response in responses
+                    ],
+                    [
+                        (
+                            is_last,
+                            [
+                                TextBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    text=content or "Cannot help.",
+                                ),
+                            ],
+                        )
+                        for is_last in (False, True)
+                    ],
+                )
 
     async def test_stream_thinking_and_text(
         self,

@@ -13,6 +13,8 @@ from ...formatter import FormatterBase, MiniMaxChatFormatter
 class MiniMaxChatModel(AnthropicChatModel):
     """Chat model for MiniMax's Anthropic-compatible API."""
 
+    _content_block_provider = "minimax"
+
     type: Literal["minimax_chat"] = "minimax_chat"
     """The type of the chat model."""
 
@@ -46,6 +48,7 @@ class MiniMaxChatModel(AnthropicChatModel):
         context_size: int = 1_000_000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the MiniMax chat model.
 
@@ -69,6 +72,9 @@ class MiniMaxChatModel(AnthropicChatModel):
                 The formatter used to serialize messages.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra arguments forwarded to ``anthropic.AsyncAnthropic``.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit MiniMax refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         super().__init__(
             credential=credential,
@@ -80,6 +86,7 @@ class MiniMaxChatModel(AnthropicChatModel):
             context_size=context_size,
             formatter=formatter or MiniMaxChatFormatter(),
             client_kwargs=client_kwargs,
+            raise_on_refusal=raise_on_refusal,
         )
 
     def _build_thinking_config(

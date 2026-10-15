@@ -9,9 +9,11 @@ from pydantic import BaseModel, Field
 
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import _enum_name
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import GeminiCredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -20,6 +22,64 @@ if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
 else:
     GenerateContentResponse = Any
+
+
+_GEMINI_PROMPT_BLOCK_REASONS = frozenset(
+    {
+        "SAFETY",
+        "BLOCKLIST",
+        "PROHIBITED_CONTENT",
+        "IMAGE_SAFETY",
+    },
+)
+_GEMINI_OUTPUT_BLOCK_REASONS = frozenset(
+    {
+        "SAFETY",
+        "BLOCKLIST",
+        "PROHIBITED_CONTENT",
+        "SPII",
+        "IMAGE_SAFETY",
+    },
+)
+
+
+def _gemini_content_block_error(
+    response: Any,
+    *,
+    partial_output: bool = False,
+) -> ContentBlockedError | None:
+    """Normalize explicit Gemini prompt and candidate block signals."""
+    request_id = getattr(response, "response_id", None)
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    block_reason = _enum_name(
+        getattr(prompt_feedback, "block_reason", None),
+    )
+    if block_reason in _GEMINI_PROMPT_BLOCK_REASONS:
+        message = getattr(prompt_feedback, "block_reason_message", None)
+        return ContentBlockedError(
+            message or f"Gemini blocked the prompt: {block_reason}.",
+            phase=ContentBlockedPhase.INPUT,
+            provider="gemini",
+            original_code=block_reason,
+            request_id=request_id,
+            partial_output=partial_output,
+        )
+
+    candidates = getattr(response, "candidates", None) or []
+    if candidates:
+        finish_reason = _enum_name(
+            getattr(candidates[0], "finish_reason", None),
+        )
+        if finish_reason in _GEMINI_OUTPUT_BLOCK_REASONS:
+            return ContentBlockedError(
+                f"Gemini blocked the response: {finish_reason}.",
+                phase=ContentBlockedPhase.OUTPUT,
+                provider="gemini",
+                original_code=finish_reason,
+                request_id=request_id,
+                partial_output=partial_output,
+            )
+    return None
 
 
 def _is_null_schema(schema: Any) -> bool:
@@ -361,6 +421,7 @@ class GeminiChatModel(ChatModelBase):
         response_id: str = _generate_id()
         text_id: str = _generate_id()
         thinking_id: str = _generate_id()
+        has_output = False
 
         async for chunk in response:
             # Capture response_id from the first chunk that carries it
@@ -373,6 +434,15 @@ class GeminiChatModel(ChatModelBase):
             # Update the response ID if exists
             response_id = getattr(chunk, "response_id", None) or response_id
             delta_res.id = response_id
+
+            blocked_error = _gemini_content_block_error(
+                chunk,
+                partial_output=has_output,
+            )
+            if blocked_error is not None:
+                if blocked_error.request_id is None:
+                    blocked_error.request_id = response_id
+                raise blocked_error
 
             if (
                 chunk.candidates
@@ -416,6 +486,7 @@ class GeminiChatModel(ChatModelBase):
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
             if delta_res.content or usage:
+                has_output = has_output or bool(delta_res.content)
                 delta_res.usage = usage
                 yield delta_res
 
@@ -436,6 +507,10 @@ class GeminiChatModel(ChatModelBase):
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
         """
+        blocked_error = _gemini_content_block_error(response)
+        if blocked_error is not None:
+            raise blocked_error
+
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         if (

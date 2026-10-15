@@ -7,10 +7,15 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _normalize_openai_compatible_content_error,
+    _openai_compatible_response_block_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import DeepSeekCredential
+from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, DeepSeekChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -154,6 +159,16 @@ class DeepSeekChatModel(ChatModelBase):
 
         return (openai.BadRequestError,)
 
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize explicit DeepSeek content-filter errors."""
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="deepseek",
+            blocked_codes={"content_filter"},
+            phase=ContentBlockedPhase.INPUT,
+        )
+        return normalized or error
+
     async def _call_api(
         self,
         model_name: str,
@@ -260,6 +275,7 @@ class DeepSeekChatModel(ChatModelBase):
         thinking_id: str = _generate_id()
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -298,6 +314,14 @@ class DeepSeekChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    provider="deepseek",
+                    request_id=response_id,
+                    partial_output=has_output,
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking block
@@ -338,6 +362,7 @@ class DeepSeekChatModel(ChatModelBase):
                     )
 
                 if delta_res.content or usage:
+                    has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
 
@@ -362,6 +387,13 @@ class DeepSeekChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                provider="deepseek",
+                request_id=getattr(response, "id", None),
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if isinstance(reasoning, str) and reasoning:
                 content_blocks.append(ThinkingBlock(thinking=reasoning))

@@ -68,6 +68,7 @@ class ChatModelBase:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 32768,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the chat model base.
 
@@ -88,6 +89,9 @@ class ChatModelBase:
                 Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether a provider's explicit refusal signal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         self.credential = credential
         self.model = model
@@ -96,6 +100,7 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self.raise_on_refusal = raise_on_refusal
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -107,6 +112,24 @@ class ChatModelBase:
         optional dependency.
         """
         return ()
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize a provider exception before retry classification.
+
+        Provider implementations can override this hook to translate SDK
+        exceptions into AgentScope exceptions such as
+        :class:`~agentscope.exception.ContentBlockedError`. Returning the
+        original exception preserves the default behavior.
+
+        Args:
+            error (`Exception`):
+                The exception raised by the provider SDK.
+
+        Returns:
+            `Exception`:
+                The normalized exception.
+        """
+        return error
 
     def _get_disable_thinking_kwargs(self) -> dict:
         """Return kwargs that disable thinking for this provider.
@@ -224,16 +247,19 @@ class ChatModelBase:
                 )
 
             except Exception as e:
-                if not isinstance(e, retryable):
+                normalized_error = self._normalize_exception(e)
+                if not isinstance(normalized_error, retryable):
+                    if normalized_error is not e:
+                        raise normalized_error from e
                     raise
-                last_error = e
+                last_error = normalized_error
                 if attempt < self.max_retries:
                     logger.warning(
                         "Attempt %d failed for model %s: %s. "
                         "Retrying in %.1fs...",
                         attempt + 1,
                         self.model,
-                        str(e),
+                        str(normalized_error),
                         self.retry_delay,
                     )
                     await asyncio.sleep(self.retry_delay)
@@ -283,6 +309,11 @@ class ChatModelBase:
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
+            except Exception as e:
+                normalized_error = self._normalize_exception(e)
+                if normalized_error is not e:
+                    raise normalized_error from e
+                raise
             finally:
                 # Closing this wrapper does not close the delegated iterator.
                 # Wait for provider cleanup before ``aclose`` returns.
@@ -559,10 +590,11 @@ class ChatModelBase:
                     # CancelledError / KeyboardInterrupt derive from
                     # BaseException and are not caught here, so they
                     # propagate as expected.
+                    normalized_error = self._normalize_exception(e)
                     if first_error is None:
-                        first_error = e
-                    last_error = e
-                    if isinstance(e, retryable):
+                        first_error = normalized_error
+                    last_error = normalized_error
+                    if isinstance(normalized_error, retryable):
                         # Transient error: retry the same strategy. A
                         # different strategy hits the same endpoint, so
                         # switching would not help a rate limit or timeout.
@@ -572,13 +604,17 @@ class ChatModelBase:
                                 "failed: %s. Retrying in %.1fs...",
                                 attempt + 1,
                                 self.model,
-                                e,
+                                normalized_error,
                                 self.retry_delay,
                             )
                             await asyncio.sleep(self.retry_delay)
                             continue
-                        raise  # retries exhausted -> give up
-                    if not isinstance(e, fallback):
+                        if normalized_error is not e:
+                            raise normalized_error from e
+                        raise
+                    if not isinstance(normalized_error, fallback):
+                        if normalized_error is not e:
+                            raise normalized_error from e
                         raise
                     # Structured-output compatibility failure: try the next
                     # strategy.
@@ -587,7 +623,7 @@ class ChatModelBase:
                         "Trying next.",
                         name,
                         self.model,
-                        e,
+                        normalized_error,
                     )
                     break
 
