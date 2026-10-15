@@ -321,6 +321,57 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(verifier.received), 1)
 
+    async def test_gives_up_on_an_executor_that_never_reports(self) -> None:
+        """An executor that never produces the report exhausts the retry
+        budget instead of being re-prompted forever."""
+        executor = StubAgent("executor", [[_no_output("executor")]])
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier, max_retries=2)
+
+        with self.assertRaises(RuntimeError):
+            await self._run(pipe, self.query)
+
+        # The initial attempt plus one re-prompt per retry
+        self.assertEqual(len(executor.received), 3)
+        self.assertListEqual(verifier.received, [])
+
+    async def test_gives_up_on_a_verifier_that_never_verdicts(self) -> None:
+        """The same for a verifier that never produces a verdict."""
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent("verifier", [[_no_output("verifier")]])
+        pipe = GoalPipeline(executor, verifier, max_retries=2)
+
+        with self.assertRaises(RuntimeError):
+            await self._run(pipe, self.query)
+
+        self.assertEqual(len(executor.received), 1)
+        self.assertEqual(len(verifier.received), 3)
+
+    async def test_a_fresh_run_restarts_the_retry_budget(self) -> None:
+        """A new goal hands both participants a fresh retry budget, the
+        way it restarts the iteration budget."""
+        executor = StubAgent(
+            "executor",
+            [[_no_output("executor")], [_no_output("executor")], [_report()]],
+        )
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+        # Two failed attempts spend a budget of one and give up.
+        with self.assertRaises(RuntimeError):
+            await self._run(pipe, self.query)
+        self.assertEqual(len(executor.received), 2)
+        self.assertListEqual(verifier.received, [])
+
+        # The same pipeline, a fresh goal: the report goes through.
+        yielded = await self._run(pipe, self.query)
+        self.assertEqual(len(executor.received), 3)
+        self.assertEqual(len(verifier.received), 1)
+        self.assertEqual(
+            yielded[-1].structured_output,
+            {"report": "已完成，见 main.py"},
+        )
+
     async def test_a_parked_executor_is_not_verified(self) -> None:
         """The work is unfinished while the executor waits on a human, so
         there is nothing for the verifier to judge yet."""
