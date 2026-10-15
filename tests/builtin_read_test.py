@@ -6,15 +6,17 @@ import os
 import tempfile
 import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 from utils import AnyString
 
-from agentscope.tool import ToolChunk, Read
+from agentscope.tool import ToolChunk, Read, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
     PermissionRule,
 )
-from agentscope.message import TextBlock
+from agentscope.message import TextBlock, ToolResultState
+from agentscope.state import AgentState, ToolContext
 
 
 # pylint: disable=too-many-public-methods
@@ -176,6 +178,108 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         self.assertIn("Line 2", content)
         self.assertIn("Line 3", content)
         self.assertNotIn("Line 4", content)
+
+    async def test_invalid_pagination_skips_reading_and_cache(self) -> None:
+        """Reject invalid pagination before reading or accessing the cache."""
+        state = AgentState()
+        backend = LocalBackend()
+        read_tool = Read(backend=backend)
+        with (
+            patch.object(
+                backend,
+                "read_file",
+                new_callable=AsyncMock,
+                return_value=b"Line 1\nLine 2\n",
+            ) as read_file,
+            patch.object(
+                backend,
+                "stat_mtime",
+                new_callable=AsyncMock,
+                return_value=1.0,
+            ) as stat_mtime,
+            patch.object(
+                ToolContext,
+                "get_cache",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as get_cache,
+            patch.object(
+                ToolContext,
+                "cache_file",
+                new_callable=AsyncMock,
+            ) as cache_file,
+        ):
+            for parameter, value in [
+                ("offset", 0),
+                ("offset", -1),
+                ("offset", -3),
+                ("limit", 0),
+                ("limit", -1),
+                ("limit", 2001),
+            ]:
+                with self.subTest(parameter=parameter, value=value):
+                    invoke = (
+                        read_tool.call if parameter == "offset" else read_tool
+                    )
+                    chunk = await invoke(
+                        file_path=self.temp_file.name,
+                        _agent_state=state,
+                        **{parameter: value},
+                    )
+
+                    self.assertIsInstance(chunk, ToolChunk)
+                    self.assertEqual(chunk.state, ToolResultState.ERROR)
+                    self.assertTrue(chunk.is_last)
+                    self.assertEqual(len(chunk.content), 1)
+                    self.assertIsInstance(chunk.content[0], TextBlock)
+                    self.assertEqual(
+                        chunk.content[0].text,
+                        f"Error: offset must be at least 1, got: {value}."
+                        if parameter == "offset"
+                        else "Error: limit must be between 1 and 2000, "
+                        f"got: {value}.",
+                    )
+                    read_file.assert_not_called()
+                    stat_mtime.assert_not_called()
+                    get_cache.assert_not_called()
+                    cache_file.assert_not_called()
+
+    async def test_read_pagination_boundaries(self) -> None:
+        """Valid pagination preserves exact line numbers and content."""
+        all_lines = "\n".join(f"{i:6d}\tLine {i}" for i in range(1, 11))
+        for offset, limit, expected in [
+            (1, 1, "     1\tLine 1"),
+            (10, 1, "    10\tLine 10"),
+            (1, 2000, all_lines),
+            (10, 2000, "    10\tLine 10"),
+            (11, 1, ""),
+        ]:
+            with self.subTest(offset=offset, limit=limit):
+                chunk = await self.read_tool(
+                    file_path=self.temp_file.name,
+                    offset=offset,
+                    limit=limit,
+                )
+
+                self.assertEqual(chunk.state, ToolResultState.RUNNING)
+                self.assertTrue(chunk.is_last)
+                self.assertEqual(len(chunk.content), 1)
+                self.assertIsInstance(chunk.content[0], TextBlock)
+                self.assertEqual(chunk.content[0].text, expected)
+
+    async def test_read_empty_file_with_valid_pagination(self) -> None:
+        """An empty file remains a successful empty result."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
+            pass
+        self.addCleanup(os.unlink, f.name)
+
+        chunk = await self.read_tool(file_path=f.name, offset=1, limit=1)
+
+        self.assertEqual(chunk.state, ToolResultState.RUNNING)
+        self.assertTrue(chunk.is_last)
+        self.assertEqual(len(chunk.content), 1)
+        self.assertIsInstance(chunk.content[0], TextBlock)
+        self.assertEqual(chunk.content[0].text, "")
 
     async def test_read_nonexistent_file(self) -> None:
         """Test reading a non-existent file."""

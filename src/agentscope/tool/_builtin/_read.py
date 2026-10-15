@@ -499,6 +499,30 @@ Usage:
     ) -> ToolChunk:
         """Read a text file and return with line numbers."""
         try:
+            if offset < 1:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Error: offset must be at least 1, "
+                            f"got: {offset}.",
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
+            if limit < 1 or limit > 2000:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Error: limit must be between 1 and 2000, "
+                            f"got: {limit}.",
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
             # Read file content via backend
             lines = None
             if _agent_state is not None:
