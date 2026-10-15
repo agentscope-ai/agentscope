@@ -296,6 +296,27 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_incomplete_usage_preserves_completion(self) -> None:
+        """Incomplete SDK token counts must not discard a valid completion."""
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        for prompt, total in [(None, None), (None, 15), (10, None)]:
+            with self.subTest(prompt=prompt, total=total):
+                response = _mock_completion([_make_part(text="hello")])
+                response.usage_metadata = GenerateContentResponseUsageMetadata(
+                    prompt_token_count=prompt,
+                    total_token_count=total,
+                )
+                self.mock_client.aio.models.generate_content = AsyncMock(
+                    return_value=response,
+                )
+
+                result = await self.model([])
+
+                self.assertTrue(result.is_last)
+                self.assertEqual(result.content[0].text, "hello")
+                self.assertIsNone(result.usage)
+
     async def test_usage_normalizes_optional_cache_count(self) -> None:
         """SDK cache counts remain integer-valued in raw model usage."""
         from google.genai.types import GenerateContentResponseUsageMetadata
@@ -466,6 +487,36 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_incomplete_usage_then_final_usage(self) -> None:
+        """Missing counts preserve text; later complete usage is retained."""
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        for prompt, total in [(None, None), (None, 15), (10, None)]:
+            with self.subTest(prompt=prompt, total=total):
+                first = _make_stream_chunk([_make_part(text="Hello")])
+                first.usage_metadata = GenerateContentResponseUsageMetadata(
+                    prompt_token_count=prompt,
+                    total_token_count=total,
+                )
+                last = _make_stream_chunk([_make_part(text=" world")])
+                self.mock_client.aio.models.generate_content_stream = (
+                    AsyncMock(
+                        return_value=_MockAsyncStream([first, last]),
+                    )
+                )
+
+                stream = await self.model([])
+                responses = [response async for response in stream]
+
+                self.assertEqual(
+                    [response.content[0].text for response in responses],
+                    ["Hello", " world", "Hello world"],
+                )
+                self.assertIsNone(responses[0].usage)
+                self.assertTrue(responses[-1].is_last)
+                self.assertEqual(responses[-1].usage.input_tokens, 10)
+                self.assertEqual(responses[-1].usage.output_tokens, 5)
 
     async def test_stream_usage_normalizes_optional_cache_count(self) -> None:
         """Delta and final usage normalize optional SDK cache counts."""
