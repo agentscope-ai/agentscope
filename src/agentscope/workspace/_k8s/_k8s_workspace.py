@@ -588,10 +588,9 @@ class K8sWorkspace(SandboxedWorkspaceBase):
     def _bootstrap_commands(self) -> list[str]:
         """Shell commands that provision this Pod once.
 
-        Only runs when the gateway script is missing (fresh PVC, or a
-        Pod that died before the script was written). Slim base image
-        runs as root, so no ``sudo`` needed — uv lands at
-        ``/usr/local/bin/uv`` which is on the default PATH.
+        Runs for a fresh PVC, an interrupted bootstrap, or a stale gateway
+        runtime marker. The slim base image runs as root, so no ``sudo`` is
+        needed — uv lands at ``/usr/local/bin/uv`` on the default PATH.
         """
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement string so entries containing spaces

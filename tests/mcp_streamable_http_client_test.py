@@ -2,6 +2,7 @@
 """The MCP client test module in agentscope."""
 import asyncio
 from multiprocessing import Process
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import MCPServer
@@ -9,6 +10,17 @@ from mcp.types import EmbeddedResource, TextResourceContents
 
 from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.tool import ToolChunk
+
+
+async def _final_chunk(tool: Any, **kwargs: Any) -> ToolChunk:
+    """Consume a streaming MCP tool and return its final chunk."""
+    stream = await tool(**kwargs)
+    final: ToolChunk | None = None
+    async for chunk in stream:
+        if chunk.is_last:
+            final = chunk
+    assert final is not None
+    return final
 
 
 async def tool_1(arg1: str, arg2: list[int]) -> str:
@@ -79,13 +91,13 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         my_tool_1 = await client.get_tool("tool_1")
-        res_1: ToolChunk = await my_tool_1(arg1="123", arg2=[1, 2, 3])
+        res_1 = await _final_chunk(my_tool_1, arg1="123", arg2=[1, 2, 3])
         self.assertEqual(
             res_1.content[0].text,
             "arg1: 123, arg2: [1, 2, 3]",
         )
 
-        res_2: ToolChunk = await my_tool_1(arg1="345", arg2=[4, 5, 6])
+        res_2 = await _final_chunk(my_tool_1, arg1="345", arg2=[4, 5, 6])
         self.assertEqual(
             res_2.content[0].text,
             "arg1: 345, arg2: [4, 5, 6]",
@@ -107,13 +119,13 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         self.assertTrue(client.is_connected)
 
         my_tool_1 = await client.get_tool("tool_1")
-        res_3: ToolChunk = await my_tool_1(arg1="12", arg2=[1, 2])
+        res_3 = await _final_chunk(my_tool_1, arg1="12", arg2=[1, 2])
         self.assertEqual(
             res_3.content[0].text,
             "arg1: 12, arg2: [1, 2]",
         )
 
-        res_4: ToolChunk = await my_tool_1(arg1="34", arg2=[4, 5])
+        res_4 = await _final_chunk(my_tool_1, arg1="34", arg2=[4, 5])
         self.assertEqual(
             res_4.content[0].text,
             "arg1: 34, arg2: [4, 5]",
@@ -135,13 +147,13 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         my_tool_2 = await client.get_tool("tool_2")
-        res: ToolChunk = await my_tool_2()
+        res = await _final_chunk(my_tool_2)
         self.assertEqual(
             res.content[0].text,
             """{
   "uri": "file://tmp.txt",
-  "mime_type": "text/plain",
-  "meta": null,
+  "mimeType": "text/plain",
+  "_meta": null,
   "text": "test content"
 }""",
         )

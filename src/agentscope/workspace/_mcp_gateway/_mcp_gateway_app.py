@@ -19,6 +19,9 @@ Endpoints::
     PUT    /mcps/{name}/runtime-headers
     GET    /mcps/{name}/tools
     POST   /mcps/{name}/tools/{tool}   # body: {arguments: {...}}
+    POST   /mcps/{name}/tools/{tool}/calls
+    GET    /tool-calls/{call_id}/events
+    DELETE /tool-calls/{call_id}
 
 Every endpoint except ``/health`` takes ``?agent_id=&session_id=``.
 Upstream sessions are kept per agent, session and MCP name, so two
@@ -33,12 +36,110 @@ gateway does not need).
 import argparse
 import asyncio
 import secrets
+import uuid
+from collections import deque
+from contextlib import asynccontextmanager
 from typing import Any
 
+import mcp.types
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 
+# pylint: disable=protected-access
 from agentscope.mcp import MCPClient
+from agentscope.mcp._content import _convert_mcp_content
+
+
+_TERMINAL_CALL_TTL_SECONDS = 300.0
+_ACTIVE_CALL_IDLE_TTL_SECONDS = 300.0
+_CALL_REAPER_INTERVAL_SECONDS = 30.0
+_MAX_UNACKNOWLEDGED_EVENTS = 1024
+
+
+def _progress_chunk(
+    progress: float,
+    total: float | None,
+    message: str | None,
+) -> dict[str, Any]:
+    """Build the wire representation of one MCP progress update."""
+    return {
+        "content": [],
+        "state": "running",
+        "is_last": False,
+        "metadata": {
+            "mcp_progress": {
+                "progress": progress,
+                "total": total,
+                "message": message,
+            },
+        },
+    }
+
+
+def _result_chunk(result: mcp.types.CallToolResult) -> dict[str, Any]:
+    """Convert a raw MCP result to the gateway's ToolChunk wire shape."""
+    return {
+        "content": _convert_mcp_content(result.content),
+        "state": "error" if result.is_error else "running",
+        "is_last": True,
+        "metadata": {},
+    }
+
+
+class _ToolCall:
+    """One background call with a single consumer's ordered output events.
+
+    Acknowledgements discard shared events, so independent consumers must
+    not poll the same call ID with separate cursors.
+    """
+
+    def __init__(self, mcp_name: str) -> None:
+        self.mcp_name = mcp_name
+        self.events: deque[dict[str, Any]] = deque()
+        self.next_sequence = 1
+        self.done = False
+        self.cancelled = False
+        self.error: str | None = None
+        self.task: asyncio.Task[None] | None = None
+        self.changed = asyncio.Event()
+        self.updated_at = asyncio.get_running_loop().time()
+        self.last_polled_at = self.updated_at
+
+    def append(self, chunk: dict[str, Any]) -> None:
+        """Append one chunk and wake long-polling consumers."""
+        if len(self.events) >= _MAX_UNACKNOWLEDGED_EVENTS:
+            self.events.popleft()
+        self.events.append(
+            {
+                "sequence": self.next_sequence,
+                "chunk": chunk,
+            },
+        )
+        self.next_sequence += 1
+        self.updated_at = asyncio.get_running_loop().time()
+        self.changed.set()
+
+    def touch(self) -> None:
+        """Renew the host polling lease for an active call."""
+        self.last_polled_at = asyncio.get_running_loop().time()
+
+    def acknowledge(self, sequence: int) -> None:
+        """Discard events confirmed by the polling consumer."""
+        while self.events and self.events[0]["sequence"] <= sequence:
+            self.events.popleft()
+
+    def finish(
+        self,
+        *,
+        error: str | None = None,
+        cancelled: bool = False,
+    ) -> None:
+        """Mark the call terminal and wake long-polling consumers."""
+        self.done = True
+        self.error = error
+        self.cancelled = cancelled
+        self.updated_at = asyncio.get_running_loop().time()
+        self.changed.set()
 
 
 class _State:
@@ -46,7 +147,46 @@ class _State:
 
     def __init__(self) -> None:
         self.clients: dict[tuple[str, str], dict[str, MCPClient]] = {}
+        self.tool_calls: dict[tuple[str, str, str], _ToolCall] = {}
         self.lock = asyncio.Lock()
+
+    async def prune_tool_calls(self) -> None:
+        """Remove expired terminal calls and abandoned active calls."""
+        now = asyncio.get_running_loop().time()
+        stale = [
+            key
+            for key, call in self.tool_calls.items()
+            if (
+                call.done
+                and now - call.updated_at >= _TERMINAL_CALL_TTL_SECONDS
+            )
+            or (
+                not call.done
+                and now - call.last_polled_at >= _ACTIVE_CALL_IDLE_TTL_SECONDS
+            )
+        ]
+        tasks: list[asyncio.Task[None]] = []
+        for key in stale:
+            call = self.tool_calls.pop(key)
+            if call.task is not None and not call.task.done():
+                call.task.cancel()
+                tasks.append(call.task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def close_tool_calls(self) -> None:
+        """Cancel and remove every retained background tool call."""
+        calls = list(self.tool_calls.values())
+        self.tool_calls.clear()
+        tasks = [
+            call.task
+            for call in calls
+            if call.task is not None and not call.task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _build_client(
@@ -69,13 +209,38 @@ async def _build_client(
     return client
 
 
+# pylint: disable=too-many-statements
 def _build_app(
     state: _State,
     auth_token: str | None = None,
     instance_nonce: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with all routes wired against ``state``."""
-    app = FastAPI(title="agentscope-workspace-mcp-gateway")
+
+    async def _reap_tool_calls() -> None:
+        """Periodically enforce terminal TTLs and active polling leases."""
+        while True:
+            await asyncio.sleep(_CALL_REAPER_INTERVAL_SECONDS)
+            await state.prune_tool_calls()
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> Any:
+        """Own the background call reaper for the application lifetime."""
+        reaper_task = asyncio.create_task(_reap_tool_calls())
+        try:
+            yield
+        finally:
+            reaper_task.cancel()
+            try:
+                await reaper_task
+            except asyncio.CancelledError:
+                pass
+            await state.close_tool_calls()
+
+    app = FastAPI(
+        title="agentscope-workspace-mcp-gateway",
+        lifespan=_lifespan,
+    )
 
     def _lookup(agent_id: str, session_id: str, name: str) -> MCPClient:
         """Resolve one registered client or raise 404."""
@@ -87,6 +252,49 @@ def _build_app(
                 f"session={session_id!r}",
             )
         return client
+
+    async def _lookup_tool_call(
+        agent_id: str,
+        session_id: str,
+        call_id: str,
+    ) -> _ToolCall:
+        """Resolve one background tool call or raise 404."""
+        await state.prune_tool_calls()
+        call = state.tool_calls.get((agent_id, session_id, call_id))
+        if call is None:
+            raise HTTPException(404, f"tool call {call_id!r} not found")
+        call.touch()
+        return call
+
+    async def _run_tool_call(
+        call: _ToolCall,
+        client: MCPClient,
+        tool: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        """Relay raw MCP progress and result data into a call record."""
+
+        async def _on_progress(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            call.append(_progress_chunk(progress, total, message))
+
+        try:
+            result = await client._call_raw_tool(
+                tool,
+                arguments,
+                progress_callback=_on_progress,
+            )
+            call.append(_result_chunk(result))
+        except asyncio.CancelledError:
+            call.finish(cancelled=True)
+            raise
+        except Exception as e:  # noqa: BLE001
+            call.finish(error=str(e))
+        else:
+            call.finish()
 
     if auth_token:
 
@@ -161,6 +369,23 @@ def _build_app(
     ) -> dict[str, Any]:
         async with state.lock:
             client = _lookup(agent_id, session_id, name)
+            active_calls = [
+                call
+                for (call_agent, call_session, _), call in (
+                    state.tool_calls.items()
+                )
+                if call_agent == agent_id
+                and call_session == session_id
+                and call.mcp_name == name
+                and not call.done
+            ]
+            for call in active_calls:
+                if call.task is not None:
+                    call.task.cancel()
+            await asyncio.gather(
+                *(call.task for call in active_calls if call.task is not None),
+                return_exceptions=True,
+            )
             del state.clients[(agent_id, session_id)][name]
             if not state.clients[(agent_id, session_id)]:
                 del state.clients[(agent_id, session_id)]
@@ -199,7 +424,85 @@ def _build_app(
     ) -> list[dict[str, Any]]:
         client = _lookup(agent_id, session_id, name)
         raw = await client.list_raw_tools()
-        return [t.model_dump(mode="json") for t in raw]
+        return [t.model_dump(mode="json", by_alias=True) for t in raw]
+
+    @app.post("/mcps/{name}/tools/{tool}/calls", status_code=202)
+    async def _start_tool_call(
+        name: str,
+        tool: str,
+        request: Request,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, str]:
+        client = _lookup(agent_id, session_id, name)
+        body = await request.json()
+        arguments = body.get("arguments") or {}
+        try:
+            await client._get_raw_tool(tool)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+
+        await state.prune_tool_calls()
+        call_id = uuid.uuid4().hex
+        call = _ToolCall(name)
+        state.tool_calls[(agent_id, session_id, call_id)] = call
+        call.task = asyncio.create_task(
+            _run_tool_call(call, client, tool, arguments),
+        )
+        return {"call_id": call_id}
+
+    @app.get("/tool-calls/{call_id}/events")
+    async def _get_tool_call_events(
+        call_id: str,
+        after: int = 0,
+        wait: float = 1.0,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        call = await _lookup_tool_call(agent_id, session_id, call_id)
+        call.acknowledge(after)
+
+        def _pending_events() -> list[dict[str, Any]]:
+            return list(call.events)
+
+        events = _pending_events()
+        if not events and not call.done and wait > 0:
+            call.changed.clear()
+            events = _pending_events()
+            if not events and not call.done:
+                try:
+                    await asyncio.wait_for(
+                        call.changed.wait(),
+                        timeout=min(wait, 5.0),
+                    )
+                except TimeoutError:
+                    pass
+                events = _pending_events()
+
+        return {
+            "events": events,
+            "done": call.done,
+            "cancelled": call.cancelled,
+            "error": call.error,
+        }
+
+    @app.delete("/tool-calls/{call_id}")
+    async def _delete_tool_call(
+        call_id: str,
+        agent_id: str = "",
+        session_id: str = "",
+    ) -> dict[str, bool]:
+        key = (agent_id, session_id, call_id)
+        call = state.tool_calls.pop(key, None)
+        if call is None:
+            raise HTTPException(404, f"tool call {call_id!r} not found")
+        if call.task is not None and not call.task.done():
+            call.task.cancel()
+            try:
+                await call.task
+            except asyncio.CancelledError:
+                pass
+        return {"ok": True}
 
     @app.post("/mcps/{name}/tools/{tool}")
     async def _call_tool(
@@ -213,15 +516,18 @@ def _build_app(
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
-            tool_obj = await client.get_tool(tool)
-            chunk = await tool_obj(**arguments)
+            result = await client._call_raw_tool(tool, arguments)
+            chunk = _result_chunk(result)
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, str(e)) from e
-        return {"chunk": chunk.model_dump(mode="json")}
+        return {"chunk": chunk}
 
     return app
+
+
+# pylint: enable=too-many-statements
 
 
 async def _run(
@@ -250,6 +556,7 @@ async def _run(
     try:
         await server.serve()
     finally:
+        await state.close_tool_calls()
         for by_name in state.clients.values():
             for client in by_name.values():
                 if client.is_stateful and client.is_connected:

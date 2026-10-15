@@ -29,7 +29,9 @@ from ._utils import (
     DEFAULT_GATEWAY_LOG,
     DEFAULT_GATEWAY_SCRIPT,
     DEFAULT_GATEWAY_VENV,
+    DEFAULT_GATEWAY_VERSION_FILE,
     DEFAULT_GLOB_HELPER_SCRIPT,
+    GATEWAY_RUNTIME_VERSION,
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
 )
@@ -60,6 +62,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     _gateway: GatewayClient | None
     """Workspace-side gateway facade. ``None`` before init / after close."""
+
+    _mcp_specs: dict[tuple[str, str], list[MCPClient]]
+    """MCP specifications restored from the workspace state file."""
 
     is_alive: bool
     """Inherited lifecycle flag, repeated for file-scoped type checks."""
@@ -101,6 +106,14 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         return self.get_backend().join_path(
             self._gateway_home,
             DEFAULT_GATEWAY_LOG,
+        )
+
+    @property
+    def _gateway_version_file(self) -> str:
+        """Sandbox-side marker for the installed gateway runtime."""
+        return self.get_backend().join_path(
+            self._gateway_home,
+            DEFAULT_GATEWAY_VERSION_FILE,
         )
 
     @property
@@ -161,11 +174,11 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
 
     def _bootstrap_commands(self) -> list[str]:
-        """Shell commands that provision the gateway venv on first use.
+        """Shell commands that provision or upgrade the gateway venv.
 
-        Runs only when :attr:`_gateway_script` is missing. Subclasses
-        whose image already ships the venv (e.g. Docker) leave this
-        empty; the base's fast-path skips the whole bootstrap block.
+        Runs when the gateway script is missing or its runtime marker is
+        stale. Subclasses whose image already ships the venv (e.g. Docker)
+        leave this empty.
         """
         return []
 
@@ -442,18 +455,32 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Steps:
 
-        1. Bootstrap the venv + script if :attr:`_gateway_script` is
-           missing (Docker's image already has it → fast-path).
+        1. Bootstrap the venv and scripts when they are missing or their
+           runtime version marker is stale.
         2. Kill any leftover gateway from a previous resume.
         3. Launch a fresh gateway pointed at ``.mcp``.
         4. Bind :attr:`_gateway` and poll ``/health``.
         """
         backend = self.get_backend()
 
-        # Provision the venv + script on first use. Fast-path skips
-        # when the script already exists (Docker image build, E2B
-        # resume, K8s PVC remount).
-        if not await backend.file_exists(self._gateway_script):
+        # Provision or upgrade the venv and scripts. The marker prevents a
+        # persisted MCP 1.x gateway from surviving this MCP 2.x migration.
+        runtime_is_current = False
+        has_script = await backend.file_exists(self._gateway_script)
+        version_file = self._gateway_version_file
+        if has_script and await backend.file_exists(version_file):
+            try:
+                installed_version = await backend.read_file(
+                    version_file,
+                )
+                runtime_is_current = (
+                    installed_version.decode().strip()
+                    == GATEWAY_RUNTIME_VERSION
+                )
+            except Exception:
+                runtime_is_current = False
+
+        if not runtime_is_current:
             logger.info(
                 "%s: bootstrapping workspace_id=%r",
                 type(self).__name__,
@@ -471,9 +498,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                         f"stderr: {r.stderr.decode(errors='replace')}\n"
                         f"stdout: {r.stdout.decode(errors='replace')}",
                     )
-            # Glob helper first, gateway script last — a partial
-            # bootstrap leaves _gateway_script absent so the next
-            # initialize retries cleanly.
+            # Write the marker last so interrupted upgrades are retried.
             if self._glob_helper_path is not None:
                 await backend.write_file(
                     self._glob_helper_path,
@@ -482,6 +507,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             await backend.write_file(
                 self._gateway_script,
                 _read_gateway_script_bytes(),
+            )
+            await backend.write_file(
+                version_file,
+                GATEWAY_RUNTIME_VERSION.encode("utf-8"),
             )
 
         # Clear any gateway left running by a previous resume so the

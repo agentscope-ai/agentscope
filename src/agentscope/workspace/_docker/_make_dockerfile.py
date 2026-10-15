@@ -5,8 +5,9 @@ The image is keyed by content hash of the Dockerfile text plus all
 files COPYed into it. If the tag already exists locally the build is
 skipped; otherwise the caller builds with the prepared context.
 
-The container installs the same ``agentscope`` version as the host via
-``uv pip install --no-deps`` inside the gateway venv.
+The container installs ``agentscope`` from the package index with
+``uv pip install --no-deps`` inside the gateway venv. The installed package
+must provide the APIs used by the copied gateway script.
 
 Public functions:
 
@@ -28,6 +29,7 @@ from .._utils import (
     _GATEWAY_BASE_REQUIREMENTS,
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
+    GATEWAY_RUNTIME_VERSION,
 )
 
 # ── shared constants (also imported by _docker_workspace) ──────────
@@ -77,9 +79,8 @@ def render_dockerfile(
         node_version: When given (e.g. ``"20"``) a ``node`` and ``npm``
             of that version are copied from the official Node slim
             image. ``None`` skips Node installation.
-        install_agentscope_block: Pre-rendered block (no surrounding
-            blank lines) that installs ``agentscope`` into the gateway
-            venv. Built by :func:`prepare_build_context`.
+        install_agentscope_block: Pre-rendered block that installs
+            ``agentscope`` into the gateway venv.
 
     Returns:
         The full Dockerfile text.
@@ -161,7 +162,7 @@ def prepare_build_context(
     """
     extra_pip_list = list(extra_pip or [])
 
-    # requirements.txt covers the gateway's imports, so skip agentscope's deps
+    # requirements.txt covers the gateway's imports, so skip agentscope's deps.
     install_block = 'RUN uv pip install --no-deps "agentscope"'
 
     dockerfile_text = render_dockerfile(
@@ -183,6 +184,7 @@ def prepare_build_context(
         "requirements.txt": requirements_text.encode("utf-8"),
         "_mcp_gateway_app.py": gateway_script_bytes,
         "_glob_helper.py": glob_helper_bytes,
+        ".gateway-version": GATEWAY_RUNTIME_VERSION.encode("utf-8"),
     }
     tag = compute_image_tag(dockerfile_text, copy_files)
 
@@ -193,5 +195,8 @@ def prepare_build_context(
     )
     (ctx_dir / "_mcp_gateway_app.py").write_bytes(gateway_script_bytes)
     (ctx_dir / "_glob_helper.py").write_bytes(glob_helper_bytes)
+    (ctx_dir / ".gateway-version").write_bytes(
+        copy_files[".gateway-version"],
+    )
 
     return ctx_dir, tag, copy_files

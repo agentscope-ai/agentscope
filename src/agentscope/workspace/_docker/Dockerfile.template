@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.6
 # The filenames `.venv`, `_mcp_gateway_app.py`, `_glob_helper.py`,
-# `gateway.log` below MUST stay in sync with the DEFAULT_GATEWAY_*
+# `.gateway-version`, and `gateway.log` below MUST stay in sync with the
+# DEFAULT_GATEWAY_*
 # constants in ``agentscope.workspace._utils`` — the base class derives
 # runtime paths from those and joins them under ``_gateway_home``.
 {node_from_block}FROM {base_image}
@@ -47,5 +48,7 @@ RUN uv pip install -r {gateway_home}/requirements.txt
 COPY _mcp_gateway_app.py {gateway_home}/_mcp_gateway_app.py
 # Glob helper script used by the builtin Glob tool.
 COPY _glob_helper.py {gateway_home}/_glob_helper.py
+# Runtime marker used to invalidate persisted MCP gateway environments.
+COPY .gateway-version {gateway_home}/.gateway-version
 
 WORKDIR {container_workdir}

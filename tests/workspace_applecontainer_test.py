@@ -9,11 +9,12 @@ running.
 """
 
 import os
+import posixpath
 import shutil
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.workspace import AppleContainerBackend, AppleContainerWorkspace
@@ -22,7 +23,10 @@ from agentscope.workspace._applecontainer._constants import (
     DEFAULT_BASE_IMAGE,
     GATEWAY_HOME,
 )
-from agentscope.workspace._utils import DEFAULT_GATEWAY_VENV
+from agentscope.workspace._utils import (
+    DEFAULT_GATEWAY_VENV,
+    GATEWAY_RUNTIME_VERSION,
+)
 
 _CONTAINER_CLI = shutil.which("container")
 _RUN_REASON = "container CLI not found — install Apple Container first"
@@ -70,6 +74,71 @@ class TestAppleContainerWorkspaceConstruct(unittest.TestCase):
         ws = AppleContainerWorkspace()
         text = asyncio.run(ws.get_instructions())
         self.assertIn(CONTAINER_WORKDIR, text)
+
+
+class TestGatewayBootstrapMarker(IsolatedAsyncioTestCase):
+    """Shared gateway upgrades can be checked without a live container."""
+
+    async def test_marker_controls_package_bootstrap(self) -> None:
+        """Stale gateways reinstall the package and write the marker last."""
+        for installed in ("old-gateway", GATEWAY_RUNTIME_VERSION):
+            with self.subTest(installed=installed):
+                workspace = AppleContainerWorkspace()
+                backend = MagicMock()
+                backend.join_path.side_effect = posixpath.join
+                backend.file_exists = AsyncMock(return_value=True)
+                backend.read_file = AsyncMock(
+                    return_value=installed.encode("utf-8"),
+                )
+                backend.write_file = AsyncMock()
+                backend.exec_shell = AsyncMock(return_value=MagicMock())
+                module = "agentscope.workspace._sandboxed_base"
+                with (
+                    patch.object(
+                        AppleContainerWorkspace,
+                        "get_backend",
+                        return_value=backend,
+                    ),
+                    patch.object(
+                        AppleContainerWorkspace,
+                        "_bootstrap_commands",
+                        return_value=["install-agentscope"],
+                    ) as bootstrap,
+                    patch(f"{module}.GatewayClient") as gateway,
+                    patch(
+                        f"{module}._read_gateway_script_bytes",
+                        return_value=b"script",
+                    ),
+                    patch(
+                        f"{module}._read_glob_helper_bytes",
+                        return_value=b"glob",
+                    ),
+                ):
+                    gateway.return_value.health = AsyncMock(return_value=True)
+                    await workspace._setup_mcp_gateway()
+                    stale = installed != GATEWAY_RUNTIME_VERSION
+                    expected_writes = (
+                        [
+                            call(workspace._glob_helper_path, b"glob"),
+                            call(workspace._gateway_script, b"script"),
+                            call(
+                                workspace._gateway_version_file,
+                                GATEWAY_RUNTIME_VERSION.encode("utf-8"),
+                            ),
+                        ]
+                        if stale
+                        else []
+                    )
+                    self.assertEqual(
+                        {
+                            "bootstrap": bootstrap.call_count,
+                            "writes": backend.write_file.await_args_list,
+                        },
+                        {
+                            "bootstrap": int(stale),
+                            "writes": expected_writes,
+                        },
+                    )
 
 
 class TestImageRefNormalization(unittest.TestCase):
@@ -433,7 +502,7 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
 
             # Call the echo tool through the gateway.
             echo_tool = await echo_client.get_tool("echo")
-            result = await echo_tool(message="hello_mcp")
+            result = await echo_tool.call_final(message="hello_mcp")
             texts = []
             for block in result.content:
                 if hasattr(block, "text") and block.text:

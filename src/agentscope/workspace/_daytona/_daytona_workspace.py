@@ -20,9 +20,8 @@ boundary, but swaps the provider runtime for the Daytona SDK:
   :class:`WorkspaceBase` under the SDK-reported workdir.
 * **Bootstrap.** First-time provisioning installs ripgrep, uv, the
   gateway virtualenv, AgentScope itself, the gateway script and the
-  glob helper. Bootstrap is detected by probing the gateway script path
-  inside the sandbox and is safe to rerun when a previous attempt was
-  interrupted.
+  glob helper. Bootstrap is detected using the gateway script and runtime
+  marker inside the sandbox and is safe to rerun after interruption.
 * **MCP gateway.** Identical to Docker/E2B after the shared-base
   migration: a FastAPI process runs inside the sandbox. Host-side calls
   drive the gateway through :class:`GatewayClient`, which runs an
@@ -425,17 +424,14 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
     def _bootstrap_commands(self) -> list[str]:
         """Provisioning commands for a fresh Daytona sandbox.
 
-        The shared sandbox base runs these only when the gateway script
-        is missing, then uploads the glob helper and gateway script.
-        Every step is idempotent so an interrupted bootstrap re-runs
-        cleanly. Path anchors come from the Daytona SDK, so the sequence
-        does not assume a fixed OS user or home directory.
+        The shared sandbox base runs these when the gateway script is missing
+        or its runtime marker is stale, then uploads the glob helper and
+        gateway script. Every step is idempotent so an interrupted bootstrap
+        re-runs cleanly. Path anchors come from the Daytona SDK, so the
+        sequence does not assume a fixed OS user or home directory.
 
-        ``--no-deps`` on agentscope is mandatory for the same reason as
-        E2B: the gateway only imports :class:`agentscope.mcp.MCPClient`,
-        whose transitive needs are already covered by the gateway base
-        requirements. Pulling the full dependency tree would make first
-        bootstrap slower and more fragile in minimal snapshots.
+        AgentScope is installed with ``--no-deps``; its lightweight MCP
+        dependencies are covered by the gateway base requirements.
 
         Returns:
             `list[str]`:
@@ -467,7 +463,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             f"{shlex.quote(self._gateway_venv)}",
             f"{shlex.quote(self._uv_bin)} pip install --python "
             f"{shlex.quote(self._gateway_python)} {pip_args}",
-            # 4. agentscope itself.
+            # 4. AgentScope itself.
             f"{shlex.quote(self._uv_bin)} pip install --python "
             f"{shlex.quote(self._gateway_python)} --no-deps 'agentscope'",
         ]

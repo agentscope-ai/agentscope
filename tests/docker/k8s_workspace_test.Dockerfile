@@ -5,8 +5,7 @@
 # Rationale
 # ---------
 # K8sWorkspace's ``_setup_mcp_gateway`` skips the bootstrap phase when the
-# gateway script already exists inside the sandbox (see
-# ``SandboxedWorkspaceBase._setup_mcp_gateway`` — fast-path skip).
+# gateway script and current runtime marker already exist inside the sandbox.
 # By pre-installing every dependency the bootstrap would install and by
 # copying the gateway/glob-helper scripts to ``GATEWAY_HOME`` at build time,
 # ``initialize()`` skips ``apt-get`` + ``uv install`` + ``pip install`` and
@@ -50,12 +49,23 @@ COPY src /src/src
 RUN uv pip install --python "${GATEWAY_HOME}/.venv/bin/python" \
         --no-deps /src
 
-# Copy the gateway script + glob helper into GATEWAY_HOME so that
-# ``_setup_mcp_gateway`` sees ``_gateway_script`` on disk and skips bootstrap.
+# Copy the gateway script + glob helper into GATEWAY_HOME and add the current
+# runtime marker so ``_setup_mcp_gateway`` can take its fast path.
 COPY src/agentscope/workspace/_mcp_gateway/_mcp_gateway_app.py \
      "${GATEWAY_HOME}/_mcp_gateway_app.py"
 COPY src/agentscope/tool/_builtin/_scripts/_glob_helper.py \
      "${GATEWAY_HOME}/_glob_helper.py"
+RUN "${GATEWAY_HOME}/.venv/bin/python" - <<'PY'
+import os
+import runpy
+from pathlib import Path
+
+config = runpy.run_path("/src/src/agentscope/workspace/_utils.py")
+target = Path(os.environ["GATEWAY_HOME"])
+(target / config["DEFAULT_GATEWAY_VERSION_FILE"]).write_text(
+    config["GATEWAY_RUNTIME_VERSION"], encoding="utf-8",
+)
+PY
 
 # The workdir is created lazily by ``_provision_sandbox``; leaving it here
 # just makes ad-hoc `docker run` debugging friendlier.

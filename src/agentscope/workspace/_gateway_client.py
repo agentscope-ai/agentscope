@@ -11,8 +11,8 @@ Three classes:
   stdio/HTTP machinery is bypassed; ``model_post_init`` is a no-op;
   ``connect`` / ``close`` / ``list_raw_tools`` / ``get_tool`` all
   round-trip through ``/mcps``.
-* :class:`GatewayMCPTool` — :class:`ToolBase` whose ``__call__``
-  invokes the upstream tool via ``POST /mcps/{name}/tools/{tool}``.
+* :class:`GatewayMCPTool` — :class:`ToolBase` whose ``__call__`` starts an
+  upstream tool call and polls ordered progress/result events.
 
 Every request runs inside the sandbox: the host writes an optional
 body to a sandbox tempfile, spawns a small Python shim via
@@ -27,7 +27,7 @@ import base64
 import json
 import secrets
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 from urllib.parse import urlencode
 
 import mcp.types
@@ -55,8 +55,7 @@ if TYPE_CHECKING:
 
 
 class GatewayMCPTool(ToolBase):
-    """An MCP tool whose ``__call__`` is one ``exec_shell``-driven
-    request to the gateway.
+    """An MCP tool whose ``__call__`` polls the sandbox gateway.
 
     Mirrors :class:`agentscope.tool.MCPTool` field-by-field so the
     toolkit treats it identically (same ``name`` format, same
@@ -136,35 +135,159 @@ class GatewayMCPTool(ToolBase):
             message="MCP tools must be explicitly allowed by the user.",
         )
 
-    async def __call__(self, **kwargs: Any) -> ToolChunk:
-        """Relay ``POST /mcps/{mcp}/tools/{tool}`` to the gateway.
+    async def call(
+        self,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ToolChunk, None]:
+        """Start a gateway call and return its progress/result stream.
+
+        Progress is best-effort snapshot delivery, not a lossless event log.
+        The gateway retains at most 1024 unacknowledged events; overflow
+        drops the oldest progress updates without reporting a dropped
+        count. Consumers must not depend on receiving every update. Buffer
+        overflow does not discard the final result.
+        """
+        return self._stream_call(kwargs)
+
+    async def _stream_call(
+        self,
+        arguments: dict[str, Any],
+    ) -> AsyncGenerator[ToolChunk, None]:
+        """Poll ordered gateway events until the MCP call is terminal.
 
         4xx / 5xx responses come back as ``ToolChunk(state=ERROR)`` so
         the agent loop can reason about failure. Raises
-        :class:`RuntimeError` only if the gateway returns 2xx with no
-        ``chunk`` payload (protocol violation).
+        :class:`RuntimeError` only for malformed successful responses.
         """
         status, body = await self._gateway.exec_request(
             "POST",
-            f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            f"/mcps/{self.mcp_name}/tools/{self._tool.name}/calls",
             params={
                 "agent_id": self._agent_id,
                 "session_id": self._session_id,
             },
-            body={"arguments": kwargs},
+            body={"arguments": arguments},
         )
         if status >= 400:
-            return ToolChunk(
+            yield ToolChunk(
                 content=[{"type": "text", "text": _safe_detail(status, body)}],
                 state=ToolResultState.ERROR,
             )
-        payload = json.loads(body)
-        chunk_dict = payload.get("chunk")
-        if chunk_dict is None:
+            return
+        start_payload = json.loads(body)
+        call_id = start_payload.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
             raise RuntimeError(
-                f"gateway returned no chunk for {self.name!r}",
+                f"gateway returned no call_id for {self.name!r}",
             )
-        return ToolChunk.model_validate(chunk_dict)
+
+        sequence = 0
+        saw_final = False
+        try:
+            while True:
+                status, body = await self._gateway.exec_request(
+                    "GET",
+                    f"/tool-calls/{call_id}/events",
+                    params={
+                        "agent_id": self._agent_id,
+                        "session_id": self._session_id,
+                        "after": str(sequence),
+                        "wait": "1.0",
+                    },
+                )
+                if status >= 400:
+                    yield ToolChunk(
+                        content=[
+                            {
+                                "type": "text",
+                                "text": _safe_detail(status, body),
+                            },
+                        ],
+                        state=ToolResultState.ERROR,
+                    )
+                    return
+
+                payload = json.loads(body)
+                for event in payload.get("events", []):
+                    event_sequence = event.get("sequence")
+                    chunk_dict = event.get("chunk")
+                    if not isinstance(event_sequence, int) or not isinstance(
+                        chunk_dict,
+                        dict,
+                    ):
+                        raise RuntimeError(
+                            f"gateway returned a malformed event for "
+                            f"{self.name!r}",
+                        )
+                    sequence = max(sequence, event_sequence)
+                    chunk = ToolChunk.model_validate(chunk_dict)
+                    saw_final = saw_final or chunk.is_last
+                    yield chunk
+
+                if payload.get("done"):
+                    if payload.get("cancelled"):
+                        yield ToolChunk(
+                            content=[
+                                {
+                                    "type": "text",
+                                    "text": "MCP tool call was cancelled.",
+                                },
+                            ],
+                            state=ToolResultState.INTERRUPTED,
+                        )
+                    elif payload.get("error"):
+                        yield ToolChunk(
+                            content=[
+                                {
+                                    "type": "text",
+                                    "text": str(payload["error"]),
+                                },
+                            ],
+                            state=ToolResultState.ERROR,
+                        )
+                    elif not saw_final:
+                        yield ToolChunk(
+                            content=[
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Gateway MCP tool stream returned no "
+                                        "final chunk."
+                                    ),
+                                },
+                            ],
+                            state=ToolResultState.ERROR,
+                        )
+                    return
+        finally:
+            try:
+                await self._gateway.exec_request(
+                    "DELETE",
+                    f"/tool-calls/{call_id}",
+                    params={
+                        "agent_id": self._agent_id,
+                        "session_id": self._session_id,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(  # pylint: disable=logging-fstring-interpolation
+                    f"Failed to clean up gateway tool call {call_id}.",
+                )
+
+    async def call_final(self, **kwargs: Any) -> ToolChunk:
+        """Invoke the gateway MCP tool and return its final result chunk."""
+        final_chunk: ToolChunk | None = None
+        result = await self(**kwargs)
+        if isinstance(result, ToolChunk):
+            return result
+        async for chunk in result:
+            if chunk.is_last:
+                final_chunk = chunk
+        if final_chunk is None:
+            raise RuntimeError(
+                f"Gateway MCP tool {self.name!r} returned no final chunk.",
+            )
+        return final_chunk
 
 
 # ── pseudo MCP client ──────────────────────────────────────────────
@@ -178,8 +301,8 @@ class GatewayMCPClient(MCPClient):
     from user input via :meth:`GatewayClient.make_client`). The local
     MCP machinery is short-circuited entirely:
 
-    * ``model_post_init`` does nothing (parent's ``_initialize_client``
-      is never called — no stdio context manager is built).
+    * ``model_post_init`` skips local configuration validation; no local
+      transport is constructed by the proxy.
     * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
     * ``close`` deregisters via ``DELETE /mcps/{name}``.
     * ``set_runtime_headers`` updates the registered live client.
@@ -191,9 +314,7 @@ class GatewayMCPClient(MCPClient):
     _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
-        """No-op — the parent builds local stdio/HTTP transport, which
-        the gateway-relayed client does not need.
-        """
+        """Leave configuration validation to the gateway-side MCP client."""
         return
 
     # ── lifecycle ─────────────────────────────────────────────────
@@ -360,6 +481,17 @@ class GatewayMCPClient(MCPClient):
         self._runtime_headers = dict(headers)
 
     # ── tool discovery ────────────────────────────────────────────
+
+    async def _call_raw_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        progress_callback: Any | None = None,
+    ) -> mcp.types.CallToolResult:
+        """Reject internal raw calls that would open a host transport."""
+        raise NotImplementedError(
+            f"Gateway MCP {self.name!r} must call tools through get_tool().",
+        )
 
     async def list_raw_tools(self) -> list[mcp.types.Tool]:
         """Fetch upstream tools via ``GET /mcps/{name}/tools``.

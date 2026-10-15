@@ -346,9 +346,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     def _bootstrap_commands(self) -> list[str]:
         """Return the provisioning shell command sequence.
 
-        Called once by :meth:`SandboxedWorkspaceBase._setup_mcp_gateway`
-        when the gateway script is missing (fresh sandbox, or a prior
-        bootstrap that was interrupted before the script was written).
+        Called by :meth:`SandboxedWorkspaceBase._setup_mcp_gateway` for a
+        fresh sandbox, an interrupted bootstrap, or a stale runtime marker.
         The base class runs each command with
         :attr:`_bootstrap_cmd_timeout` and then uploads the glob helper
         and gateway script itself, so this hook only builds the command
@@ -383,7 +382,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # Gateway venv + base requirements + agentscope from PyPI.
+            # Gateway venv, base requirements and AgentScope from PyPI.
             # ``uv venv`` creates the gateway home as a parent dir.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",

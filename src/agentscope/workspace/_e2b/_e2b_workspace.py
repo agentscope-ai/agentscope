@@ -22,7 +22,7 @@ Docker engine for the E2B SDK (``e2b.AsyncSandbox``):
   probe + install loop lives on :class:`SandboxedWorkspaceBase`; this
   subclass only supplies the sandbox-specific shell commands via
   :meth:`_bootstrap_commands`. Bootstrap runs at most once per sandbox
-  lifetime (the presence of the gateway script on disk is the marker).
+  lifetime for a given runtime marker; changing the marker rebuilds it.
 * **MCP gateway.** Identical to Docker: a FastAPI process inside the
   sandbox. All host-side calls drive the gateway through
   :class:`GatewayClient`, which runs an in-sandbox ``python3 -c`` shim
@@ -327,16 +327,12 @@ class E2BWorkspace(SandboxedWorkspaceBase):
     def _bootstrap_commands(self) -> list[str]:
         """Shell commands that provision this E2B sandbox once.
 
-        Only runs when the gateway script is missing (fresh sandbox or
-        a prior bootstrap that was interrupted). Every step is
-        idempotent so a resumed sandbox can re-run cleanly.
+        Runs for a fresh sandbox, an interrupted bootstrap, or a stale
+        gateway runtime marker. Every step is idempotent so a resumed
+        sandbox can re-run cleanly.
 
-        ``--no-deps`` on agentscope is mandatory: the gateway only
-        imports :class:`agentscope.mcp.MCPClient` whose transitive
-        needs (``mcp / pydantic / httpx / httpx2``) are installed via
-        the gateway base requirements. Pulling the full dep tree
-        drags in heavy / Rust-built packages the E2B image cannot
-        compile.
+        AgentScope is installed with ``--no-deps``; its lightweight MCP
+        dependencies are covered by the gateway base requirements.
         """
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement string so entries with spaces or
@@ -354,7 +350,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| sudo env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 2. Gateway venv + base requirements + agentscope.
+            # 2. Gateway venv, base requirements and AgentScope.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
             f"uv pip install --python {self._gateway_python} "

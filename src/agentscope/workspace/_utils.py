@@ -93,16 +93,20 @@ DEFAULT_MCP_FILE = ".mcp"
 DEFAULT_GATEWAY_VENV = ".venv"
 DEFAULT_GATEWAY_LOG = "gateway.log"
 DEFAULT_GATEWAY_SCRIPT = "_mcp_gateway_app.py"
+DEFAULT_GATEWAY_VERSION_FILE = ".gateway-version"
 DEFAULT_GLOB_HELPER_SCRIPT = "_glob_helper.py"
+
+# Bump when gateway code or dependencies require persisted sandboxes to
+# bootstrap again. Package-based deployment replaces the runtime archive.
+GATEWAY_RUNTIME_VERSION = "mcp2-progress"
 
 #: Minimum Python packages the gateway script needs at runtime.
 #: Both Docker (image build) and E2B (sandbox bootstrap) install this
 #: same tuple into the gateway venv before adding ``agentscope`` itself.
 #:
-#: ``agentscope`` goes in with ``--no-deps``, so anything it imports has
-#: to be named here. The current MCP client imports ``httpx2``, while
-#: released versions installed by DockerWorkspace can still import
-#: ``httpx``. Keep both explicit during the transition.
+#: ``agentscope`` is installed with ``--no-deps``. Its lightweight MCP
+#: imports must be covered here. Keep ``httpx`` for published packages that
+#: still import it; the migrated MCP client uses ``httpx2``.
 #: The version on ``mcp`` mirrors ``pyproject.toml``, so the gateway
 #: speaks the same protocol version as the process driving it.
 _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (

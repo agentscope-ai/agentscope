@@ -497,13 +497,11 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
     def _bootstrap_commands(self) -> list[str]:
         """Shell commands that provision this container once.
 
-        Only runs when the gateway script is missing (fresh container
-        or prior interrupted bootstrap). Every step is idempotent.
+        Runs for a fresh container, an interrupted bootstrap, or a stale
+        gateway runtime marker. Every step is idempotent.
 
-        ``--no-deps`` on agentscope is mandatory: the gateway only
-        imports :class:`agentscope.mcp.MCPClient` whose transitive
-        needs (``mcp / pydantic / httpx / httpx2``) are installed via
-        the gateway base requirements.
+        AgentScope is installed with ``--no-deps``; its lightweight MCP
+        dependencies are covered by the gateway base requirements.
         """
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
@@ -517,7 +515,7 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 2. Gateway venv + base requirements + agentscope.
+            # 2. Gateway venv, base requirements and AgentScope.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
             f"uv pip install --python {self._gateway_python} "
