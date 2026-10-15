@@ -17,6 +17,8 @@ from ._powershell import PowerShell
 from ._read import Read
 from ._skill import SkillViewer
 from ._write import Write
+from ._web_search import WebSearch
+from ._python import Python
 
 __all__ = [
     "AskUser",
@@ -32,6 +34,8 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    "WebSearch",
+    "Python",
     "BackendBase",
     "DirEntry",
     "LocalBackend",
