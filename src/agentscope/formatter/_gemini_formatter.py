@@ -41,7 +41,7 @@ class _GeminiFormatterBase(FormatterBase, ABC):
         Returns:
             `dict[str, Any] | None`:
                 The formatted data block in Gemini ``inline_data`` format,
-                or None if the media type is not supported.
+                or a text placeholder if the media type is not supported.
         """
         source = block.source
         media_type = source.media_type
@@ -52,12 +52,26 @@ class _GeminiFormatterBase(FormatterBase, ABC):
             for pattern in self.supported_input_media_types
         ):
             logger.warning(
-                "Media type %s is not supported, skipped.",
+                "Media type %s is not supported, replaced with a text placeholder.",
                 media_type,
             )
-            return None
+            return self._unsupported_media_placeholder(source)
 
         return self._format_media_source(source)
+
+    @staticmethod
+    def _unsupported_media_placeholder(
+        source: URLSource | Base64Source,
+    ) -> dict[str, Any]:
+        """Build a text placeholder standing in for a media block the
+        endpoint cannot ingest, so the enclosing message is not dropped
+        when the media block was its only content."""
+        main_type = source.media_type.split("/", 1)[0]
+        if isinstance(source, URLSource):
+            text = f"[{main_type} file returned, URL: {source.url}]"
+        else:
+            text = f"[{main_type} file returned, type: {source.media_type}]"
+        return {"text": text}
 
     @staticmethod
     def _format_media_source(
