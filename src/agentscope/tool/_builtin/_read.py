@@ -218,7 +218,7 @@ Usage:
         file_path = tool_input.get("file_path", "")
         if not file_path:
             return False
-        return fnmatch.fnmatch(file_path, rule_content)
+        return fnmatch.fnmatch(os.path.normpath(file_path), rule_content)
 
     async def generate_suggestions(
         self,

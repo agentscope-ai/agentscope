@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import sys
 from typing import TYPE_CHECKING, Any, List
 
@@ -176,7 +177,7 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
 
         # Try matching against the search path first
         path = tool_input.get("path", "")
-        if path and fnmatch.fnmatch(path, rule_content):
+        if path and fnmatch.fnmatch(os.path.normpath(path), rule_content):
             return True
 
         # Fall back to matching against the pattern itself
