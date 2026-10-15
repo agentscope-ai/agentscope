@@ -7,10 +7,11 @@ Anthropic uses event-based streaming (message_start, content_block_start,
 content_block_delta, message_delta events).
 """
 import json
+from datetime import datetime, timedelta
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from anthropic import types as anthropic_types
 
@@ -725,6 +726,59 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_usage_time_stamped_at_message_delta(self) -> None:
+        """The final usage carries the full generation time, not the
+        time-to-first-token stamped at ``message_start``."""
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 10
+        msg_usage.output_tokens = 0
+        msg_usage.cache_creation_input_tokens = 0
+        msg_usage.cache_read_input_tokens = 0
+
+        message = MagicMock()
+        message.id = "msg-t"
+        message.usage = msg_usage
+
+        msg_delta_usage = MagicMock()
+        msg_delta_usage.output_tokens = 5
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=_make_event("text", type="text"),
+            ),
+            _make_event(
+                "content_block_delta",
+                index=0,
+                delta=_make_event("delta", type="text_delta", text="Hi"),
+            ),
+            _make_event("message_delta", usage=msg_delta_usage),
+        ]
+
+        start = datetime(2026, 10, 1, 10, 0, 0)
+        first_event_at = start + timedelta(milliseconds=300)
+        last_event_at = start + timedelta(seconds=20)
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+        ) as mock_datetime:
+            mock_datetime.now.side_effect = [first_event_at, last_event_at]
+
+            responses = [
+                _
+                async for _ in (
+                    self.model._parse_anthropic_stream_completion_response(
+                        start,
+                        _MockAsyncEventStream(events),
+                    )
+                )
+            ]
+
+        usage = responses[-1].usage
+        self.assertEqual(usage.output_tokens, 5)
+        self.assertEqual(usage.time, 20.0)
 
     async def test_stream_redacted_thinking(self) -> None:
         """Stream redacted_thinking block is emitted at
