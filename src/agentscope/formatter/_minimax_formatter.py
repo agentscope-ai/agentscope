@@ -9,7 +9,7 @@ from ._anthropic_formatter import (
     AnthropicChatFormatter,
     AnthropicMultiAgentFormatter,
 )
-from ..message import DataBlock
+from ..message import DataBlock, Msg
 
 
 class MiniMaxChatFormatter(AnthropicChatFormatter):
@@ -47,6 +47,24 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
             'Defaults to ``["text/plain", "image/*", "video/*"]``.'
         ),
     )
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the MiniMax chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The MiniMax user-message representation.
+        """
+        return await MiniMaxChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
 
     def _format_anthropic_data_block(
         self,
