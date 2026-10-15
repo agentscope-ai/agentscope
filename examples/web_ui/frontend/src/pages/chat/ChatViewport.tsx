@@ -931,7 +931,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard
-												key={`${subagentHitl[0].worker_session_id}:${subagentHitl[0].reply_id}`}
+												key={`${subagentHitl[0].worker_session_id}:${subagentHitl[0].reply_id}:${subagentHitl[0].tool_call_id}`}
 												entry={subagentHitl[0]}
 												onConfirm={(toolCall, confirm, rules) =>
 													onSubagentConfirm(

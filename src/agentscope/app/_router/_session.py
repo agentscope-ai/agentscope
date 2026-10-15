@@ -758,9 +758,9 @@ async def _worker_still_asking(
     worker_agent_id: str,
     worker_session_id: str,
     reply_id: str,
+    tool_call_id: str,
 ) -> bool:
-    """Return whether a worker session is still parked on the ASKING
-    tool call identified by ``reply_id``.
+    """Return whether a worker session is still parked on one tool call.
 
     This is the reconcile-on-read check (design §3.5): the worker
     session's own ``state.context`` is the single source of truth for
@@ -771,7 +771,7 @@ async def _worker_still_asking(
     Mirrors the wakeup guard in
     :meth:`ChatService._run_impl` — a request is "still asking" when
     the tail ``AssistantMsg`` of the worker carries a tool call in
-    ``ASKING`` or ``SUBMITTED`` state for the matching ``reply_id``.
+    ``ASKING`` or ``SUBMITTED`` state with the matching call id.
 
     Args:
         storage (`StorageBase`):
@@ -784,12 +784,14 @@ async def _worker_still_asking(
             The worker session to inspect.
         reply_id (`str`):
             The reply id the pending request belongs to.
+        tool_call_id (`str`):
+            The tool call id the pending projection represents.
 
     Returns:
         `bool`:
             ``True`` if the worker is still awaiting confirmation for
-            ``reply_id``; ``False`` otherwise (resolved, cancelled, or
-            the session/record is gone).
+            ``tool_call_id``; ``False`` otherwise (resolved, cancelled,
+            or the session/record is gone).
     """
     session = await storage.get_session(
         user_id,
@@ -802,7 +804,8 @@ async def _worker_still_asking(
     if last_msg.role != "assistant" or last_msg.id != reply_id:
         return False
     return any(
-        tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+        tc.id == tool_call_id
+        and tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
         for tc in last_msg.get_content_blocks("tool_call")
     )
 
@@ -919,6 +922,7 @@ async def stream_session_events(
                     payload["worker_agent_id"],
                     payload["worker_session_id"],
                     payload["reply_id"],
+                    payload["tool_call_id"],
                 ):
                     await projection.delete(
                         session_id,
@@ -926,6 +930,7 @@ async def stream_session_events(
                         SubagentHitlProjector.entry_id(
                             payload["worker_session_id"],
                             payload["reply_id"],
+                            payload["tool_call_id"],
                         ),
                     )
                     continue
