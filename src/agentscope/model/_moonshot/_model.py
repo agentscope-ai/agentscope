@@ -23,6 +23,16 @@ else:
     AsyncStream = Any
 
 
+# ``thinking_enable`` cannot be configured for these models: thinking is
+# always on and the API rejects ``thinking.type == "disabled"``, so the
+# field is omitted from the request entirely (their model cards hide the
+# switch for the same reason).
+_THINKING_ALWAYS_ON_MODELS = (
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+)
+
+
 class MoonshotChatModel(ChatModelBase):
     """The Moonshot AI chat model."""
 
@@ -42,7 +52,10 @@ class MoonshotChatModel(ChatModelBase):
             description=(
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
-                "enabled by default but can be disabled."
+                "enabled by default but can be disabled. For the Code "
+                "models (kimi-k2.7-code, kimi-k2.7-code-highspeed), "
+                "thinking is always on and cannot be disabled, so this "
+                "flag is ignored."
             ),
         )
 
@@ -208,7 +221,10 @@ class MoonshotChatModel(ChatModelBase):
         if is_k3:
             if self.parameters.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = self.parameters.reasoning_effort
-        else:
+        # Models that cannot disable thinking are skipped on purpose: the
+        # API rejects ``"disabled"`` and omitting the field keeps the
+        # always-on default.
+        elif model_name not in _THINKING_ALWAYS_ON_MODELS:
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
@@ -455,6 +471,11 @@ class MoonshotChatModel(ChatModelBase):
 
     def _get_disable_thinking_kwargs(self) -> dict:
         """Moonshot uses ``thinking.type=disabled`` in extra_body."""
+        if self.model in _THINKING_ALWAYS_ON_MODELS:
+            # Thinking cannot be disabled on these models: return no
+            # kwargs so the structured-output fallback ladder skips the
+            # ``no_think`` strategy instead of sending a rejected value.
+            return {}
         return {
             "extra_body": {"thinking": {"type": "disabled"}},
         }

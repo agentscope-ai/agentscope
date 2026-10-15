@@ -241,6 +241,52 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_thinking_always_on_models_omit_thinking(self) -> None:
+        """Models that cannot disable thinking send no thinking field."""
+        for model_name in ("kimi-k2.7-code", "kimi-k2.7-code-highspeed"):
+            with self.subTest(model_name=model_name):
+                model = MoonshotChatModel(
+                    credential=MoonshotCredential(api_key="test"),
+                    model=model_name,
+                    stream=False,
+                    context_size=262_144,
+                )
+                mock_client = MagicMock()
+                mock_create = AsyncMock(
+                    return_value=_mock_completion(text="Hello!"),
+                )
+                mock_client.chat.completions.create = mock_create
+                model.client = mock_client
+
+                await model([])
+
+                self.assertNotIn(
+                    "thinking",
+                    mock_create.await_args.kwargs.get("extra_body") or {},
+                )
+
+    async def test_thinking_always_on_models_keep_caller_extra_body(
+        self,
+    ) -> None:
+        """A caller-provided thinking dict is forwarded untouched."""
+        model = MoonshotChatModel(
+            credential=MoonshotCredential(api_key="test"),
+            model="kimi-k2.7-code",
+            stream=False,
+            context_size=262_144,
+        )
+        mock_client = MagicMock()
+        mock_create = AsyncMock(return_value=_mock_completion(text="Hello!"))
+        mock_client.chat.completions.create = mock_create
+        model.client = mock_client
+
+        await model([], extra_body={"thinking": {"budget_tokens": 1024}})
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs["extra_body"],
+            {"thinking": {"budget_tokens": 1024}},
+        )
+
     async def test_tool_call_response(
         self,
     ) -> None:
@@ -318,6 +364,26 @@ class TestKimiModelParameters(unittest.TestCase):
             parameters=MoonshotChatModel.Parameters(thinking_enable=True),
         )
         self.assertTrue(model.parameters.thinking_enable)
+
+    def test_disable_thinking_kwargs_distinguish_code_models(self) -> None:
+        """Models that cannot disable thinking return no kwargs."""
+        code_model = MoonshotChatModel(
+            credential=MoonshotCredential(api_key="test"),
+            model="kimi-k2.7-code",
+            stream=False,
+            context_size=262_144,
+        )
+        regular_model = MoonshotChatModel(
+            credential=MoonshotCredential(api_key="test"),
+            model="kimi-k2-5",
+            stream=False,
+            context_size=131_072,
+        )
+        self.assertEqual(code_model._get_disable_thinking_kwargs(), {})
+        self.assertEqual(
+            regular_model._get_disable_thinking_kwargs(),
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        )
 
 
 # ---------------------------------------------------------------------------
