@@ -140,6 +140,17 @@
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
+		"askUser": {
+			"title": "需要你的选择",
+			"other": "其他",
+			"otherPlaceholder": "输入你的回答",
+			"submit": "提交回答",
+			"invalid": "无法显示这个问题。"
+		},
+		"externalExecution": {
+			"title": "{{name}} 正在等待外部执行器",
+			"description": "该工具需要由宿主应用提供的集成完成。"
+		},
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
 		"maxItersExceeded": {
@@ -450,6 +461,8 @@
 		"noModels": "暂无可用的实时语音模型。",
 		"disable": "停用语音模型",
 		"selectFirst": "请先选择语音模型",
+		"backendFollows": "任务后端跟随 Chat 模型 · {{model}}",
+		"backendMissing": "请先选择 Chat 模型，再启动 GPT Live",
 		"start": "开始语音对话",
 		"stop": "结束语音对话"
 	},

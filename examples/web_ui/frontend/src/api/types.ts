@@ -851,6 +851,8 @@ export interface RealtimeModelCard {
 	input_sample_rate: number;
 	output_sample_rate: number;
 	supports_tools: boolean;
+	interaction_mode: 'turn_based' | 'full_duplex';
+	delegation_backend: 'none' | 'session_chat';
 	max_context_tokens: number | null;
 	max_audio_turns: number | null;
 	max_audio_duration_s: number | null;

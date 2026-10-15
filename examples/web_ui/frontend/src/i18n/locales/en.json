@@ -140,6 +140,17 @@
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
+		"askUser": {
+			"title": "Your input is needed",
+			"other": "Other",
+			"otherPlaceholder": "Enter your answer",
+			"submit": "Submit answers",
+			"invalid": "This question could not be displayed."
+		},
+		"externalExecution": {
+			"title": "{{name}} is waiting for an external executor",
+			"description": "This tool must be completed by an integration provided by the host application."
+		},
 		"newSession": "New Session",
 		"greeting": "Where should we start?",
 		"maxItersExceeded": {
@@ -450,6 +461,8 @@
 		"noModels": "No realtime voice models are available.",
 		"disable": "Disable voice model",
 		"selectFirst": "Select a voice model first",
+		"backendFollows": "Task backend follows Chat model · {{model}}",
+		"backendMissing": "Select a Chat model before starting GPT Live",
 		"start": "Start voice conversation",
 		"stop": "End voice conversation"
 	},

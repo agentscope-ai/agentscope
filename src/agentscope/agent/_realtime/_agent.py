@@ -4,12 +4,19 @@ import asyncio
 import base64
 import time
 import uuid
+from collections import deque
+from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, TYPE_CHECKING
 
 from ...realtime import _events as me
 from ._aggregator import TurnAggregator
-from ...realtime._base import ModelDisconnectedError, RealtimeModelBase
+from ...realtime._base import (
+    InteractionMode,
+    ModelDisconnectedError,
+    RealtimeModelBase,
+)
 from ._metrics import TurnMetrics
 from ...realtime._transport._base import (
     AudioFrame,
@@ -30,6 +37,7 @@ from ...event import (
     ModelCallStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
+    RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
@@ -38,8 +46,10 @@ from ...event import (
     ToolCallEndEvent,
     ToolCallStartEvent,
     ToolResultEndEvent,
+    ToolResultDataDeltaEvent,
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
+    ExternalExecutionResultEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
@@ -59,10 +69,15 @@ from ...state import AgentState
 from ...tool import ToolChunk, ToolResponse, Toolkit
 from ...types import ReplyFinishedReason
 
+if TYPE_CHECKING:
+    from .._agent import Agent
+
 # Audio buffered while the model is being reconnected: 10 s at 100 ms chunks.
 _BACKLOG_FRAMES = 100
 _HISTORY_MAX_MESSAGES = 100
 _HISTORY_MAX_TEXT_CHARS = 32_000
+_LIVE_CHECKPOINT_INTERVAL_SECS = 2.0
+_DELEGATION_INPUT_TIMEOUT_SECS = 300.0
 
 
 @dataclass
@@ -87,6 +102,21 @@ class _QueuedEvent:
 
     event: AgentEvent
     checkpoint: AgentState | None = None
+
+
+@dataclass
+class _ClientDelegation:
+    """One application-managed task requested by a Live session."""
+
+    delegation_id: str
+    prompt: Msg
+    agent: "Agent | None" = None
+    prompt_id: str = ""
+    baseline_ids: set[str] = field(default_factory=set)
+    buffered_events: list[AgentEvent] = field(default_factory=list)
+    visible: bool = False
+    timeout_task: asyncio.Task[None] | None = None
+    expiring: bool = False
 
 
 class RealtimeAgent:
@@ -129,6 +159,9 @@ class RealtimeAgent:
         state: AgentState | None = None,
         vad: VADBase | None = None,
         aggregator: TurnAggregator | None = None,
+        delegation_agent_factory: (
+            Callable[[AgentState], "Agent"] | None
+        ) = None,
     ) -> None:
         """Initialize the realtime agent.
 
@@ -163,6 +196,12 @@ class RealtimeAgent:
                 acknowledgements. Subclass it to change what counts as a
                 turn. A default with no backchannel list is used if
                 omitted.
+            delegation_agent_factory (`Callable[[AgentState], Agent] | None`,
+            optional):
+                Builds a chat agent for each client-delegated Live task from
+                the supplied isolated session state. Its model, toolkit, and
+                permission state normally come from the current persisted
+                chat session.
         """
         self.name = name
         self.system_prompt = system_prompt
@@ -171,6 +210,14 @@ class RealtimeAgent:
         self.state = state or AgentState()
         self.vad = vad
         self.aggregator = aggregator or TurnAggregator()
+        self._delegation_agent_factory = delegation_agent_factory
+        if (
+            self.model.interaction_mode is InteractionMode.FULL_DUPLEX
+            and self.vad is not None
+        ):
+            raise ValueError(
+                "A full-duplex model cannot use client-side turn VAD.",
+            )
 
         self._engine = PermissionEngine(self.state.permission_context)
         self._transport: TransportBase | None = None
@@ -191,6 +238,18 @@ class RealtimeAgent:
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._barge_lock = asyncio.Lock()
+        self._live_session_id = ""
+        self._live_replies: dict[str, _Reply] = {}
+        self._live_message_ids: set[str] = set()
+        self._live_transcript: deque[tuple[str, str, int, int]] = deque()
+        self._live_transcript_chars = 0
+        self._last_live_checkpoint_at: float | None = None
+        self._last_live_checkpoint_end_ms: int | None = None
+        self._delegations: dict[str, _ClientDelegation] = {}
+        self._delegation_queue: deque[str] = deque()
+        self._active_delegation_id: str | None = None
+        self._delegated_tool_calls: dict[str, str] = {}
+        self._delegation_lock = asyncio.Lock()
 
         # Model session: connected flag, the downlink pump that outlives
         # any transport, and reconnect bookkeeping.
@@ -226,6 +285,7 @@ class RealtimeAgent:
                 self._end_user_turn()
                 self._user_turn = ""
                 self._finish_reply(ReplyFinishedReason.ERROR)
+                self._finish_live_replies(ReplyFinishedReason.ERROR)
         self._connection_generation += 1
 
         instructions = self.system_prompt
@@ -323,10 +383,19 @@ class RealtimeAgent:
         for future in self._confirmations.values():
             future.cancel()
         self._confirmations.clear()
+        timeout_tasks = [
+            delegation.timeout_task
+            for delegation in self._delegations.values()
+            if delegation.timeout_task is not None
+        ]
+        for task in timeout_tasks:
+            task.cancel()
         for task in list(self._tasks):
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+        if timeout_tasks:
+            await asyncio.gather(*timeout_tasks, return_exceptions=True)
         if self._downlink is not None:
             self._downlink.cancel()
             await asyncio.gather(self._downlink, return_exceptions=True)
@@ -334,6 +403,7 @@ class RealtimeAgent:
         self._connected = False
         self._connected_event.clear()
         await self.model.close()
+        self._finish_live_replies(ReplyFinishedReason.COMPLETED)
 
     def _on_downlink_done(self, task: asyncio.Task) -> None:
         """Surface a crashed downlink instead of a silently dead session."""
@@ -451,7 +521,10 @@ class RealtimeAgent:
             # the model stops talking to nobody, then hand the caller the
             # events that produced (the interrupted ReplyEnd) before the
             # stream ends rather than leaking them into the next run.
-            await self._barge_in()
+            if self.model.interaction_mode is InteractionMode.FULL_DUPLEX:
+                await self._interrupt_live_speech()
+            else:
+                await self._barge_in()
             while not self._out.empty():
                 queued = self._out.get_nowait()
                 self._yielded_checkpoint = (
@@ -478,7 +551,13 @@ class RealtimeAgent:
 
     async def send(
         self,
-        inputs: (str | Msg | UserConfirmResultEvent | UserInterruptEvent),
+        inputs: (
+            str
+            | Msg
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+        ),
     ) -> None:
         """Feed the agent anything that is not audio.
 
@@ -497,10 +576,31 @@ class RealtimeAgent:
                 await self._barge_in()
 
             case UserConfirmResultEvent():
+                tool_call_ids = [
+                    result.tool_call.id for result in inputs.confirm_results
+                ]
+                delegation = self._delegation_for_tool_calls(tool_call_ids)
+                if delegation is not None:
+                    self._schedule_client_delegation(delegation, inputs)
+                    return
                 for result in inputs.confirm_results:
                     future = self._confirmations.get(result.tool_call.id)
                     if future and not future.done():
                         future.set_result(result)
+
+            case ExternalExecutionResultEvent():
+                tool_call_ids = [
+                    result.id for result in inputs.execution_results
+                ]
+                delegation = self._delegation_for_tool_calls(tool_call_ids)
+                if delegation is not None:
+                    self._schedule_client_delegation(delegation, inputs)
+                    return
+                # pylint: disable-next=logging-fstring-interpolation
+                logger.warning(
+                    f"RealtimeAgent: ignored external execution results "
+                    f"without an active delegation: {tool_call_ids}",
+                )
 
             case str() | Msg():
                 if not self.model.supports_text_input:
@@ -535,6 +635,11 @@ class RealtimeAgent:
     def last_turn_metrics(self) -> TurnMetrics:
         """Latency breakdown of the most recent turn."""
         return self._metrics
+
+    @property
+    def allows_open_user_reply_checkpoint(self) -> bool:
+        """Whether an incomplete user transcript is safe to persist."""
+        return self.model.interaction_mode is InteractionMode.FULL_DUPLEX
 
     # ------------------------------------------------------------------
     # Uplink: transport -> model
@@ -608,6 +713,8 @@ class RealtimeAgent:
                 await self.send(frame.data.get("text", ""))
             case ControlFrameType.USER_CONFIRM:
                 await self.send(UserConfirmResultEvent(**frame.data))
+            case ControlFrameType.EXTERNAL_EXECUTION_RESULT:
+                await self.send(ExternalExecutionResultEvent(**frame.data))
             case ControlFrameType.INTERRUPT:
                 await self.send(UserInterruptEvent(reply_id=self._reply_id))
             case _:
@@ -628,8 +735,24 @@ class RealtimeAgent:
         the exit of :meth:`reply_stream`, so it is serialised; the losers
         find the reply already closed and return.
         """
+        if self.model.interaction_mode is InteractionMode.FULL_DUPLEX:
+            await self._interrupt_live_speech()
+            return
         async with self._barge_lock:
             await self._barge_in_locked()
+
+    async def _interrupt_live_speech(self) -> None:
+        """Stop Live speech without cancelling delegated backend work."""
+        async with self._barge_lock:
+            if self._transport is not None and self._audio_pending:
+                await self._transport.clear_audio()
+                self._audio_pending = False
+            if self._connected:
+                await self.model.interrupt_speech()
+            self._finish_live_role(
+                "assistant",
+                ReplyFinishedReason.INTERRUPTED,
+            )
 
     async def _barge_in_locked(self) -> None:
         """Body of :meth:`_barge_in`, run under the lock."""
@@ -667,6 +790,7 @@ class RealtimeAgent:
                 self._end_user_turn()
                 self._user_turn = ""
                 self._finish_reply(ReplyFinishedReason.ERROR)
+                self._finish_live_replies(ReplyFinishedReason.ERROR)
             logger.info(
                 "RealtimeAgent: model session ended; keep talking and it "
                 "reconnects on the next audio.",
@@ -674,6 +798,9 @@ class RealtimeAgent:
 
     async def _on_model_event(self, event: me.ModelEvent) -> None:
         """Handle one model event."""
+        if self.model.interaction_mode is InteractionMode.FULL_DUPLEX:
+            await self._on_live_event(event)
+            return
         rate = self.model.output_sample_rate
         match event:
             case me.SpeechStartedEvent():
@@ -768,6 +895,633 @@ class RealtimeAgent:
                     "RealtimeAgent: model closed the session (%s)",
                     event.reason,
                 )
+
+    async def _on_live_event(self, event: me.ModelEvent) -> None:
+        """Project one full-duplex timeline event into public events."""
+        match event:
+            case me.SessionStartedEvent():
+                self._live_session_id = event.session_id
+                self._last_live_checkpoint_at = None
+                self._last_live_checkpoint_end_ms = None
+
+            case me.TimelineAudioDeltaEvent():
+                if self._transport is None:
+                    return
+                reply = self._start_live_reply("assistant")
+                playout_id = f"live:{self._live_session_id}"
+                await self._transport.send_audio(event.pcm, playout_id)
+                self._audio_pending = True
+                self._emit_audio(reply, event.pcm, event.sample_rate)
+
+            case me.TimelineTranscriptDeltaEvent():
+                self._append_live_transcript(event)
+                reply = self._start_live_reply(event.role)
+                self._emit_live_text(
+                    event.role,
+                    reply,
+                    event.delta,
+                    event.end_ms,
+                )
+
+            case me.SessionClosedEvent():
+                self._finish_live_replies(ReplyFinishedReason.COMPLETED)
+
+            case me.ModelErrorEvent():
+                logger.error(
+                    "RealtimeAgent: Live model error %s: %s",
+                    event.code,
+                    event.message,
+                )
+                self._finish_live_replies(ReplyFinishedReason.ERROR)
+
+            case me.SessionEndedEvent():
+                self._finish_live_replies(ReplyFinishedReason.ERROR)
+
+            case me.DelegationCreatedEvent(target="client"):
+                self._start_client_delegation(event.delegation_id)
+
+            case me.DelegationCreatedEvent() | me.DelegatedResponseEvent():
+                logger.debug(
+                    "RealtimeAgent: ignoring an unsupported delegated event",
+                )
+
+            case me.SessionUsageEvent():
+                pass
+
+    def _start_live_reply(self, role: str) -> _Reply:
+        """Open one independent user or assistant Live transcript."""
+        current = self._live_replies.get(role)
+        if current is not None:
+            return current
+        reply_id = f"live:{role}:{uuid.uuid4().hex}"
+        reply = _Reply(item_id=reply_id, reply_id=reply_id)
+        self._live_replies[role] = reply
+        self._live_message_ids.add(reply_id)
+        self._emit(
+            ReplyStartEvent(
+                session_id=self.state.session_id,
+                reply_id=reply_id,
+                name="user" if role == "user" else self.name,
+                role="user" if role == "user" else "assistant",
+            ),
+        )
+        if role == "assistant":
+            self._emit(
+                ModelCallStartEvent(
+                    reply_id=reply_id,
+                    model_name=self.model.model,
+                ),
+            )
+        return reply
+
+    def _emit_live_text(
+        self,
+        role: str,
+        reply: _Reply,
+        delta: str,
+        end_ms: int,
+    ) -> None:
+        """Append a timestamped Live transcript to its speaker's message."""
+        if not reply.text_started:
+            reply.text_started = True
+            self._emit(
+                TextBlockStartEvent(
+                    reply_id=reply.reply_id,
+                    block_id=reply.text_block_id,
+                ),
+            )
+        message = next(
+            (
+                item
+                for item in reversed(self.state.context)
+                if item.id == reply.reply_id
+            ),
+            None,
+        )
+        if message is None:
+            message = Msg(
+                id=reply.reply_id,
+                role="user" if role == "user" else "assistant",
+                name="user" if role == "user" else self.name,
+                content=[TextBlock(id=reply.text_block_id, text=delta)],
+            )
+            self.state.context.append(message)
+        else:
+            blocks = message.get_content_blocks("text")
+            if blocks:
+                blocks[-1].text += delta
+            else:
+                message.content.append(
+                    TextBlock(id=reply.text_block_id, text=delta),
+                )
+        self._emit(
+            TextBlockDeltaEvent(
+                reply_id=reply.reply_id,
+                block_id=reply.text_block_id,
+                delta=delta,
+            ),
+            checkpoint=self._should_checkpoint_live_transcript(end_ms),
+        )
+
+    def _should_checkpoint_live_transcript(self, end_ms: int) -> bool:
+        """Sample state when the wall or Live timeline interval advances."""
+        now = time.monotonic()
+        interval_ms = int(_LIVE_CHECKPOINT_INTERVAL_SECS * 1_000)
+        wall_due = (
+            self._last_live_checkpoint_at is None
+            or now - self._last_live_checkpoint_at
+            >= _LIVE_CHECKPOINT_INTERVAL_SECS
+        )
+        timeline_due = (
+            self._last_live_checkpoint_end_ms is not None
+            and end_ms - self._last_live_checkpoint_end_ms >= interval_ms
+        )
+        if not wall_due and not timeline_due:
+            return False
+        self._last_live_checkpoint_at = now
+        if self._last_live_checkpoint_end_ms is None:
+            self._last_live_checkpoint_end_ms = end_ms
+        else:
+            self._last_live_checkpoint_end_ms = max(
+                self._last_live_checkpoint_end_ms,
+                end_ms,
+            )
+        return True
+
+    def _finish_live_role(
+        self,
+        role: str,
+        reason: ReplyFinishedReason,
+    ) -> None:
+        """Close one speaker's current Live presentation segment."""
+        reply = self._live_replies.pop(role, None)
+        if reply is None:
+            return
+        if reply.text_started:
+            self._emit(
+                TextBlockEndEvent(
+                    reply_id=reply.reply_id,
+                    block_id=reply.text_block_id,
+                ),
+            )
+        if reply.audio_started:
+            self._emit(
+                DataBlockEndEvent(
+                    reply_id=reply.reply_id,
+                    block_id=reply.audio_block_id,
+                ),
+            )
+        if role == "assistant":
+            self._emit(
+                ModelCallEndEvent(
+                    reply_id=reply.reply_id,
+                    input_tokens=0,
+                    output_tokens=0,
+                ),
+            )
+        finished = ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=reply.reply_id,
+            finished_reason=reason,
+        )
+        for message in reversed(self.state.context):
+            if message.id == reply.reply_id:
+                message.append_event(finished)
+                break
+        self._emit(finished)
+
+    def _finish_live_replies(self, reason: ReplyFinishedReason) -> None:
+        """Close both independently growing Live transcript streams."""
+        self._finish_live_role("user", reason)
+        self._finish_live_role("assistant", reason)
+
+    def _start_client_delegation(self, delegation_id: str) -> None:
+        """Queue one GPT-Live task behind the active delegation."""
+        if not delegation_id or delegation_id in self._delegations:
+            return
+        if self._delegation_agent_factory is None:
+            self._schedule_delegation_failure(delegation_id)
+            return
+        prompt = UserMsg(
+            name="user",
+            content=self._build_delegation_prompt(),
+        )
+        delegation = _ClientDelegation(
+            delegation_id=delegation_id,
+            prompt=prompt,
+        )
+        self._delegations[delegation_id] = delegation
+        if self._active_delegation_id is None:
+            self._activate_client_delegation(delegation)
+        else:
+            self._delegation_queue.append(delegation_id)
+
+    def _activate_client_delegation(
+        self,
+        delegation: _ClientDelegation,
+    ) -> None:
+        """Create a backend from the latest state and start its task."""
+        if self._delegation_agent_factory is None:
+            self._delegations.pop(delegation.delegation_id, None)
+            self._schedule_delegation_failure(delegation.delegation_id)
+            self._activate_next_client_delegation()
+            return
+        try:
+            agent = self._delegation_agent_factory(
+                self._copy_delegation_state(),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "RealtimeAgent: failed to create delegation backend",
+            )
+            self._delegations.pop(delegation.delegation_id, None)
+            self._schedule_delegation_failure(delegation.delegation_id)
+            self._activate_next_client_delegation()
+            return
+        delegation.agent = agent
+        delegation.prompt_id = delegation.prompt.id
+        delegation.baseline_ids = {
+            message.id for message in agent.state.context
+        }
+        self._active_delegation_id = delegation.delegation_id
+        self._schedule_client_delegation(delegation, delegation.prompt)
+
+    def _activate_next_client_delegation(self) -> None:
+        """Start the oldest queued delegation, if one remains."""
+        if self._active_delegation_id is not None:
+            return
+        while self._delegation_queue:
+            delegation_id = self._delegation_queue.popleft()
+            delegation = self._delegations.get(delegation_id)
+            if delegation is not None:
+                self._activate_client_delegation(delegation)
+                return
+
+    def _schedule_client_delegation(
+        self,
+        delegation: _ClientDelegation,
+        inputs: (
+            Msg
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+        ),
+    ) -> None:
+        """Run or resume a delegated chat-agent reply in the background."""
+        self._cancel_delegation_timeout(delegation)
+        task = asyncio.create_task(
+            self._drive_client_delegation(delegation, inputs),
+            name=f"live-delegation-{delegation.delegation_id}",
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _schedule_delegation_timeout(
+        self,
+        delegation: _ClientDelegation,
+    ) -> None:
+        """Cancel a delegation that remains parked without input."""
+        self._cancel_delegation_timeout(delegation)
+        delegation.timeout_task = asyncio.create_task(
+            self._expire_client_delegation(delegation),
+            name=f"live-delegation-timeout-{delegation.delegation_id}",
+        )
+
+    def _cancel_delegation_timeout(
+        self,
+        delegation: _ClientDelegation,
+    ) -> None:
+        """Cancel the pending external-input deadline, if any."""
+        task = delegation.timeout_task
+        delegation.timeout_task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _expire_client_delegation(
+        self,
+        delegation: _ClientDelegation,
+    ) -> None:
+        """Interrupt and finish a delegation after its input deadline."""
+        try:
+            await asyncio.sleep(_DELEGATION_INPUT_TIMEOUT_SECS)
+            if (
+                self._delegations.get(delegation.delegation_id)
+                is not delegation
+                or self._active_delegation_id != delegation.delegation_id
+                or delegation.agent is None
+            ):
+                return
+            delegation.expiring = True
+            await self._drive_client_delegation(
+                delegation,
+                UserInterruptEvent(reply_id=delegation.agent.state.reply_id),
+                result_override=(
+                    "The delegated task was cancelled because the required "
+                    "user input or external execution was not provided in "
+                    "time."
+                ),
+            )
+        except asyncio.CancelledError:
+            return
+
+    def _schedule_delegation_failure(self, delegation_id: str) -> None:
+        """Tell GPT-Live that an application backend is unavailable."""
+        task = asyncio.create_task(
+            self.model.send_delegation_result(
+                delegation_id,
+                "The delegated task could not be completed because the "
+                "session chat agent is unavailable.",
+            ),
+            name=f"live-delegation-failure-{delegation_id}",
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _drive_client_delegation(
+        self,
+        delegation: _ClientDelegation,
+        inputs: (
+            Msg
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | UserInterruptEvent
+        ),
+        result_override: str | None = None,
+    ) -> None:
+        """Run a chat agent and return its verified result to GPT-Live."""
+        final: Msg | None = None
+        waiting_for_external_input = False
+        try:
+            if delegation.agent is None:
+                raise RuntimeError("The delegation backend is unavailable.")
+            async with self._delegation_lock:
+                async for item in delegation.agent.reply_stream(
+                    inputs,
+                    yield_final_msg=True,
+                ):
+                    if isinstance(item, Msg):
+                        final = item
+                        continue
+                    if not delegation.visible and isinstance(
+                        item,
+                        (
+                            ReplyStartEvent,
+                            ToolCallStartEvent,
+                            ToolCallDeltaEvent,
+                            ToolCallEndEvent,
+                            ToolResultStartEvent,
+                        ),
+                    ):
+                        delegation.buffered_events.append(item)
+                    if isinstance(
+                        item,
+                        (
+                            RequireUserConfirmEvent,
+                            RequireExternalExecutionEvent,
+                        ),
+                    ):
+                        self._sync_delegation_state(delegation)
+                        self._show_delegation_interaction(
+                            delegation,
+                            item,
+                        )
+                        waiting_for_external_input = True
+                    elif delegation.visible and isinstance(
+                        item,
+                        (
+                            ToolCallStartEvent,
+                            ToolCallDeltaEvent,
+                            ToolCallEndEvent,
+                            ToolResultStartEvent,
+                            ToolResultTextDeltaEvent,
+                            ToolResultDataDeltaEvent,
+                            ToolResultEndEvent,
+                            ReplyEndEvent,
+                        ),
+                    ):
+                        if isinstance(
+                            item,
+                            (ToolResultEndEvent, ReplyEndEvent),
+                        ):
+                            self._sync_delegation_state(delegation)
+                        self._emit(item)
+
+            if waiting_for_external_input:
+                self._schedule_delegation_timeout(delegation)
+                return
+            if final is None:
+                raise RuntimeError(
+                    "The delegation backend ended without a final result.",
+                )
+
+            self._sync_delegation_state(delegation)
+            content = (
+                result_override or (final.get_text_content() or "").strip()
+            )
+            if not content:
+                content = "The delegated task completed without a text result."
+            await self.model.send_delegation_result(
+                delegation.delegation_id,
+                content,
+            )
+            self._finish_client_delegation(delegation.delegation_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "RealtimeAgent: client delegation %s failed",
+                delegation.delegation_id,
+            )
+            try:
+                await self.model.send_delegation_result(
+                    delegation.delegation_id,
+                    "The delegated task failed. Ask the user to try again.",
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "RealtimeAgent: failed to report delegation failure",
+                )
+            self._finish_client_delegation(delegation.delegation_id)
+
+    def _build_delegation_prompt(self) -> str:
+        """Build a bounded task prompt from the current Live transcript."""
+        lines: list[str] = []
+        for role, delta, _, _ in self._live_transcript:
+            label = "User" if role == "user" else "Voice assistant"
+            if lines and lines[-1].startswith(f"{label}: "):
+                lines[-1] = f"{lines[-1]}{delta}"
+            else:
+                lines.append(f"{label}: {delta}")
+        transcript = "\n".join(lines)
+        if len(transcript) > _HISTORY_MAX_TEXT_CHARS:
+            transcript = transcript[-_HISTORY_MAX_TEXT_CHARS:]
+        if not transcript.strip():
+            transcript = "No transcript text is available."
+        return (
+            f"You are the task backend for a live voice conversation. "
+            f"Use the latest transcript, the session context, and the "
+            f"available tools to complete the delegated task. Transcript "
+            f"fragments may contain corrections; prefer the latest user "
+            f"intent. Do not claim an action succeeded until a tool confirms "
+            f"it. Return verified facts, current status, and the next step in "
+            f"a concise result of at most 300 words for the voice assistant "
+            f"to communicate.\n\n## Live transcript\n{transcript}"
+        )
+
+    def _show_delegation_interaction(
+        self,
+        delegation: _ClientDelegation,
+        interaction: RequireUserConfirmEvent | RequireExternalExecutionEvent,
+    ) -> None:
+        """Expose a delegated external-input request through the UI."""
+        if not delegation.visible:
+            start = next(
+                (
+                    event
+                    for event in delegation.buffered_events
+                    if isinstance(event, ReplyStartEvent)
+                ),
+                None,
+            )
+            if start is not None:
+                self._emit(start)
+            for event in delegation.buffered_events:
+                if isinstance(
+                    event,
+                    (
+                        ToolCallStartEvent,
+                        ToolCallDeltaEvent,
+                        ToolCallEndEvent,
+                        ToolResultStartEvent,
+                    ),
+                ):
+                    self._emit(event)
+            delegation.visible = True
+            delegation.buffered_events.clear()
+        self._emit(interaction)
+        for tool_call in interaction.tool_calls:
+            self._delegated_tool_calls[tool_call.id] = delegation.delegation_id
+
+    def _copy_delegation_state(self) -> AgentState:
+        """Copy session state while omitting duplicated Live messages."""
+        state = self.state.model_copy()
+        for field_name in type(self.state).model_fields:
+            if field_name != "context":
+                setattr(
+                    state,
+                    field_name,
+                    deepcopy(getattr(self.state, field_name)),
+                )
+        state.context = [
+            message.model_copy(deep=True)
+            for message in self.state.context
+            if message.id not in self._live_message_ids
+        ]
+        return state
+
+    def _sync_delegation_state(
+        self,
+        delegation: _ClientDelegation,
+    ) -> None:
+        """Persist delegated tool state without duplicating hidden prompts."""
+        if delegation.agent is None:
+            return
+        backend_state = delegation.agent.state
+        self.state.permission_context = (
+            backend_state.permission_context.model_copy(deep=True)
+        )
+        self.state.tool_context = backend_state.tool_context.model_copy(
+            deep=True,
+        )
+        self.state.tasks_context = backend_state.tasks_context.model_copy(
+            deep=True,
+        )
+        existing = {
+            message.id: index
+            for index, message in enumerate(
+                self.state.context,
+            )
+        }
+        for message in backend_state.context:
+            if (
+                message.id in delegation.baseline_ids
+                or message.id == delegation.prompt_id
+            ):
+                continue
+            kept = [
+                block.model_copy(deep=True)
+                for block in message.content
+                if block.type in {"tool_call", "tool_result"}
+            ]
+            if not kept:
+                continue
+            synced = message.model_copy(deep=True)
+            synced.content = kept
+            index = existing.get(message.id)
+            if index is None:
+                existing[message.id] = len(self.state.context)
+                self.state.context.append(synced)
+            else:
+                self.state.context[index] = synced
+
+    def _finish_client_delegation(self, delegation_id: str) -> None:
+        """Drop routing state after a delegated task reaches a result."""
+        delegation = self._delegations.pop(delegation_id, None)
+        if delegation is not None:
+            self._cancel_delegation_timeout(delegation)
+        stale = [
+            tool_call_id
+            for tool_call_id, owner in self._delegated_tool_calls.items()
+            if owner == delegation_id
+        ]
+        for tool_call_id in stale:
+            self._delegated_tool_calls.pop(tool_call_id, None)
+        if self._active_delegation_id == delegation_id:
+            self._active_delegation_id = None
+            self._activate_next_client_delegation()
+
+    def _delegation_for_tool_calls(
+        self,
+        tool_call_ids: list[str],
+    ) -> _ClientDelegation | None:
+        """Resolve one active delegation owning every supplied tool call."""
+        if not tool_call_ids:
+            return None
+        delegation_id = self._delegated_tool_calls.get(tool_call_ids[0])
+        if delegation_id is None or any(
+            self._delegated_tool_calls.get(tool_call_id) != delegation_id
+            for tool_call_id in tool_call_ids
+        ):
+            return None
+        if delegation_id != self._active_delegation_id:
+            return None
+        delegation = self._delegations.get(delegation_id)
+        if delegation is None or delegation.expiring:
+            return None
+        return delegation
+
+    def _append_live_transcript(
+        self,
+        event: me.TimelineTranscriptDeltaEvent,
+    ) -> None:
+        """Keep a timestamped transcript window within the prompt budget."""
+        fragment = (
+            event.role,
+            event.delta,
+            event.start_ms,
+            event.end_ms,
+        )
+        self._live_transcript.append(fragment)
+        self._live_transcript_chars += len(fragment[1])
+        while self._live_transcript_chars > _HISTORY_MAX_TEXT_CHARS:
+            role, text, start_ms, end_ms = self._live_transcript.popleft()
+            excess = self._live_transcript_chars - _HISTORY_MAX_TEXT_CHARS
+            if not self._live_transcript and len(text) > excess:
+                kept = text[excess:]
+                self._live_transcript.appendleft(
+                    (role, kept, start_ms, end_ms),
+                )
+                self._live_transcript_chars -= excess
+                break
+            self._live_transcript_chars -= len(text)
 
     def _start_user_turn(self, item_id: str = "") -> None:
         """Open the user's turn as a reply of its own. A local VAD sees it
@@ -1003,19 +1757,25 @@ class RealtimeAgent:
             ),
         )
 
-    def _emit(self, event: AgentEvent) -> None:
+    def _emit(
+        self,
+        event: AgentEvent,
+        *,
+        checkpoint: bool = False,
+    ) -> None:
         """Queue one event for :meth:`reply_stream`."""
-        checkpoint = None
-        if isinstance(
+        snapshot = None
+        if checkpoint or isinstance(
             event,
             (
                 ReplyEndEvent,
+                RequireExternalExecutionEvent,
                 RequireUserConfirmEvent,
                 ToolResultEndEvent,
             ),
         ):
-            checkpoint = self.state.model_copy(deep=True)
-        self._out.put_nowait(_QueuedEvent(event, checkpoint))
+            snapshot = self.state.model_copy(deep=True)
+        self._out.put_nowait(_QueuedEvent(event, snapshot))
 
     def checkpoint_snapshot(self, event: AgentEvent) -> AgentState | None:
         """Return the immutable state paired with the yielded event."""

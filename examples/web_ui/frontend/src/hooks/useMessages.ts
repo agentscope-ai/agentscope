@@ -5,6 +5,7 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+	ExternalExecutionResultEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
@@ -16,6 +17,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -33,23 +35,6 @@ export type SubagentHitlEntry = {
 	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
 	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
 	created_at: string;
-};
-
-/**
- * Return true if ``msg`` is an assistant reply currently parked on a
- * pending tool_call (awaiting user confirmation or an external
- * execution result). Used both to detect the "in-flight reply on page
- * load" case and as the SDK-gap workaround that hides the confirm
- * card once the paired tool_result lands.
- */
-const hasPendingToolCall = (msg: Msg | undefined): boolean => {
-	if (!msg || msg.role !== 'assistant') return false;
-	for (const block of msg.content) {
-		if (block.type !== 'tool_call') continue;
-		const state = (block as ToolCallBlock).state;
-		if (state === 'asking' || state === 'submitted') return true;
-	}
-	return false;
 };
 
 const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
@@ -136,6 +121,10 @@ export function useMessages(
 		isRealtimeAudioActive?: () => boolean;
 		/** Send a tool confirmation over the active realtime transport. */
 		sendRealtimeUserConfirm?: (event: UserConfirmResultEvent) => Promise<void>;
+		/** Return an external tool result over the realtime transport. */
+		sendRealtimeExternalExecutionResult?: (
+			event: ExternalExecutionResultEvent,
+		) => Promise<void>;
 	},
 ) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -330,21 +319,23 @@ export function useMessages(
 					if (cancelled) return;
 					eventCursor = event_cursor;
 					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR the
-					// tail msg is parked on a pending tool_call (awaiting
+					// If a reply is in flight (running on a worker) OR any
+					// persisted msg is parked on a pending tool_call (awaiting
 					// user confirmation / external execution), initialise the
 					// phase to ``streaming`` so the interrupt button is
 					// available immediately — otherwise a fresh page load
 					// while parked leaves the UI stuck on ``idle`` with no
 					// way to abort.
-					const tail = messages[messages.length - 1];
-					if (is_running || hasPendingToolCall(tail)) {
+					const pendingHitl = getPendingHitlCalls(messages)[0];
+					if (is_running || pendingHitl) {
 						setPhase('streaming');
-						if (hasPendingToolCall(tail)) {
+						if (pendingHitl) {
 							// Prime the ref so continuation events (which
 							// arrive without a fresh REPLY_START) apply to
 							// the right msg.
-							currentReplyRef.current = tail ?? null;
+							currentReplyRef.current =
+								messages.find((message) => message.id === pendingHitl.replyId) ??
+								null;
 						}
 					}
 					// Published synchronously, not through `scheduleUpdate`:
@@ -461,6 +452,30 @@ export function useMessages(
 					optionsRef.current.sendRealtimeUserConfirm
 				) {
 					await optionsRef.current.sendRealtimeUserConfirm(event);
+				} else {
+					await chatApi.trigger({
+						agent_id: agentId,
+						session_id: sessionId,
+						input: event,
+					});
+				}
+			} catch (e) {
+				setError(e as Error);
+				throw e;
+			}
+		},
+		[agentId, sessionId],
+	);
+
+	const onExternalExecutionResult = useCallback(
+		async (event: ExternalExecutionResultEvent) => {
+			if (!agentId || !sessionId) return;
+			try {
+				if (
+					optionsRef.current?.isRealtimeAudioActive?.() &&
+					optionsRef.current.sendRealtimeExternalExecutionResult
+				) {
+					await optionsRef.current.sendRealtimeExternalExecutionResult(event);
 				} else {
 					await chatApi.trigger({
 						agent_id: agentId,
@@ -596,6 +611,7 @@ export function useMessages(
 		error: ownsConversation ? error : null,
 		send,
 		onUserConfirm,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,

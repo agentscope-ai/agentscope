@@ -1,4 +1,7 @@
-import type { UserConfirmResultEvent } from '@agentscope-ai/agentscope/event';
+import type {
+	ExternalExecutionResultEvent,
+	UserConfirmResultEvent,
+} from '@agentscope-ai/agentscope/event';
 
 import { realtimeApi } from '@/api';
 
@@ -177,6 +180,19 @@ export class BrowserWebRTCTransport {
 		}
 		this.controlChannel.send(
 			JSON.stringify({ type: 'control', control: 'user_confirm', data: event }),
+		);
+	}
+
+	externalExecutionResult(event: ExternalExecutionResultEvent): void {
+		if (this.controlChannel?.readyState !== 'open') {
+			throw new Error('The realtime control channel is not open.');
+		}
+		this.controlChannel.send(
+			JSON.stringify({
+				type: 'control',
+				control: 'external_execution_result',
+				data: event,
+			}),
 		);
 	}
 

@@ -75,6 +75,6 @@ class OpenAICredential(CredentialBase):
     @classmethod
     def get_realtime_model_classes(cls) -> list[Type["RealtimeModelBase"]]:
         """Return the OpenAI realtime model classes."""
-        from ..realtime import OpenAIRealtimeModel
+        from ..realtime import OpenAILiveModel, OpenAIRealtimeModel
 
-        return [OpenAIRealtimeModel]
+        return [OpenAIRealtimeModel, OpenAILiveModel]

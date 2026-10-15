@@ -2,6 +2,7 @@ import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import {
 	BookText,
+	BrainCircuit,
 	ChevronDown,
 	Database,
 	ListTodo,
@@ -266,6 +267,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		phase,
 		send,
 		onUserConfirm,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
@@ -275,6 +277,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onSessionUpdated: handleSessionUpdated,
 		isRealtimeAudioActive: () => voiceBusy,
 		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
+		sendRealtimeExternalExecutionResult: realtimeVoice.externalExecutionResult,
 	});
 	const {
 		mcps,
@@ -539,7 +542,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model]);
+	}, [groups, selectedModel]);
 
 	const selectedRealtimeModelCard = useMemo(() => {
 		if (!selectedRealtimeModel) return null;
@@ -556,6 +559,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}
 		return null;
 	}, [realtimeGroups, selectedRealtimeModel]);
+	const realtimeUsesSessionChat =
+		selectedRealtimeModelCard?.delegation_backend === 'session_chat';
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -818,7 +823,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -828,7 +833,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onFallbackChange={handleFallbackChange}
 										selectedTTSModel={selectedTTSModel}
 										onTTSChange={handleTTSChange}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<PermissionModeSelect
 										id="tour-permission-mode"
@@ -902,6 +907,23 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									</DropdownMenu>
 								</div>
 							</div>
+							{realtimeUsesSessionChat && (
+								<div
+									className={
+										'flex min-h-7 items-center justify-end gap-1.5 px-2 ' +
+										'text-xs text-muted-foreground'
+									}
+								>
+									<BrainCircuit className="size-3.5 shrink-0" />
+									<span className="max-w-full truncate">
+										{selectedModel
+											? t('realtime.backendFollows', {
+													model: selectedModel.model,
+												})
+											: t('realtime.backendMissing')}
+									</span>
+								</div>
+							)}
 							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
@@ -917,10 +939,16 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onExternalExecutionResult={onExternalExecutionResult}
 									onInterrupt={interrupt}
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}
-									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
+									voiceDisabled={
+										!selectedRealtimeModel ||
+										!agentId ||
+										!sessionId ||
+										(realtimeUsesSessionChat && !selectedModel)
+									}
 									// cwd={
 									// 	{cwd: view?.session.config.cwd, git: {
 									// 		branch: 'main',

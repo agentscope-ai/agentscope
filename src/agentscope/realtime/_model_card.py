@@ -60,6 +60,17 @@ class RealtimeModelCard(BaseModel):
         default=False,
         description="Whether this model accepts tool schemas.",
     )
+    interaction_mode: Literal["turn_based", "full_duplex"] = Field(
+        default="turn_based",
+        description="Whether speech is turn-based or full duplex.",
+    )
+    delegation_backend: Literal["none", "session_chat"] = Field(
+        default="none",
+        description=(
+            "Whether delegated tasks use the session's configured chat "
+            "agent."
+        ),
+    )
 
     # Context limits. Providers use different units and several can apply
     # at once, so all are optional; ``None`` means unlimited or unknown.

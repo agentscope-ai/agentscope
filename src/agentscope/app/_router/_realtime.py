@@ -175,6 +175,15 @@ async def _create_realtime_offer(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    card = getattr(model, "card", None)
+    if (
+        getattr(card, "delegation_backend", "none") == "session_chat"
+        and getattr(session.config, "chat_model_config", None) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Configure a chat model before starting GPT Live.",
+        )
 
     lock_key = MessageBusKeys.session_lock(session_id)
     if await message_bus.is_locked(lock_key):

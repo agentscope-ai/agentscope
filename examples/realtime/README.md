@@ -40,6 +40,22 @@ python examples/realtime/local_mic.py
 
 Speak, hear the reply, and speak over it to interrupt. `Ctrl-Q` quits.
 
+### GPT-Live prototype
+
+The GPT-Live integration uses a server-side WebSocket and client delegation.
+The local example builds a chat agent from the selected backend model; the Web
+UI automatically reuses the session's current Chat model and tools:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export OPENAI_LIVE_BACKEND_MODEL=your-responses-model
+python examples/realtime/openai_live_local.py
+```
+
+This integration supports continuous full-duplex audio, independent user and
+assistant captions, and application-managed task execution through the normal
+AgentScope chat agent.
+
 The default model is `qwen-audio-3.0-realtime-plus`. Any card listed for the
 credential works; the class is looked up from the card, the same way the
 service layer does it:

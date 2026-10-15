@@ -958,6 +958,96 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
 class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     """Verify that a WebRTC run keeps the normal session contract."""
 
+    async def test_sampled_live_checkpoint_persists_immediately(self) -> None:
+        """Persist a sampled transcript snapshot at its published cursor."""
+
+        class _LiveFakeAgent(_FakeAgent):
+            allows_open_user_reply_checkpoint = True
+
+            def checkpoint_snapshot(self, event: Any) -> object | None:
+                if isinstance(event, TextBlockDeltaEvent):
+                    return self.state
+                return super().checkpoint_snapshot(event)
+
+        events = [
+            ReplyStartEvent(
+                session_id="session-1",
+                reply_id="user-1",
+                name="user",
+                role="user",
+            ),
+            TextBlockDeltaEvent(
+                reply_id="user-1",
+                block_id="text-1",
+                delta="hello",
+            ),
+        ]
+        agent = _LiveFakeAgent(
+            {"id": "user-1", "role": "user"},
+            events,
+        )
+        message_bus = _FakeMessageBus(sequence_entries=True)
+        storage = _FakeStorage()
+        closed = asyncio.Event()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=lambda _: closed.set(),
+        )
+
+        session.start()
+        await asyncio.wait_for(closed.wait(), timeout=1)
+
+        self.assertDictEqual(
+            {
+                "storage_methods": [item["method"] for item in storage.calls],
+                "cursor_values": [
+                    item["value"]
+                    for item in message_bus.calls
+                    if item["method"] == "registry_set"
+                ],
+            },
+            {
+                "storage_methods": [
+                    "update_session_state",
+                    "update_session_state",
+                ],
+                "cursor_values": ["2-0"],
+            },
+        )
+
+    async def test_older_checkpoint_cannot_regress_cursor(self) -> None:
+        """A delayed flush cannot overwrite a newer checkpoint cursor."""
+        message_bus = _FakeMessageBus()
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=_FakeStorage(),
+            message_bus=message_bus,
+            on_closed=lambda _: None,
+        )
+        session._checkpoint_entry_id = "2-0"
+        session._persist_state = AsyncMock()  # type: ignore[method-assign]
+
+        await session._checkpoint_state("1-0", cast(Any, object()))
+
+        self.assertDictEqual(
+            {
+                "persist_calls": session._persist_state.await_args_list,
+                "checkpoint_entry_id": session._checkpoint_entry_id,
+                "registry_calls": [
+                    item
+                    for item in message_bus.calls
+                    if item["method"] == "registry_set"
+                ],
+            },
+            {
+                "persist_calls": [],
+                "checkpoint_entry_id": "2-0",
+                "registry_calls": [],
+            },
+        )
+
     async def test_request_close_owns_and_deduplicates_the_task(self) -> None:
         """Synchronous callbacks share one retained asynchronous close."""
         transport = _FakeTransport()
@@ -1415,7 +1505,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         transport = _FakeTransport()
         peer_connection = _FakePeerConnection()
         storage = _FakeStorage()
-        message_bus = _FakeMessageBus()
+        message_bus = _FakeMessageBus(sequence_entries=True)
         closed = asyncio.Event()
 
         async def _create_agent() -> _FakeAgent:
@@ -1449,7 +1539,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             {
                 "storage_methods": ["update_session_state"] * 3,
                 "published_event_types": [event.type for event in events],
-                "cursor_values": ["1-0"] * 2,
+                "cursor_values": ["2-0", "3-0"],
             },
         )
 
