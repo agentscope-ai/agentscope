@@ -5,7 +5,13 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
+from agentscope.agent import (
+    Agent,
+    ContextConfig,
+    InjectionConfig,
+    ModelConfig,
+    ReActConfig,
+)
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.tool import (
     ToolBase,
@@ -98,6 +104,97 @@ class MockConcurrentTool(ToolBase):
         return ToolChunk(
             content=[TextBlock(text=f"Concurrent result: {input}")],
         )
+
+
+class AgentModelRetryTest(IsolatedAsyncioTestCase):
+    """Tests for agent-level model retries."""
+
+    async def test_stream_failure_before_first_chunk_uses_fallback(
+        self,
+    ) -> None:
+        """A pristine failed stream is retried before falling back."""
+        primary = MockModel()
+        primary.set_responses(
+            [
+                [ConnectionError("first")],
+                [ConnectionError("second")],
+                [ConnectionError("third")],
+            ],
+        )
+        fallback = MockModel()
+        fallback.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="fallback answer")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=primary,
+            model_config=ModelConfig(
+                max_retries=2,
+                fallback_model=fallback,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        msg = await agent.reply(UserMsg(name="user", content="hello"))
+
+        self.assertEqual(msg.get_text_content(), "fallback answer")
+        self.assertEqual(primary.cnt, 3)
+        self.assertEqual(fallback.cnt, 1)
+
+    async def test_stream_failure_after_first_chunk_is_not_retried(
+        self,
+    ) -> None:
+        """A partially emitted stream is not replayed automatically."""
+        primary = MockModel()
+        primary.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="partial")],
+                        is_last=False,
+                    ),
+                    ConnectionError("stream disconnected"),
+                ],
+            ],
+        )
+        fallback = MockModel()
+        fallback.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="fallback answer")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=primary,
+            model_config=ModelConfig(
+                max_retries=2,
+                fallback_model=fallback,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        with self.assertRaisesRegex(ConnectionError, "stream disconnected"):
+            async for _ in agent.reply_stream(
+                UserMsg(name="user", content="hello"),
+            ):
+                pass
+
+        self.assertEqual(primary.cnt, 1)
+        self.assertEqual(fallback.cnt, 0)
 
 
 class AgentBasicTest(IsolatedAsyncioTestCase):
