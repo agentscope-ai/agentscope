@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
+
+import asyncio
+import logging
 import mimetypes
+import subprocess
 from urllib.parse import quote
 
 from fastapi import (
@@ -11,12 +15,23 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
+from ..._utils._common import _describe_exception
+from ...mcp import MCPClient
+from ...skill import Skill
+from .._service import WorkspaceService, WorkspaceStatus
+from .._service._office_preview import (
+    MAX_OFFICE_PREVIEW_BYTES,
+    OFFICE_PREVIEW_UPLOAD_TIMEOUT_SECONDS,
+    convert_office_document,
+)
+from .._service._workspace import SkillUploadError, UploadManifest
 from ..deps import (
     get_current_user_id,
     get_skill_hubs,
@@ -24,11 +39,7 @@ from ..deps import (
     get_workspace_service,
 )
 from ..hub import SkillHubBase
-from .._service import WorkspaceService, WorkspaceStatus
-from .._service._workspace import SkillUploadError, UploadManifest
 from ..storage import MCPRecord, StorageBase
-from ...mcp import MCPClient
-from ...skill import Skill
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
@@ -40,9 +51,9 @@ from ._schema import (
     MCPClientStatus,
     ToolInfo,
 )
-from ..._utils._common import _describe_exception
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
+_office_preview_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +85,7 @@ async def list_mcps(
         try:
             mcp_tools = await client.list_tools()
             tools = [
-                ToolInfo(name=t.name, description=t.description)
-                for t in mcp_tools
+                ToolInfo(name=t.name, description=t.description) for t in mcp_tools
             ]
             results.append(
                 MCPClientStatus(
@@ -353,9 +363,7 @@ async def add_skills_from_library(
             continue
         hub = skill_hubs.get(record.hub_id or "")
         if hub is None:
-            failed[
-                record.name
-            ] = f"Its hub {record.hub_id!r} is no longer registered."
+            failed[record.name] = f"Its hub {record.hub_id!r} is no longer registered."
             continue
         try:
             archive = await hub.download(
@@ -406,6 +414,94 @@ async def remove_skill(
 # ---------------------------------------------------------------------------
 # File browsing endpoints
 # ---------------------------------------------------------------------------
+
+
+@workspace_router.post("/files/office-preview")
+async def preview_office_file(
+    request: Request,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    filename: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> Response:
+    """Convert one bounded, session-authorized Office upload to PDF."""
+    await workspace_service.resolve(user_id, agent_id, session_id)
+    if _office_preview_lock.locked():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="An Office preview is already being generated. Download the original file instead.",
+        )
+    declared_size = request.headers.get("content-length")
+    if declared_size:
+        try:
+            if int(declared_size) > MAX_OFFICE_PREVIEW_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Office preview files must be 50 MiB or smaller.",
+                )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Content-Length header.",
+            ) from e
+
+    content = bytearray()
+    try:
+        async with _office_preview_lock:
+            async with asyncio.timeout(OFFICE_PREVIEW_UPLOAD_TIMEOUT_SECONDS):
+                async for chunk in request.stream():
+                    if len(content) + len(chunk) > MAX_OFFICE_PREVIEW_BYTES:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                            detail="Office preview files must be 50 MiB or smaller.",
+                        )
+                    content.extend(chunk)
+            if not content:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The Office preview file is empty.",
+                )
+            pdf = await asyncio.to_thread(
+                convert_office_document,
+                bytes(content),
+                filename,
+            )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        ) from e
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Office preview conversion timed out. Download the original file.",
+        ) from e
+    except TimeoutError as e:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="Office preview upload timed out. Download the original file instead.",
+        ) from e
+    except RuntimeError as e:
+        logging.getLogger(__name__).exception(
+            "Office preview conversion failed for %r",
+            filename,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Could not preview this Office file. Download the original instead.",
+        ) from e
+
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Length": str(len(pdf))},
+    )
 
 
 @workspace_router.get("/directories")
@@ -542,8 +638,7 @@ async def read_workspace_file(
         default=False,
         description="Force a Content-Disposition attachment.",
     ),
-    token: str
-    | None = Query(
+    token: str | None = Query(
         default=None,
         description=(
             "A token from ``POST /workspace/files/download-token``, "
@@ -603,14 +698,12 @@ async def read_workspace_file(
     if entry.size_bytes is not None:
         headers["Content-Length"] = str(entry.size_bytes)
     if download:
-        headers[
-            "Content-Disposition"
-        ] = f"attachment; filename*=UTF-8''{quote(basename)}"
+        headers["Content-Disposition"] = (
+            f"attachment; filename*=UTF-8''{quote(basename)}"
+        )
 
     return StreamingResponse(
         backend.read_stream(target),
-        media_type=(
-            mimetypes.guess_type(basename)[0] or "application/octet-stream"
-        ),
+        media_type=(mimetypes.guess_type(basename)[0] or "application/octet-stream"),
         headers=headers,
     )

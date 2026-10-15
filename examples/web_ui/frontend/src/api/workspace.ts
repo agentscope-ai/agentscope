@@ -4,6 +4,7 @@ import type {
 	AddFromLibraryResponse,
 	AddSkillRequest,
 	DirectoryListing,
+	WorkspaceDownloadTokenResponse,
 	WorkspaceStatus,
 	MCPClient,
 	MCPClientStatus,
@@ -15,6 +16,19 @@ export interface UploadOptions {
 	onProgress?: (progress: UploadProgress) => void;
 	/** Aborts the upload; rejects with a `DOMException` named `AbortError`. */
 	signal?: AbortSignal;
+}
+
+async function responseError(res: Response): Promise<ApiError> {
+	const text = await res.text();
+	let detail = text || res.statusText;
+	try {
+		const body = JSON.parse(text) as { detail?: unknown };
+		if (typeof body.detail === 'string') detail = body.detail;
+		else if (body.detail !== undefined) detail = JSON.stringify(body.detail);
+	} catch {
+		// Keep the raw response when the server did not return JSON.
+	}
+	return new ApiError(res.status, detail);
 }
 
 /**
@@ -109,12 +123,65 @@ export const workspaceApi = {
 	 * one the caller is already trusted with the host. The response
 	 * echoes the resolved absolute path.
 	 */
-	directories: (agentId: string, sessionId: string, path = '') =>
-		client.get<DirectoryListing>('/workspace/directories', {
-			agent_id: agentId,
-			session_id: sessionId,
-			path,
-		}),
+	directories: (agentId: string, sessionId: string, path = '', options?: { silent?: boolean }) =>
+		client.get<DirectoryListing>(
+			'/workspace/directories',
+			{
+				agent_id: agentId,
+				session_id: sessionId,
+				path,
+			},
+			{ silent: options?.silent },
+		),
+
+	/** Reads one workspace file with the normal authenticated API header. */
+	readFile: async (agentId: string, sessionId: string, path: string) => {
+		const res = await client.stream('/workspace/files', {
+			params: { agent_id: agentId, session_id: sessionId, path },
+			silent: true,
+		});
+		return res.blob();
+	},
+
+	/** Converts a DOCX/PPTX file with the server's office converter. */
+	officePreview: async (agentId: string, sessionId: string, file: File) => {
+		const url = new URL(
+			'/workspace/files/office-preview',
+			getBaseUrl() || window.location.origin,
+		);
+		url.searchParams.set('agent_id', agentId);
+		url.searchParams.set('session_id', sessionId);
+		url.searchParams.set('filename', file.name);
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/octet-stream',
+				'X-User-ID': getUserId(),
+			},
+			body: file,
+		});
+		if (!res.ok) throw await responseError(res);
+		return res.blob();
+	},
+
+	/** Mints the capability used by a direct browser download. */
+	downloadToken: (agentId: string, sessionId: string, path: string) =>
+		client.post<WorkspaceDownloadTokenResponse>(
+			'/workspace/files/download-token',
+			undefined,
+			{ agent_id: agentId, session_id: sessionId, path },
+			{ silent: true },
+		),
+
+	downloadUrl: (agentId: string, sessionId: string, path: string, token: string) => {
+		const url = new URL('/workspace/files', getBaseUrl() || window.location.origin);
+		url.searchParams.set('agent_id', agentId);
+		url.searchParams.set('session_id', sessionId);
+		url.searchParams.set('path', path);
+		url.searchParams.set('download', 'true');
+		url.searchParams.set('token', token);
+		return url.toString();
+	},
 
 	/**
 	 * Where the session is pointed, plus the git state of that place.

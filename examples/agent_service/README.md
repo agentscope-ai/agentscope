@@ -13,7 +13,13 @@ Details about the agent service please refer to the [tutorial](https://docs.agen
 
 - Python ≥ 3.11
 - Node.js ≥ 20 with `npx`
+- [optional] LibreOffice on the service host for DOCX/PPTX WebUI previews
 - [optional] Gaode/AMap API key in `AMAP_API_KEY` (for the `amap` MCP)
+
+Office previews convert files up to 50 MiB to PDF, with a 45-second conversion
+limit. Install LibreOffice so `libreoffice` or `soffice` is available on the
+service `PATH`. If it is unavailable or cannot convert a file, users can still
+download the original. Page layout may differ from Microsoft Office.
 
 ## Quickstart
 

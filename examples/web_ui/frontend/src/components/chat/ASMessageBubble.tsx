@@ -24,9 +24,16 @@ import {
 import * as mime from 'mime-types';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import {
+	dataBlockName,
+	dataBlockDownloadUrl,
+	fileFromDataBlock,
+	isOfficeDocument,
+	OfficeFilePreview,
+} from './OfficeFilePreview';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
-import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
+import type { TFunction, ToolCallWithResult, ToolRenderContext } from './tool-renderers/types';
 import { Markdown } from '@/components/markdown';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -390,6 +397,8 @@ function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
 
 interface MessageBubbleProps {
 	message: Msg;
+	agentId: string | null;
+	sessionId: string | null;
 	onUserConfirm: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -415,7 +424,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
+function ASMessageBubbleComponent({ message, agentId, sessionId }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -462,7 +471,7 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 					.map((block, index) => (
 						<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
 							<BubbleContent>
-								<ASBlock block={block} />
+								<ASBlock block={block} context={{ agentId, sessionId }} />
 							</BubbleContent>
 						</Bubble>
 					))}
@@ -485,7 +494,7 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 					{blocks
 						.filter((block) => block.type === 'data')
 						.map((block, index) => (
-							<ASBlock block={block} key={index} />
+							<ASBlock block={block} key={index} context={{ agentId, sessionId }} />
 						))}
 				</AttachmentGroup>
 				{message.role === 'user' ? (
@@ -594,9 +603,10 @@ function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
 
 interface ASBlockProps {
 	block: ExtendedContentBlock;
+	context?: ToolRenderContext;
 }
 
-export function ASBlock({ block, ...props }: ASBlockProps) {
+export function ASBlock({ block, context, ...props }: ASBlockProps) {
 	const { t } = useTranslation();
 
 	switch (block.type) {
@@ -609,6 +619,22 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 		case 'data': {
 			const dataType = block.source.media_type.split('/')[0];
 			if (dataType === 'audio') return null;
+			const name = dataBlockName(block);
+			const agentId = context?.agentId;
+			const sessionId = context?.sessionId;
+			if (agentId && sessionId && isOfficeDocument(name, block.source.media_type)) {
+				return (
+					<OfficeFilePreview
+						agentId={agentId}
+						sessionId={sessionId}
+						name={name}
+						mediaType={block.source.media_type}
+						loadOriginal={() => fileFromDataBlock(block, name, agentId, sessionId)}
+						getDownloadUrl={() => dataBlockDownloadUrl(block, agentId, sessionId)}
+						downloadFromSource
+					/>
+				);
+			}
 			const data =
 				block.source.type === 'url'
 					? block.source.url
@@ -723,7 +749,7 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 					</CollapsibleTrigger>
 					<CollapsibleContent className="bg-muted p-2 rounded text-sm">
 						{items.map((item, index) => (
-							<ASBlock block={item} key={index} />
+							<ASBlock block={item} key={index} context={context} />
 						))}
 					</CollapsibleContent>
 				</Collapsible>
@@ -749,7 +775,7 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 						</div>
 					</CollapsibleTrigger>
 					<CollapsibleContent className="flex flex-col w-full gap-y-1 bg-muted p-2 rounded text-sm text-muted-foreground">
-						{block.calls.map((pair) => renderToolCall(pair, t))}
+						{block.calls.map((pair) => renderToolCall(pair, t, context))}
 					</CollapsibleContent>
 				</Collapsible>
 			);

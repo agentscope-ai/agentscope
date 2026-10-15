@@ -876,5 +876,20 @@
 		"empty": "此文件夹为空",
 		"pressEnter": "先按回车校验该路径",
 		"gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
+	},
+	"workspaceFiles": {
+		"title": "工作区文件",
+		"description": "浏览此会话中创建的文件。",
+		"root": "工作区根目录",
+		"parent": "上一级",
+		"refresh": "刷新文件",
+		"empty": "此处没有文件",
+		"emptyDescription": "会话中创建的文件会显示在这里。",
+		"preview": "预览",
+		"previewTitle": "预览：{{name}}",
+		"closePreview": "关闭预览",
+		"download": "下载",
+		"downloadFile": "下载{{name}}",
+		"noSession": "请先选择会话。"
 	}
 }

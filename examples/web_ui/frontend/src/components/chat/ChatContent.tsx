@@ -7,7 +7,7 @@ import {
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
 import { GitBranch, TriangleAlert } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '../ui/button';
 import { DiffStats } from './tool-renderers/_shared';
@@ -16,6 +16,7 @@ import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
+import { WorkspaceFilesDrawer } from '@/components/chat/WorkspaceFilesDrawer';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Marker, MarkerContent } from '@/components/ui/marker';
@@ -139,6 +140,13 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
+	const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
+	const previousPhase = useRef(phase);
+	useEffect(() => {
+		const wasRunning = previousPhase.current !== 'idle';
+		previousPhase.current = phase;
+		if (wasRunning && phase === 'idle') setFilesRefreshVersion((version) => version + 1);
+	}, [phase]);
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
@@ -215,6 +223,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											<ASMessageBubble
 												message={message}
 												onUserConfirm={onUserConfirm}
+												agentId={agentId}
+												sessionId={sessionId}
 											/>
 										</MessageScrollerItem>
 									);
@@ -307,12 +317,19 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						voiceDisabled={voiceDisabled}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
-								<WorkingDirectoryDialog
-									agentId={agentId}
-									sessionId={sessionId}
-									value={cwd}
-									onChange={onCwdChange}
-								/>
+								<div className="flex min-w-0 items-center gap-2">
+									<WorkingDirectoryDialog
+										agentId={agentId}
+										sessionId={sessionId}
+										value={cwd}
+										onChange={onCwdChange}
+									/>
+									<WorkspaceFilesDrawer
+										agentId={agentId}
+										sessionId={sessionId}
+										refreshVersion={filesRefreshVersion}
+									/>
+								</div>
 								{git && (
 									<Button
 										className="font-mono"

@@ -286,6 +286,12 @@ export interface DirectoryListing {
 	entries: DirectoryEntry[];
 }
 
+/** Short-lived capability for a browser-native workspace file download. */
+export interface WorkspaceDownloadTokenResponse {
+	token: string;
+	expires_at: number;
+}
+
 /** Git state of one directory. */
 export interface GitStatus {
 	/** `null` on a detached HEAD. */

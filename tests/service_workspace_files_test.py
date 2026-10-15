@@ -8,16 +8,20 @@ which avoids pulling a full FastAPI / Redis stack.
 
 from __future__ import annotations
 
+import asyncio
 import posixpath
 import time
 from typing import AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
+from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._router._workspace import (
     create_download_token,
     list_workspace_directory,
+    preview_office_file,
     read_workspace_file,
 )
 from agentscope.app._service import WorkspaceService
@@ -28,7 +32,6 @@ from agentscope.app.storage import (
     SessionRecord,
     UserOrigin,
 )
-from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.state import AgentState
 from agentscope.tool import DirEntry
 
@@ -153,9 +156,7 @@ class _FakeBackend:
                 DirEntry(
                     name=name,
                     is_dir=is_dir,
-                    size_bytes=(
-                        None if is_dir else len(self._files.get(child, b""))
-                    ),
+                    size_bytes=(None if is_dir else len(self._files.get(child, b""))),
                     mtime=1_700_000_000.0,
                 ),
             )
@@ -234,8 +235,29 @@ def _make_session(
 async def _collect(response: object) -> bytes:
     """Drain a StreamingResponse body into bytes."""
     chunks = [chunk async for chunk in response.body_iterator]
-    return b"".join(
-        c.encode("utf-8") if isinstance(c, str) else c for c in chunks
+    return b"".join(c.encode("utf-8") if isinstance(c, str) else c for c in chunks)
+
+
+def _request(body: bytes, *, include_length: bool = True) -> Request:
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    headers = [(b"content-length", str(len(body)).encode())] if include_length else []
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/workspace/files/office-preview",
+            "raw_path": b"/workspace/files/office-preview",
+            "query_string": b"",
+            "headers": headers,
+            "client": ("test", 1),
+            "server": ("test", 80),
+        },
+        receive,
     )
 
 
@@ -422,6 +444,138 @@ class WorkspaceFileEndpointTests(IsolatedAsyncioTestCase):
             workspace_service=self._service,
             **kwargs,
         )
+
+    async def test_office_preview_requires_resolved_session(self) -> None:
+        """Preview conversion is available only through a session workspace."""
+        with self.assertRaises(HTTPException) as ctx:
+            await preview_office_file(
+                request=_request(b"docx bytes"),
+                agent_id="a",
+                session_id="missing",
+                filename="report.docx",
+                user_id="u",
+                workspace_service=self._service,
+            )
+        self.assertEqual(ctx.exception.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch(
+        "agentscope.app._router._workspace.convert_office_document",
+        return_value=b"%PDF-1.7 preview",
+    )
+    async def test_office_preview_returns_pdf(self, convert: object) -> None:
+        """A valid session receives a PDF preview without replacing its source."""
+        original = b"office bytes"
+        response = await preview_office_file(
+            request=_request(original),
+            agent_id="a",
+            session_id="s",
+            filename="report.docx",
+            user_id="u",
+            workspace_service=self._service,
+        )
+        self.assertEqual(response.media_type, "application/pdf")
+        self.assertEqual(response.body, b"%PDF-1.7 preview")
+        convert.assert_called_once_with(original, "report.docx")  # type: ignore[attr-defined]
+
+    @patch(
+        "agentscope.app._router._workspace.convert_office_document",
+        side_effect=FileNotFoundError(
+            "LibreOffice is required. Download the original file instead.",
+        ),
+    )
+    async def test_missing_converter_explains_download_fallback(
+        self,
+        _convert: object,
+    ) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            await preview_office_file(
+                request=_request(b"docx bytes"),
+                agent_id="a",
+                session_id="s",
+                filename="report.docx",
+                user_id="u",
+                workspace_service=self._service,
+            )
+        self.assertEqual(ctx.exception.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertIn("Download the original file", ctx.exception.detail)
+
+    @patch(
+        "agentscope.app._router._workspace.convert_office_document",
+        side_effect=RuntimeError("/tmp/private/path/report.docx: invalid file"),
+    )
+    async def test_conversion_failure_does_not_expose_server_paths(
+        self,
+        _convert: object,
+    ) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            await preview_office_file(
+                request=_request(b"docx bytes"),
+                agent_id="a",
+                session_id="s",
+                filename="report.docx",
+                user_id="u",
+                workspace_service=self._service,
+            )
+        self.assertEqual(
+            ctx.exception.status_code,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+        self.assertNotIn("/tmp/private/path", ctx.exception.detail)
+
+    @patch("agentscope.app._router._workspace.MAX_OFFICE_PREVIEW_BYTES", 4)
+    async def test_rejects_oversized_stream_without_content_length(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            await preview_office_file(
+                request=_request(b"12345", include_length=False),
+                agent_id="a",
+                session_id="s",
+                filename="report.docx",
+                user_id="u",
+                workspace_service=self._service,
+            )
+        self.assertEqual(
+            ctx.exception.status_code,
+            status.HTTP_413_CONTENT_TOO_LARGE,
+        )
+
+    @patch("agentscope.app._router._workspace.MAX_OFFICE_PREVIEW_BYTES", 4)
+    async def test_rejects_oversized_declared_request_before_reading(self) -> None:
+        request = _request(b"12345")
+        with self.assertRaises(HTTPException) as ctx:
+            await preview_office_file(
+                request=request,
+                agent_id="a",
+                session_id="s",
+                filename="report.docx",
+                user_id="u",
+                workspace_service=self._service,
+            )
+        self.assertEqual(
+            ctx.exception.status_code,
+            status.HTTP_413_CONTENT_TOO_LARGE,
+        )
+
+    @patch(
+        "agentscope.app._router._workspace.OFFICE_PREVIEW_UPLOAD_TIMEOUT_SECONDS", 0.01
+    )
+    async def test_times_out_slow_upload_before_conversion(self) -> None:
+        class SlowRequest:
+            headers = {}
+
+            async def stream(self) -> AsyncIterator[bytes]:
+                yield b"prefix"
+                await asyncio.sleep(1)
+
+        with self.assertRaises(HTTPException) as ctx:
+            await preview_office_file(
+                request=SlowRequest(),  # type: ignore[arg-type]
+                agent_id="a",
+                session_id="s",
+                filename="report.docx",
+                user_id="u",
+                workspace_service=self._service,
+            )
+        self.assertEqual(ctx.exception.status_code, status.HTTP_408_REQUEST_TIMEOUT)
 
     async def test_read_streams_content_with_inferred_type(self) -> None:
         """The body arrives in chunks, typed from the file extension."""
