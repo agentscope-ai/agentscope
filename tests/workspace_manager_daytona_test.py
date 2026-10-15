@@ -90,9 +90,43 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
                 "default_mcps": [],
                 "skill_paths": [],
                 "os_user": "daytona",
+                "auto_stop_interval": None,
             },
         )
         self.assertIn(workspace.workspace_id, manager._cache)
+
+    async def test_get_workspace_forwards_auto_stop_interval(self) -> None:
+        """Zero and positive policies reach new workspace instances."""
+        for interval in (0, 45):
+            with self.subTest(interval=interval):
+                manager = DaytonaWorkspaceManager(auto_stop_interval=interval)
+
+                workspace = await manager.get_workspace("u", "a", "s", "wid")
+
+                self.assertEqual(
+                    workspace.kwargs["auto_stop_interval"],
+                    interval,
+                )
+                self.assertTrue(workspace.initialized)
+
+    def test_auto_stop_interval_rejects_invalid_values(self) -> None:
+        """Invalid policies fail when constructing the manager."""
+        cases = (
+            (-1, ValueError),
+            (True, TypeError),
+            (False, TypeError),
+            (1.5, TypeError),
+            ("15", TypeError),
+        )
+        for interval, expected_error in cases:
+            with self.subTest(interval=interval):
+                with self.assertRaisesRegex(
+                    expected_error,
+                    "^auto_stop_interval must",
+                ):
+                    DaytonaWorkspaceManager(auto_stop_interval=interval)
+
+        self.assertEqual(_FakeWorkspace.created, [])
 
     async def test_get_workspace_uses_workspace_id_cache_key(self) -> None:
         """Same workspace id returns cached instance regardless of session."""

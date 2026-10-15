@@ -165,6 +165,8 @@ class _FakeSandbox:
         self.recovered = False
         self.stopped: list[dict[str, object]] = []
         self.waited_for_stop = False
+        self.auto_stop_interval = 15
+        self.lifecycle_events: list[str] = []
 
     async def get_work_dir(self) -> str:
         """Return SDK-derived workdir."""
@@ -177,12 +179,14 @@ class _FakeSandbox:
     async def start(self, timeout: float | None = 60) -> None:
         """Mark sandbox started."""
         del timeout
+        self.lifecycle_events.append("start")
         self.started = True
         self.state = "started"
 
     async def recover(self, timeout: float | None = 60) -> None:
         """Mark sandbox recovered."""
         del timeout
+        self.lifecycle_events.append("recover")
         self.recovered = True
         self.state = "started"
 
@@ -199,8 +203,10 @@ class _FakeSandbox:
         self,
         timeout: float | None = 60,
     ) -> None:
-        """No-op wait hook."""
+        """Mark start wait complete."""
         del timeout
+        self.lifecycle_events.append("wait_start")
+        self.state = "started"
 
     async def wait_for_sandbox_stop(
         self,
@@ -208,11 +214,18 @@ class _FakeSandbox:
     ) -> None:
         """Mark stop wait."""
         del timeout
+        self.lifecycle_events.append("wait_stop")
         self.waited_for_stop = True
         self.state = "stopped"
 
     async def refresh_data(self) -> None:
-        """No-op refresh hook."""
+        """Record provider data refresh."""
+        self.lifecycle_events.append("refresh")
+
+    async def set_autostop_interval(self, interval: int) -> None:
+        """Update the provider auto-stop policy."""
+        self.lifecycle_events.append("set_autostop")
+        self.auto_stop_interval = interval
 
 
 class _MappedProcess:
@@ -617,6 +630,119 @@ class _DaytonaWorkspaceMockBase(IsolatedAsyncioTestCase):
         self.bootstrap_patch.stop()
         self.gateway_patch.stop()
         sys.modules.pop("daytona", None)
+
+
+class TestDaytonaAutoStopInterval(_DaytonaWorkspaceMockBase):
+    """Provider auto-stop policy configuration and validation."""
+
+    async def test_create_passes_configured_auto_stop_interval(self) -> None:
+        """Zero and positive intervals reach the sandbox creation API."""
+        for interval in (0, 45):
+            with self.subTest(interval=interval):
+                workspace = DaytonaWorkspace(
+                    auto_stop_interval=interval,
+                )
+
+                await workspace.initialize()
+
+                params = _FakeDaytona.created_params[-1]
+                self.assertEqual(params.kwargs["auto_stop_interval"], interval)
+                self.assertEqual(workspace._sandbox.lifecycle_events, [])
+                await workspace.close()
+
+    async def test_create_omits_unconfigured_auto_stop_interval(self) -> None:
+        """``None`` leaves the provider's creation policy untouched."""
+        workspace = DaytonaWorkspace(auto_stop_interval=None)
+
+        await workspace.initialize()
+
+        params = _FakeDaytona.created_params[0]
+        self.assertNotIn("auto_stop_interval", params.kwargs)
+
+    async def test_reattach_preserves_unconfigured_auto_stop_interval(
+        self,
+    ) -> None:
+        """``None`` does not overwrite an existing sandbox's policy."""
+        candidate = _FakeSandbox("sandbox-default-policy")
+        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-default-policy"}
+        _FakeDaytona.list_result[:] = [candidate]
+        workspace = DaytonaWorkspace(
+            workspace_id="wid-default-policy",
+            auto_stop_interval=None,
+        )
+
+        await workspace.initialize()
+
+        self.assertEqual(candidate.auto_stop_interval, 15)
+        self.assertEqual(candidate.lifecycle_events, ["refresh"])
+        self.assertEqual(_FakeDaytona.created_params, [])
+
+    async def test_reattach_applies_auto_stop_interval_after_ready(
+        self,
+    ) -> None:
+        """Reattached sandboxes become ready before their policy updates."""
+        cases = (
+            ("started", ["refresh", "set_autostop"]),
+            ("stopped", ["start", "refresh", "set_autostop"]),
+            ("paused", ["start", "refresh", "set_autostop"]),
+            ("error", ["recover", "refresh", "set_autostop"]),
+            (
+                "stopping",
+                ["wait_stop", "start", "refresh", "set_autostop"],
+            ),
+            (
+                "pausing",
+                ["wait_stop", "start", "refresh", "set_autostop"],
+            ),
+            ("starting", ["wait_start", "refresh", "set_autostop"]),
+            ("resuming", ["wait_start", "refresh", "set_autostop"]),
+        )
+        for interval in (0, 45):
+            for state, expected_events in cases:
+                with self.subTest(interval=interval, state=state):
+                    candidate = _FakeSandbox(
+                        "sandbox-policy",
+                        state=state,
+                        recoverable=state == "error",
+                    )
+                    candidate.labels = {
+                        METADATA_WORKSPACE_ID_KEY: "wid-policy",
+                    }
+                    _FakeDaytona.list_result[:] = [candidate]
+                    workspace = DaytonaWorkspace(
+                        workspace_id="wid-policy",
+                        auto_stop_interval=interval,
+                    )
+
+                    await workspace.initialize()
+
+                    self.assertIs(workspace._sandbox, candidate)
+                    self.assertEqual(candidate.auto_stop_interval, interval)
+                    self.assertEqual(
+                        candidate.lifecycle_events,
+                        expected_events,
+                    )
+                    self.assertEqual(_FakeDaytona.created_params, [])
+                    await workspace.close()
+
+    def test_auto_stop_interval_rejects_invalid_values(self) -> None:
+        """Invalid policies fail before creating a provider client."""
+        cases = (
+            (-1, ValueError),
+            (True, TypeError),
+            (False, TypeError),
+            (1.5, TypeError),
+            ("15", TypeError),
+        )
+        for interval, expected_error in cases:
+            with self.subTest(interval=interval):
+                with self.assertRaisesRegex(
+                    expected_error,
+                    "^auto_stop_interval must",
+                ):
+                    DaytonaWorkspace(auto_stop_interval=interval)
+
+        self.assertEqual(_FakeDaytona.instances, [])
 
 
 class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
