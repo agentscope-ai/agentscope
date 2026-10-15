@@ -582,14 +582,24 @@ def _get_tool_request_attributes(
         attributes[SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS] = tool_call.input
 
         if tool_name:
-            registered = getattr(instance, "tools", {}).get(tool_name)
-            if registered is not None:
-                tool_obj = getattr(registered, "tool", None)
-                description = getattr(tool_obj, "description", None)
-                if description:
-                    attributes[
-                        SpanAttributes.GEN_AI_TOOL_DESCRIPTION
-                    ] = description
+            # Toolkit keeps its tools in ``tool_groups``, not in a flat
+            # ``tools`` mapping, so resolve the descriptor by walking the
+            # groups. MCP tools are registered under a prefixed name and
+            # simply do not match here, which is the same as before.
+            registered = next(
+                (
+                    tool
+                    for group in instance.tool_groups
+                    for tool in group.tools
+                    if tool.name == tool_name
+                ),
+                None,
+            )
+            description = getattr(registered, "description", None)
+            if description:
+                attributes[
+                    SpanAttributes.GEN_AI_TOOL_DESCRIPTION
+                ] = description
 
     return attributes
 
