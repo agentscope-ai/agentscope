@@ -124,6 +124,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         - A synthetic :class:`~agentscope.tool.ToolResponse` notifying
           the agent of the background task id is yielded instead.
 
+        If the reply is interrupted before the deadline, the task is
+        cancelled as well, and the ``INTERRUPTED`` result that the toolkit
+        yields for it is passed on.
+
         .. note::
             Tools with ``is_state_injected=True`` or ``is_external_tool=True``
             bypass this logic and are always executed synchronously.
@@ -197,6 +201,27 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
+                break
+            except asyncio.CancelledError:
+                # The reply is interrupted. Cancel the tool as well, so the
+                # toolkit yields its INTERRUPTED result, and pass that on as
+                # the agent would get it without this middleware.
+                drain_task.cancel()
+                await asyncio.wait([drain_task])
+                while not queue.empty():
+                    item = queue.get_nowait()
+                    if isinstance(item, (ToolChunk, ToolResponse)):
+                        pre_collected.append(item)
+
+                # Re-raise if the tool had already finished, never started or
+                # ignored the cancel, so the interruption isn't lost
+                response = pre_collected[-1] if pre_collected else None
+                if (
+                    not isinstance(response, ToolResponse)
+                    or response.state != ToolResultState.INTERRUPTED
+                ):
+                    raise
+                completed = True
                 break
 
             if item is _QUEUE_SENTINEL:
