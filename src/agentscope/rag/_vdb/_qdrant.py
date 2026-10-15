@@ -478,6 +478,7 @@ class QdrantStore(VectorStoreBase):
         ``chunk.metadata.<key>`` written by :meth:`insert`.  Returns
         ``None`` when ``metadata_filter`` is empty so that callers
         skip the filter argument entirely.
+        A ``None`` value matches an explicitly null field, not a missing key.
 
         Args:
             metadata_filter (`dict[str, Any] | None`):
@@ -495,6 +496,13 @@ class QdrantStore(VectorStoreBase):
         conditions = []
         for key, value in metadata_filter.items():
             field = f"chunk.metadata.{key}"
+            if value is None:
+                conditions.append(
+                    models.IsNullCondition(
+                        is_null=models.PayloadField(key=field),
+                    ),
+                )
+                continue
             if isinstance(value, float):
                 if not math.isfinite(value):
                     raise ValueError(

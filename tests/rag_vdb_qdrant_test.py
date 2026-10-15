@@ -444,6 +444,69 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual([r.document_id for r in results], ["doc-2"])
 
+    async def test_null_metadata_filters(self) -> None:
+        """Null means an explicit null, and composes with other predicates."""
+        await self.store.create_collection("kb-null", dimensions=3)
+        records = []
+        for index, metadata in enumerate(
+            [
+                {"reviewer": None, "scope": "a"},
+                {"scope": "a"},
+                {"reviewer": "", "scope": "a"},
+                {"reviewer": False, "scope": "a"},
+                {"reviewer": 0, "scope": "a"},
+                {"reviewer": "None", "scope": "a"},
+                {"reviewer": None, "scope": "b"},
+            ],
+        ):
+            record = _make_record("text", [1.0, 0.0, 0.0], f"doc-{index}")
+            record.chunk.metadata = metadata
+            records.append(record)
+        await self.store.insert("kb-null", records)
+        metadata_filter = {"reviewer": None, "scope": "a"}
+        results = await self.store.search(
+            "kb-null",
+            [1.0, 0.0, 0.0],
+            top_k=10,
+            metadata_filter=metadata_filter,
+        )
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": 1.0,
+                    "document_id": "doc-0",
+                    "chunk": records[0].chunk.model_dump(),
+                },
+            ],
+        )
+        documents = await self.store.list_documents(
+            "kb-null",
+            metadata_filter=metadata_filter,
+        )
+        self.assertEqual(
+            [document.model_dump() for document in documents],
+            [
+                {
+                    "document_id": "doc-0",
+                    "source": "doc-0.txt",
+                    "chunk_count": 1,
+                    "metadata": metadata_filter,
+                },
+            ],
+        )
+        for index, record in enumerate(records):
+            with self.subTest(document_id=record.document_id):
+                chunks = await self.store.list_chunks(
+                    "kb-null",
+                    record.document_id,
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [chunk.model_dump() for chunk in chunks],
+                    [record.chunk.model_dump()] if index == 0 else [],
+                )
+
     async def test_float_metadata_filters(self) -> None:
         """Every read operation matches finite floats without rounding."""
         await self.store.create_collection("kb-1", dimensions=3)
