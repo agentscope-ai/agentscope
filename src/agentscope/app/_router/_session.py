@@ -41,6 +41,7 @@ from .._service import (
     SubagentHitlProjector,
 )
 from ..storage import (
+    ASRModelConfig,
     ChatModelConfig,
     RealtimeModelConfig,
     SessionKnowledgeConfig,
@@ -131,7 +132,13 @@ session_router = APIRouter(
 async def _ensure_credential_exists(
     access: ResourceAccessService,
     user_id: str,
-    config: ChatModelConfig | RealtimeModelConfig | TTSModelConfig | None,
+    config: (
+        ASRModelConfig
+        | ChatModelConfig
+        | RealtimeModelConfig
+        | TTSModelConfig
+        | None
+    ),
 ) -> None:
     """Validate that the credential referenced by ``config`` is visible to
     the given user (own or shared). No-op when ``config`` is ``None``.
@@ -139,8 +146,9 @@ async def _ensure_credential_exists(
     Args:
         access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
-        config (`ChatModelConfig | RealtimeModelConfig | TTSModelConfig | \
-            None`): Model config to validate. Pass ``None`` to skip the check.
+        config (`ASRModelConfig | ChatModelConfig | RealtimeModelConfig | \
+            TTSModelConfig | None`): Model config to validate. Pass ``None`` \
+            to skip the check.
 
     Raises:
         `HTTPException`: 404 if the credential does not exist or is not
@@ -331,6 +339,7 @@ async def create_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await _ensure_credential_exists(access, user_id, body.asr_model_config)
     await _ensure_credential_exists(
         access,
         user_id,
@@ -362,6 +371,7 @@ async def create_session(
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
+            asr_model_config=body.asr_model_config,
             realtime_model_config=body.realtime_model_config,
             knowledge_config=body.knowledge_config,
             # A caller that named the session owns that name; anything
@@ -521,6 +531,7 @@ async def update_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await _ensure_credential_exists(access, user_id, body.asr_model_config)
     await _ensure_credential_exists(
         access,
         user_id,

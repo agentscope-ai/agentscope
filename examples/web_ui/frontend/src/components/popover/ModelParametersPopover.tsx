@@ -2,6 +2,8 @@ import { Check, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import type {
+	ASRModelCard,
+	ASRModelConfig,
 	ChatModelConfig,
 	CredentialView,
 	ModelCard,
@@ -31,6 +33,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { type CredentialWithASRModels, useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableTTSModels } from '@/hooks/useAvailableTTSModels';
 import { useTranslation } from '@/i18n/useI18n';
@@ -224,6 +227,260 @@ function StringField({ id, label, required, prop, value, onChange }: FieldProps)
 	);
 }
 
+function JsonField({ id, label, required, prop, value, onChange }: FieldProps) {
+	const [draft, setDraft] = useState(value === undefined ? '' : JSON.stringify(value));
+	const [invalid, setInvalid] = useState(false);
+
+	useEffect(() => {
+		setDraft(value === undefined ? '' : JSON.stringify(value));
+		setInvalid(false);
+	}, [value]);
+
+	return (
+		<>
+			<Label htmlFor={id} className="whitespace-nowrap">
+				{label}
+				{required && <span className="text-destructive ml-0.5">*</span>}
+			</Label>
+			<Input
+				id={id}
+				type="text"
+				value={draft}
+				aria-invalid={invalid}
+				placeholder={prop.default === undefined ? undefined : JSON.stringify(prop.default)}
+				onChange={(event) => {
+					setDraft(event.target.value);
+					setInvalid(false);
+				}}
+				onBlur={() => {
+					if (draft.trim() === '') {
+						onChange(undefined);
+						return;
+					}
+					try {
+						const parsed = JSON.parse(draft) as unknown;
+						const expected = resolveType(prop).type;
+						const matches =
+							(expected === 'array' && Array.isArray(parsed)) ||
+							(expected === 'object' &&
+								typeof parsed === 'object' &&
+								parsed !== null &&
+								!Array.isArray(parsed));
+						if (!matches) {
+							setInvalid(true);
+							return;
+						}
+						onChange(parsed);
+					} catch {
+						setInvalid(true);
+					}
+				}}
+			/>
+		</>
+	);
+}
+
+interface ASRModelMenuProps {
+	groups: Record<string, CredentialWithASRModels[]>;
+	selectedASRModel: ASRModelConfig | null;
+	onASRChange: (config: ASRModelConfig | null) => void;
+}
+
+function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuProps) {
+	const { t } = useTranslation();
+	const groupEntries = Object.entries(groups)
+		.map(([type, items]) => [type, items.filter((item) => item.models.length > 0)] as const)
+		.filter(([, items]) => items.length > 0);
+
+	let selectedCard: ASRModelCard | undefined;
+	if (selectedASRModel) {
+		for (const item of groups[selectedASRModel.type] ?? []) {
+			if (item.credential.id !== selectedASRModel.credential_id) continue;
+			selectedCard = item.models.find((model) => model.name === selectedASRModel.model);
+			if (selectedCard) break;
+		}
+	}
+
+	const renderModels = (type: string, credential: CredentialView, models: ASRModelCard[]) =>
+		models.map((model) => {
+			const selected =
+				selectedASRModel?.credential_id === credential.id &&
+				selectedASRModel.model === model.name;
+			return (
+				<DropdownMenuCheckboxItem
+					key={`${credential.id}-${model.name}`}
+					checked={selected}
+					onSelect={(event) => event.preventDefault()}
+					onCheckedChange={(checked) => {
+						if (!checked) return;
+						onASRChange({
+							type,
+							credential_id: credential.id,
+							model: model.name,
+							parameters: extractDefaults(
+								model.parameter_schema as ParameterSchema | undefined,
+							),
+						});
+					}}
+				>
+					<span className="min-w-0 flex-1 truncate">{model.label}</span>
+					{model.realtime && (
+						<Badge variant="outline" className="ml-1.5 shrink-0 px-1 py-0 text-[10px]">
+							Realtime
+						</Badge>
+					)}
+				</DropdownMenuCheckboxItem>
+			);
+		});
+
+	return (
+		<DropdownMenuSub>
+			<DropdownMenuSubTrigger>
+				<span className="truncate">{t('model-parameters.asrLabel')}</span>
+			</DropdownMenuSubTrigger>
+			<DropdownMenuSubContent className="max-h-96 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto">
+				{groupEntries.length === 0 ? (
+					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
+						<p>{t('model-parameters.asrEmpty')}</p>
+					</div>
+				) : (
+					groupEntries.map(([type, items], index) => {
+						const singleCredential = items.length === 1;
+						return (
+							<DropdownMenuGroup key={type}>
+								{index > 0 && <DropdownMenuSeparator />}
+								<DropdownMenuLabel>
+									{type.replace(/_credential$/, '')}
+								</DropdownMenuLabel>
+								{singleCredential
+									? renderModels(type, items[0].credential, items[0].models)
+									: items.map(({ credential, models }) => {
+											const selected = models.some(
+												(model) =>
+													selectedASRModel?.credential_id ===
+														credential.id &&
+													selectedASRModel.model === model.name,
+											);
+											return (
+												<DropdownMenuSub key={credential.id}>
+													<DropdownMenuSubTrigger>
+														<Check
+															className={cn(
+																'size-4 mr-1.5 shrink-0',
+																!selected && 'invisible',
+															)}
+														/>
+														{credentialLabel(credential)}
+													</DropdownMenuSubTrigger>
+													<DropdownMenuPortal>
+														<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
+															{renderModels(type, credential, models)}
+														</DropdownMenuSubContent>
+													</DropdownMenuPortal>
+												</DropdownMenuSub>
+											);
+										})}
+							</DropdownMenuGroup>
+						);
+					})
+				)}
+
+				{selectedASRModel && selectedCard && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuSub>
+							<DropdownMenuSubTrigger>
+								{t('model-parameters.asrParameters')}
+							</DropdownMenuSubTrigger>
+							<DropdownMenuSubContent className="w-80 max-h-96 overflow-y-auto p-3">
+								<p className="mb-3 text-xs text-muted-foreground">
+									{t('model-parameters.asrParametersDescription')}
+								</p>
+								{(() => {
+									const schema = selectedCard.parameter_schema as
+										| ParameterSchema
+										| undefined;
+									const entries = Object.entries(schema?.properties ?? {});
+									if (entries.length === 0) {
+										return (
+											<p className="text-xs text-muted-foreground">
+												{t('model-parameters.empty')}
+											</p>
+										);
+									}
+									const required = schema?.required ?? [];
+									const values = selectedASRModel.parameters ?? {};
+									return (
+										<div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3">
+											{entries.map(([key, prop]) => {
+												const fieldProps: FieldProps = {
+													id: `asr-${selectedCard.name}-${key}`,
+													label: prop.title ?? key,
+													required: required.includes(key),
+													prop,
+													value: values[key],
+													onChange: (value) => {
+														const parameters = {
+															...values,
+															[key]: value,
+														};
+														if (value === '' || value === undefined)
+															delete parameters[key];
+														onASRChange({
+															...selectedASRModel,
+															parameters,
+														});
+													},
+												};
+												const { type, enumValues } = resolveType(prop);
+												let field: React.ReactNode;
+												if (type === 'boolean')
+													field = <BooleanField {...fieldProps} />;
+												else if (enumValues)
+													field = <EnumField {...fieldProps} />;
+												else if (type === 'number' || type === 'integer')
+													field = <NumberField {...fieldProps} />;
+												else if (type === 'array' || type === 'object')
+													field = <JsonField {...fieldProps} />;
+												else field = <StringField {...fieldProps} />;
+												return (
+													<Tooltip key={key}>
+														<TooltipTrigger asChild>
+															<div className="col-span-2 grid grid-cols-subgrid items-center">
+																{field}
+															</div>
+														</TooltipTrigger>
+														{prop.description && (
+															<TooltipContent side="left">
+																{prop.description}
+															</TooltipContent>
+														)}
+													</Tooltip>
+												);
+											})}
+										</div>
+									);
+								})()}
+							</DropdownMenuSubContent>
+						</DropdownMenuSub>
+					</>
+				)}
+
+				<DropdownMenuSeparator />
+				<DropdownMenuCheckboxItem
+					checked={!selectedASRModel}
+					onSelect={(event) => event.preventDefault()}
+					onCheckedChange={(checked) => {
+						if (checked) onASRChange(null);
+					}}
+				>
+					{t('model-parameters.noAsr')}
+				</DropdownMenuCheckboxItem>
+			</DropdownMenuSubContent>
+		</DropdownMenuSub>
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -243,6 +500,10 @@ interface Props {
 	selectedTTSModel?: TTSModelConfig | null;
 	/** Called when the user picks a TTS model+voice or disables TTS. */
 	onTTSChange?: (config: TTSModelConfig | null) => void;
+	/** Currently selected ASR model. `null` means speech input is disabled. */
+	selectedASRModel?: ASRModelConfig | null;
+	/** Called when the user picks an ASR model or disables speech input. */
+	onASRChange?: (config: ASRModelConfig | null) => void;
 	/**
 	 * Locks the trigger while a session config write is in flight, so a
 	 * second edit cannot race the first. The trigger is also locked
@@ -276,6 +537,8 @@ export function ModelParametersPopover({
 	onFallbackChange,
 	selectedTTSModel,
 	onTTSChange,
+	selectedASRModel,
+	onASRChange,
 	disabled: locked = false,
 	idPrefix = 'model',
 	triggerLabel,
@@ -286,6 +549,7 @@ export function ModelParametersPopover({
 	const { t } = useTranslation();
 	const { groups } = useAvailableModels();
 	const { groups: ttsGroups } = useAvailableTTSModels();
+	const { groups: asrGroups } = useAvailableASRModels();
 
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
@@ -776,6 +1040,15 @@ export function ModelParametersPopover({
 							</DropdownMenuCheckboxItem>
 						</DropdownMenuSubContent>
 					</DropdownMenuSub>
+				)}
+
+				{/* ----- ASR ----- */}
+				{onASRChange !== undefined && (
+					<ASRModelMenu
+						groups={asrGroups}
+						selectedASRModel={selectedASRModel ?? null}
+						onASRChange={onASRChange}
+					/>
 				)}
 			</DropdownMenuContent>
 		</DropdownMenu>

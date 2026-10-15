@@ -100,7 +100,16 @@
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
 		"stop": "Stop generating",
-		"stopping": "Stopping ..."
+		"stopping": "Stopping ...",
+		"startRecording": "Start voice input",
+		"stopRecording": "Stop and transcribe",
+		"requestingMicrophone": "Requesting microphone access…",
+		"transcribing": "Transcribing…",
+		"asrUnavailable": "No speech recognition model is configured",
+		"recordingUnsupported": "This browser cannot record a supported audio format",
+		"microphonePermissionDenied": "Microphone access was denied",
+		"transcriptionFailed": "Voice transcription failed",
+		"transcriptionEmpty": "No speech was detected"
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",
@@ -566,7 +575,12 @@
 		"ttsEmpty": "No TTS models available.",
 		"ttsParameters": "Parameters",
 		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
-		"noTts": "No TTS"
+		"noTts": "No TTS",
+		"asrLabel": "Speech recognition",
+		"asrEmpty": "No speech recognition models available.",
+		"asrParameters": "Parameters",
+		"asrParametersDescription": "Adjust parameters for the selected speech recognition model. Arrays and objects use JSON.",
+		"noAsr": "No speech recognition"
 	},
 	"setup": {
 		"title": "Connect to Service",

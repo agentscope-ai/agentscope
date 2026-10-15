@@ -12,6 +12,14 @@ from ._channel import (
     UpdateChannelRequest,
 )
 from ._chat import ChatRequest, ChatTriggerResponse
+from ._asr import (
+    ListASRModelsRequest,
+    ListASRModelsResponse,
+    RealtimeASRStartRequest,
+    RealtimeASRTokenRequest,
+    RealtimeASRTokenResponse,
+    TranscriptionResponse,
+)
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
 from ._hub_mcp import InstallMCPRequest, MCPView, UpdateMCPRequest
@@ -154,6 +162,13 @@ __all__ = [
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",
+    # ASR
+    "ListASRModelsRequest",
+    "ListASRModelsResponse",
+    "RealtimeASRStartRequest",
+    "RealtimeASRTokenRequest",
+    "RealtimeASRTokenResponse",
+    "TranscriptionResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",

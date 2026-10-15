@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """App routers."""
+from ._asr import asr_router
 from ._agent import agent_router
 from ._channel import channel_router
 from ._chat import chat_router
@@ -19,6 +20,7 @@ from ._tts_model import tts_model_router
 from ._workspace import workspace_router
 
 __all__ = [
+    "asr_router",
     "agent_router",
     "channel_router",
     "model_router",

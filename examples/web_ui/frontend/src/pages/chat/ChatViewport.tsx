@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
+	ASRModelConfig,
 	ChatModelConfig,
 	PermissionMode,
 	RealtimeModelConfig,
@@ -19,7 +20,7 @@ import type {
 	TTSModelConfig,
 	UpdateSessionRequest,
 } from '@/api';
-import { sessionApi } from '@/api';
+import { asrApi, sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
@@ -50,6 +51,7 @@ import {
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
+import { useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
@@ -181,12 +183,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
 	const { groups: realtimeGroups } = useAvailableRealtimeModels();
+	const { groups: asrGroups, loading: asrModelsLoading } = useAvailableASRModels();
 
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedASRModel, setSelectedASRModel] = useState<ASRModelConfig | null>(null);
 	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<RealtimeModelConfig | null>(
 		null,
 	);
@@ -526,6 +530,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedASRModel(null);
 		setSelectedRealtimeModel(null);
 		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
@@ -556,6 +561,16 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}
 		return null;
 	}, [realtimeGroups, selectedRealtimeModel]);
+
+	const selectedASRModelCard = useMemo(() => {
+		if (!selectedASRModel) return null;
+		for (const item of asrGroups[selectedASRModel.type] ?? []) {
+			if (item.credential.id !== selectedASRModel.credential_id) continue;
+			const card = item.models.find((model) => model.name === selectedASRModel.model);
+			if (card) return card;
+		}
+		return null;
+	}, [asrGroups, selectedASRModel]);
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -650,6 +665,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedASRModel(view.session.config.asr_model_config ?? null);
 		setSelectedRealtimeModel(view.session.config.realtime_model_config ?? null);
 		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
@@ -707,6 +723,11 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		await patchConfig({ tts_model_config: config }, () => setSelectedTTSModel(config));
 	};
 
+	/** Persist an ASR model change. `null` disables speech input. */
+	const handleASRChange = async (config: ASRModelConfig | null) => {
+		await patchConfig({ asr_model_config: config }, () => setSelectedASRModel(config));
+	};
+
 	/** Persist the model used by browser realtime voice mode. */
 	const handleRealtimeModelChange = async (config: RealtimeModelConfig | null) => {
 		await patchConfig({ realtime_model_config: config }, () =>
@@ -722,6 +743,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			setSelectedRealtimeModel(updated),
 		);
 	};
+
+	/** Transcribe one browser recording with the configured batch ASR model. */
+	const handleTranscribe = useCallback(
+		async (file: File) => {
+			if (!selectedASRModel || selectedASRModelCard?.realtime) return '';
+			const response = await asrApi.transcribe({
+				file,
+				credentialId: selectedASRModel.credential_id,
+				model: selectedASRModel.model,
+				parameters: selectedASRModel.parameters,
+			});
+			return response.text;
+		},
+		[selectedASRModel, selectedASRModelCard],
+	);
 
 	/**
 	 * Persist a permission-mode change.
@@ -828,6 +864,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onFallbackChange={handleFallbackChange}
 										selectedTTSModel={selectedTTSModel}
 										onTTSChange={handleTTSChange}
+										selectedASRModel={selectedASRModel}
+										onASRChange={handleASRChange}
 										disabled={configPending}
 									/>
 									<PermissionModeSelect
@@ -921,6 +959,27 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}
 									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
+									asrInputTypes={selectedASRModelCard?.input_types ?? []}
+									onTranscribe={handleTranscribe}
+									asrRealtime={!!selectedASRModelCard?.realtime}
+									realtimeASRConfig={
+										selectedASRModel && selectedASRModelCard?.realtime
+											? {
+													credentialId: selectedASRModel.credential_id,
+													model: selectedASRModel.model,
+													parameters: selectedASRModel.parameters,
+												}
+											: null
+									}
+									asrDisabled={
+										asrModelsLoading ||
+										!selectedASRModel ||
+										!selectedASRModelCard ||
+										!agentId ||
+										!sessionId ||
+										voiceBusy
+									}
+									asrResetKey={`${agentId ?? ''}:${sessionId ?? ''}:${selectedASRModel?.credential_id ?? ''}:${selectedASRModel?.model ?? ''}`}
 									// cwd={
 									// 	{cwd: view?.session.config.cwd, git: {
 									// 		branch: 'main',

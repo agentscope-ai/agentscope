@@ -467,7 +467,12 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
             [OpenAIASRModel],
         )
         cards = OpenAICredential.list_asr_models()
-        parameter_schema = OpenAIASRModel.Parameters.model_json_schema()
+        base_schema = OpenAIASRModel.Parameters.model_json_schema()
+        parameter_schema = {
+            "type": "object",
+            "properties": base_schema["properties"],
+            "required": base_schema.get("required", []),
+        }
         self.assertEqual(
             [card.model_dump(mode="json") for card in cards],
             [
@@ -486,6 +491,7 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
                     "output_types": ["text/plain"],
                     "realtime": False,
                     "parameter_schema": parameter_schema,
+                    "parameters_overrides": {},
                 },
                 {
                     "type": "asr_model",
@@ -502,6 +508,7 @@ class TestOpenAIASRModel(IsolatedAsyncioTestCase):
                     "output_types": ["text/plain"],
                     "realtime": False,
                     "parameter_schema": parameter_schema,
+                    "parameters_overrides": {},
                 },
             ],
         )
