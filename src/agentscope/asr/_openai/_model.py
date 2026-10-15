@@ -60,12 +60,12 @@ class OpenAIASRModel(ASRModelBase):
         if not filename:
             raise ValueError("filename must not be empty")
 
-        options = self.parameters.model_dump(exclude_none=True)
-        options.update(kwargs)
-        result = await self.client.audio.transcriptions.create(
-            file=(filename, audio),
-            model=self.model,
-            response_format="json",
-            **options,
-        )
+        api_kwargs: dict[str, Any] = {
+            "file": (filename, audio),
+            "model": self.model,
+            "response_format": "json",
+            **self.parameters.model_dump(exclude_none=True),
+            **kwargs,
+        }
+        result = await self.client.audio.transcriptions.create(**api_kwargs)
         return ASRResponse(content=TextBlock(text=result.text))
