@@ -322,6 +322,26 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     read_only,
                 )
 
+    async def test_rg_pre_and_tree_o_are_not_read_only(self) -> None:
+        """``rg --pre`` runs a program, ``tree -o`` writes a file."""
+        expected = {
+            "rg --pre ./hook.sh foo .": False,
+            "rg --pre=./hook.sh foo .": False,
+            "tree -o out.txt": False,
+            "tree -ao out.txt": False,
+            "rg foo .": True,
+            "rg -o foo .": True,
+            "rg -n --hidden foo .": True,
+            "tree": True,
+            "tree -L 2": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [

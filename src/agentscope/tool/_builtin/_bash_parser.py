@@ -223,6 +223,23 @@ class BashCommandParser:
             ):
                 return False
 
+        # ``rg --pre <cmd>`` runs <cmd> on every searched file, and
+        # ``tree -o <file>`` writes the tree to a file
+        if cmd.startswith(("rg ", "tree ")):
+            try:
+                tokens = shlex.split(cmd)
+            except ValueError:
+                return False
+            if tokens[0] == "rg" and any(
+                _ == "--pre" or _.startswith("--pre=") for _ in tokens[1:]
+            ):
+                return False
+            if tokens[0] == "tree" and any(
+                _.startswith("-") and not _.startswith("--") and "o" in _
+                for _ in tokens[1:]
+            ):
+                return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
