@@ -132,6 +132,30 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _split_lines(text: str) -> list[str]:
+    """Split text into lines at ``\\n`` only, keeping the line endings.
+
+    ``str.splitlines`` also ends a line at ``\\v``, ``\\f``,
+    ``\\x1c``-``\\x1e``, ``\\x85``, ``\\u2028`` and ``\\u2029``. ripgrep
+    (the ``Grep`` tool), ``sed`` and ``wc -l`` count only ``\\n``, so the
+    builtin tools number lines this way to keep a line number from one tool
+    pointing at the same text in another.
+
+    Args:
+        text (`str`):
+            Decoded file contents.
+
+    Returns:
+        `list[str]`:
+            The lines, each ending with ``\\n`` except possibly the last.
+    """
+    parts = text.split("\n")
+    lines = [part + "\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
 # ── base class ─────────────────────────────────────────────────────────
 
 
