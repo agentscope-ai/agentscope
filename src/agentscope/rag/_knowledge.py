@@ -296,6 +296,9 @@ class KnowledgeBase:
         3. ``document_metadata`` — document-level fields propagated
            down (filename, media type, upload time, ...).
 
+        Metadata is merged into per-insertion copies; the caller's
+        chunks are left unchanged.
+
         Args:
             chunks (`list[Chunk]`):
                 The pre-chunked document content (already produced by
@@ -327,12 +330,18 @@ class KnowledgeBase:
 
         # Precedence: metadata_filter wins (security boundary), then
         # chunk metadata, then document_metadata.  See docstring.
-        for chunk in chunks:
-            chunk.metadata = {
-                **(document_metadata or {}),
-                **chunk.metadata,
-                **(self._metadata_filter or {}),
-            }
+        chunks = [
+            chunk.model_copy(
+                update={
+                    "metadata": {
+                        **(document_metadata or {}),
+                        **chunk.metadata,
+                        **(self._metadata_filter or {}),
+                    },
+                },
+            )
+            for chunk in chunks
+        ]
 
         response = await self._embedding_model(
             [chunk.content for chunk in chunks],
