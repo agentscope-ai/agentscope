@@ -1761,6 +1761,7 @@ class Agent:
             async for evt in self._convert_chat_response_to_event(
                 block_ids,
                 res,
+                single_response=True,
             ):
                 yield evt
 
@@ -3758,17 +3759,33 @@ class Agent:
         self,
         block_ids: dict,
         chunk: ChatResponse,
+        single_response: bool = False,
     ) -> AsyncGenerator:
         """Convert a ChatResponse chunk into a sequence of agent events. To
         keep the identifiers of the content blocks reasonable, the input
-        blocks_ids is used to track the block ids.
+        blocks_ids is used to track the block generation.
 
         Args:
             block_ids (`dict`):
                 The block ids used to track the block generation.
             chunk (`ChatResponse`):
                 The chat response chunk to be converted.
+            single_response (`bool`, defaults to `False`):
+                Whether *chunk* carries a whole non-streaming response.
+                Streaming chunks keep a stream open across chunks and are
+                converted with the chunk-boundary semantics; a whole
+                response is rebuilt block by block, in its original order,
+                so the rebuilt message matches what ``_save_to_context``
+                records and ``reply()`` returns.
         """
+
+        if single_response:
+            async for evt in self._convert_single_response_chunk_to_event(
+                block_ids,
+                chunk,
+            ):
+                yield evt
+            return
 
         # Classify the content blocks into different types
         text_blocks, thinking_blocks, tool_call_blocks = [], [], []
@@ -3882,6 +3899,147 @@ class Agent:
                 data=data_block.source.data,
                 media_type=data_block.source.media_type,
             )
+
+    async def _convert_single_response_chunk_to_event(
+        self,
+        block_ids: dict,
+        chunk: ChatResponse,
+    ) -> AsyncGenerator:
+        """Convert a whole non-streaming response into agent events,
+        rebuilding its blocks in the original order.
+
+        Within the chunk, the FIRST text (or thinking) block continues a
+        stream opened by an earlier event batch and every further block of
+        the same type closes the current stream and opens a fresh one, so
+        the rebuilt message matches what ``_save_to_context`` records and
+        ``reply()`` returns. Data blocks never close the text/thinking
+        streams, keeping the omni-style keep-alive semantics.
+        """
+        first_text_done = False
+        first_thinking_done = False
+        for block in chunk.content:
+            if isinstance(block, ThinkingBlock):
+                if block_ids.get("text"):
+                    yield TextBlockEndEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["text"],
+                    )
+                    block_ids["text"] = None
+                if block_ids.get("thinking") and first_thinking_done:
+                    yield ThinkingBlockEndEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["thinking"],
+                    )
+                    block_ids["thinking"] = None
+                if not block_ids.get("thinking"):
+                    block_ids["thinking"] = _generate_id()
+                    yield ThinkingBlockStartEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["thinking"],
+                    )
+                yield ThinkingBlockDeltaEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=block_ids["thinking"],
+                    delta=block.thinking,
+                )
+                first_thinking_done = True
+
+            elif isinstance(block, TextBlock):
+                if block_ids.get("thinking"):
+                    yield ThinkingBlockEndEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["thinking"],
+                    )
+                    block_ids["thinking"] = None
+                if block_ids.get("text") and first_text_done:
+                    yield TextBlockEndEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["text"],
+                    )
+                    block_ids["text"] = None
+                if not block_ids.get("text"):
+                    block_ids["text"] = _generate_id()
+                    yield TextBlockStartEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["text"],
+                    )
+                yield TextBlockDeltaEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=block_ids["text"],
+                    delta=block.text,
+                )
+                first_text_done = True
+
+            elif isinstance(block, ToolCallBlock):
+                if block_ids.get("thinking"):
+                    yield ThinkingBlockEndEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["thinking"],
+                    )
+                    block_ids["thinking"] = None
+                if block_ids.get("text"):
+                    yield TextBlockEndEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block_ids["text"],
+                    )
+                    block_ids["text"] = None
+                # Not in previous chunk, start with a start event
+                if block.id not in block_ids["tools"]:
+                    block_ids["tools"].append(block.id)
+                    yield ToolCallStartEvent(
+                        reply_id=self.state.reply_id,
+                        tool_call_id=block.id,
+                        tool_call_name=block.name,
+                    )
+                yield ToolCallDeltaEvent(
+                    reply_id=self.state.reply_id,
+                    tool_call_id=block.id,
+                    delta=block.input,
+                )
+
+            elif isinstance(block, DataBlock):
+                if not isinstance(block.source, Base64Source):
+                    # Only Base64Source carries inline delta bytes; URLSource
+                    # is one-shot and not part of the streaming protocol.
+                    continue
+                if block.id not in block_ids["data"]:
+                    block_ids["data"].append(block.id)
+                    yield DataBlockStartEvent(
+                        reply_id=self.state.reply_id,
+                        block_id=block.id,
+                        media_type=block.source.media_type,
+                    )
+                yield DataBlockDeltaEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=block.id,
+                    data=block.source.data,
+                    media_type=block.source.media_type,
+                )
+
+        # A whole response carrying no thinking/text closes their streams.
+        if block_ids.get("thinking"):
+            yield ThinkingBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["thinking"],
+            )
+            block_ids["thinking"] = None
+        if block_ids.get("text"):
+            yield TextBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["text"],
+            )
+            block_ids["text"] = None
+
+        # Handle the tool calls opened earlier but absent from the response
+        finished_ids = set(block_ids["tools"]) - set(
+            _.id for _ in chunk.content if isinstance(_, ToolCallBlock)
+        )
+        for finished_id in finished_ids:
+            yield ToolCallEndEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=finished_id,
+            )
+            block_ids["tools"].remove(finished_id)
 
     async def _convert_tool_chunk_to_event(
         self,
