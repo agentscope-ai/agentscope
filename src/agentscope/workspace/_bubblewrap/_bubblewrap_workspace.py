@@ -346,18 +346,7 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
                 "workspace_id=%r",
                 self.workspace_id,
             )
-            for cmd in self._bootstrap_commands():
-                result = await backend.exec_shell(
-                    ["sh", "-c", cmd],
-                    timeout=self._bootstrap_cmd_timeout,
-                )
-                if not result.ok():
-                    raise RuntimeError(
-                        "BubblewrapWorkspace bootstrap failed "
-                        f"(exit {result.exit_code}) for: {cmd!r}\n"
-                        f"stderr: {result.stderr.decode(errors='replace')}\n"
-                        f"stdout: {result.stdout.decode(errors='replace')}",
-                    )
+            await self._run_bootstrap_commands(self._bootstrap_commands())
 
         # These scripts are part of the installed AgentScope runtime rather
         # than user state, so refresh them even when a persistent workspace's
@@ -409,6 +398,24 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
             await self._stop_gateway_process()
         else:  # pragma: no cover - loop always breaks or raises
             await self._raise_gateway_timeout(health_timeout)
+
+    async def _ensure_system_runtime(self) -> None:
+        """Install ripgrep and refresh the Glob helper.
+
+        The commands are conditional (``rg --version``), so a resumed
+        workspace does not re-download ripgrep. The helper script is
+        rewritten every initialization so it matches this AgentScope
+        version without starting the MCP gateway.
+        """
+        async with self._system_runtime_lock:
+            await self._run_bootstrap_commands(
+                self._system_bootstrap_commands(),
+                label="system bootstrap",
+            )
+            await self.get_backend().write_file(
+                self._glob_helper_path,
+                _read_glob_helper_bytes(),
+            )
 
     async def _bootstrap_is_ready(self) -> bool:
         """Check whether persisted user-space bootstrap artifacts work."""
@@ -513,8 +520,21 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
                 f"'bwrap' executable. Smoke probe failed: {detail}",
             )
 
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Install official ripgrep for builtin Grep, without uv."""
+        bin_dir = f"{self._gateway_home}/bin"
+        rg_path = shlex.quote(f"{bin_dir}/rg")
+        return [
+            f"mkdir -p {shlex.quote(bin_dir)}",
+            f"if ! {rg_path} --version >/dev/null 2>&1; then "
+            f"rm -f {rg_path}; "
+            f"{self._install_ripgrep_script()}; "
+            "fi",
+            f"{rg_path} --version",
+        ]
+
     def _bootstrap_commands(self) -> list[str]:
-        """Return user-space provisioning commands for Bubblewrap."""
+        """Return user-space provisioning commands for the MCP gateway."""
         pip_pkgs = [
             *_GATEWAY_BASE_REQUIREMENTS,
             *self.extra_pip,
@@ -522,7 +542,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
         bin_dir = f"{self._gateway_home}/bin"
         uv_path = shlex.quote(f"{bin_dir}/uv")
-        rg_path = shlex.quote(f"{bin_dir}/rg")
         python_path = shlex.quote(self._gateway_python)
         return [
             f"mkdir -p {shlex.quote(bin_dir)}",
@@ -535,11 +554,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
             f"{uv_path} venv {shlex.quote(self._gateway_venv)}; "
             "fi",
             f"{uv_path} pip install --python {python_path} " f"{pip_args}",
-            f"if ! {rg_path} --version >/dev/null 2>&1; then "
-            f"rm -f {rg_path}; "
-            f"{self._install_ripgrep_script()}; "
-            "fi",
-            f"{rg_path} --version",
             f"{uv_path} pip install --python {python_path} "
             "--no-deps 'agentscope'",
         ]
@@ -640,6 +654,8 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
 
     async def _raise_gateway_timeout(self, timeout: float) -> None:
         """Raise a gateway-start failure with the log tail included."""
+        # Leave the facade unset so a later add_mcp can retry.
+        self._gateway = None
         try:
             log = await self.get_backend().read_file(self._gateway_log)
             tail = log[-2000:].decode(errors="replace")

@@ -17,12 +17,11 @@ Docker engine for the E2B SDK (``e2b.AsyncSandbox``):
 * **Persistence.** Sandbox filesystem state is the persistence layer —
   there is no host-side ``workdir`` parameter. Pausing keeps the disk;
   resuming brings it back wholesale.
-* **Bootstrap.** First-time provisioning installs uv + a gateway venv
-  + agentscope (``--no-deps``) and uploads the gateway script. The
-  probe + install loop lives on :class:`SandboxedWorkspaceBase`; this
-  subclass only supplies the sandbox-specific shell commands via
-  :meth:`_bootstrap_commands`. Bootstrap runs at most once per sandbox
-  lifetime (the presence of the gateway script on disk is the marker).
+* **Bootstrap.** Ripgrep and the Glob helper are installed for
+  builtin Grep/Glob even when no MCP is configured. uv, the gateway
+  venv, and agentscope (``--no-deps``) are installed by
+  :meth:`_bootstrap_commands` only when an MCP server needs the
+  gateway. The gateway script on disk is the marker for that step.
 * **MCP gateway.** Identical to Docker: a FastAPI process inside the
   sandbox. All host-side calls drive the gateway through
   :class:`GatewayClient`, which runs an in-sandbox ``python3 -c`` shim
@@ -324,12 +323,24 @@ class E2BWorkspace(SandboxedWorkspaceBase):
 
     # ── internals: bootstrap ────────────────────────────────────
 
-    def _bootstrap_commands(self) -> list[str]:
-        """Shell commands that provision this E2B sandbox once.
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Install ripgrep for the builtin Grep tool.
 
-        Only runs when the gateway script is missing (fresh sandbox or
-        a prior bootstrap that was interrupted). Every step is
-        idempotent so a resumed sandbox can re-run cleanly.
+        The E2B base template already ships curl. sudo is required
+        because the sandbox user is not root.
+        """
+        return [
+            "sudo apt-get update -qq "
+            "&& sudo apt-get install -y --no-install-recommends ripgrep "
+            "&& sudo rm -rf /var/lib/apt/lists/*",
+        ]
+
+    def _bootstrap_commands(self) -> list[str]:
+        """Shell commands that provision the E2B MCP gateway venv.
+
+        Only runs when the gateway script is missing and an MCP server
+        needs the gateway. Every step is idempotent so a resumed
+        sandbox can re-run cleanly.
 
         ``--no-deps`` on agentscope is mandatory: the gateway only
         imports :class:`agentscope.mcp.MCPClient` whose transitive
@@ -345,16 +356,12 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
         return [
-            # 1. System deps + uv installer, both via sudo so uv lands
-            # at /usr/local/bin (on PATH — no absolute-path plumbing
-            # needed downstream).
-            "sudo apt-get update -qq "
-            "&& sudo apt-get install -y --no-install-recommends ripgrep "
-            "&& sudo rm -rf /var/lib/apt/lists/*",
+            # uv lands at /usr/local/bin (on PATH — no absolute-path
+            # plumbing needed downstream).
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| sudo env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 2. Gateway venv + base requirements + agentscope.
+            # Gateway venv + base requirements + agentscope.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
             f"uv pip install --python {self._gateway_python} "

@@ -15,11 +15,12 @@ Docker engine for the Kubernetes API (``kubernetes_asyncio``):
 * **Persistence.** A PVC (``as-ws-{workspace_id}``) mounted at
   ``/workspace`` provides cross-Pod-restart persistence. Skills,
   ``.mcp``, sessions, and data survive restarts.
-* **Bootstrap.** First-time provisioning installs system deps +
-  uv + gateway venv + agentscope and uploads the gateway script.
-  The probe + install loop lives on :class:`SandboxedWorkspaceBase`;
-  this subclass only supplies Pod-specific shell commands via
-  :meth:`_bootstrap_commands`.
+* **Bootstrap.** :meth:`_system_bootstrap_commands` installs
+  ripgrep (and curl) for builtin Grep even when no MCP is configured.
+  uv, the gateway venv, and agentscope are installed by
+  :meth:`_bootstrap_commands` only when an MCP server needs the
+  gateway. The probe + install loop lives on
+  :class:`SandboxedWorkspaceBase`.
 * **MCP gateway.** Identical to Docker/E2B: a FastAPI process inside
   the Pod, host talks to it via :class:`GatewayClient` through the
   gateway shim (``exec_shell``-based transport, no host-to-Pod
@@ -585,13 +586,27 @@ class K8sWorkspace(SandboxedWorkspaceBase):
 
     # ── internals: bootstrap ────────────────────────────────────
 
-    def _bootstrap_commands(self) -> list[str]:
-        """Shell commands that provision this Pod once.
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Install ripgrep and the packages Grep/bootstrap share.
 
-        Only runs when the gateway script is missing (fresh PVC, or a
-        Pod that died before the script was written). Slim base image
-        runs as root, so no ``sudo`` needed — uv lands at
-        ``/usr/local/bin/uv`` which is on the default PATH.
+        Slim base image runs as root, so no ``sudo`` is needed.
+        ``curl`` and ``ca-certificates`` share this apt transaction
+        with ``ripgrep``; the gateway installer uses them later.
+        """
+        sys_deps = " ".join(shlex.quote(d) for d in SYSTEM_DEPS)
+        return [
+            f"apt-get update -qq "
+            f"&& apt-get install -y --no-install-recommends {sys_deps} "
+            f"&& rm -rf /var/lib/apt/lists/*",
+        ]
+
+    def _bootstrap_commands(self) -> list[str]:
+        """Shell commands that provision the Pod MCP gateway venv.
+
+        Only runs when the gateway script is missing and an MCP server
+        needs the gateway. Slim base image runs as root, so no
+        ``sudo`` needed — uv lands at ``/usr/local/bin/uv`` which is
+        on the default PATH.
         """
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement string so entries containing spaces
@@ -599,12 +614,8 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         # brackets, direct-URL installs) cannot break the ``sh -c``
         # command or become an injection vector.
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
-        sys_deps = " ".join(shlex.quote(d) for d in SYSTEM_DEPS)
 
         return [
-            f"apt-get update -qq "
-            f"&& apt-get install -y --no-install-recommends {sys_deps} "
-            f"&& rm -rf /var/lib/apt/lists/*",
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",

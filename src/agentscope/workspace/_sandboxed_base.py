@@ -8,12 +8,16 @@ an in-sandbox MCP gateway. Subclasses only need to provide:
 - :meth:`_provision_backend` — attach/create the sandbox, bind
   ``self._backend``.
 - :meth:`_teardown_backend` — destroy/pause the sandbox.
+- :meth:`_system_bootstrap_commands` — shell commands for builtin
+  Glob/Grep dependencies (ripgrep). Independent of MCP.
 - :meth:`_bootstrap_commands` — shell commands to install the gateway
   venv on first use (Docker skips this — the image already has it).
 - gateway-path class attributes (see below).
 
-Everything gateway-related — bootstrap, launch, health poll, MCP
-add/remove routing, ``.mcp`` persistence, reset — lives here.
+Builtin Glob/Grep setup is part of every sandbox. The MCP gateway —
+venv bootstrap, launch, health poll — runs only when an MCP server is
+configured or first added. MCP add/remove routing, ``.mcp``
+persistence, and reset live here.
 """
 
 import asyncio
@@ -59,15 +63,20 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     """Sandbox-side directory holding the gateway venv, script, log."""
 
     _gateway: GatewayClient | None
-    """Workspace-side gateway facade. ``None`` before init / after close."""
+    """Workspace-side gateway facade. ``None`` before init / after close,
+    and while no MCP server has been configured."""
+
+    _gateway_ready: bool
+    """True after the gateway process has passed its health check."""
 
     is_alive: bool
     """Inherited lifecycle flag, repeated for file-scoped type checks."""
 
     _bootstrap_cmd_timeout: float = 1800.0
-    """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
-    bootstrap step. Subclasses lower this for lighter base images
-    (E2B uses 600 s; K8s inherits the wider default for apt-get).
+    """Per-command timeout for system and gateway bootstrap steps.
+
+    Subclasses lower this for lighter base images (E2B uses 600 s;
+    K8s inherits the wider default for apt-get).
     """
 
     @property
@@ -140,6 +149,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             max_live_stateful_mcps=max_live_stateful_mcps,
         )
         self._gateway = None
+        self._gateway_ready = False
+        self._system_runtime_lock = asyncio.Lock()
+        self._gateway_lock = asyncio.Lock()
 
     # ── subclass hooks ────────────────────────────────────────────
 
@@ -160,21 +172,34 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         been closed. Must be idempotent and swallow exceptions.
         """
 
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Shell commands for builtin Glob/Grep, not the MCP gateway.
+
+        Runs from :meth:`_ensure_system_runtime` when the Glob helper
+        is missing. Subclasses whose image already ships ``ripgrep``
+        and the helper (Docker) leave this empty.
+        """
+        return []
+
     def _bootstrap_commands(self) -> list[str]:
         """Shell commands that provision the gateway venv on first use.
 
-        Runs only when :attr:`_gateway_script` is missing. Subclasses
-        whose image already ships the venv (e.g. Docker) leave this
-        empty; the base's fast-path skips the whole bootstrap block.
+        Runs only when :attr:`_gateway_script` is missing and an MCP
+        server actually needs the gateway. Subclasses whose image
+        already ships the venv (e.g. Docker) leave this empty; the
+        base's fast-path skips the whole bootstrap block.
         """
         return []
 
     # ── lifecycle template methods ────────────────────────────────
 
     async def initialize(self) -> None:
-        """Provision the sandbox, restore MCPs, start the gateway.
+        """Provision the sandbox and restore configured MCPs.
 
-        Idempotent — a no-op when already alive.
+        Idempotent — a no-op when already alive. The MCP gateway is
+        started here only when ``default_mcps`` or the persisted
+        ``.mcp`` file is non-empty; otherwise it starts on the first
+        :meth:`add_mcp`.
         """
         logger.info(
             "Initialize workspace (id=%s) from %s ...",
@@ -197,9 +222,21 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         # Set up the workspace layout
         await self._ensure_workspace_layout()
 
+        # Glob/Grep do not need the MCP gateway.
+        await self._ensure_system_runtime()
+
         # The gateway starts empty; each session registers its own
-        # MCPs on its first list_mcps.
-        await self._setup_mcp_gateway()
+        # MCPs on its first list_mcps. Skip the install/launch/health
+        # path when nothing is configured.
+        if self._requires_mcp_gateway():
+            await self._ensure_mcp_gateway()
+        else:
+            logger.info(
+                "%s: skipping MCP gateway bootstrap workspace_id=%r "
+                "(no default or persisted MCP servers)",
+                type(self).__name__,
+                self.workspace_id,
+            )
 
         # Set up the skills if not exists
         await self._migrate_skill_layout()
@@ -217,8 +254,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """Close the gateway facade, then tear down the sandbox.
 
         Idempotent — errors are swallowed so ``close`` is always
-        safe to call.
+        safe to call. Safe when the gateway was never started.
         """
+        self._gateway_ready = False
         if self._gateway is not None:
             try:
                 await self._gateway.aclose()
@@ -280,6 +318,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
         """
+        # No gateway means no MCP is configured. Listing must not
+        # install or launch one just to return an empty result.
         if self._gateway is None:
             return []
         agent_id, session_id = agent_id or "", session_id or ""
@@ -340,6 +380,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 If the gateway is not attached or rejects the
                 registration.
         """
+        await self._ensure_mcp_gateway()
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
         agent_id, session_id = agent_id or "", session_id or ""
@@ -390,9 +431,21 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             `RuntimeError`:
                 If the gateway is not attached.
         """
+        agent_id, session_id = agent_id or "", session_id or ""
+        if self._gateway is None:
+            async with self._mcp_lock:
+                specs = self._declared_specs(agent_id, session_id)
+                if not any(m.name == name for m in specs):
+                    logger.warning(
+                        "MCP %r not found for agent=%r session=%r",
+                        name,
+                        agent_id,
+                        session_id,
+                    )
+                    return
+            await self._ensure_mcp_gateway()
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
-        agent_id, session_id = agent_id or "", session_id or ""
         async with self._mcp_lock:
             specs = self._declared_specs(agent_id, session_id)
             if not any(m.name == name for m in specs):
@@ -437,6 +490,89 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
+    def _requires_mcp_gateway(self) -> bool:
+        """Whether ``initialize`` should start the MCP gateway now.
+
+        True when :attr:`default_mcps` is non-empty or the restored
+        ``.mcp`` file declares at least one server. An absent file,
+        an empty object, and sessions persisted as ``[]`` do not.
+        """
+        if self.default_mcps:
+            return True
+        return any(specs for specs in self._mcp_specs.values())
+
+    async def _run_bootstrap_commands(
+        self,
+        commands: list[str],
+        *,
+        label: str = "bootstrap",
+    ) -> None:
+        """Run bootstrap shell commands, raising on the first failure.
+
+        Args:
+            commands (`list[str]`):
+                Shell command strings, executed in order via
+                ``sh -c``.
+            label (`str`, optional):
+                Phrase used in the failure message. ``"bootstrap"``
+                keeps the historical gateway error text.
+        """
+        backend = self.get_backend()
+        for cmd in commands:
+            result = await backend.exec_shell(
+                ["sh", "-c", cmd],
+                timeout=self._bootstrap_cmd_timeout,
+            )
+            if not result.ok():
+                raise RuntimeError(
+                    f"{type(self).__name__} {label} failed "
+                    f"(exit {result.exit_code}) for: {cmd!r}\n"
+                    f"stderr: "
+                    f"{result.stderr.decode(errors='replace')}\n"
+                    f"stdout: "
+                    f"{result.stdout.decode(errors='replace')}",
+                )
+
+    async def _ensure_system_runtime(self) -> None:
+        """Install builtin Glob/Grep dependencies without the gateway.
+
+        Package installation runs only when the Glob helper is absent
+        (fresh sandbox). A resumed sandbox or a prebuilt image that
+        already has the helper does not repeat it.
+        """
+        async with self._system_runtime_lock:
+            backend = self.get_backend()
+            if await backend.file_exists(self._glob_helper_path):
+                return
+            logger.info(
+                "%s: installing base workspace runtime workspace_id=%r",
+                type(self).__name__,
+                self.workspace_id,
+            )
+            await self._run_bootstrap_commands(
+                self._system_bootstrap_commands(),
+                label="system bootstrap",
+            )
+            await backend.write_file(
+                self._glob_helper_path,
+                _read_glob_helper_bytes(),
+            )
+
+    async def _ensure_mcp_gateway(self) -> None:
+        """Start the gateway once, on first use.
+
+        Concurrent callers share one bootstrap. A failed attempt does
+        not stick, so a later :meth:`add_mcp` can retry.
+        """
+        await self._ensure_system_runtime()
+        if self._gateway_ready:
+            return
+        async with self._gateway_lock:
+            if self._gateway_ready:
+                return
+            await self._setup_mcp_gateway()
+            self._gateway_ready = True
+
     async def _setup_mcp_gateway(self) -> None:
         """Bootstrap (once) and launch the in-sandbox gateway.
 
@@ -455,22 +591,11 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         # resume, K8s PVC remount).
         if not await backend.file_exists(self._gateway_script):
             logger.info(
-                "%s: bootstrapping workspace_id=%r",
+                "%s: bootstrapping MCP gateway workspace_id=%r",
                 type(self).__name__,
                 self.workspace_id,
             )
-            for cmd in self._bootstrap_commands():
-                r = await backend.exec_shell(
-                    ["sh", "-c", cmd],
-                    timeout=self._bootstrap_cmd_timeout,
-                )
-                if not r.ok():
-                    raise RuntimeError(
-                        f"{type(self).__name__} bootstrap failed "
-                        f"(exit {r.exit_code}) for: {cmd!r}\n"
-                        f"stderr: {r.stderr.decode(errors='replace')}\n"
-                        f"stdout: {r.stdout.decode(errors='replace')}",
-                    )
+            await self._run_bootstrap_commands(self._bootstrap_commands())
             # Glob helper first, gateway script last — a partial
             # bootstrap leaves _gateway_script absent so the next
             # initialize retries cleanly.
@@ -520,6 +645,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
         else:
+            # Leave the gateway unset so a later add_mcp can retry.
+            self._gateway = None
             try:
                 log = await backend.read_file(self._gateway_log)
                 tail = log[-2000:].decode(errors="replace")
