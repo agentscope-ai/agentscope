@@ -140,8 +140,15 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
                 }
 
             elif isinstance(event, ModelCallEndEvent):
-                # Update the used tokens
-                agent.state.middle_context[middleware_key][event.reply_id] += (
+                # Update the used tokens. The counter is created on demand:
+                # an inner middleware can swallow the ``ReplyStartEvent``
+                # that would have created it, and the rest of the reply
+                # must still be accounted for rather than raising.
+                used = agent.state.middle_context.setdefault(
+                    middleware_key,
+                    {},
+                )
+                used[event.reply_id] = used.get(event.reply_id, 0) + (
                     self.input_token_weight * event.input_tokens
                     + self.output_token_weight * event.output_tokens
                 )
