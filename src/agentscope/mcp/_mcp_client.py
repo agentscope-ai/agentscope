@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+
 import asyncio
 import re
 from contextlib import (
@@ -200,7 +201,7 @@ class MCPClient(BaseModel):
                     args=config.args or [],
                     env=config.env,
                     cwd=str(config.cwd) if config.cwd else None,
-                    encoding="utf-8",
+                    encoding=config.encoding,
                     encoding_error_handler=config.encoding_error_handler,
                 ),
             )
@@ -215,6 +216,7 @@ class MCPClient(BaseModel):
                 url=config.url,
                 headers=config.headers,
                 timeout=config.timeout,
+                sse_read_timeout=config.sse_read_timeout,
             )
 
         return self._create_streamable_http_client()
@@ -393,8 +395,7 @@ class MCPClient(BaseModel):
 
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
 
         try:
@@ -519,7 +520,7 @@ class MCPClient(BaseModel):
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{name}' not found in MCP server " f"'{self.name}'",
+                f"Tool '{name}' not found in MCP server '{self.name}'",
             )
 
         # Create MCPTool based on stateful/stateless
@@ -549,8 +550,7 @@ class MCPClient(BaseModel):
         """
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
         if not self._session:
             raise RuntimeError(
