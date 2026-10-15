@@ -148,6 +148,28 @@ class BashCommandParser:
         """Initialize the parser with tree-sitter-bash language."""
         self.parser = Parser(Language(tsbash.language()))
 
+    @staticmethod
+    def _node_text(source: str, node: Node) -> str:
+        """Return the source text that a node spans.
+
+        tree-sitter reports UTF-8 **byte** offsets, so the span must be taken
+        on the encoded form and decoded back. Slicing the ``str`` with those
+        offsets shifts every token that follows a non-ASCII character, so the
+        token text silently changes.
+
+        Args:
+            source (`str`):
+                The command string that was handed to the parser.
+            node (`Node`):
+                The node whose text should be extracted.
+
+        Returns:
+            `str`:
+                The exact source text covered by the node.
+        """
+        raw = source.encode("utf-8")
+        return raw[node.start_byte : node.end_byte].decode("utf-8", "replace")
+
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
@@ -323,7 +345,7 @@ class BashCommandParser:
             # Extract the target file
             for child in node.children:
                 if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
+                    path = self._node_text(command, child)
                     paths.append(("redirect", path.strip("'\"")))
         # Check for commands
         if node.type == "command":
@@ -333,9 +355,9 @@ class BashCommandParser:
 
             for child in node.children:
                 if child.type == "command_name":
-                    cmd_name = command[child.start_byte : child.end_byte]
+                    cmd_name = self._node_text(command, child)
                 elif child.type == "word" and cmd_name:
-                    arg = command[child.start_byte : child.end_byte]
+                    arg = self._node_text(command, child)
                     args.append(arg.strip("'\""))
 
             # Check if this is a file-manipulating command
@@ -471,7 +493,7 @@ class BashCommandParser:
             # Extract the target file
             for child in node.children:
                 if child.type == "word":
-                    path = command[child.start_byte : child.end_byte]
+                    path = self._node_text(command, child)
                     redirections.append(path.strip("'\""))
 
         # Recursively process children
@@ -553,7 +575,7 @@ class BashCommandParser:
             """Recursively extract commands from AST."""
             if node.type == "command":
                 # Extract command text
-                cmd_text = command[node.start_byte : node.end_byte]
+                cmd_text = self._node_text(command, node)
                 subcommands.append(cmd_text)
             elif node.type in ["list", "pipeline", "command_list"]:
                 # Recursively process compound structures
@@ -603,16 +625,16 @@ class BashCommandParser:
         for child in simple_cmd.children:
             if child.type == "variable_assignment":
                 # Environment variable assignment
-                var_name = subcmd[child.start_byte : child.end_byte].split(
+                var_name = self._node_text(subcmd, child).split(
                     "=",
                 )[0]
                 env_vars.append(var_name)
             elif child.type == "command_name":
                 # Command name
-                parts.append(subcmd[child.start_byte : child.end_byte])
+                parts.append(self._node_text(subcmd, child))
             elif child.type == "word" and len(parts) >= 1:
                 # Argument (might be a flag or subcommand)
-                word = subcmd[child.start_byte : child.end_byte]
+                word = self._node_text(subcmd, child)
                 parts.append(word)
                 # Stop after we have command + first argument
                 if len(parts) >= 2:
