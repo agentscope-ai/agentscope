@@ -322,6 +322,42 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     read_only,
                 )
 
+    async def test_less_and_file_write_options_are_not_read_only(
+        self,
+    ) -> None:
+        """``less`` logging and ``file --compile`` skip the fast path."""
+        expected = {
+            # side-effecting forms
+            "file -C -m magic": False,
+            "file --compile -m magic": False,
+            "file -bC magic": False,
+            "less -o/tmp/less.log": False,
+            "less -O/tmp/less.log": False,
+            "less -o /tmp/less.log": False,
+            "less --log-file=/tmp/less.log": False,
+            "less --log-file /tmp/less.log": False,
+            "less --LOG-FILE=/tmp/less.log": False,
+            "less -No/tmp/less.log": False,
+            "printf hi | less -O/tmp/less.log": False,
+            # ordinary inspection stays read-only
+            "file README.md": True,
+            "file -b README.md": True,
+            "file -m ./Compiled": True,
+            "less README.md": True,
+            "less -N README.md": True,
+            # option values containing o/C must not false-positive
+            "less -p/foo": True,
+            "less --pattern=foo": True,
+            "file -- -C": True,
+            "less -- -o/tmp/less.log": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [

@@ -223,6 +223,13 @@ class BashCommandParser:
             ):
                 return False
 
+        # ``less -o/-O/--log-file`` copies piped input to a file;
+        # ``file -C/--compile`` writes a compiled magic database.
+        if cmd.startswith(("less ", "file ")) and (
+            self._has_less_or_file_write_options(cmd)
+        ):
+            return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
@@ -243,6 +250,94 @@ class BashCommandParser:
             if base_cmd in SAFE_COMMANDS:
                 return True
 
+        return False
+
+    def _has_less_or_file_write_options(self, cmd: str) -> bool:
+        """Return True if ``less``/``file`` options can write files.
+
+        Keeps ordinary inspection forms on the read-only fast path, but
+        rejects ``less`` logging options and ``file --compile`` / ``-C``.
+        Option parsing stops at ``--`` so positional operands are ignored.
+        Short-option values are not scanned for option letters, so e.g.
+        ``less -p/foo`` stays read-only even though the pattern contains
+        ``o``.
+        """
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            return True
+
+        if not tokens:
+            return False
+
+        name, args = tokens[0], tokens[1:]
+        if name == "less":
+            return self._less_has_log_options(args)
+        if name == "file":
+            return self._file_has_compile_option(args)
+        return False
+
+    @staticmethod
+    def _less_has_log_options(args: List[str]) -> bool:
+        """Detect ``less`` ``-o`` / ``-O`` / ``--log-file`` write options."""
+        # Short options of less that take a following/attached argument.
+        # Used so attached values are not mistaken for further option letters.
+        short_with_arg = set("bhjkoOpPtTxzD#")
+        i = 0
+        while i < len(args):
+            tok = args[i]
+            if tok == "--":
+                break
+            if tok.startswith("--"):
+                opt = tok[2:].split("=", 1)[0]
+                if opt in ("log-file", "LOG-FILE"):
+                    return True
+                i += 1
+                continue
+            if tok.startswith("-") and len(tok) > 1:
+                chars = tok[1:]
+                j = 0
+                while j < len(chars):
+                    c = chars[j]
+                    if c in ("o", "O"):
+                        return True
+                    if c in short_with_arg:
+                        # Remainder of this token is the option value.
+                        break
+                    j += 1
+            i += 1
+        return False
+
+    @staticmethod
+    def _file_has_compile_option(args: List[str]) -> bool:
+        """Detect ``file -C`` / ``--compile`` which write magic.mgc."""
+        short_with_arg = set("efFmP")
+        i = 0
+        while i < len(args):
+            tok = args[i]
+            if tok == "--":
+                break
+            if tok.startswith("--"):
+                opt = tok[2:].split("=", 1)[0]
+                if opt == "compile":
+                    return True
+                i += 1
+                continue
+            if (
+                tok.startswith("-")
+                and not tok.startswith("--")
+                and len(tok) > 1
+            ):
+                chars = tok[1:]
+                j = 0
+                while j < len(chars):
+                    c = chars[j]
+                    if c == "C":
+                        return True
+                    if c in short_with_arg:
+                        break
+                    j += 1
+            i += 1
         return False
 
     def _is_mutating_find_command(self, cmd: str) -> bool:
