@@ -130,7 +130,7 @@
 			"invalid_request": "The request to the model was rejected as invalid.",
 			"upstream": "The upstream model service returned an error.",
 			"connection": "Could not reach the model service — network error or timeout.",
-			"internal": "An unexpected internal error occurred.",
+			"internal": "An internal tool or framework error stopped this reply. Try again; if it persists, check the server logs.",
 			"setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
 			"unknown": "The reply failed with an unknown error."
 		},

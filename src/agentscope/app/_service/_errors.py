@@ -124,7 +124,10 @@ def _classify_type(e: Exception) -> ErrorType:
 
     if _is_network_error(e):
         return ErrorType.CONNECTION
-    if isinstance(e, DeveloperOrientedException):
+    # Concurrent tool execution wraps leaf failures in ExceptionGroup. Walk
+    # the complete chain so a fatal AgentScope exception is still classified
+    # as an internal framework error instead of falling through to UNKNOWN.
+    if any(isinstance(exc, DeveloperOrientedException) for exc in _causes(e)):
         return ErrorType.INTERNAL
     return ErrorType.UNKNOWN
 
