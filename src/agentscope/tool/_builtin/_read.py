@@ -79,6 +79,36 @@ class _ReadParams(ParamsBase):
     )
 
 
+def _normalize_match_path(file_path: str) -> str:
+    """Normalize a path before it is matched against a permission rule.
+
+    Permission rules match a path string with :func:`fnmatch.fnmatch`, which
+    performs no path resolution: it compares the raw string against the
+    pattern. A path that still contains ``..`` segments therefore matches a
+    pattern covering the *textually* referenced directory while the operating
+    system resolves it to a completely different file. For example, with the
+    rule ``/project/src/**`` the path ``/project/src/../../etc/app.conf``
+    matches the pattern, yet every filesystem call resolves it to
+    ``/etc/app.conf`` -- so an allow rule scoped to ``src/`` silently grants
+    writes outside the project.
+
+    Collapsing ``.`` and ``..`` lexically with :func:`os.path.normpath` makes
+    the string used for matching agree with the path the filesystem will
+    actually act on. ``normpath`` is used rather than ``realpath`` so that
+    sandbox / virtual paths (which need not exist on the host) are still
+    handled correctly.
+
+    Args:
+        file_path (`str`):
+            The raw path exactly as supplied in the tool input.
+
+    Returns:
+        `str`:
+            The lexically normalized path used for rule matching.
+    """
+    return os.path.normpath(file_path)
+
+
 class Read(ToolBase):
     """The read tool."""
 
@@ -218,6 +248,7 @@ Usage:
         file_path = tool_input.get("file_path", "")
         if not file_path:
             return False
+        file_path = _normalize_match_path(file_path)
         return fnmatch.fnmatch(file_path, rule_content)
 
     async def generate_suggestions(
