@@ -41,8 +41,10 @@ def _guess_image_media_type(data: bytes) -> str:
     for signature, media_type in signatures.items():
         if data.startswith(signature):
             return media_type
-    # WebP: ``RIFF`` at offset 0 + ``WEBP`` at offset 8.
-    if len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    # WebP: ``RIFF`` at offset 0 + ``WEBP`` at offset 8. A slice ``data[8:12]``
+    # needs 12 bytes, so the guard must be ``>= 12``; ``> 12`` rejects the
+    # smallest legal RIFF/WebP header and mislabels it as JPEG.
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"
 
