@@ -15,8 +15,9 @@ base class, not here.
 #: and ripgrep during bootstrap.
 DEFAULT_IMAGE = "python:3.11-slim"
 
-#: Default keep-alive timeout in seconds for newly-created sandboxes.
-DEFAULT_TIMEOUT = 300
+#: Default sandbox lease in seconds. Configure a longer lease for turns
+#: that can exceed 30 minutes; there is no background lease renewal.
+DEFAULT_TIMEOUT = 1800
 
 #: Per-command timeout for first-time bootstrap shell commands.
 BOOTSTRAP_COMMAND_TIMEOUT = 600.0
