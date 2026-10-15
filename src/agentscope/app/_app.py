@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
 from .hub import HubBase, HubError, MCPHubBase, SkillHubBase
+from .middleware._api_key_auth import API_KEY_ENV, APIKeyAuthMiddleware
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
@@ -474,5 +475,13 @@ def create_app(
     # Optional extra middlewares
     for middleware in extra_middlewares or []:
         app.add_middleware(middleware.cls, **middleware.kwargs)
+
+    # Opt-in authentication gate (#3314): with AGENTSCOPE_API_KEY set,
+    # every request must present the key; unset leaves behavior
+    # unchanged. Added after extra_middlewares so the gate is the
+    # outermost middleware and rejects unauthenticated traffic first.
+    api_key = os.environ.get(API_KEY_ENV, "").strip()
+    if api_key:
+        app.add_middleware(APIKeyAuthMiddleware, api_key=api_key)
 
     return app
