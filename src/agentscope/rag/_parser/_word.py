@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
@@ -33,42 +33,66 @@ if TYPE_CHECKING:
     from docx.text.paragraph import Paragraph as DocxParagraph
 
 _VML_NS = "{urn:schemas-microsoft-com:vml}"
+# Word writes a text box twice inside ``mc:AlternateContent``: a
+# ``wps:txbx`` under ``mc:Choice`` and the same text as a VML text box
+# under ``mc:Fallback``. Both hold a ``w:txbxContent``.
+_MC_FALLBACK = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+)
 
 
 def _extract_text_from_paragraph(para: DocxParagraph) -> str:
-    """Extract text from a paragraph, including text in text boxes and
-    VML shapes.
+    """Extract text from a paragraph, including any text box anchored to it.
 
-    Tries three methods in order:
-    1. All ``w:t`` elements in the paragraph XML (covers revisions,
-       hyperlinks, etc.).
-    2. The standard ``para.text`` property.
-    3. Text inside ``w:txbxContent`` and VML ``v:textbox`` elements.
+    The paragraph's own runs come first, then each text box once, as its own
+    line. Reading every ``w:t`` under the paragraph in one pass would splice a
+    text box into the middle of the surrounding sentence, and would read the
+    ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
+
+    Args:
+        para (`DocxParagraph`):
+            The python-docx paragraph to read.
+
+    Returns:
+        `str`:
+            The paragraph's text, with each text box on its own line.
     """
     from docx.oxml.ns import qn
 
-    text = ""
-    for t_elem in para._element.findall(".//" + qn("w:t")):
-        if t_elem.text:
-            text += t_elem.text
+    text_tag = qn("w:t")
+    text_box_tag = qn("w:txbxContent")
+    root = para._element
 
-    if not text:
-        text = para.text.strip()
+    def in_text_box(element: Any) -> bool:
+        """Whether ``element`` sits inside a text box under this paragraph."""
+        for ancestor in element.iterancestors():
+            if ancestor is root:
+                return False
+            if ancestor.tag == text_box_tag:
+                return True
+        return False
 
-    if not text:
-        for txbx in para._element.findall(".//" + qn("w:txbxContent")):
-            for p_elem in txbx.findall(".//" + qn("w:p")):
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        text += t_elem.text
+    def joined(elements: Any) -> str:
+        return "".join(t.text for t in elements if t.text)
 
-        for vml_tb in para._element.findall(".//" + _VML_NS + "textbox"):
-            for p_elem in vml_tb.findall(".//" + qn("w:p")):
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        text += t_elem.text
+    blocks: list[str] = []
 
-    return text.strip()
+    own_text = joined(
+        t for t in root.findall(".//" + text_tag) if not in_text_box(t)
+    )
+    if own_text.strip():
+        blocks.append(own_text.strip())
+
+    # A VML text box holds a ``w:txbxContent`` too, so this covers both the
+    # modern and the legacy shape without reading either of them twice.
+    for text_box in root.findall(".//" + text_box_tag):
+        if any(a.tag == _MC_FALLBACK for a in text_box.iterancestors()):
+            continue
+        box_text = joined(text_box.findall(".//" + text_tag))
+        if box_text.strip():
+            blocks.append(box_text.strip())
+
+    return "\n".join(blocks)
 
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
