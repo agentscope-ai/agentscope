@@ -245,7 +245,11 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         """
         await self._attach_or_create_sandbox()
         self._note_lease_granted()
-        self._backend = E2BBackend(self._sandbox, workdir=SANDBOX_WORKDIR)
+        self._backend = E2BBackend(
+            self._sandbox,
+            workdir=SANDBOX_WORKDIR,
+            renew_hook=self.prepare_for_reuse,
+        )
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.

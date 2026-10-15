@@ -11,8 +11,10 @@ transient failures keep the existing connection.
 # pylint: disable=protected-access
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from agentscope.workspace._e2b._e2b_backend import E2BBackend
 from agentscope.workspace._e2b._e2b_workspace import E2BWorkspace
 
 
@@ -134,6 +136,59 @@ class TestE2BLeaseRenewal(unittest.IsolatedAsyncioTestCase):
         await ws._teardown_backend()
         self.assertIsNone(ws._last_renew_attempt_at)
         self.assertFalse(ws._lease_lost)
+
+
+class _FakeCommandsSandbox(_FakeSandbox):
+    """Adds the ``commands``/``files`` surface the backend primitives use."""
+
+    def __init__(self, sandbox_id: str = "sbx-test") -> None:
+        super().__init__(sandbox_id)
+        run_result = SimpleNamespace(exit_code=0, stdout="ok", stderr="")
+        self.commands = SimpleNamespace(run=AsyncMock(return_value=run_result))
+        self.files = SimpleNamespace(
+            read=AsyncMock(return_value=b"data"),
+            write=AsyncMock(return_value=None),
+        )
+
+
+class TestE2BBackendRenewWiring(unittest.IsolatedAsyncioTestCase):
+    """The exec path must actually invoke the renewal hook (PR #3285)."""
+
+    @staticmethod
+    def _make_backend(hook: AsyncMock) -> E2BBackend:
+        return E2BBackend(
+            _FakeCommandsSandbox(), workdir="/w", renew_hook=hook
+        )
+
+    async def test_primitives_invoke_renew_hook(self) -> None:
+        """exec_shell / read_file / write_file each renew before use."""
+        hook = AsyncMock(return_value=True)
+        backend = self._make_backend(hook)
+
+        await backend.exec_shell(["echo", "hi"])
+        await backend.read_file("/w/f.txt")
+        await backend.write_file("f.txt", b"x")
+
+        self.assertEqual(hook.call_count, 3)
+        backend._sandbox.commands.run.assert_awaited()
+
+    async def test_exec_fails_fast_when_lease_lost(self) -> None:
+        """Hook reporting False raises instead of hitting a dead sandbox."""
+        hook = AsyncMock(return_value=False)
+        backend = self._make_backend(hook)
+
+        with self.assertRaises(RuntimeError):
+            await backend.exec_shell(["echo", "hi"])
+        backend._sandbox.commands.run.assert_not_called()
+
+    async def test_provision_backend_binds_renew_hook(self) -> None:
+        """_provision_backend hands prepare_for_reuse to the backend."""
+        ws, _ = _make_workspace()
+        ws._attach_or_create_sandbox = AsyncMock()
+
+        await ws._provision_backend()
+
+        self.assertEqual(ws._backend._renew_hook, ws.prepare_for_reuse)
 
 
 if __name__ == "__main__":
