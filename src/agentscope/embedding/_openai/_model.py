@@ -139,9 +139,13 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         if self.pass_dimensions:
             api_kwargs["dimensions"] = self.dimensions
 
+        cache_identifier: dict[str, Any] = {
+            "base_url": str(self.client.base_url),
+            "api_kwargs": api_kwargs,
+        }
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
             if cached:
                 return EmbeddingResponse(
@@ -168,7 +172,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
 
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
                 embeddings=embeddings,
             )
 
