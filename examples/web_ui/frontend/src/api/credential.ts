@@ -5,6 +5,7 @@ import type {
 	CredentialListResponse,
 	CredentialView,
 	CredentialSchemasResponse,
+	RemoteModelsResponse,
 	UpdateCredentialRequest,
 } from './types';
 
@@ -20,4 +21,12 @@ export const credentialApi = {
 		client.patch<CredentialView>(`/credential/${credentialId}`, body),
 
 	delete: (credentialId: string) => client.delete(`/credential/${credentialId}`),
+
+	/** Ask the configured endpoint which models it actually serves. */
+	remoteModels: (credentialId: string, options?: { silent?: boolean }) =>
+		client.get<RemoteModelsResponse>(
+			`/credential/${credentialId}/remote-models`,
+			undefined,
+			options,
+		),
 };

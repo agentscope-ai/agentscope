@@ -1,6 +1,7 @@
-import { Eye, EyeOff, Plus, Trash2, Pen } from 'lucide-react';
+import { Cable, Eye, EyeOff, Plus, Trash2, Pen } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
+import { ApiError } from '@/api/client';
 import { credentialApi, embeddingModelApi, modelApi, ttsModelApi } from '@/api';
 import type {
 	CredentialView,
@@ -47,6 +48,13 @@ type ModelTab = 'llm' | 'tts' | 'embedding';
 
 /** A row in the model table — one of the three card shapes. */
 type ModelRow = ModelCard | TTSModelCard | EmbeddingModelCard;
+
+/** Result of probing the endpoint behind the credential. */
+type EndpointCheckState =
+	| { status: 'loading' }
+	| { status: 'ok'; remote: string[] }
+	| { status: 'unsupported'; detail: string }
+	| { status: 'error'; detail: string };
 
 // ─── Masked value ─────────────────────────────────────────────────────────────
 
@@ -232,6 +240,95 @@ function ModelTable({ models, variant }: ModelTableProps) {
 	);
 }
 
+// ─── Endpoint check ───────────────────────────────────────────────────────────
+
+/**
+ * Render the outcome of an endpoint probe next to the static catalog.
+ * The three-way split is the whole point: entries the endpoint serves
+ * and the catalog knows are usable now; endpoint-only entries need a
+ * custom model card; catalog-only entries likely fail at chat time.
+ *
+ * @param check - Probe result state.
+ * @param catalog - Chat model names from the static card catalog.
+ * @returns The compact comparison listing.
+ */
+function EndpointCheckResult({
+	check,
+	catalog,
+}: {
+	check: EndpointCheckState;
+	catalog: string[];
+}) {
+	const { t } = useTranslation();
+
+	if (check.status === 'loading') {
+		return (
+			<p className="mt-2 px-3 text-[11px] text-text-tertiary">
+				{t('credential.endpointCheck.checking')}
+			</p>
+		);
+	}
+	if (check.status === 'unsupported') {
+		return (
+			<p className="mt-2 px-3 text-[11px] text-text-tertiary">
+				{t('credential.endpointCheck.unsupported')}
+			</p>
+		);
+	}
+	if (check.status === 'error') {
+		return (
+			<p className="mt-2 px-3 text-[11px] break-all text-destructive">
+				{check.detail}
+			</p>
+		);
+	}
+
+	const catalogSet = new Set(catalog);
+	const usable = check.remote.filter((name) => catalogSet.has(name));
+	const endpointOnly = check.remote.filter((name) => !catalogSet.has(name));
+	const catalogOnly = catalog.filter((name) => !check.remote.includes(name));
+	const rows = [
+		{
+			label: t('credential.endpointCheck.usable', { count: usable.length }),
+			names: usable,
+		},
+		{
+			label: t('credential.endpointCheck.endpointOnly', {
+				count: endpointOnly.length,
+			}),
+			names: endpointOnly,
+		},
+		{
+			label: t('credential.endpointCheck.catalogOnly', {
+				count: catalogOnly.length,
+			}),
+			names: catalogOnly,
+		},
+	];
+
+	return (
+		<div className="mt-2 flex flex-col gap-y-1.5 px-3">
+			<p className="text-[11px] text-text-secondary">
+				{t('credential.endpointCheck.okSummary', { count: check.remote.length })}
+			</p>
+			{rows.map(({ label, names }) => (
+				<p key={label} className="text-[11px] text-text-tertiary">
+					{label}
+					{names.length > 0 && (
+						<span
+							className="ml-1.5 break-all font-mono text-[10px]"
+							title={names.join(', ')}
+						>
+							{names.slice(0, 8).join(', ')}
+							{names.length > 8 ? ` +${names.length - 8}` : ''}
+						</span>
+					)}
+				</p>
+			))}
+		</div>
+	);
+}
+
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
 interface DetailPanelProps {
@@ -256,6 +353,33 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 	// A credential switch can land on a provider with no TTS models at
 	// all, which would leave the tab pointing at an empty list.
 	useEffect(() => setTab('llm'), [credential.id]);
+
+	// Endpoint check — asks the configured endpoint what it serves so the
+	// static catalog can be compared against reality. Stale results reset
+	// on credential switch.
+	const [endpointCheck, setEndpointCheck] = useState<EndpointCheckState | null>(
+		null,
+	);
+	useEffect(() => setEndpointCheck(null), [credential.id]);
+
+	const checkEndpoint = useCallback(async () => {
+		setEndpointCheck({ status: 'loading' });
+		try {
+			const res = await credentialApi.remoteModels(credential.id, {
+				silent: true,
+			});
+			setEndpointCheck({ status: 'ok', remote: res.models });
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 400) {
+				setEndpointCheck({ status: 'unsupported', detail: e.detail });
+			} else {
+				setEndpointCheck({
+					status: 'error',
+					detail: e instanceof ApiError ? e.detail : String(e),
+				});
+			}
+		}
+	}, [credential.id]);
 
 	useEffect(() => {
 		if (!type) return;
@@ -374,7 +498,34 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 					})}
 				</div>
 
-				{/* Available Models */}
+				{/* Endpoint check — the static catalog above is curated per
+				    credential type and never consulted the base_url; this
+				    probe shows what the configured endpoint really serves. */}
+					<div className="mt-6 px-[18px]">
+						<div className="flex items-center justify-between rounded-[12px] border border-border px-3 py-2">
+							<span className="text-[11px] text-text-secondary">
+								{t('credential.endpointCheck.title')}
+							</span>
+							<Button
+								size="sm"
+								variant="ghost"
+								className="h-7 gap-x-1.5 text-[11.5px] text-text-secondary hover:text-foreground"
+								onClick={checkEndpoint}
+								disabled={endpointCheck?.status === 'loading'}
+							>
+								<Cable />
+								{t('credential.endpointCheck.action')}
+							</Button>
+						</div>
+						{endpointCheck && (
+							<EndpointCheckResult
+								check={endpointCheck}
+								catalog={models.map((m) => m.name)}
+							/>
+						)}
+					</div>
+
+					{/* Available Models */}
 				<Tabs
 					value={tab}
 					onValueChange={(v) => setTab(v as ModelTab)}

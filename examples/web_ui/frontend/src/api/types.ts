@@ -476,6 +476,12 @@ export interface CredentialListResponse {
 	total: number;
 }
 
+/** Raw model IDs reported by the endpoint behind a credential. */
+export interface RemoteModelsResponse {
+	models: string[];
+	total: number;
+}
+
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 
 export type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';

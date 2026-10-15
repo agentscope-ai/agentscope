@@ -40,3 +40,13 @@ class ListCredentialSchemasResponse(BaseModel):
     schemas: list[dict] = Field(
         description="JSON schemas for all registered credential types.",
     )
+
+
+class ListRemoteModelsResponse(BaseModel):
+    """Response body for listing the models a credential's endpoint
+    actually serves."""
+
+    models: list[str] = Field(
+        description="Sorted raw model IDs reported by the endpoint.",
+    )
+    total: int = Field(description="Total number of models.")

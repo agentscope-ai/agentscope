@@ -43,3 +43,20 @@ class OllamaCredential(CredentialBase):
         from ..embedding import OllamaEmbeddingModel
 
         return OllamaEmbeddingModel
+
+    async def list_remote_models(self) -> list[str] | None:
+        """Query the Ollama server's ``GET /api/tags`` model listing."""
+        from ._base import _http_get_json
+
+        payload = await _http_get_json(
+            f"{(self.host or 'http://localhost:11434').rstrip('/')}/api/tags",
+            headers={},
+        )
+        entries = payload.get("models", []) if isinstance(payload, dict) else []
+        return sorted(
+            {
+                entry["name"]
+                for entry in entries
+                if isinstance(entry, dict) and "name" in entry
+            },
+        )
