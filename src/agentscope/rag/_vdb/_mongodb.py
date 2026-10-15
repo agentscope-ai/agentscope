@@ -293,6 +293,7 @@ class MongoDBStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -305,8 +306,13 @@ class MongoDBStore(VectorStoreBase):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
         """
-        await self._col(collection).delete_many({"document_id": document_id})
+        query = {"document_id": document_id}
+        query.update(self._build_metadata_filter(metadata_filter) or {})
+        await self._col(collection).delete_many(query)
 
     # ------------------------------------------------------------------
     # Search
