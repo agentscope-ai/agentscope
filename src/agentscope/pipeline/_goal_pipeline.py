@@ -44,10 +44,21 @@ class _VerificationResult(BaseModel):
 
     message: str = Field(
         description=(
-            "If not passed, the message should explain why it "
-            "failed, and what needs to be fixed. List the specific "
-            "issues that need to be addressed, including where to "
-            "exactly find them (e.g., file paths, line numbers)."
+            "If not passed, a summary of why it failed. List the specific "
+            "issues that need to be addressed one by one in 'issues', "
+            "including where to exactly find them (e.g., file paths, line "
+            "numbers)."
+        ),
+    )
+
+    issues: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The specific issues that need to be addressed when the result "
+            "is 'fail', ordered by severity. Each item should follow the "
+            "format '[severity] issue - suggestion', e.g. '[critical] "
+            "Missing requirements.txt - add the dependency list'. Leave it "
+            "empty for 'pass' or 'impossible'."
         ),
     )
 
@@ -317,7 +328,9 @@ class GoalPipeline:
                         break
 
                     # Feedback to the executor for further improvement
-                    feedback = final_msg.structured_output.get("message")
+                    feedback = self._format_feedback(
+                        final_msg.structured_output,
+                    )
                     executor_inputs = UserMsg(
                         name="system",
                         content=(
@@ -331,3 +344,13 @@ class GoalPipeline:
             if break_loop:
                 # Break the loop for hitl events or verification passed
                 break
+
+    @staticmethod
+    def _format_feedback(structured_output: dict) -> str:
+        """Render a failed verification as executor feedback: an issue list
+        when the verifier supplied one, its summary message otherwise."""
+        issues = structured_output.get("issues") or []
+        if not issues:
+            return structured_output.get("message", "")
+        lines = "\n".join(f"- {_}" for _ in issues)
+        return f"{structured_output.get('message', '')}\n{lines}"

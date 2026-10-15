@@ -85,6 +85,58 @@ class SlowTool(ToolBase):
         return ToolChunk(content=[TextBlock(text="never")])
 
 
+class ConcurrencyProbe:
+    """Tracks how many tool calls of a kind run at the same time."""
+
+    def __init__(self) -> None:
+        """Start with nothing running."""
+        self.current = 0
+        self.max = 0
+
+    async def enter(self) -> None:
+        """Enter and yield once so sibling calls can overlap."""
+        self.current += 1
+        self.max = max(self.max, self.current)
+        await asyncio.sleep(0)
+
+    async def leave(self) -> None:
+        """Leave the call."""
+        self.current -= 1
+
+
+class ProbeTool(ToolBase):
+    """A tool that runs briefly and records its peak concurrency."""
+
+    name: str = "probe_tool"
+    description: str = "A tool that records its concurrency"
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+
+    def __init__(self, probe: ConcurrencyProbe) -> None:
+        """Share one probe across tools."""
+        super().__init__()
+        self._probe = probe
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="Allowed",
+        )
+
+    async def call(self) -> ToolChunk:
+        """Hold the probe for a moment so overlaps are visible."""
+        await self._probe.enter()
+        await asyncio.sleep(0.05)
+        await self._probe.leave()
+        return ToolChunk(content=[TextBlock(text="probed")])
+
+
 def _tool_call(
     id: str,
     input: str,
@@ -1095,3 +1147,82 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertListEqual(self.researcher.state.context, [])
+
+    async def _run_probe_team(
+        self,
+        probe: ConcurrencyProbe,
+        max_concurrency: int | None,
+    ) -> None:
+        """Run one round in which four members each call the probe tool."""
+        members = [
+            TeamMember(
+                agent=_agent(f"member-{i}", [ProbeTool(probe)]),
+                description="Probes",
+            )
+            for i in range(4)
+        ]
+        self.pipeline = TeamPipeline(
+            leader=self.leader,
+            members=members,
+            max_concurrency=max_concurrency,
+        )
+        self.leader.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=f"call-{i}",
+                                name="TeamAssign",
+                                input=f'{{"member": "member-{i}", '
+                                '"prompt": "Probe"}}',
+                            )
+                            for i in range(4)
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                _text("All probed."),
+            ],
+        )
+        for i, member in enumerate(members):
+            member.agent.model.set_responses(
+                [
+                    _tool_call(f"call-m{i}", "{}", name="probe_tool"),
+                    _text("probed"),
+                ],
+            )
+
+        await self._run(self.query)
+
+        self.assertEqual(
+            self.leader.state.context[-1].get_text_content(),
+            "All probed.",
+        )
+
+    async def test_max_concurrency_bounds_members(self) -> None:
+        """At most ``max_concurrency`` members run at the same time."""
+        probe = ConcurrencyProbe()
+        await self._run_probe_team(probe, max_concurrency=2)
+        self.assertEqual(probe.max, 2)
+
+    async def test_default_concurrency_unbounded(self) -> None:
+        """Without ``max_concurrency``, every member runs at once."""
+        probe = ConcurrencyProbe()
+        await self._run_probe_team(probe, max_concurrency=None)
+        self.assertEqual(probe.max, 4)
+
+    async def test_invalid_max_concurrency(self) -> None:
+        """A ``max_concurrency`` below one is rejected."""
+        with self.assertRaises(ValueError):
+            TeamPipeline(
+                leader=self.leader,
+                members=[
+                    TeamMember(
+                        agent=self.researcher,
+                        description="Researches",
+                    ),
+                ],
+                max_concurrency=0,
+            )
