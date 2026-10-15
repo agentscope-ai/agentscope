@@ -104,7 +104,9 @@ class K8sBackend(BackendBase):
 
         Returns:
             `ExecResult`:
-                The captured exit code, stdout, and stderr.
+                The captured exit code, stdout, and stderr.  ``-1`` when
+                the stream ended before the Pod reported a verdict, so a
+                cut-off command is not read as a successful one.
         """
         from kubernetes_asyncio import client as k8s_client
         from kubernetes_asyncio.stream import WsApiClient
@@ -137,6 +139,7 @@ class K8sBackend(BackendBase):
                 stdout_parts: list[bytes] = []
                 stderr_parts: list[bytes] = []
                 exit_code = 0
+                status_seen = False
 
                 async with ws as sock:
                     async for msg in sock:
@@ -160,6 +163,7 @@ class K8sBackend(BackendBase):
                             elif channel == 3:  # error/status
                                 import json
 
+                                status_seen = True
                                 try:
                                     status = json.loads(
                                         payload.decode("utf-8"),
@@ -182,6 +186,14 @@ class K8sBackend(BackendBase):
                                     exit_code = 1
                         else:
                             break
+
+                # Only the channel-3 frame carries a verdict. A stream cut
+                # by a connection error ends on a non-data frame without one,
+                # and ``ExecResult.exit_code`` documents ``-1`` for exactly
+                # that, so returning the ``0`` this loop started from reads a
+                # half-run command back to the caller as a success.
+                if not status_seen:
+                    exit_code = -1
 
                 return ExecResult(
                     exit_code=exit_code,
@@ -268,7 +280,9 @@ class K8sBackend(BackendBase):
 
         After sending the tar data, this method reads back the exec
         stream to capture any ``tar`` stderr and exit status.  A
-        non-zero exit raises ``RuntimeError``.
+        non-zero exit raises ``RuntimeError``, as does a stream that
+        ends before reporting one: either way the file did not verifiably
+        land.
 
         Args:
             path (`str`):
@@ -339,7 +353,8 @@ class K8sBackend(BackendBase):
 
         Raises:
             `RuntimeError`:
-                If the command exits non-zero inside the Pod.
+                If the command exits non-zero inside the Pod, or the
+                stream ends before it reports a verdict at all.
         """
         from kubernetes_asyncio import client as k8s_client
         from kubernetes_asyncio.stream import WsApiClient
@@ -361,6 +376,7 @@ class K8sBackend(BackendBase):
             )
             stderr_parts: list[bytes] = []
             exit_code = 0
+            status_seen = False
 
             async with ws as sock:
                 if isinstance(stdin, list):
@@ -388,6 +404,7 @@ class K8sBackend(BackendBase):
                     elif channel == 3:
                         import json
 
+                        status_seen = True
                         try:
                             status = json.loads(
                                 payload.decode("utf-8"),
@@ -399,6 +416,13 @@ class K8sBackend(BackendBase):
                             ValueError,
                         ):
                             exit_code = 1
+
+            if not status_seen:
+                raise RuntimeError(
+                    f"write to {path!r} failed: the exec stream ended "
+                    f"before {command[0]} reported an exit status, so the "
+                    "file may be truncated.",
+                )
 
             if exit_code != 0:
                 stderr_text = b"".join(stderr_parts).decode(
