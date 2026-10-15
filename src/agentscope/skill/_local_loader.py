@@ -13,6 +13,24 @@ from .._utils._common import _normalize_local_path
 from ..skill import Skill
 
 
+def _find_skill_md(directory: str) -> str | None:
+    """Locate the SKILL.md file in *directory*, case-insensitively.
+
+    Returns the path of the actual file, or ``None`` when the directory
+    contains no skill manifest under any casing of ``SKILL.md``.
+    """
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.lower() == "skill.md" and os.path.isfile(
+            os.path.join(directory, entry),
+        ):
+            return os.path.join(directory, entry)
+    return None
+
+
 class LocalSkillLoader(SkillLoaderBase):
     """The skill loader that loads skills from a local directory."""
 
@@ -39,13 +57,14 @@ class LocalSkillLoader(SkillLoaderBase):
         Returns:
             `Skill | None`: A Skill object or None if loading failed.
         """
-        skill_md_path = os.path.join(skill_root, "SKILL.md")
+        # Resolve the manifest case-insensitively so a skill written as
+        # ``skill.md`` on a case-insensitive filesystem still loads on a
+        # case-sensitive one.
+        skill_md_path = _find_skill_md(skill_root)
+        if skill_md_path is None:
+            return None
 
         try:
-            # Check if SKILL.md exists
-            if not await aiofiles.ospath.isfile(skill_md_path):
-                return None
-
             # Get file modification time
             updated_at = await aiofiles.ospath.getmtime(skill_md_path)
 
@@ -125,14 +144,14 @@ class LocalSkillLoader(SkillLoaderBase):
                 """Find all directories containing SKILL.md file."""
                 dirs = []
 
-                if os.path.isfile(os.path.join(self.directory, "SKILL.md")):
+                if _find_skill_md(self.directory):
                     dirs.append(self.directory)
 
                 if self.scan_subdir:
-                    for root, _, filenames in os.walk(self.directory):
+                    for root, _, _filenames in os.walk(self.directory):
                         if root == self.directory:
                             continue
-                        if "SKILL.md" in filenames:
+                        if _find_skill_md(root):
                             dirs.append(root)
 
                 return dirs
