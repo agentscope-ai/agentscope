@@ -174,9 +174,14 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         if rule_content is None:
             return True
 
-        # Try matching against the search path first
+        # Try matching against the search path first. The suggestion this
+        # class generates is ``<dir>/**``, and fnmatch needs the trailing
+        # separator for that to match, so also try the directory with one.
         path = tool_input.get("path", "")
-        if path and fnmatch.fnmatch(path, rule_content):
+        if path and any(
+            fnmatch.fnmatch(candidate, rule_content)
+            for candidate in (path, path.rstrip("/\\") + "/")
+        ):
             return True
 
         # Fall back to matching against the pattern itself
