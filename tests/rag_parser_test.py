@@ -1992,7 +1992,9 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
             ExcelParser(table_format="csv")  # type: ignore[arg-type]
 
 
-class WordParserTest(IsolatedAsyncioTestCase):
+class WordParserTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Behavioural coverage for :class:`WordParser`."""
 
     async def test_invalid_input_errors(self) -> None:
@@ -2232,6 +2234,41 @@ class WordParserTest(IsolatedAsyncioTestCase):
                             ["", "", "tail", ""],
                         ],
                     )
+
+    async def test_wide_rows_keep_all_cells_in_markdown(self) -> None:
+        """Rows wider than the header must not lose their extra cells.
+
+        A ragged table (fewer header cells than a data row) is schema-valid
+        OOXML, and markdown is the default ``table_format``: truncating to
+        the header width silently dropped the data, while the json format
+        kept every cell.
+        """
+        # python-docx has no public setter for dropping cells either.
+        # pylint: disable=protected-access
+        from docx import Document
+
+        doc = Document()
+        table = doc.add_table(rows=2, cols=4)
+        table.cell(0, 0).text = "H1"
+        table.cell(0, 1).text = "H2"
+        for col, text in zip(table.rows[1].cells, ("a", "b", "c", "d")):
+            col.text = text
+        for index in (3, 2):
+            table.rows[0]._tr.remove(table.rows[0]._tr.tc_lst[index])
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(
+            table_format="markdown",
+            separate_table=True,
+        ).parse(buffer.getvalue(), "ragged.docx")
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(
+            sections[0].content.text,
+            "| H1 | H2 |  |  |\n"
+            "| --- | --- | --- | --- |\n"
+            "| a | b | c | d |\n",
+        )
 
     async def test_nested_table_text_is_kept(self) -> None:
         """Text inside a table nested in another cell must survive parsing."""
