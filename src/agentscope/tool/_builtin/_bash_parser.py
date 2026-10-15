@@ -151,8 +151,8 @@ class BashCommandParser:
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
-        For compound commands (&&, ||, ;, |), ALL subcommands must be
-        read-only for the entire command to be considered read-only.
+        For compound commands (&&, ||, ;, |, &, newline), ALL subcommands
+        must be read-only for the entire command to be considered read-only.
 
         Commands with output redirections (>, >>) are NOT considered read-only.
 
@@ -172,8 +172,13 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command
-        if any(op in cmd for op in ["&&", "||", ";", "|"]):
+        # Check if it's a compound command. A background "&" and a newline
+        # separate commands just like ";" does — without them here, a
+        # mutating command rides behind a read-only prefix (``ls & rm -f x``)
+        # and the prefix match below auto-allows the whole line. ("&&" already
+        # contains "&"; a quoted operator is harmless because the AST splitter
+        # only yields real command nodes.)
+        if any(op in cmd for op in ["&&", "||", ";", "|", "&", "\n"]):
             # Split into subcommands and check each one
             try:
                 tree = self.parser.parse(bytes(cmd, "utf8"))
@@ -535,7 +540,7 @@ class BashCommandParser:
     def split_compound_command(self, root: Node, command: str) -> List[str]:
         """Split compound commands using tree-sitter for precise parsing.
 
-        Recognizes: &&, ||, ;, |
+        Recognizes: &&, ||, ;, |, & (background), and newline separators.
 
         Args:
             root (`Node`):
