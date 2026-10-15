@@ -499,3 +499,44 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["items"], [])
+
+    async def test_upload_html_document(self) -> None:
+        """Upload an HTML file and observe the lifecycle."""
+        headers = {"X-User-ID": "user-1"}
+        with TestClient(self._app) as client:
+            files = {
+                "file": (
+                    "page.html",
+                    b"<html><head><meta charset=\"utf-8\"></head><body>hello html</body></html>",
+                    "text/html",
+                ),
+            }
+            resp = client.post(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                files=files,
+                headers=headers,
+            )
+            self.assertEqual(resp.status_code, 201, resp.text)
+            body = resp.json()
+            document_id = body["document_id"]
+            self.assertEqual(body["filename"], "page.html")
+
+            deadline = 5.0
+            poll = 0.05
+            elapsed = 0.0
+            final_status = body["status"]
+            while elapsed < deadline:
+                resp = client.get(
+                    f"/knowledge_bases/{self._kb_id}/documents/status",
+                    params={"ids": document_id},
+                    headers=headers,
+                )
+                self.assertEqual(resp.status_code, 200, resp.text)
+                items = resp.json()["items"]
+                self.assertEqual(len(items), 1, items)
+                final_status = items[0]["status"]
+                if final_status in ("ready", "error"):
+                    break
+                await asyncio.sleep(poll)
+                elapsed += poll
+            self.assertEqual(final_status, "ready", items)

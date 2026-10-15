@@ -14,6 +14,7 @@ from ._parser import (
     TextParser,
     WordParser,
     ExcelParser,
+    HtmlParser,
 )
 from ._vdb import (
     DocumentSummary,
@@ -41,6 +42,7 @@ __all__ = [
     "TextParser",
     "WordParser",
     "ExcelParser",
+    "HtmlParser",
     "Section",
     "VectorStoreBase",
     "VectorRecord",

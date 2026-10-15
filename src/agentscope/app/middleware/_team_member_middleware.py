@@ -157,8 +157,6 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
             ):
                 # Interrupted / already-failed endings cannot be continued
                 # by swallowing their ReplyEndEvent.  Forward unchanged.
-                # TODO: When the subagent fails, the leader should be aware
-                #  of that.
                 yield evt
                 continue
 
