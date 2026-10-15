@@ -607,3 +607,29 @@ class FileCacheTest(  # pylint: disable=too-many-public-methods
         with open(self.test_file, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "final\n")
+
+    async def test_non_utf8_read_is_not_cached_for_edit(self) -> None:
+        """Test a lossy non-UTF-8 Read cannot back an Edit."""
+        original = b"name = 'caf\xe9'\ncount = 1\n"
+        with open(self.test_file, "wb") as f:
+            f.write(original)
+
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+        self.assertIn("�", read_chunk.content[0].text)
+        self.assertIn("not valid UTF-8", read_chunk.content[0].text)
+        self.assertEqual(self.state.tool_context.read_file_cache, [])
+
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="count = 1",
+            new_string="count = 2",
+            _agent_state=self.state,
+        )
+        self.assertEqual(edit_chunk.state, "error")
+
+        with open(self.test_file, "rb") as f:
+            self.assertEqual(f.read(), original)

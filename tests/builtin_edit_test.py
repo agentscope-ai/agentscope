@@ -238,3 +238,20 @@ class EditToolTest(IsolatedAsyncioTestCase):
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)
+
+    async def test_non_utf8_file_is_not_edited(self) -> None:
+        """Test editing a non-UTF-8 file fails and keeps its bytes."""
+        original = b"name = 'caf\xe9'\ncount = 1\n"
+        with open(self.temp_file.name, "wb") as f:
+            f.write(original)
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="count = 1",
+            new_string="count = 2",
+        )
+
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("can't decode", chunk.content[0].text)
+        with open(self.temp_file.name, "rb") as f:
+            self.assertEqual(f.read(), original)
