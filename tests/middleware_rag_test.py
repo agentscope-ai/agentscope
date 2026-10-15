@@ -1124,3 +1124,26 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             [result.document_id for result in results],
             ["doc-broad"],
         )
+
+
+class RAGHintTemplateValidationTest(IsolatedAsyncioTestCase):
+    """``hint_template`` must be renderable, not merely contain a marker."""
+
+    def test_unknown_placeholder_is_rejected(self) -> None:
+        """A second, unknown placeholder must fail validation up front."""
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(
+                hint_template="A {context} B {doc_id}",
+            )
+
+    def test_valid_template_is_still_accepted(self) -> None:
+        """The documented single-placeholder form keeps validating."""
+        params = RAGMiddleware.Parameters(
+            hint_template="Sources:\n{context}",
+        )
+        self.assertIn("{context}", params.hint_template)
+
+    def test_missing_placeholder_is_still_rejected(self) -> None:
+        """The pre-existing count check must keep working."""
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="no placeholder here")
