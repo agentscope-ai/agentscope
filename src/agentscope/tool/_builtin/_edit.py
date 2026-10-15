@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The edit tool in agentscope."""
-import difflib
 import fnmatch
 from typing import Any, List
 
@@ -20,6 +19,7 @@ from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
 from ._backend import BackendBase, _normalize_newlines
+from ._diff import _unified_diff
 
 
 class Edit(ToolBase):
@@ -312,7 +312,7 @@ Usage:
                 is_last=True,
             )
 
-        content = None
+        content: str
         if _agent_state is not None:
             # Take the mtime from the backend that reads the file, so the
             # cache also works for sandbox-only paths.
@@ -424,14 +424,11 @@ Usage:
         # web UI can render it with real line numbers and proper inter-hunk
         # gaps. The diff is kept in ``metadata`` only (not in the textual
         # output) so it does not bloat the LLM context.
-        diff_text = "".join(
-            difflib.unified_diff(
-                content.splitlines(keepends=True),
-                updated_content.splitlines(keepends=True),
-                fromfile=f"a/{file_path}",
-                tofile=f"b/{file_path}",
-                n=3,
-            ),
+        diff_text = _unified_diff(
+            content,
+            updated_content,
+            fromfile=f"a/{file_path}",
+            tofile=f"b/{file_path}",
         )
 
         return ToolChunk(
