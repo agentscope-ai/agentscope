@@ -355,7 +355,10 @@ class Grep(ToolBase):
             n: Show line numbers (content mode only, default True)
             **kwargs: Additional parameters (-A, -B, -C)
         """
-        search_path = path or await self._backend.getcwd()
+        search_path = self._backend.abspath(
+            path or ".",
+            cwd=await self._backend.getcwd(),
+        )
 
         if head_limit is not None and head_limit < 0:
             return ToolChunk(
