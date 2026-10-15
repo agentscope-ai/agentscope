@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the QdrantStore class."""
 from contextlib import AsyncExitStack
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -698,3 +699,187 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             [c.content.text for c in chunks],
             ["v2-chunk0", "v2-chunk1"],
         )
+
+    async def _metadata_hits(
+        self,
+        metadata_filter: dict[str, Any],
+        document_id: str,
+    ) -> dict[str, list[str]]:
+        """Run the three filtered reads and return identifying labels.
+
+        Args:
+            metadata_filter (`dict[str, Any]`):
+                The filter passed to every read.
+            document_id (`str`):
+                The document ``list_chunks`` is scoped to.
+
+        Returns:
+            `dict[str, list[str]]`:
+                Document ids from ``search`` and ``list_documents``,
+                and chunk texts from ``list_chunks``.
+        """
+        hits = await self.store.search(
+            "kb-1",
+            [1.0, 0.0, 0.0],
+            metadata_filter=metadata_filter,
+        )
+        documents = await self.store.list_documents(
+            "kb-1",
+            metadata_filter=metadata_filter,
+        )
+        chunks = await self.store.list_chunks(
+            "kb-1",
+            document_id,
+            metadata_filter=metadata_filter,
+        )
+        return {
+            "search": [result.document_id for result in hits],
+            "list_documents": [doc.document_id for doc in documents],
+            "list_chunks": [chunk.content.text for chunk in chunks],
+        }
+
+    async def test_metadata_filter_matches_literal_dotted_keys(
+        self,
+    ) -> None:
+        """Dotted keys match literal metadata, not nested paths."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        fixtures = {
+            "literal": {"release.version": "v1"},
+            "nested": {"release": {"version": "v1"}},
+            "plain": {"release_version": "v1"},
+        }
+        records = []
+        for name, metadata in fixtures.items():
+            record = _make_record(name, [1.0, 0.0, 0.0], document_id=name)
+            record.chunk.metadata.update(metadata)
+            records.append(record)
+        await self.store.insert("kb-1", records)
+
+        stored = {
+            doc.document_id: doc.metadata
+            for doc in await self.store.list_documents("kb-1")
+        }
+        self.assertEqual(stored, fixtures)
+
+        plain = await self._metadata_hits(
+            {"release_version": "v1"},
+            "plain",
+        )
+        self.assertEqual(
+            plain,
+            {
+                "search": ["plain"],
+                "list_documents": ["plain"],
+                "list_chunks": ["plain"],
+            },
+        )
+
+        dotted = await self._metadata_hits(
+            {"release.version": "v1"},
+            "literal",
+        )
+        self.assertEqual(
+            dotted,
+            {
+                "search": ["literal"],
+                "list_documents": ["literal"],
+                "list_chunks": ["literal"],
+            },
+        )
+        nested_chunks = await self.store.list_chunks(
+            "kb-1",
+            "nested",
+            metadata_filter={"release.version": "v1"},
+        )
+        self.assertEqual(nested_chunks, [])
+        missed = await self._metadata_hits(
+            {"release.version": "v2"},
+            "literal",
+        )
+        self.assertEqual(
+            missed,
+            {
+                "search": [],
+                "list_documents": [],
+                "list_chunks": [],
+            },
+        )
+
+    async def test_metadata_filter_matches_literal_bracket_keys(
+        self,
+    ) -> None:
+        """Bracket characters stay inside the metadata key."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        fixtures = {
+            "literal": {"release[0]": "v1"},
+            "indexed": {"release": ["v1"]},
+        }
+        records = []
+        for name, metadata in fixtures.items():
+            record = _make_record(name, [1.0, 0.0, 0.0], document_id=name)
+            record.chunk.metadata.update(metadata)
+            records.append(record)
+        await self.store.insert("kb-1", records)
+        stored = {
+            doc.document_id: doc.metadata
+            for doc in await self.store.list_documents("kb-1")
+        }
+        self.assertEqual(stored, fixtures)
+
+        hits = await self._metadata_hits({"release[0]": "v1"}, "literal")
+        self.assertEqual(
+            hits,
+            {
+                "search": ["literal"],
+                "list_documents": ["literal"],
+                "list_chunks": ["literal"],
+            },
+        )
+        indexed_chunks = await self.store.list_chunks(
+            "kb-1",
+            "indexed",
+            metadata_filter={"release[0]": "v1"},
+        )
+        self.assertEqual(indexed_chunks, [])
+
+    async def test_metadata_filter_rejects_quotes_and_backslashes(
+        self,
+    ) -> None:
+        """Reject keys Qdrant payload paths cannot escape."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        bad_keys = (
+            'release"version',
+            "release\\version",
+            'a\\"b',
+        )
+        for key in bad_keys:
+            metadata_filter = {"safe": "v1", key: "v1"}
+            with self.subTest(operation="search", key=key):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "quotes or backslashes",
+                ):
+                    await self.store.search(
+                        "kb-1",
+                        [1.0, 0.0, 0.0],
+                        metadata_filter=metadata_filter,
+                    )
+            with self.subTest(operation="list_documents", key=key):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "quotes or backslashes",
+                ):
+                    await self.store.list_documents(
+                        "kb-1",
+                        metadata_filter=metadata_filter,
+                    )
+            with self.subTest(operation="list_chunks", key=key):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "quotes or backslashes",
+                ):
+                    await self.store.list_chunks(
+                        "kb-1",
+                        "doc-1",
+                        metadata_filter=metadata_filter,
+                    )

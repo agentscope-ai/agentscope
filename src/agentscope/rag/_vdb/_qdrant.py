@@ -300,8 +300,8 @@ class QdrantStore(VectorStoreBase):
             metadata_filter (`dict[str, Any] | None`, optional):
                 If provided, restrict the search to records whose
                 ``chunk.metadata`` matches every ``key == value`` pair
-                in this dict (translated into a Qdrant ``must`` payload
-                filter against ``chunk.metadata.<key>``).
+                in this dict. Each key is a literal top-level metadata
+                name, including names that contain ``.`` or ``[]``.
 
         Returns:
             `list[VectorSearchResult]`:
@@ -348,6 +348,7 @@ class QdrantStore(VectorStoreBase):
             metadata_filter (`dict[str, Any] | None`, optional):
                 If provided, restrict aggregation to records whose
                 ``chunk.metadata`` matches every ``key == value`` pair.
+                Each key is a literal top-level metadata name.
 
         Returns:
             `list[DocumentSummary]`:
@@ -418,7 +419,8 @@ class QdrantStore(VectorStoreBase):
             limit (`int`, defaults to ``30``):
                 Maximum number of chunks to return.
             metadata_filter (`dict[str, Any] | None`, optional):
-                Extra ``chunk.metadata`` equality constraints.
+                Extra ``chunk.metadata`` equality constraints. Each
+                key is a literal top-level metadata name.
 
         Returns:
             `list[Chunk]`:
@@ -469,15 +471,46 @@ class QdrantStore(VectorStoreBase):
         return [by_index[index] for index in sorted(by_index)][:limit]
 
     @staticmethod
+    def _metadata_field_path(key: str) -> str:
+        """Build a Qdrant path for one literal metadata key.
+
+        ``metadata_filter`` is a flat dictionary: each key is a
+        top-level name in ``Chunk.metadata``, not a nested path. The
+        name is one quoted segment (``chunk.metadata."<key>"``) so
+        ``.`` and ``[]`` stay inside that name. Qdrant payload paths
+        have no escape syntax, so a key that contains a quote or a
+        backslash is rejected instead of matching another field.
+
+        Args:
+            key (`str`):
+                A literal top-level metadata key.
+
+        Returns:
+            `str`:
+                The payload path ``chunk.metadata."<key>"``.
+
+        Raises:
+            `ValueError`:
+                If ``key`` contains ``"`` or ``\\``.
+        """
+        if '"' in key or "\\" in key:
+            raise ValueError(
+                "Metadata filter keys cannot contain quotes or "
+                "backslashes.",
+            )
+        return f'chunk.metadata."{key}"'
+
+    @staticmethod
     def _build_metadata_filter(
         metadata_filter: dict[str, Any] | None,
     ) -> Any:
         """Translate a flat ``{key: value}`` filter into a Qdrant filter.
 
-        Each ``key`` is matched against the corresponding nested path
-        ``chunk.metadata.<key>`` written by :meth:`insert`.  Returns
-        ``None`` when ``metadata_filter`` is empty so that callers
-        skip the filter argument entirely.
+        Each key is a literal top-level ``Chunk.metadata`` name. It is
+        quoted as one path segment so characters such as ``.`` are not
+        read as nested fields. Returns ``None`` when
+        ``metadata_filter`` is empty so that callers skip the filter
+        argument entirely.
 
         Args:
             metadata_filter (`dict[str, Any] | None`):
@@ -486,6 +519,11 @@ class QdrantStore(VectorStoreBase):
         Returns:
             `qdrant_client.models.Filter | None`:
                 A Qdrant ``Filter`` object, or ``None``.
+
+        Raises:
+            `ValueError`:
+                If a key contains a quote or a backslash, or a float
+                value is not finite.
         """
         if not metadata_filter:
             return None
@@ -494,7 +532,7 @@ class QdrantStore(VectorStoreBase):
 
         conditions = []
         for key, value in metadata_filter.items():
-            field = f"chunk.metadata.{key}"
+            field = QdrantStore._metadata_field_path(key)
             if isinstance(value, float):
                 if not math.isfinite(value):
                     raise ValueError(
