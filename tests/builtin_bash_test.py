@@ -190,6 +190,40 @@ class BashToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].state, "error")
         self.assertIn("timed out", chunks[0].content[0].text.lower())
 
+    async def test_timeout_zero_rejected(self) -> None:
+        """timeout=0 must not fake-timeout a successful command (#3307)."""
+        chunks = []
+        async for chunk in self.bash_tool.call(
+            command='echo "hello world"',
+            timeout=0,
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "error")
+        self.assertIn("timeout must be at least 1ms", chunks[0].content[0].text)
+        self.assertIn("got: 0", chunks[0].content[0].text)
+        self.assertNotIn("Command failed", chunks[0].content[0].text)
+
+    async def test_timeout_negative_rejected(self) -> None:
+        """timeout<0 must be rejected with a clear error (#3307)."""
+        chunks = []
+        async for chunk in self.bash_tool.call(
+            command='echo "hello world"',
+            timeout=-1,
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "error")
+        self.assertIn("timeout must be at least 1ms", chunks[0].content[0].text)
+        self.assertIn("got: -1", chunks[0].content[0].text)
+
+    async def test_timeout_schema_minimum_is_one(self) -> None:
+        """JSON schema minimum for timeout is 1ms (#3307)."""
+        timeout_schema = self.bash_tool.input_schema["properties"]["timeout"]
+        self.assertEqual(timeout_schema["minimum"], 1)
+
 
 @unittest.skipIf(
     sys.platform == "win32",

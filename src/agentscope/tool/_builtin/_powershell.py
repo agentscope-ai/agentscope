@@ -80,7 +80,7 @@ are easier for the user to review and authorize:
                 ),
                 "default": 120000,
                 "maximum": 600000,
-                "minimum": 0,
+                "minimum": 1,
             },
         },
         "required": ["command"],
@@ -185,6 +185,21 @@ are easier for the user to review and authorize:
             `ToolChunk`:
                 A final chunk containing the command output.
         """
+        if timeout < 1:
+            yield ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            f"Error: timeout must be at least 1ms, "
+                            f"got: {timeout}."
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+            return
+
         timeout_ms = min(timeout, 600000)
         encoded_user_command = base64.b64encode(
             command.encode("utf-16-le"),
