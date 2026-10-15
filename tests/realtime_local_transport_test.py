@@ -172,3 +172,49 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
             ).model_dump(),
             {"item_id": "x", "played_ms": 1, "first_played_at": 2.0},
         )
+
+    async def test_odd_length_pcm_does_not_break_the_callback(self) -> None:
+        """A dangling half-sample must not reach ``np.frombuffer``.
+
+        Providers stream base64 PCM in chunks that need not end on a sample
+        boundary, and this runs on PortAudio's thread, where a raised
+        exception leaves the output block unfilled.
+        """
+        transport = LocalAudioTransport(output_sample_rate=24000)
+        await transport.send_audio(
+            np.full(600, 7, np.int16).tobytes() + b"\x01",
+            "r1",
+        )
+
+        out = _play(transport, 1)
+
+        self.assertEqual(
+            (
+                int(out[0, 0]),
+                int(out[599, 0]),
+                int(out[600, 0]),
+                len(transport._pending),
+            ),
+            (7, 7, 0, 0),
+        )
+
+    async def test_clear_audio_tolerates_a_dangling_byte(self) -> None:
+        """The fade must not read an unaligned buffer either.
+
+        1439 bytes is an odd count *and* shorter than one fade (1440), which
+        is the case where the sliced buffer itself is unaligned.
+        """
+        transport = LocalAudioTransport(output_sample_rate=24000, fade_ms=30)
+        await transport.send_audio(
+            np.full(719, 1000, np.int16).tobytes() + b"\x01",
+            "r1",
+        )
+
+        cut = await transport.clear_audio()
+
+        tail = np.frombuffer(bytes(transport._pending), np.int16)
+        self.assertEqual(
+            (cut.played_ms, len(tail), int(tail[0])),
+            (0, 719, 1000),
+        )
+        self.assertTrue(bool(np.all(np.diff(tail) <= 0)))
