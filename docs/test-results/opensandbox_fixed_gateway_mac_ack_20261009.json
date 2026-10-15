@@ -1,0 +1,507 @@
+{
+  "scope": "Fresh workspace startup with a prestarted empty gateway; builtin tools, skills, MCP isolation and same-node pause/resume",
+  "template_id": "tpl-bf7a1d2c-fd3e-47a5-aaa9-5b374acf561f",
+  "results": [
+    {
+      "iteration": 1,
+      "kind": "warmup",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-6144a41a-18b9-4d33-92b3-b6140d13a92e",
+      "sdk_create_seconds": 0.07039273506961763,
+      "provision_seconds": 0.08883426990360022,
+      "backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0018665969837456942
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27657062700018287
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2136927719693631
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20310769812203944
+        },
+        {
+          "method": "file_exists",
+          "seconds": 0.20310994796454906
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20416451105847955
+        },
+        {
+          "method": "write_file",
+          "seconds": 0.20658248499967158
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2110555712133646
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2123587210662663
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.22887039696797729
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.25893627805635333
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2050470681861043
+        },
+        {
+          "method": "write_file",
+          "seconds": 0.20699511701241136
+        }
+      ],
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27877402515150607,
+      "initialize_seconds": 0.36777288909070194,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0018665969837456942
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27657062700018287
+        }
+      ],
+      "prestarted_gateway_pid": 623,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 2,
+      "kind": "warmup",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-4811b513-fad8-474a-be85-f7873786ce33",
+      "sdk_create_seconds": 2.0585233939345926,
+      "provision_seconds": 2.081163296941668,
+      "backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0018020160496234894
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27524538710713387
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 3.4610962739679962
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20413003000430763
+        },
+        {
+          "method": "file_exists",
+          "seconds": 0.20413250988349319
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20297532505355775
+        },
+        {
+          "method": "write_file",
+          "seconds": 0.20511101000010967
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.21149139502085745
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2098896859679371
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.22938752314075828
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2598072439432144
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20440183789469302
+        },
+        {
+          "method": "write_file",
+          "seconds": 0.2066598569508642
+        }
+      ],
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.2772232280112803,
+      "initialize_seconds": 2.358507138909772,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0018020160496234894
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27524538710713387
+        }
+      ],
+      "prestarted_gateway_pid": 623,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 3,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-1701e20e-0dda-4a1d-8c03-d70645d359bc",
+      "sdk_create_seconds": 0.058700428111478686,
+      "provision_seconds": 0.14734527096152306,
+      "backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0016381791792809963
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27593189803883433
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.21346787502989173
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20315236994065344
+        },
+        {
+          "method": "file_exists",
+          "seconds": 0.20315485005266964
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20313240913674235
+        },
+        {
+          "method": "write_file",
+          "seconds": 0.20521259307861328
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.21096925786696374
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.21369125205092132
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2293120699469
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2586764090228826
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.20294942311011255
+        },
+        {
+          "method": "write_file",
+          "seconds": 0.20486881188116968
+        }
+      ],
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.2777334628626704,
+      "initialize_seconds": 0.42519304691813886,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0016381791792809963
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27593189803883433
+        }
+      ],
+      "prestarted_gateway_pid": 623,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    }
+  ],
+  "resume": {
+    "kind": "same_node_resume",
+    "status": "PASS",
+    "bootstrap_calls": 0,
+    "same_node_pool": true,
+    "sandbox_id": "fsb-310f2e89-71f7-4d9a-87b5-27acc3ae2a0e",
+    "sdk_create_seconds": 0.06004111818037927,
+    "provision_seconds": 2.0480719939805567,
+    "backend_calls": [
+      {
+        "method": "read_file",
+        "seconds": 0.001625729026272893
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2751656440086663
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20399533491581678
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20728651713579893
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20320546091534197
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.20469936705194414
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2303158910945058
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20279499888420105
+      },
+      {
+        "method": "file_exists",
+        "seconds": 0.20279703894630075
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20294416416436434
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.2049066941253841
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2041318800766021
+      },
+      {
+        "method": "read_file",
+        "seconds": 0.0013200710527598858
+      },
+      {
+        "method": "read_file",
+        "seconds": 0.0010876727756112814
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20287546189501882
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.20412175985984504
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.6724157771095634
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2049715449102223
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2031069789081812
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.2049427549354732
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2585237040184438
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20299952500499785
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.204231983050704
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.26067524077370763
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20281871920451522
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20335858594626188
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20573984901420772
+      },
+      {
+        "method": "file_exists",
+        "seconds": 0.2057422990910709
+      },
+      {
+        "method": "read_file",
+        "seconds": 0.0013699119444936514
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20357670285739005
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20299592497758567
+      },
+      {
+        "method": "file_exists",
+        "seconds": 0.20299788494594395
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.21544311591424048
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.22034385497681797
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.3127555549144745
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2601301739923656
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.22336702793836594
+      },
+      {
+        "method": "read_file",
+        "seconds": 0.0012539790477603674
+      },
+      {
+        "method": "read_file",
+        "seconds": 0.0013315698597580194
+      },
+      {
+        "method": "read_file",
+        "seconds": 0.0009933209512382746
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20295724319294095
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2045018111821264
+      },
+      {
+        "method": "file_exists",
+        "seconds": 0.204503471031785
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20711275096982718
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.20853289496153593
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.6309306160546839
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20312291895970702
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2579393668565899
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.2038123591337353
+      },
+      {
+        "method": "write_file",
+        "seconds": 0.20514889992773533
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.32907406496815383
+      },
+      {
+        "method": "exec_shell",
+        "seconds": 0.20455070189200342
+      }
+    ],
+    "prepared_gateway_reused": false,
+    "prepared_check_seconds": 1.6200356185436249e-06,
+    "fresh_initialize_seconds": 1.2697712550871074,
+    "workspace_id": "prepared-0eb78c3d7114",
+    "guest_gateway_neighbors": "172.30.0.1 dev eth0 lladdr 02:00:00:00:00:02 ref 1 used 0/0/0 probes 4 REACHABLE\n172.30.0.5 dev eth0 lladdr 02:00:00:00:00:02 used 0/0/0 probes 0 STALE",
+    "durable_pause_seconds": 61.291611639084294,
+    "pause_confirmed": true,
+    "gateway_restart_seconds": 1.3118853440973908,
+    "resume_initialize_seconds": 3.9942916678264737,
+    "same_sandbox": true,
+    "filesystem_preserved": true,
+    "tmpfs_preserved": true,
+    "boot_id_preserved": true,
+    "background_process_preserved": true,
+    "user_skill_preserved": true,
+    "mcp_restored_and_callable": true,
+    "mcp_scope_isolated": true,
+    "source_node": "ap-southeast-1.10.79.205.204",
+    "resumed_node": "ap-southeast-1.10.79.205.204",
+    "fastlet": "fixed-mac-validation-20261009-fastlet-zm2lj",
+    "placement_evidence": "The same Fastlet logged creation, checkpoint publication, and restore of Sandbox UID 90ac276e-0c23-4da6-a9d5-61d57e0c32af; its Pod spec.nodeName was recorded.",
+    "checkpoint_size_bytes": 6442463013,
+    "checkpoint_publish_seconds": 46.662846118,
+    "note": "Single same-node cycle after the stable gateway MAC fix. Resume includes SDK service readiness and workspace restoration, including a gateway restart; it is not runtime-only restore latency."
+  },
+  "date": "2026-10-09",
+  "environment": "Alibaba Cloud's managed Kubernetes (ACK), Singapore",
+  "timing_scope": "Cached prestarted gateway template; timings exclude model inference and template build/download. Two warmups, one startup measurement, and one same-node durable pause/resume cycle; this is functional verification, not a statistical benchmark."
+}

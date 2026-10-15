@@ -1,0 +1,511 @@
+{
+  "scope": "Fresh workspace startup with a prestarted empty gateway; builtin tools, skills, MCP isolation and same-node pause/resume",
+  "template_id": "tpl-d4ba6ea1-c091-4ed7-81dd-247cdcf80da8",
+  "results": [
+    {
+      "iteration": 1,
+      "kind": "warmup",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-690530f7-4001-4b80-ad57-c0d13f1d1dbf",
+      "sdk_create_seconds": 0.06998907099477947,
+      "provision_seconds": 0.08859780989587307,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.28039080603048205,
+      "initialize_seconds": 0.3691298100166023,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0016797410789877176
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27839727490209043
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 2,
+      "kind": "warmup",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-fd6e1807-c1df-4092-9ff3-bf3317da84b5",
+      "sdk_create_seconds": 0.06817526603117585,
+      "provision_seconds": 0.08617476606741548,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27899065311066806,
+      "initialize_seconds": 0.3652725119609386,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0016491599380970001
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2771838179323822
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 3,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-c1fc39b3-154d-4700-8d63-b08373405e2f",
+      "sdk_create_seconds": 0.0578485990408808,
+      "provision_seconds": 0.07836717716418207,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27876700600609183,
+      "initialize_seconds": 0.3572467570193112,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0016091889701783657
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2769869822077453
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 4,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-95241377-4201-456c-a4c8-63dba692a098",
+      "sdk_create_seconds": 0.05707865580916405,
+      "provision_seconds": 0.07890866394154727,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27900460292585194,
+      "initialize_seconds": 0.3579987802077085,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.001693671802058816
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2771600370761007
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 5,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-a81bef93-b330-4707-b443-2dac5bfc6f0c",
+      "sdk_create_seconds": 0.05802186508662999,
+      "provision_seconds": 0.07827564398758113,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27965936390683055,
+      "initialize_seconds": 0.35801617009565234,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.00155634805560112
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27795391087420285
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 6,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-c8168684-b987-4da1-9d22-64474f1a4b57",
+      "sdk_create_seconds": 0.06934637203812599,
+      "provision_seconds": 0.08793475897982717,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27880288707092404,
+      "initialize_seconds": 0.3668241398409009,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0015011460054665804
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2771201957948506
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 7,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-4d7d6951-b931-40c2-beb6-baa9d8819bb4",
+      "sdk_create_seconds": 0.05826359195634723,
+      "provision_seconds": 0.07821743306703866,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.2787871970795095,
+      "initialize_seconds": 0.357093672035262,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.001589817926287651
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2770438538864255
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 8,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-ebd0268d-c5cf-4b52-a822-540b7e7d7f7e",
+      "sdk_create_seconds": 0.05696758208796382,
+      "provision_seconds": 0.0769671939779073,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.2789201319683343,
+      "initialize_seconds": 0.3559678979218006,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0015424680896103382
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2772285488899797
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 9,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-611af0c8-de78-4424-9c7a-3f856a674f31",
+      "sdk_create_seconds": 0.05689845001325011,
+      "provision_seconds": 0.07570587610825896,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27870729519054294,
+      "initialize_seconds": 0.35449509299360216,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0016366401687264442
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27692829980514944
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 10,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-ed1494fe-cd07-4838-80e7-be870ea2fd3a",
+      "sdk_create_seconds": 0.05847072903998196,
+      "provision_seconds": 0.07791076297871768,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.2784087359905243,
+      "initialize_seconds": 0.3564077508635819,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0014855160843580961
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27677148510701954
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 11,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-cebc52ba-67d1-44ae-b905-8a007e14a45b",
+      "sdk_create_seconds": 0.05706392601132393,
+      "provision_seconds": 0.07624650304205716,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.27877616602927446,
+      "initialize_seconds": 0.35511029209010303,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0015033059753477573
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.27704570395871997
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    },
+    {
+      "iteration": 12,
+      "kind": "measurement",
+      "status": "PASS",
+      "bootstrap_calls": 0,
+      "same_node_pool": true,
+      "sandbox_id": "fsb-52efeeb6-3a63-4f26-8f7f-3f5211571531",
+      "sdk_create_seconds": 0.05769117409363389,
+      "provision_seconds": 0.07947126100771129,
+      "prepared_gateway_reused": true,
+      "prepared_check_seconds": 0.2786570528987795,
+      "initialize_seconds": 0.3582183870021254,
+      "initialization_backend_calls": [
+        {
+          "method": "read_file",
+          "seconds": 0.0015295168850570917
+        },
+        {
+          "method": "exec_shell",
+          "seconds": 0.2769774519838393
+        }
+      ],
+      "prestarted_gateway_pid": 622,
+      "gateway_process_preserved": true,
+      "python": true,
+      "read_write": true,
+      "ripgrep": true,
+      "glob_match": true,
+      "fresh_filesystem": true,
+      "empty_mcp_registry": true
+    }
+  ],
+  "resume": {
+    "kind": "same_node_resume",
+    "status": "PASS",
+    "bootstrap_calls": 0,
+    "same_node_pool": true,
+    "sandbox_id": "fsb-bb665ee2-b748-46af-a734-5a40eedc7e5c",
+    "sdk_create_seconds": 0.05807400611229241,
+    "provision_seconds": 66.15696360892616,
+    "prepared_gateway_reused": false,
+    "prepared_check_seconds": 1.4400575309991837e-06,
+    "fresh_initialize_seconds": 1.2041151889134198,
+    "workspace_id": "prepared-6d2670d6898d",
+    "durable_pause_seconds": 51.53075268003158,
+    "pause_confirmed": true,
+    "gateway_restart_seconds": 1.2941950641106814,
+    "resume_initialize_seconds": 68.0797160489019,
+    "same_sandbox": true,
+    "filesystem_preserved": true,
+    "tmpfs_preserved": true,
+    "boot_id_preserved": true,
+    "background_process_preserved": true,
+    "user_skill_preserved": true,
+    "mcp_restored_and_callable": true,
+    "mcp_scope_isolated": true,
+    "source_node": "ap-southeast-1.10.79.205.204",
+    "resumed_node": "ap-southeast-1.10.79.205.204",
+    "placement_evidence": "The same Fastlet agentscope-prestarted-ready-fastlet-6hdtf logged create, durable pause, restore, and delete of Sandbox UID 3f418ad5-059b-462f-89f6-89b506b40ac0; its pod spec.nodeName is recorded.",
+    "runtime_restore_seconds": 0.031737201,
+    "checkpoint_size_bytes": 5368721185,
+    "checkpoint_publish_seconds": 37.289006849,
+    "snapshot_pause_window_seconds": 9.077100344,
+    "note": "One durable same-node cycle. 66.16s provisioning includes SDK endpoint/readiness wait with HTTP 503 retries despite runtime restore finishing in 31.7ms. The delay root cause is not established; do not treat runtime Ready as usable workspace readiness."
+  },
+  "date": "2026-10-08",
+  "environment": {
+    "platform": "Alibaba Cloud managed Kubernetes (ACK)",
+    "node": "ap-southeast-1.10.79.205.204",
+    "pool": "agentscope-prestarted-ready",
+    "max_sandboxes_per_fastlet": 4,
+    "template_cached_before_measurement": true,
+    "guest_cpu": "1",
+    "guest_memory": "2Gi",
+    "guest_rootfs": "3Gi",
+    "cpu_template": "none (AMD host does not support T2A)",
+    "opensandbox_sdk": "1.1.1rc2.dev106+gc7dc78a4.d20261008",
+    "agentscope_version": "2.0.10.dev0"
+  },
+  "summary": {
+    "initialize_seconds": {
+      "samples": 10,
+      "median": 0.3571702145272866,
+      "min": 0.35449509299360216,
+      "max": 0.3668241398409009,
+      "mean": 0.3577378940070048
+    },
+    "sdk_create_seconds": {
+      "samples": 10,
+      "median": 0.057769886567257345,
+      "min": 0.05689845001325011,
+      "max": 0.06934637203812599,
+      "mean": 0.058765094517730175
+    },
+    "prepared_check_seconds": {
+      "samples": 10,
+      "median": 0.278781681554392,
+      "min": 0.2784087359905243,
+      "max": 0.27965936390683055,
+      "mean": 0.2788490439066663
+    }
+  },
+  "comparison": {
+    "dependencies_only": {
+      "summary": {
+        "sdk_create_seconds": {
+          "samples": 5,
+          "median": 0.05971631710417569,
+          "mean": 2.6808115473948417,
+          "min": 0.05851693102158606,
+          "max": 13.1501122280024
+        },
+        "initialize_seconds": {
+          "samples": 5,
+          "median": 3.801697901915759,
+          "mean": 6.412656084634364,
+          "min": 3.7675923991482705,
+          "max": 16.9001512080431
+        },
+        "gateway_setup_seconds": {
+          "samples": 5,
+          "median": 2.3023393000476062,
+          "mean": 2.301297071063891,
+          "min": 2.277559201931581,
+          "max": 2.3201243430376053
+        }
+      },
+      "measurements": [
+        {
+          "iteration": 3,
+          "initialize_seconds": 3.7917106461245567,
+          "sdk_create_seconds": 0.05851693102158606
+        },
+        {
+          "iteration": 4,
+          "initialize_seconds": 3.7675923991482705,
+          "sdk_create_seconds": 0.05971631710417569
+        },
+        {
+          "iteration": 5,
+          "initialize_seconds": 16.9001512080431,
+          "sdk_create_seconds": 13.1501122280024
+        },
+        {
+          "iteration": 6,
+          "initialize_seconds": 3.802128267940134,
+          "sdk_create_seconds": 0.05906735686585307
+        },
+        {
+          "iteration": 7,
+          "initialize_seconds": 3.801697901915759,
+          "sdk_create_seconds": 0.07664490398019552
+        }
+      ]
+    },
+    "initialize_reduction_percent": 90.60498167549555,
+    "note": "Separate serial runs on the same ACK cluster, with cached templates. Baseline has 5 samples including its slow sample; current run has 10 after 2 warmups. Not a controlled host/storage benchmark."
+  },
+  "disk_expansion": {
+    "checked_node": "ap-southeast-1.10.79.205.203",
+    "cloud_block_device_gib": 200,
+    "host_data_filesystem_capacity_gib": 117.56,
+    "runtime_xfs_filesystem_capacity_gib": 49.98,
+    "note": "Cloud block expansion is visible; data filesystem expansion was not yet visible during this measurement."
+  }
+}
