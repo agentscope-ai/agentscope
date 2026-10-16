@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from pathlib import Path
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import Mock, patch
 
 from utils import AnyString
 
@@ -46,6 +47,89 @@ def _make_record(
             total_chunks=total_chunks,
         ),
     )
+
+
+class MilvusLiteStoreBatchSizeTest(IsolatedAsyncioTestCase):
+    """Validate batch sizes without requiring a Milvus installation."""
+
+    def test_zero_batch_size(self) -> None:
+        """Reject zero when constructing the store."""
+        with self.assertRaisesRegex(ValueError, "batch_size.*positive"):
+            MilvusLiteStore(batch_size=0)
+
+    def test_negative_batch_size(self) -> None:
+        """Reject a negative size before it can silently discard records."""
+        with self.assertRaisesRegex(ValueError, "batch_size.*positive"):
+            MilvusLiteStore(batch_size=-1)
+
+    async def test_insert_batches(self) -> None:
+        """Positive sizes submit every record in order without mutation."""
+        for batch_size, count, batch_sizes in (
+            (1, 3, [1, 1, 1]),
+            (2, 3, [2, 1]),
+            (None, 257, [256, 1]),
+        ):
+            with self.subTest(batch_size=batch_size):
+                records = [
+                    _make_record(
+                        f"chunk-{index}",
+                        [float(index), 1.0, 0.0],
+                        document_id="doc-1",
+                        chunk_index=index,
+                        total_chunks=count,
+                    )
+                    for index in range(count)
+                ]
+                for index, record in enumerate(records):
+                    record.chunk.metadata["ordinal"] = index
+                before = [r.model_dump(mode="json") for r in records]
+                client = Mock()
+                with patch.object(
+                    MilvusLiteStore,
+                    "get_client",
+                    return_value=client,
+                ) as get_client:
+                    store = (
+                        MilvusLiteStore()
+                        if batch_size is None
+                        else MilvusLiteStore(batch_size=batch_size)
+                    )
+                    get_client.assert_not_called()
+                    await store.insert("kb_1", records)
+
+                calls = client.upsert.call_args_list
+                self.assertEqual(
+                    [len(call.kwargs["data"]) for call in calls],
+                    batch_sizes,
+                )
+                self.assertEqual(
+                    [call.kwargs["collection_name"] for call in calls],
+                    ["kb_1"] * len(batch_sizes),
+                )
+                self.assertEqual(
+                    [row for call in calls for row in call.kwargs["data"]],
+                    [
+                        {
+                            "id": AnyString(),
+                            "vector": record["vector"],
+                            "document_id": record["document_id"],
+                            "chunk": record["chunk"],
+                            "metadata": record["chunk"]["metadata"],
+                        }
+                        for record in before
+                    ],
+                )
+                self.assertEqual(
+                    [r.model_dump(mode="json") for r in records],
+                    before,
+                )
+
+    async def test_insert_empty_records(self) -> None:
+        """Empty input remains a no-op without creating a client."""
+        store = MilvusLiteStore(batch_size=1)
+        with patch.object(store, "get_client") as get_client:
+            await store.insert("kb_1", [])
+        get_client.assert_not_called()
 
 
 @unittest.skipUnless(
