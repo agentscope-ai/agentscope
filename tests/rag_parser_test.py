@@ -113,6 +113,18 @@ def _make_pptx_rich() -> bytes:
     return buffer.getvalue()
 
 
+def _make_pptx_with_image(image_bytes: bytes) -> bytes:
+    """Build a PPTX containing a single picture on a blank slide."""
+    from pptx import Presentation
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide.shapes.add_picture(io.BytesIO(image_bytes), 0, 0)
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_pptx_with_group() -> bytes:
     """Build a PPTX whose slide holds a text box and a group of two boxes.
 
@@ -1100,6 +1112,164 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_tiff_image_media_type_for_bytes_and_path(self) -> None:
+        """TIFF bytes retain their MIME type for both PPTX input forms."""
+        import tempfile
+
+        from PIL import Image
+        from pptx import Presentation
+
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (2, 2), color=(17, 34, 51)).save(
+            image_buffer,
+            format="TIFF",
+        )
+        image_bytes = image_buffer.getvalue()
+        pptx_bytes = _make_pptx_with_image(image_bytes)
+        embedded = (
+            Presentation(io.BytesIO(pptx_bytes)).slides[0].shapes[0].image
+        )
+        self.assertEqual(
+            {"content_type": embedded.content_type, "blob": embedded.blob},
+            {"content_type": "image/tiff", "blob": image_bytes},
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "tiff.pptx")
+            with open(path, "wb") as fp:
+                fp.write(pptx_bytes)
+            for input_type, pptx_input in (
+                ("bytes", pptx_bytes),
+                ("path", path),
+            ):
+                for include_image in (True, False):
+                    with self.subTest(
+                        input_type=input_type,
+                        include_image=include_image,
+                    ):
+                        sections = await PPTParser(
+                            include_image=include_image,
+                            slide_prefix=None,
+                            slide_suffix=None,
+                        ).parse(pptx_input, "tiff.pptx")
+                        self.assertEqual(
+                            [section.model_dump() for section in sections],
+                            [
+                                {
+                                    "content": {
+                                        "type": "data",
+                                        "id": AnyString(),
+                                        "created_at": AnyString(),
+                                        "finished_at": None,
+                                        "source": {
+                                            "type": "base64",
+                                            "data": base64.b64encode(
+                                                image_bytes,
+                                            ).decode("utf-8"),
+                                            "media_type": "image/tiff",
+                                        },
+                                        "name": "tiff.pptx",
+                                    },
+                                    "source": "tiff.pptx",
+                                    "metadata": {
+                                        "slide": 1,
+                                        "media_type": "image/tiff",
+                                    },
+                                },
+                            ]
+                            if include_image
+                            else [],
+                        )
+
+    async def test_image_media_type_falls_back_when_unavailable(self) -> None:
+        """Missing or unreadable MIME information preserves readable images."""
+        from unittest.mock import PropertyMock, patch
+
+        from pptx.parts.image import Image
+
+        pptx_bytes = _make_pptx_with_image(_PNG_PIXEL)
+        for content_type in (
+            None,
+            "",
+            AttributeError("missing content type"),
+            ValueError("unreadable content type"),
+        ):
+            with self.subTest(content_type=content_type):
+                with patch.object(
+                    Image,
+                    "content_type",
+                    new_callable=PropertyMock,
+                ) as mocked_type:
+                    if isinstance(content_type, Exception):
+                        mocked_type.side_effect = content_type
+                    else:
+                        mocked_type.return_value = content_type
+                    sections = await PPTParser(
+                        slide_prefix=None,
+                        slide_suffix=None,
+                    ).parse(pptx_bytes, "fallback.pptx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    [
+                        {
+                            "content": {
+                                "type": "data",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "source": {
+                                    "type": "base64",
+                                    "data": _PNG_PIXEL_B64,
+                                    "media_type": "image/png",
+                                },
+                                "name": "fallback.pptx",
+                            },
+                            "source": "fallback.pptx",
+                            "metadata": {
+                                "slide": 1,
+                                "media_type": "image/png",
+                            },
+                        },
+                    ],
+                )
+
+    async def test_unreadable_image_is_skipped(self) -> None:
+        """Unreadable picture objects or image bytes keep warning and skip."""
+        from unittest.mock import PropertyMock, patch
+
+        from pptx.parts.image import Image
+        from pptx.shapes.picture import Picture
+
+        pptx_bytes = _make_pptx_with_image(_PNG_PIXEL)
+        for target, attribute in ((Picture, "image"), (Image, "blob")):
+            with self.subTest(attribute=attribute):
+                with patch.object(
+                    target,
+                    attribute,
+                    new_callable=PropertyMock,
+                    side_effect=ValueError("unreadable image"),
+                ):
+                    with self.assertLogs("as", level="WARNING") as captured:
+                        sections = await PPTParser(
+                            slide_prefix=None,
+                            slide_suffix=None,
+                        ).parse(pptx_bytes, "unreadable.pptx")
+                self.assertEqual(
+                    {
+                        "sections": [
+                            section.model_dump() for section in sections
+                        ],
+                        "warnings": captured.output,
+                    },
+                    {
+                        "sections": [],
+                        "warnings": [
+                            "WARNING:as:Failed to extract image from PPT "
+                            "shape: unreadable image",
+                        ],
+                    },
+                )
 
     async def test_picture_placeholder_emits_data_block(self) -> None:
         """Pictures inserted into layout placeholders keep their content."""
