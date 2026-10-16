@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+# pylint: disable=too-many-public-methods
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -18,12 +19,35 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    AssistantMsg,
+    HintBlock,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
     UserMsg,
 )
 from agentscope.types import ReplyFinishedReason
+
+_MAX_ITERS_HINT_SOURCE = (
+    '{"label": "System", "sublabel": "Max Iterations Reached"}'
+)
+_MAX_ITERS_HINT_TEXT = "Do not call any tools"
+
+
+def _messages_have_max_iters_hint(messages: list) -> bool:
+    """Whether any message still carries the max-iters hint."""
+    for message in messages:
+        for block in message.content:
+            if not isinstance(block, HintBlock):
+                continue
+            if block.source == _MAX_ITERS_HINT_SOURCE:
+                return True
+            if (
+                isinstance(block.hint, str)
+                and _MAX_ITERS_HINT_TEXT in block.hint
+            ):
+                return True
+    return False
 
 
 class MockSequentialTool(ToolBase):
@@ -1084,6 +1108,144 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
             },
         )
+
+    async def test_max_iters_hint_does_not_leak_into_next_reply(self) -> None:
+        """The max-iters hint steers one reply, then leaves the context."""
+        received: list[dict] = []
+
+        class TrackingModel(MockModel):
+            """A mock model that snapshots each call's tool choice and hint."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                """Record whether this call still sees the max-iters hint."""
+                messages = kwargs.get("messages") or []
+                received.append(
+                    {
+                        "tool_choice": kwargs.get("tool_choice"),
+                        "hint_present": _messages_have_max_iters_hint(
+                            messages,
+                        ),
+                    },
+                )
+                return await super()._call_api(*args, **kwargs)
+
+        model = TrackingModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final summary")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Next answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(max_iters=1),
+        )
+
+        first = await agent.reply(UserMsg(name="user", content="Think"))
+
+        self.assertEqual(first.get_text_content(), "Final summary")
+        self.assertEqual(received[0]["tool_choice"], None)
+        self.assertEqual(received[1]["tool_choice"].mode, "none")
+        self.assertTrue(received[1]["hint_present"])
+        self.assertTrue(_messages_have_max_iters_hint(agent.state.context))
+
+        second = await agent.reply(UserMsg(name="user", content="Continue"))
+
+        self.assertEqual(second.get_text_content(), "Next answer")
+        self.assertEqual(received[2]["tool_choice"], None)
+        self.assertFalse(received[2]["hint_present"])
+        self.assertFalse(_messages_have_max_iters_hint(agent.state.context))
+
+    async def test_leftover_max_iters_hint_is_cleared_on_new_reply(
+        self,
+    ) -> None:
+        """A stored max-iters hint is removed before the next reply."""
+        received: list[bool] = []
+
+        class TrackingModel(MockModel):
+            """A mock model that records whether each call sees the hint."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                """Snapshot hint presence before later context edits."""
+                messages = kwargs.get("messages") or []
+                received.append(_messages_have_max_iters_hint(messages))
+                return await super()._call_api(*args, **kwargs)
+
+        def _hint() -> HintBlock:
+            """Build one max-iters hint block."""
+            return HintBlock(
+                hint=(
+                    "<system-reminder>You have reached the maximum of "
+                    "1 reasoning-acting iterations. Do not call "
+                    "any tools.</system-reminder>"
+                ),
+                source=_MAX_ITERS_HINT_SOURCE,
+            )
+
+        model = TrackingModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Fresh answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        agent.state.context.extend(
+            [
+                AssistantMsg(
+                    name="Friday",
+                    content=[
+                        TextBlock(text="Earlier summary"),
+                        _hint(),
+                    ],
+                ),
+                AssistantMsg(name="Friday", content=[_hint()]),
+            ],
+        )
+
+        msg = await agent.reply(UserMsg(name="user", content="Again"))
+
+        self.assertEqual(msg.get_text_content(), "Fresh answer")
+        self.assertEqual(received, [False])
+        self.assertFalse(_messages_have_max_iters_hint(agent.state.context))
+        texts = [
+            block.text
+            for message in agent.state.context
+            for block in message.content
+            if isinstance(block, TextBlock)
+        ]
+        self.assertIn("Earlier summary", texts)
+        self.assertEqual(len(agent.state.context), 3)
 
     async def test_forced_final_text_call_is_bounded(self) -> None:
         """The forced final text call runs at most once."""

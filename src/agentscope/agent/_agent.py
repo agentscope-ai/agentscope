@@ -108,6 +108,13 @@ from ..workspace import Offloader, WorkspaceBase
 # The name of the tool that the agent uses to compress its own context
 _COMPRESSION_TOOL_NAME = "CompressContext"
 
+# Identifies the hint that forces a text-only close when one reply hits
+# ``max_iters``. The counter resets on the next reply, so this hint must
+# not stay in context after that.
+_MAX_ITERS_HINT_SOURCE = (
+    '{"label": "System", "sublabel": "Max Iterations Reached"}'
+)
+
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
@@ -1107,6 +1114,9 @@ class Agent:
                     yield evt
             else:
                 await self._handle_incoming_messages(msgs)
+                # ``cur_iter`` resets below. Drop the previous reply's
+                # max-iters hint so it cannot forbid tools on this reply.
+                self._drop_max_iters_hints()
                 # Update the context with the incoming message and state
                 self.state.reply_context = ReplyContext(
                     reply_id=_generate_id(),
@@ -3481,6 +3491,34 @@ class Agent:
             return last_msg
         return None
 
+    def _drop_max_iters_hints(self) -> None:
+        """Remove max-iters hints left by earlier replies.
+
+        The hint is appended for the one forced finalization call of the
+        reply that exhausted ``max_iters``. A later reply starts at
+        ``cur_iter == 0`` and must be allowed to call tools again.
+        """
+        retained: list[Msg] = []
+        removed = False
+        for msg in self.state.context:
+            filtered = [
+                block
+                for block in msg.content
+                if not (
+                    isinstance(block, HintBlock)
+                    and block.source == _MAX_ITERS_HINT_SOURCE
+                )
+            ]
+            if len(filtered) == len(msg.content):
+                retained.append(msg)
+                continue
+            removed = True
+            if filtered:
+                msg.content = filtered
+                retained.append(msg)
+        if removed:
+            self.state.context = retained
+
     def _get_reply_usage(self) -> Usage | None:
         """Get a copy of the accumulated usage for the current reply."""
         last_msg = self._get_last_msg()
@@ -3708,8 +3746,7 @@ class Agent:
                         f"and return the final answer as text. Do not call "
                         f"any tools.</system-reminder>"
                     ),
-                    source='{"label": "System", "sublabel": '
-                    '"Max Iterations Reached"}',
+                    source=_MAX_ITERS_HINT_SOURCE,
                 ),
                 tool_choice=ToolChoice(mode="none"),
             )
