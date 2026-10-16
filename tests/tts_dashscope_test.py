@@ -15,9 +15,13 @@ Covers:
   * ``DashScopeCosyVoiceTTSModel`` realtime connect / close / push /
     synthesize lifecycle over a mocked SpeechSynthesizer.
 """
+import asyncio
 import base64
 import io
+import json
+import threading
 import wave
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, Mock, patch
@@ -232,6 +236,92 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
         )
 
     # -- non-streaming --
+
+    # pylint: disable=missing-function-docstring
+    async def test_sdk_io_keeps_event_loop_responsive(self) -> None:
+        self.patcher.stop()
+        loop = asyncio.get_running_loop()
+        acknowledgements: list[bool] = []
+        requests: list[dict] = []
+        pcm = b"\x01\x00" * 512
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                requests.append(
+                    json.loads(
+                        self.rfile.read(int(self.headers["Content-Length"])),
+                    ),
+                )
+                acknowledged = threading.Event()
+                loop.call_soon_threadsafe(acknowledged.set)
+                acknowledgements.append(acknowledged.wait(5))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                for _ in range(2):
+                    acknowledged = threading.Event()
+                    loop.call_soon_threadsafe(acknowledged.set)
+                    acknowledgements.append(acknowledged.wait(5))
+                    payload = {
+                        "request_id": "loopback-test",
+                        "output": {
+                            "audio": {
+                                "data": base64.b64encode(pcm).decode("ascii"),
+                            },
+                        },
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    }
+                    self.wfile.write(
+                        ("data: " + json.dumps(payload) + "\n\n").encode(),
+                    )
+                    self.wfile.flush()
+
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                acknowledgements.clear()
+                requests.clear()
+                server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+                thread = threading.Thread(target=server.serve_forever)
+                thread.start()
+                try:
+                    model = self._make_model(stream=stream)
+                    result = await model.synthesize(
+                        "Hello",
+                        base_address=(
+                            f"http://127.0.0.1:{server.server_port}/api/v1"
+                        ),
+                    )
+                    responses = (
+                        [chunk async for chunk in result]
+                        if stream
+                        else [result]
+                    )
+                    audio = b"".join(
+                        base64.b64decode(chunk.content.source.data)
+                        for chunk in responses
+                    )
+                    with wave.open(io.BytesIO(audio), "rb") as wav:
+                        self.assertEqual(
+                            wav.readframes(wav.getnframes()),
+                            pcm * 2,
+                        )
+                        self.assertEqual(wav.getframerate(), _TTS_SAMPLE_RATE)
+                        self.assertEqual(wav.getnchannels(), _TTS_CHANNELS)
+                        self.assertEqual(wav.getsampwidth(), _TTS_SAMPLE_WIDTH)
+                    self.assertEqual(
+                        [chunk.is_last for chunk in responses],
+                        [False, True] if stream else [True],
+                    )
+                    self.assertEqual(requests[0]["input"]["text"], "Hello")
+                    self.assertEqual(requests[0]["input"]["voice"], "Cherry")
+                    self.assertEqual(acknowledgements, [True, True, True])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join()
+
+    # pylint: enable=missing-function-docstring
 
     async def test_api_errors_are_not_successful_audio(self) -> None:
         """Provider errors must propagate, including after partial audio."""

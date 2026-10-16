@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """DashScope TTS model implementation using MultiModalConversation API."""
+import asyncio
 import base64
 import io
 import wave
 from datetime import datetime
+from functools import partial
 from typing import (
     Any,
     AsyncGenerator,
@@ -141,7 +143,7 @@ class DashScopeTTSModel(TTSModelBase):
         if self.stream:
             return self._parse_into_async_generator(response)
 
-        return self._aggregate_sync(response)
+        return await asyncio.to_thread(self._aggregate_sync, response)
 
     @staticmethod
     def _aggregate_sync(
@@ -206,7 +208,7 @@ class DashScopeTTSModel(TTSModelBase):
         start_datetime = datetime.now()
         it = iter(response)
         while True:
-            chunk = next(it, _SENTINEL)
+            chunk = await asyncio.to_thread(partial(next, it, _SENTINEL))
             if chunk is _SENTINEL:
                 break
             if chunk.status_code != 200:
