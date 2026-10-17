@@ -91,6 +91,8 @@ class SchedulerManager:
         # ``updated_at`` of each registered job, so a reconcile can tell
         # an edited schedule from an unchanged one.
         self._versions: dict[str, datetime] = {}
+        # Serialises reconcile: see :meth:`reconcile`.
+        self._reconcile_lock = asyncio.Lock()
         self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
@@ -443,6 +445,23 @@ class SchedulerManager:
         no longer enabled, and re-registers those whose ``updated_at``
         moved. Safe to call repeatedly — that is how a dropped
         notification heals.
+
+        Concurrent callers are serialised. Both the periodic loop and the
+        lifecycle listener call this method, and without a lock a read
+        that captured the old records can finish *after* a newer read has
+        already applied its changes: the stale snapshot then re-adds a job
+        the newer pass had just deleted, or rewrites an edited job with
+        the previous record. Holding the lock across the read and the
+        apply keeps the two in the same order, so the last reconcile to
+        finish is also the newest one.
+        """
+        async with self._reconcile_lock:
+            await self._reconcile_once()
+
+    async def _reconcile_once(self) -> None:
+        """Read storage once and drive the job set to match it.
+
+        Caller must hold :attr:`_reconcile_lock`.
         """
         try:
             records = await self._storage.list_all_schedules()
