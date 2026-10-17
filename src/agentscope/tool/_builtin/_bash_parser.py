@@ -276,7 +276,7 @@ class BashCommandParser:
         """Extract file paths from a bash command using tree-sitter.
 
         Returns paths that are arguments to file-manipulating commands
-        (rm, mv, cp, chmod, chown, etc.) and output redirection targets.
+        (rm, mv, cp, chmod, chown, tee, etc.) and output redirection targets.
 
         Args:
             command (`str`):
@@ -351,6 +351,12 @@ class BashCommandParser:
                 "sed",
                 "mkdir",
                 "rmdir",
+                # ``tee`` writes every one of its file operands, so its
+                # targets have to reach the dangerous-path check. Without
+                # this, ``echo ... | tee /etc/crontab`` produced no path at
+                # all: the only write surface it has is its arguments, and
+                # nothing else in the command names a file.
+                "tee",
             ]:
                 # Extract file arguments (skip flags)
                 for arg in args:
@@ -401,6 +407,7 @@ class BashCommandParser:
                 "touch",
                 "mkdir",
                 "rmdir",
+                "tee",
             ]:
                 cmd_name = token
                 # Look for file arguments after this command

@@ -571,6 +571,34 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 result = self.parser.extract_file_paths(cmd)
                 self.assertEqual(result, expected)
 
+    async def test_tee_command(self) -> None:
+        """Test file path extraction from tee commands.
+
+        ``tee`` only ever writes to its operands, so those operands are the
+        whole write surface of the command. If they are not extracted, the
+        dangerous-path check never sees ``tee /etc/crontab`` at all.
+        """
+        test_cases = [
+            ("tee out.txt", [("tee", "out.txt")]),
+            ("echo hi | tee /etc/crontab", [("tee", "/etc/crontab")]),
+            ("tee -a ~/.bashrc", [("tee", "~/.bashrc")]),
+            (
+                "cat f | tee -a a.txt b.txt",
+                [("tee", "a.txt"), ("tee", "b.txt")],
+            ),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_tee_command_fallback_parser(self) -> None:
+        """The token fallback must extract tee targets too."""
+        result = self.parser._extract_paths_fallback(  # pylint: disable=protected-access
+            "echo hi | tee /etc/crontab",
+        )
+        self.assertEqual(result, [("tee", "/etc/crontab")])
+
     async def test_ln_command(self) -> None:
         """Test file path extraction from ln commands."""
         test_cases = [

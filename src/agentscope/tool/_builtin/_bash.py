@@ -543,7 +543,7 @@ easier to review tool calls and give permission.
         """Extract dangerous paths from a bash command using tree-sitter.
 
         Checks for dangerous paths in:
-        - File-manipulating commands (rm, mv, cp, chmod, chown, sed, touch)
+        - File-manipulating commands (rm, mv, cp, chmod, chown, sed, touch, tee)
         - Output redirections (>, >>)
 
         Args:
