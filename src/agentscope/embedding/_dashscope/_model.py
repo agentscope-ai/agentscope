@@ -431,8 +431,11 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "input": formatted,
             "model": self.model,
             "api_key": self.api_key,
-            **kwargs,
         }
+        # Qwen3 VL supports custom dimensions; fixed multimodal models do not.
+        if self.model == "qwen3-vl-embedding":
+            api_kwargs["dimension"] = self.dimensions
+        api_kwargs.update(kwargs)
 
         # Exclude api_key from cache identifier to avoid persisting secrets
         # and to keep cache valid across key rotations.
