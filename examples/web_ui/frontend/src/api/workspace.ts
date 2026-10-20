@@ -99,7 +99,74 @@ function uploadSkillXhr(
 	});
 }
 
+export interface TextFileSnapshot {
+	path: string;
+	text: string;
+	revision: string;
+}
+
+export interface FileEditAccess {
+	editable: boolean;
+	reason: 'outside_edit_roots' | null;
+}
+
 export const workspaceApi = {
+	files: {
+		editAccess: (agentId: string, sessionId: string, path: string, signal: AbortSignal) =>
+			client.get<FileEditAccess>(
+				'/workspace/files/edit-access',
+				{ agent_id: agentId, session_id: sessionId, path },
+				{ signal, silent: true },
+			),
+		readText: (agentId: string, sessionId: string, path: string, signal: AbortSignal) =>
+			client.get<TextFileSnapshot>(
+				'/workspace/files/text',
+				{ agent_id: agentId, session_id: sessionId, path },
+				{ signal, silent: true },
+			),
+		saveText: async (
+			agentId: string,
+			sessionId: string,
+			path: string,
+			text: string,
+			revision: string,
+			signal: AbortSignal,
+		): Promise<TextFileSnapshot> => {
+			const response = await client.stream('/workspace/files/text', {
+				method: 'PUT',
+				params: { agent_id: agentId, session_id: sessionId, path },
+				body: { text, revision },
+				signal,
+				silent: true,
+			});
+			return response.json();
+		},
+		read: (agentId: string, sessionId: string, path: string, signal: AbortSignal) =>
+			client.stream('/workspace/files', {
+				params: { agent_id: agentId, session_id: sessionId, path },
+				signal,
+				silent: true,
+			}),
+
+		downloadUrl: async (
+			agentId: string,
+			sessionId: string,
+			path: string,
+			signal: AbortSignal,
+		): Promise<string> => {
+			const params = { agent_id: agentId, session_id: sessionId, path };
+			const { token } = await client.post<{ token: string }>(
+				'/workspace/files/download-token',
+				undefined,
+				params,
+				{ signal, silent: true },
+			);
+			const url = new URL('/workspace/files', getBaseUrl());
+			url.search = new URLSearchParams({ ...params, token, download: 'true' }).toString();
+			return url.toString();
+		},
+	},
+
 	/**
 	 * List one directory level inside the session's workspace.
 	 *
@@ -109,12 +176,21 @@ export const workspaceApi = {
 	 * one the caller is already trusted with the host. The response
 	 * echoes the resolved absolute path.
 	 */
-	directories: (agentId: string, sessionId: string, path = '') =>
-		client.get<DirectoryListing>('/workspace/directories', {
-			agent_id: agentId,
-			session_id: sessionId,
-			path,
-		}),
+	directories: (
+		agentId: string,
+		sessionId: string,
+		path = '',
+		options?: { signal?: AbortSignal; silent?: boolean },
+	) =>
+		client.get<DirectoryListing>(
+			'/workspace/directories',
+			{
+				agent_id: agentId,
+				session_id: sessionId,
+				path,
+			},
+			options,
+		),
 
 	/**
 	 * Where the session is pointed, plus the git state of that place.

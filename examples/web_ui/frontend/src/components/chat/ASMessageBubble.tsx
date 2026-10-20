@@ -24,6 +24,8 @@ import {
 import * as mime from 'mime-types';
 import { memo, useEffect, useRef, useState } from 'react';
 
+import { ArtifactList } from './artifacts/ArtifactList';
+import type { FileArtifact } from './artifacts/artifacts';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
@@ -390,6 +392,7 @@ function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
 
 interface MessageBubbleProps {
 	message: Msg;
+	onOpenArtifact?: (artifact: FileArtifact) => void;
 	onUserConfirm: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
@@ -415,7 +418,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
+function ASMessageBubbleComponent({ message, onOpenArtifact }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -488,6 +491,9 @@ function ASMessageBubbleComponent({ message }: MessageBubbleProps) {
 							<ASBlock block={block} key={index} />
 						))}
 				</AttachmentGroup>
+				{!isUser && !isRunning && onOpenArtifact && (
+					<ArtifactList content={message.content} onOpen={onOpenArtifact} />
+				)}
 				{message.role === 'user' ? (
 					plainText && (
 						<MessageFooter>

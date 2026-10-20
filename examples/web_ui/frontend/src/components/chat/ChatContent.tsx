@@ -6,16 +6,21 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch, TriangleAlert } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import { FolderOpen, GitBranch, TriangleAlert } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '../ui/button';
+import { ArtifactDrawer } from './artifacts/ArtifactDrawer';
+import { type FileArtifact, fileChangeVersion } from './artifacts/artifacts';
+import { useFileChanges } from './artifacts/useFileChanges';
+import { WorkspaceFilesDrawer } from './artifacts/WorkspaceFilesDrawer';
 import { DiffStats } from './tool-renderers/_shared';
 import type { GitStatus } from '@/api';
+import { getUserId } from '@/api/client';
 import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
-import { TextInput } from '@/components/chat/TextInput.tsx';
+import { TextInput, type TextInputRef } from '@/components/chat/TextInput.tsx';
 import { WorkingDirectoryDialog } from '@/components/dialog/WorkingDirectoryDialog';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Marker, MarkerContent } from '@/components/ui/marker';
@@ -139,6 +144,26 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
+	const inputRef = useRef<TextInputRef>(null);
+	const scope = JSON.stringify([getUserId(), agentId, sessionId]);
+	const fileChanges = useFileChanges(msgs, scope, loading);
+	const [fileView, setFileView] = useState<
+		| { scope: string; kind: 'preview'; artifact: FileArtifact }
+		| { scope: string; kind: 'browse' }
+		| null
+	>(null);
+	useEffect(() => setFileView(null), [scope]);
+	const openArtifact = useCallback(
+		(artifact: FileArtifact) => {
+			setFileView({ scope, kind: 'preview', artifact });
+		},
+		[scope],
+	);
+	const referenceFile = (path: string) => {
+		inputRef.current?.insertText(t('artifacts.referenceText', { path: JSON.stringify(path) }));
+		setFileView(null);
+		requestAnimationFrame(() => inputRef.current?.focus());
+	};
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
@@ -177,6 +202,33 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				className,
 			)}
 		>
+			{!loading &&
+				agentId &&
+				sessionId &&
+				fileView?.scope === scope &&
+				(fileView.kind === 'preview' ? (
+					<ArtifactDrawer
+						key={JSON.stringify([scope, fileView.artifact.path])}
+						artifact={fileView.artifact}
+						changeVersion={fileChangeVersion(fileChanges, fileView.artifact.path)}
+						agentId={agentId}
+						sessionId={sessionId}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				) : (
+					<WorkspaceFilesDrawer
+						key={scope}
+						agentId={agentId}
+						sessionId={sessionId}
+						initialPath={cwd ?? ''}
+						fileChanges={fileChanges}
+						onClose={() => setFileView(null)}
+						referenceDisabled={disabled}
+						onReference={referenceFile}
+					/>
+				))}
 			{loading ? (
 				<div className="flex flex-1 w-full items-center justify-center">
 					{showSpinner ? <Spinner className="size-5 text-muted-foreground" /> : null}
@@ -215,6 +267,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											<ASMessageBubble
 												message={message}
 												onUserConfirm={onUserConfirm}
+												onOpenArtifact={
+													agentId && sessionId ? openArtifact : undefined
+												}
 											/>
 										</MessageScrollerItem>
 									);
@@ -294,6 +349,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				    edges parallel — a plain rectangle here would show the
 				    pill's corners cutting into it. */}
 					<TextInput
+						ref={inputRef}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
 						onSend={onSend}
 						disabled={disabled}
@@ -306,13 +362,24 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						onVoiceToggle={onVoiceToggle}
 						voiceDisabled={voiceDisabled}
 						headerSlot={
-							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
-								<WorkingDirectoryDialog
-									agentId={agentId}
-									sessionId={sessionId}
-									value={cwd}
-									onChange={onCwdChange}
-								/>
+							<div className="flex w-full flex-wrap items-center justify-between gap-1 px-2 py-1 text-sm text-muted-foreground">
+								<div className="flex min-w-0 flex-wrap items-center gap-1">
+									<WorkingDirectoryDialog
+										agentId={agentId}
+										sessionId={sessionId}
+										value={cwd}
+										onChange={onCwdChange}
+									/>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={!agentId || !sessionId || loading}
+										onClick={() => setFileView({ scope, kind: 'browse' })}
+									>
+										<FolderOpen />
+										{t('artifacts.browseFiles')}
+									</Button>
+								</div>
 								{git && (
 									<Button
 										className="font-mono"

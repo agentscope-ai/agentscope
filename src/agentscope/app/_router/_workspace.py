@@ -25,7 +25,13 @@ from ..deps import (
 )
 from ..hub import SkillHubBase
 from .._service import WorkspaceService, WorkspaceStatus
-from .._service._workspace import SkillUploadError, UploadManifest
+from .._service._workspace import (
+    FileEditAccess,
+    SkillUploadError,
+    TextFileSaveRequest,
+    TextFileSnapshot,
+    UploadManifest,
+)
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
@@ -613,4 +619,67 @@ async def read_workspace_file(
             mimetypes.guess_type(basename)[0] or "application/octet-stream"
         ),
         headers=headers,
+    )
+
+
+@workspace_router.get("/files/edit-access")
+async def get_file_edit_access(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> FileEditAccess:
+    """Report path-scope eligibility; reading and saving recheck it."""
+    return await workspace_service.file_edit_access(
+        user_id,
+        agent_id,
+        session_id,
+        path,
+    )
+
+
+@workspace_router.get("/files/text")
+async def read_workspace_text(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> TextFileSnapshot:
+    """Return an allowed editor snapshot with a content revision.
+
+    Files outside the workspace and persisted session cwd remain available
+    through the read-only endpoint, but cannot be opened for editing.
+    """
+    return await workspace_service.read_text_file(
+        user_id,
+        agent_id,
+        session_id,
+        path,
+    )
+
+
+@workspace_router.put("/files/text")
+async def save_workspace_text(
+    body: TextFileSaveRequest,
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    workspace_service: WorkspaceService = Depends(get_workspace_service),
+) -> TextFileSnapshot:
+    """Save an existing file within the workspace or persisted session cwd.
+
+    Selecting cwd grants editing within that directory.
+    X-User-ID is a temporary identity mechanism, not authentication.
+    This API still requires a trusted deployment. Revision checking is
+    optimistic and cannot exclude Agent or external-process writes.
+    """
+    return await workspace_service.save_text_file(
+        user_id,
+        agent_id,
+        session_id,
+        path,
+        body,
     )

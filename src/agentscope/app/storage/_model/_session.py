@@ -276,10 +276,13 @@ class SessionConfig(BaseModel):
     Not confined to the workspace root, matching
     ``GET /workspace/directories``: on a sandboxed backend the
     reachable filesystem *is* the sandbox, and on a local one the
-    caller is already trusted with the host. Nothing is validated on
-    write — the value only names a place to look, so a path that has
-    gone missing surfaces when something tries to read it rather than
-    blocking the change.
+    caller is already trusted with the host. The stored value is not
+    validated on write; missing paths surface when accessed.
+
+    The file editor also treats cwd as an additional editable root.
+    It resolves paths on access, excluding filesystem roots and the
+    backend user's home from this additional grant. Choosing a specific
+    directory still expands edit access; this is not host isolation.
 
     A relative value stays relative on purpose: the workspace root is
     backend-dependent (a host directory for :class:`LocalWorkspace`, a
