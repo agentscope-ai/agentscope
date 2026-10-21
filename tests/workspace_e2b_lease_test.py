@@ -37,9 +37,11 @@ class _FakeSandbox:
         self.set_timeout = AsyncMock()
 
     def fail_with_not_found(self) -> None:
+        """Make the next ``set_timeout`` raise the SDK's 404 shape."""
         self.set_timeout = AsyncMock(side_effect=_fake_api_404())
 
     def fail_transiently(self) -> None:
+        """Make the next ``set_timeout`` raise a non-404 error."""
         self.set_timeout = AsyncMock(side_effect=Exception("network down"))
 
 
@@ -53,6 +55,7 @@ class _Clock:
         return self.now
 
     def advance(self, seconds: float) -> None:
+        """Move the clock forward by ``seconds``."""
         self.now += seconds
 
 
@@ -84,7 +87,9 @@ class TestE2BLeaseRenewal(unittest.IsolatedAsyncioTestCase):
         """With the lease freshly stamped, the first use skips renewal;
         the second use (interval advanced) renews via set_timeout."""
         clock = _Clock()
-        ws, sandbox = _make_workspace(lease_units=3, clock=clock, stamp_lease=True)
+        ws, sandbox = _make_workspace(
+            lease_units=3, clock=clock, stamp_lease=True
+        )
         ws._clock = clock
 
         await ws.prepare_for_reuse()  # interval not elapsed → skipped
