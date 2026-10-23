@@ -573,5 +573,5 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
         """Format system message for DashScope API."""
         return {
             "role": "system",
-            "content": msg.get_text_content(),
+            "content": msg.get_text_content() or "",
         }

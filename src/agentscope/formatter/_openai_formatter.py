@@ -572,5 +572,5 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         """Format system message for OpenAI API."""
         return {
             "role": "system",
-            "content": msg.get_text_content(),
+            "content": msg.get_text_content() or "",
         }

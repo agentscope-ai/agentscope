@@ -551,5 +551,5 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
         """
         return {
             "role": "system",
-            "content": msg.get_text_content(),
+            "content": msg.get_text_content() or "",
         }

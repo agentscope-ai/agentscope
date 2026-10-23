@@ -464,5 +464,5 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         """Format a system message for the Moonshot AI API."""
         return {
             "role": "system",
-            "content": msg.get_text_content(),
+            "content": msg.get_text_content() or "",
         }

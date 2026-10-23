@@ -411,5 +411,5 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
         """Format system message for Volcengine API."""
         return {
             "role": "system",
-            "content": msg.get_text_content(),
+            "content": msg.get_text_content() or "",
         }
