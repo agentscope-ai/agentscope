@@ -140,6 +140,22 @@ class TTSModelConfig(BaseModel):
     """TTS parameters (voice, language, etc.)."""
 
 
+class ASRModelConfig(BaseModel):
+    """The ASR model configuration class."""
+
+    type: str
+    """The provider type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The ASR model name."""
+
+    parameters: dict
+    """Provider-specific speech recognition parameters."""
+
+
 class RealtimeModelConfig(BaseModel):
     """The realtime voice model configuration class."""
 
@@ -302,6 +318,9 @@ class SessionConfig(BaseModel):
 
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
+
+    asr_model_config: ASRModelConfig | None = None
+    """The ASR model config. None means speech input is not enabled."""
 
     realtime_model_config: RealtimeModelConfig | None = None
     """The realtime voice model config. None disables voice mode."""

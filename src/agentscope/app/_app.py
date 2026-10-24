@@ -15,6 +15,7 @@ from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
+    asr_router,
     agent_router,
     channel_router,
     chat_router,
@@ -433,6 +434,7 @@ def create_app(
 
     # Built-in routers
     for router in (
+        asr_router,
         agent_router,
         chat_router,
         credential_router,

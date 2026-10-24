@@ -57,19 +57,23 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
 
         class _Storage(RedisStorage):
+            # pylint: disable=attribute-defined-outside-init
             async def __aenter__(self) -> Any:
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Detach the shared fake Redis client."""
                 self._client = None
 
         class _Bus(RedisMessageBus):
+            # pylint: disable=attribute-defined-outside-init
             async def __aenter__(self) -> Any:
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Detach the shared fake Redis client."""
                 self._client = None
 
         app = create_app(
@@ -123,6 +127,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
                 "realtime_model_config": None,
                 "knowledge_config": None,
             },
@@ -144,6 +149,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
                 "realtime_model_config": None,
                 "knowledge_config": None,
             },
@@ -171,6 +177,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
                 "realtime_model_config": None,
                 "knowledge_config": None,
             },
@@ -198,6 +205,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
                 "realtime_model_config": None,
                 "knowledge_config": None,
             },
@@ -224,6 +232,7 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
                 "chat_model_config": None,
                 "fallback_chat_model_config": None,
                 "tts_model_config": None,
+                "asr_model_config": None,
                 "realtime_model_config": None,
                 "knowledge_config": None,
             },
@@ -347,6 +356,7 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
                     },
                     "fallback_chat_model_config": None,
                     "tts_model_config": None,
+                    "asr_model_config": None,
                     "realtime_model_config": None,
                     "knowledge_config": None,
                 },

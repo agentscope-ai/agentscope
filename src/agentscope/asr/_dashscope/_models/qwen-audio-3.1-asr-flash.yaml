@@ -1,0 +1,24 @@
+name: qwen-audio-3.1-asr-flash
+label: Qwen Audio 3.1 ASR Flash
+input_types:
+  - audio/aac
+  - audio/flac
+  - audio/mpeg
+  - audio/mp4
+  - audio/ogg
+  - audio/opus
+  - audio/wav
+  - audio/webm
+output_types:
+  - text/plain
+realtime: false
+
+parameter_overrides:
+  # Language is detected automatically. Hotwords need a dedicated editor,
+  # and sample rate is inferred from the uploaded recording.
+  language_hints:
+    hidden: true
+  vocabulary:
+    hidden: true
+  sample_rate:
+    hidden: true

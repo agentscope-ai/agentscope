@@ -100,7 +100,16 @@
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
 		"stop": "停止生成",
-		"stopping": "停止中 ..."
+		"stopping": "停止中 ...",
+		"startRecording": "开始语音输入",
+		"stopRecording": "停止并转写",
+		"requestingMicrophone": "正在请求麦克风权限…",
+		"transcribing": "正在转写…",
+		"asrUnavailable": "尚未配置语音识别模型",
+		"recordingUnsupported": "当前浏览器无法录制受支持的音频格式",
+		"microphonePermissionDenied": "麦克风权限已被拒绝",
+		"transcriptionFailed": "语音转写失败",
+		"transcriptionEmpty": "未检测到语音"
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
@@ -566,7 +575,12 @@
 		"ttsEmpty": "暂无可用的语音合成模型。",
 		"ttsParameters": "参数",
 		"ttsParametersDescription": "调整所选语音合成模型的参数。",
-		"noTts": "不使用语音合成"
+		"noTts": "不使用语音合成",
+		"asrLabel": "语音识别",
+		"asrEmpty": "暂无可用的语音识别模型。",
+		"asrParameters": "参数",
+		"asrParametersDescription": "调整所选语音识别模型的参数，数组和对象请使用 JSON。",
+		"noAsr": "不使用语音识别"
 	},
 	"setup": {
 		"title": "连接到服务器",

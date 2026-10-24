@@ -20,6 +20,13 @@ export interface TTSModelConfig {
 	parameters: Record<string, unknown>;
 }
 
+export interface ASRModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	parameters: Record<string, unknown>;
+}
+
 export interface RealtimeModelConfig {
 	type: string;
 	credential_id: string;
@@ -157,6 +164,8 @@ export interface SessionConfig {
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** ASR model configuration. null means speech input is not enabled. */
+	asr_model_config: ASRModelConfig | null;
 	/** Realtime voice model configuration. null disables voice mode. */
 	realtime_model_config: RealtimeModelConfig | null;
 	/** Knowledge bases attached to this session + KB middleware parameters. */
@@ -196,6 +205,8 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional ASR model. Omit (or pass null) for no speech input. */
+	asr_model_config?: ASRModelConfig | null;
 	/** Optional realtime voice model. Omit (or pass null) for none. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/** Optional knowledge base attachment. Omit (or null) for none. */
@@ -227,6 +238,8 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/** New ASR model, or null to disable speech input. */
+	asr_model_config?: ASRModelConfig | null;
 	/** New realtime voice model, or null to disable voice mode. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/**
@@ -1308,6 +1321,33 @@ export interface ChannelSessionsResponse {
 
 export interface ChannelChatIdsResponse {
 	chats: { chat_id: string; name: string; source: string }[];
+}
+
+// ─── ASR ──────────────────────────────────────────────────────────────────────
+
+export interface ASRModelCard {
+	type: 'asr_model';
+	name: string;
+	label: string;
+	input_types: string[];
+	output_types: string[];
+	realtime: boolean;
+	parameter_schema: Record<string, unknown>;
+	parameters_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListASRModelResponse {
+	models: ASRModelCard[];
+	total: number;
+}
+
+export interface TranscriptionResponse {
+	text: string;
+}
+
+export interface RealtimeASRTokenResponse {
+	token: string;
+	expires_at: number;
 }
 
 // ─── TTS ──────────────────────────────────────────────────────────────────────

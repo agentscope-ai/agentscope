@@ -30,6 +30,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
+import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
@@ -89,6 +90,18 @@ interface ChatContentProps {
 	voiceState?: RealtimeConnectionState;
 	onVoiceToggle?: () => void;
 	voiceDisabled?: boolean;
+	/** Audio media types accepted by the selected ASR model. */
+	asrInputTypes?: string[];
+	/** Transcribes one completed browser recording. */
+	onTranscribe?: (file: File) => Promise<string>;
+	/** Whether the selected model uses streaming recognition. */
+	asrRealtime?: boolean;
+	/** Configuration for the realtime ASR browser transport. */
+	realtimeASRConfig?: RealtimeASRConfig | null;
+	/** Whether speech-to-text recording is unavailable. */
+	asrDisabled?: boolean;
+	/** Identity used to discard recording state after context changes. */
+	asrResetKey?: string;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -128,6 +141,12 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	voiceState,
 	onVoiceToggle,
 	voiceDisabled,
+	asrInputTypes,
+	onTranscribe,
+	asrRealtime,
+	realtimeASRConfig,
+	asrDisabled,
+	asrResetKey,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -305,6 +324,12 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						voiceState={voiceState}
 						onVoiceToggle={onVoiceToggle}
 						voiceDisabled={voiceDisabled}
+						asrInputTypes={asrInputTypes}
+						onTranscribe={onTranscribe}
+						asrRealtime={asrRealtime}
+						realtimeASRConfig={realtimeASRConfig}
+						asrDisabled={asrDisabled}
+						asrResetKey={asrResetKey}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
 								<WorkingDirectoryDialog
