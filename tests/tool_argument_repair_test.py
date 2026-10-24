@@ -140,6 +140,13 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
                         },
                     )
 
+        # The same guard applies on the schema-less path: its early return
+        # used to bypass it, letting NaN reserialize into invalid JSON
+        for json_str in ['{"ratio": NaN}', '{"ratio": Infinity}']:
+            with self.subTest(json_str=json_str, schema=None):
+                with self.assertRaises(ToolJSONDecodeError):
+                    _json_loads_with_repair(json_str)
+
 
 class ToolCallArgumentRepairTest(IsolatedAsyncioTestCase):
     """Unittest for repairing the arguments within an agent reply."""
