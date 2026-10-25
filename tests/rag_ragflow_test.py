@@ -106,7 +106,7 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
             "dataset_ids": ["dataset-1"],
             "page": 1,
             "page_size": 3,
-            "similarity_threshold": 0.25,
+            "similarity_threshold": 0.5,
             "vector_similarity_weight": 0.6,
             "knn_top_k": 42,
             "keyword": True,
@@ -158,6 +158,75 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_search_threshold_overrides_dataset_default(self) -> None:
+        """A lower per-search threshold must reach the retrieval server."""
+        thresholds: list[float] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            threshold = json.loads(request.content)["similarity_threshold"]
+            thresholds.append(threshold)
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "chunks": [
+                            {
+                                "id": f"chunk-{score}",
+                                "document_id": "doc-1",
+                                "document_keyword": "manual.txt",
+                                "content": f"score {score}",
+                                "similarity": score,
+                            }
+                            for score in (0.7, 0.3, 0.0)
+                            if score >= threshold
+                        ],
+                    },
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("httpx.AsyncClient", return_value=client):
+            knowledge = RAGFlowKnowledgeBase(
+                name="handbook",
+                description="Company policies.",
+                config=RAGFlowConfig(
+                    api_key="secret",
+                    base_url="https://ragflow.example",
+                    dataset_id="dataset-1",
+                    similarity_threshold=0.6,
+                ),
+            )
+        cases: list[tuple[float | None, list[float]]] = [
+            (None, [0.7]),
+            (0.1, [0.7, 0.3]),
+            (0.0, [0.7, 0.3, 0.0]),
+            (0.9, []),
+            (None, [0.7]),
+        ]
+        try:
+            for threshold, expected in cases:
+                with self.subTest(score_threshold=threshold):
+                    results = await knowledge.search(
+                        ["policy", TextBlock(text="leave")],
+                        top_k=3,
+                        score_threshold=threshold,
+                    )
+                    self.assertListEqual(
+                        [result.score for result in results],
+                        expected,
+                    )
+                    self.assertEqual(
+                        thresholds[-2:],
+                        [0.6 if threshold is None else threshold] * 2,
+                    )
+                    self.assertEqual(
+                        knowledge.config.similarity_threshold,
+                        0.6,
+                    )
+        finally:
+            await knowledge.aclose()
 
     async def test_document_lifecycle_maps_status_and_paginates_chunks(
         self,

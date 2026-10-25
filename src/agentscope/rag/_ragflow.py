@@ -100,14 +100,19 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
             )
         return payload.get("data")
 
-    async def _retrieve(self, question: str, page_size: int) -> dict[str, Any]:
+    async def _retrieve(
+        self,
+        question: str,
+        page_size: int,
+        score_threshold: float,
+    ) -> dict[str, Any]:
         """Retrieve one query's result envelope."""
         body: dict[str, Any] = {
             "question": question,
             "dataset_ids": [self._config.dataset_id],
             "page": 1,
             "page_size": page_size,
-            "similarity_threshold": self._config.similarity_threshold,
+            "similarity_threshold": score_threshold,
             "vector_similarity_weight": (
                 self._config.vector_similarity_weight
             ),
@@ -132,6 +137,9 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
         ``DataBlock`` inputs are ignored because RAGFlow's retrieval endpoint
         accepts text.  Results from all queries are deduplicated by RAGFlow's
         stable chunk id, keeping the highest score.
+
+        ``score_threshold`` overrides the configured similarity threshold
+        for this search.  ``None`` uses the configured default.
         """
         if top_k <= 0:
             return []
@@ -143,8 +151,13 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
         if not query_texts:
             return []
 
+        threshold = (
+            self._config.similarity_threshold
+            if score_threshold is None
+            else score_threshold
+        )
         responses = await asyncio.gather(
-            *(self._retrieve(text, top_k) for text in query_texts),
+            *(self._retrieve(text, top_k, threshold) for text in query_texts),
         )
         best: dict[str, VectorSearchResult] = {}
         for data in responses:
