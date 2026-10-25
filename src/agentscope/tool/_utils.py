@@ -99,15 +99,24 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
         partial_funcs.append(annotated_func)
         annotated_func = annotated_func.func
 
+    globalns = getattr(annotated_func, "__globals__", None)
+
     try:
         type_hints = typing.get_type_hints(
             annotated_func,
             include_extras=True,
         )
     except Exception:
+        # One unresolvable annotation, for example a type imported only under
+        # ``TYPE_CHECKING``, must not discard the annotations that do resolve.
         type_hints = {}
-
-    globalns = getattr(annotated_func, "__globals__", None)
+        raw_annotations = getattr(annotated_func, "__annotations__", {})
+        if isinstance(raw_annotations, dict):
+            for name, annotation in raw_annotations.items():
+                try:
+                    type_hints[name] = _resolve_annotation(annotation, globalns)
+                except Exception:
+                    continue
 
     for partial_func in reversed(partial_funcs):
         type_hints.update(

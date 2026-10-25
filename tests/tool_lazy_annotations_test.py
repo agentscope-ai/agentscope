@@ -9,13 +9,25 @@ resolved back to real types before being handed to pydantic.
 from __future__ import annotations
 
 from functools import partial
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 from unittest import TestCase
 
 from pydantic import BaseModel, Field
 
 from agentscope.tool import FunctionTool
 from agentscope.tool._utils import _extract_input_schema
+
+if TYPE_CHECKING:
+    from agentscope.state import AgentState
+
+
+def state_injected_tool(
+    query: Annotated[str, Field(description="The search query")],
+    mode: Literal["web", "news"] = "web",
+    _agent_state: AgentState | None = None,
+) -> str:
+    """Search for something."""
+    return query
 
 
 class Location(BaseModel):
@@ -401,5 +413,30 @@ class LazyAnnotationsTest(TestCase):
                 "type": "object",
                 "properties": {"value": {"type": "integer"}},
                 "required": ["value"],
+            },
+        )
+
+    def test_unresolvable_annotation_does_not_discard_the_others(
+        self,
+    ) -> None:
+        """A type imported only under TYPE_CHECKING must not discard the other hints."""
+        schema = _extract_input_schema(state_injected_tool)
+
+        self.assertDictEqual(
+            schema,
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["web", "news"],
+                        "default": "web",
+                    },
+                },
+                "required": ["query"],
             },
         )
