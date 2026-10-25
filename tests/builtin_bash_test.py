@@ -263,6 +263,29 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         self.assertIn("command_substitution", decision.message)
 
+    async def test_separator_hidden_commands_not_auto_allowed(self) -> None:
+        """Test newline- and ``&``-hidden commands bypass nothing.
+
+        A command separated by a newline or a single ``&`` is compound;
+        a read-only prefix must not auto-allow a hidden mutation the way
+        it must not for ``;`` and ``&&``.
+        """
+        test_cases = [
+            "cat file.txt\nrm -rf /tmp/victim",
+            "cat file.txt & rm -rf /tmp/victim",
+            "ls\nshutdown now",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=repr(cmd)):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertNotEqual(
+                    decision.behavior,
+                    PermissionBehavior.ALLOW,
+                )
+
     async def test_mutating_find_commands_not_auto_allowed(self) -> None:
         """Test mutating find commands are not auto-allowed as read-only."""
         test_cases = [
