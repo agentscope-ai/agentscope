@@ -1013,7 +1013,10 @@ class ReActAgent(ReActAgentBase):
                 await self.memory.add(retrieved_msg)
 
     async def _compress_memory_if_needed(self) -> None:
-        """Compress the memory content if needed."""
+        """Compress memory if needed.
+
+        Preserve existing memory when the model returns no summary.
+        """
         if (
             self.compression_config is None
             or not self.compression_config.enable
@@ -1109,7 +1112,7 @@ class ReActAgent(ReActAgentBase):
                 last_chunk = res
 
             # Format the compressed memory summary
-            if last_chunk.metadata:
+            if last_chunk is not None and last_chunk.metadata:
                 # Update the compressed summary in the memory storage
                 await self.memory.update_compressed_summary(
                     self.compression_config.summary_template.format(

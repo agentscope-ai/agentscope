@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """The unittest for memory compression."""
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.agent import ReActAgent
 from agentscope.formatter import FormatterBase
@@ -85,6 +86,77 @@ class MockFormatter(FormatterBase):
 
 class MemoryCompressionTest(IsolatedAsyncioTestCase):
     """The unittest for memory compression."""
+
+    async def test_empty_compression_stream_preserves_memory(self) -> None:
+        """An empty response preserves prior memory and permits a retry."""
+        for separate_model in (False, True):
+            with self.subTest(separate_model=separate_model):
+                model = MockChatModel("mock-model", stream=True)
+                agent = ReActAgent(
+                    name="Friday",
+                    sys_prompt="You are a helpful assistant.",
+                    model=MockChatModel("reply-model")
+                    if separate_model
+                    else model,
+                    formatter=MockFormatter(),
+                    compression_config=ReActAgent.CompressionConfig(
+                        enable=True,
+                        trigger_threshold=1,
+                        agent_token_counter=CharTokenCounter(),
+                        keep_recent=1,
+                        compression_model=model if separate_model else None,
+                        summary_template="{task_overview}",
+                    ),
+                )
+                messages = [
+                    Msg("user", "Older message to summarize.", "user"),
+                    Msg("user", "Keep this recent message.", "user"),
+                ]
+                await agent.memory.add(messages)
+                await agent.memory.update_compressed_summary("Prior summary")
+                before = agent.memory.state_dict()
+
+                async def stream(
+                    chunks: list[ChatResponse],
+                ) -> AsyncGenerator[ChatResponse, None]:
+                    """Yield the supplied chunks without contacting a model."""
+                    for chunk in chunks:
+                        yield chunk
+
+                # The final chunk carries the structured summary; intermediate
+                # chunks may contain no parsed metadata yet.
+                responses = [
+                    stream([]),
+                    stream(
+                        [
+                            ChatResponse(content=[]),
+                            ChatResponse(
+                                content=[],
+                                metadata={"task_overview": "New summary"},
+                            ),
+                        ],
+                    ),
+                ]
+                with patch.object(
+                    MockChatModel,
+                    "__call__",
+                    side_effect=responses,
+                ) as model_call:
+                    with self.assertLogs("as", level="WARNING"):
+                        await agent._compress_memory_if_needed()
+                    self.assertEqual(agent.memory.state_dict(), before)
+
+                    await agent._compress_memory_if_needed()
+                    self.assertEqual(model_call.await_count, 2)
+
+                remaining = await agent.memory.get_memory(
+                    exclude_mark="compressed",
+                )
+                self.assertEqual(
+                    [msg.get_text_content() for msg in remaining],
+                    ["New summary", "Keep this recent message."],
+                )
+                self.assertEqual(remaining[-1].id, messages[-1].id)
 
     async def test_no_compression_below_threshold(self) -> None:
         """Test that compression is NOT triggered when memory is below
