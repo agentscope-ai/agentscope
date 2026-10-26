@@ -3,6 +3,8 @@
 
 import base64
 import os
+import re
+import xml.etree.ElementTree as ET
 from typing import AsyncGenerator, Any, List
 
 from ._backend import BackendBase, LocalBackend, _normalize_newlines
@@ -18,6 +20,60 @@ from ...permission import (
 
 
 _SHELL_CANDIDATES = ("pwsh", "powershell.exe")
+
+# PowerShell serializes its own error stream as CLIXML when the host runs a
+# command through ``-EncodedCommand``; native commands keep plain stderr.
+_CLIXML_HEADER = "#< CLIXML"
+_CLIXML_ESCAPE = re.compile(r"_x([0-9A-Fa-f]{4})_")
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_CLIXML_STREAMS = ("Error", "Warning", "Verbose", "Debug", "Information")
+
+
+def _decode_clixml(data: bytes) -> str:
+    """Turn PowerShell's CLIXML error stream back into readable text.
+
+    ``-EncodedCommand`` makes Windows PowerShell 5.1 serialize its error,
+    warning, and progress records as ``#< CLIXML`` XML instead of plain
+    lines. Passing that XML to the model hides the actual message, so the
+    stream records are extracted, their ``_xHHHH_`` escapes decoded, and
+    ANSI color codes removed. Anything that is not a CLIXML stream — a
+    native command's stderr, truncated output, or unexpected XML — is
+    returned as decoded text unchanged.
+
+    Args:
+        data (`bytes`):
+            The captured stderr bytes.
+
+    Returns:
+        `str`: Readable stderr text.
+    """
+    text = data.decode("utf-8", errors="replace")
+    if not text.startswith(_CLIXML_HEADER):
+        return text
+
+    start = text.find("<Objs")
+    if start < 0:
+        return text
+    try:
+        root = ET.fromstring(text[start:])
+    except ET.ParseError:
+        return text
+
+    parts = [
+        node.text
+        for node in root.iter()
+        if node.text
+        and node.tag.rsplit("}", 1)[-1] == "S"
+        and node.get("S") in _CLIXML_STREAMS
+    ]
+    if not parts:
+        return text
+    decoded = "".join(parts)
+    decoded = _CLIXML_ESCAPE.sub(
+        lambda match: chr(int(match.group(1), 16)),
+        decoded,
+    )
+    return _ANSI_ESCAPE.sub("", decoded)
 
 
 class PowerShell(ToolBase):
@@ -233,7 +289,7 @@ are easier for the user to review and authorize:
             result.stdout.decode("utf-8", errors="replace"),
         )
         stderr = _normalize_newlines(
-            result.stderr.decode("utf-8", errors="replace"),
+            _decode_clixml(result.stderr),
         )
         if result.exit_code == -1 and result.stderr == b"timed out":
             yield ToolChunk(
