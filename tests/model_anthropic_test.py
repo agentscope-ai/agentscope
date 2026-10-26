@@ -7,10 +7,11 @@ Anthropic uses event-based streaming (message_start, content_block_start,
 content_block_delta, message_delta events).
 """
 import json
+from datetime import datetime, timedelta
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from anthropic import types as anthropic_types
 
@@ -22,7 +23,7 @@ from agentscope.message import (
     ToolCallBlock,
     ThinkingBlock,
 )
-from agentscope.model import AnthropicChatModel
+from agentscope.model import AnthropicChatModel, ChatUsage
 from agentscope.credential import AnthropicCredential
 from agentscope.tool import ToolChoice
 
@@ -724,6 +725,50 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     ],
                 ),
             ],
+        )
+
+    async def test_stream_final_usage_reports_full_generation_time(
+        self,
+    ) -> None:
+        """The final response reports the full generation time."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-t",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        start = datetime(2026, 10, 1, 10, 0, 0)
+        first_event_at = start + timedelta(milliseconds=300)
+        last_event_at = start + timedelta(seconds=20)
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+        ) as mock_datetime:
+            mock_datetime.now.side_effect = [
+                start,
+                first_event_at,
+                last_event_at,
+            ]
+            responses = [r async for r in await self.model([])]
+
+        self.assertTrue(responses[-1].is_last)
+        self.assertEqual(
+            responses[-1].usage,
+            ChatUsage(input_tokens=10, output_tokens=5, time=20.0),
         )
 
     async def test_stream_redacted_thinking(self) -> None:

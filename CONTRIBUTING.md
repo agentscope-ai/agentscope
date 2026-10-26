@@ -377,11 +377,12 @@ classes plus documentation:
    your backend.
    _Reference: `agentscope/workspace/_local_workspace.py` (`LocalWorkspace`)_
 
-2. **Workspace manager class** — alongside
-   `agentscope/app/_manager/_workspace_manager.py`, subclassing
+2. **Workspace manager class** — under
+   `agentscope/app/workspace_manager/`, subclassing
    `WorkspaceManagerBase`. Wires your workspace into the application
    lifecycle.
-   _Reference: `LocalWorkspaceManager` in the same file._
+   _Reference: `LocalWorkspaceManager` in
+   `agentscope/app/workspace_manager/_local_workspace_manager.py`._
 
 3. **Documentation** — open a companion PR in
    [agentscope-ai/docs](https://github.com/agentscope-ai/docs) describing

@@ -321,6 +321,105 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(verifier.received), 1)
 
+    async def test_gives_up_on_an_executor_that_never_reports(self) -> None:
+        """Stop after the initial attempt and the allowed retries."""
+        for max_retries in (0, 2):
+            with self.subTest(max_retries=max_retries):
+                missing = _no_output("executor")
+                executor = StubAgent("executor", [[missing]])
+                verifier = StubAgent("verifier", [[_verdict("pass")]])
+                pipe = GoalPipeline(
+                    executor,
+                    verifier,
+                    max_retries=max_retries,
+                )
+                yielded = []
+
+                with self.assertRaises(RuntimeError) as raised:
+                    async for chunk in pipe.reply_stream(
+                        UserMsg("user", "Build a crawler"),
+                    ):
+                        yielded.append(chunk)
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "The executor failed to generate a valid execution "
+                    f"report after {max_retries} retries.",
+                )
+                self.assertEqual(yielded, [missing] * (max_retries + 1))
+                self.assertEqual(len(executor.received), max_retries + 1)
+                self.assertEqual(verifier.received, [])
+
+    async def test_gives_up_on_a_verifier_that_never_verdicts(self) -> None:
+        """Bound retries with a missing verdict or an empty stream."""
+        for batch in ([], [_no_output("verifier")]):
+            with self.subTest(empty_stream=not batch):
+                report = _report("Completed; see main.py")
+                executor = StubAgent("executor", [[report]])
+                verifier = StubAgent("verifier", [batch])
+                pipe = GoalPipeline(executor, verifier, max_retries=2)
+                yielded = []
+
+                with self.assertRaises(RuntimeError) as raised:
+                    async for chunk in pipe.reply_stream(
+                        UserMsg("user", "Build a crawler"),
+                    ):
+                        yielded.append(chunk)
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "The verifier failed to generate a valid verification "
+                    "result after 2 retries.",
+                )
+                self.assertEqual(yielded, [report])
+                self.assertEqual(
+                    (len(executor.received), len(verifier.received)),
+                    (1, 3),
+                )
+
+    async def test_a_fresh_run_restarts_the_retry_budget(self) -> None:
+        """Each participant can retry again after a previous run failed."""
+        for participant in ("executor", "verifier"):
+            with self.subTest(participant=participant):
+                report = _report("Completed; see main.py")
+                verdict = _verdict("pass")
+                executor = StubAgent("executor", [[report]])
+                verifier = StubAgent("verifier", [[verdict]])
+                missing = _no_output(participant)
+                if participant == "executor":
+                    executor.script = [[missing]] * 3 + [[report]]
+                    expected_yielded = [missing, report]
+                    expected_calls = (4, 1)
+                    output_name = "execution report"
+                else:
+                    verifier.script = [[missing]] * 3 + [[verdict]]
+                    expected_yielded = [report]
+                    expected_calls = (2, 4)
+                    output_name = "verification result"
+                pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+                with self.assertRaises(RuntimeError) as raised:
+                    await self._run(
+                        pipe,
+                        UserMsg("user", "Build a crawler"),
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    f"The {participant} failed to generate a valid "
+                    f"{output_name} after 1 retries.",
+                )
+
+                # The new run must retry once before succeeding.
+                yielded = await self._run(
+                    pipe,
+                    UserMsg("user", "Build another crawler"),
+                )
+                self.assertEqual(yielded, expected_yielded)
+                self.assertEqual(
+                    (len(executor.received), len(verifier.received)),
+                    expected_calls,
+                )
+
     async def test_a_parked_executor_is_not_verified(self) -> None:
         """The work is unfinished while the executor waits on a human, so
         there is nothing for the verifier to judge yet."""

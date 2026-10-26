@@ -398,7 +398,8 @@ class GeminiChatModel(ChatModelBase):
                     # Tool call
                     if part.function_call:
                         if part.thought_signature:
-                            call_id = base64.b64encode(
+                            # Mark signature IDs for the history formatter.
+                            call_id = "gemini_ts:" + base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
@@ -455,7 +456,8 @@ class GeminiChatModel(ChatModelBase):
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
                     if part.thought_signature:
-                        call_id = base64.b64encode(
+                        # Mark signature IDs for the history formatter.
+                        call_id = "gemini_ts:" + base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
                     else:

@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 from typing import Any, Type
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel
@@ -824,4 +825,35 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 "hints": [],
                 "structured_call_count": 0,
             },
+        )
+
+
+class FrontmatterParseTest(TestCase):
+    """Parsing of memory-file frontmatter."""
+
+    def test_closing_fence_at_end_of_text_keeps_fields(self) -> None:
+        """Keep fields when the closing fence is the last line.
+
+        Discovery reads a byte-capped prefix, and that prefix often ends
+        on the closing ``---``. A file can end there too. Both must still
+        expose ``description`` and ``type``.
+        """
+        fields = {
+            "name": "tea.md",
+            "description": "User likes tea",
+            "type": "user",
+        }
+        ending_on_fence = (
+            "---\n"
+            "name: tea.md\n"
+            "description: User likes tea\n"
+            "type: user\n"
+            "---"
+        )
+        # pylint: disable-next=protected-access
+        parse = AgenticMemoryMiddleware._parse_frontmatter_fields
+        self.assertDictEqual(parse(ending_on_fence), fields)
+        self.assertDictEqual(
+            parse(ending_on_fence + "\n\nThey drink tea daily.\n"),
+            fields,
         )

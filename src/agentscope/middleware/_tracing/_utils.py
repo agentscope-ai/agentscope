@@ -36,7 +36,16 @@ def _to_serializable(
     elif isinstance(obj, dict):
         res = {str(key): _to_serializable(val) for (key, val) in obj.items()}
 
-    elif isinstance(obj, (Msg, BaseModel)) or is_dataclass(obj):
+    elif isinstance(obj, (Msg, BaseModel)):
+        # Dump the model's fields, so the span carries readable JSON
+        # rather than a Python repr string.
+        try:
+            res = _to_serializable(obj.model_dump())
+        except Exception:
+            # Tracing must not fail because model serialization fails.
+            res = repr(obj)
+
+    elif is_dataclass(obj):
         res = repr(obj)
 
     elif inspect.isclass(obj) and issubclass(obj, BaseModel):

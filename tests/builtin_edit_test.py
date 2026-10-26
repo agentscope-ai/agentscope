@@ -8,6 +8,7 @@ from agentscope.tool import Edit
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 
@@ -255,3 +256,59 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertIn("can't decode", chunk.content[0].text)
         with open(self.temp_file.name, "rb") as f:
             self.assertEqual(f.read(), original)
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent."""
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {
+                    "file_path": f"/tmp/probe/{parent}/out.csv",
+                    "old_string": "a",
+                    "new_string": "b",
+                }
+                engine = PermissionEngine(PermissionContext())
+                first = await engine.check_permission(
+                    self.edit_tool,
+                    tool_input,
+                )
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Edit",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                engine.add_rule(first.suggested_rules[0])
+                approved = await engine.check_permission(
+                    self.edit_tool,
+                    tool_input,
+                )
+                unrelated = await engine.check_permission(
+                    self.edit_tool,
+                    {
+                        **tool_input,
+                        "file_path": f"/tmp/probe/{sibling}/out.csv",
+                    },
+                )
+                self.assertEqual(
+                    [
+                        first.behavior,
+                        approved.behavior,
+                        unrelated.behavior,
+                    ],
+                    [
+                        PermissionBehavior.ASK,
+                        PermissionBehavior.ALLOW,
+                        PermissionBehavior.ASK,
+                    ],
+                )

@@ -7,7 +7,10 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+import httpx
+import ollama
 
 from utils import AnyValue
 
@@ -44,7 +47,7 @@ class OllamaListModelsTest(IsolatedAsyncioTestCase):
 
 
 class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
-    """Test Ollama embedding via mocked _call_api."""
+    """Test Ollama embedding calls and token usage."""
 
     async def test_basic_call(self) -> None:
         """Basic call returns correct embeddings."""
@@ -108,6 +111,57 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(call_count, 2)
+
+    async def test_token_usage(self) -> None:
+        """Preserve optional token counts parsed by the real Ollama SDK."""
+        cases: list[tuple[dict[str, Any], int | None]] = [
+            ({"prompt_eval_count": 8}, 8),
+            ({"prompt_eval_count": 0}, 0),
+            ({"prompt_eval_count": None}, None),
+            ({}, None),
+        ]
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                transport = httpx.MockTransport(
+                    Mock(
+                        return_value=httpx.Response(
+                            200,
+                            json={
+                                "embeddings": [[0.25, 0.5]],
+                                **fields,
+                            },
+                        ),
+                    ),
+                )
+                client = ollama.AsyncClient(
+                    host="http://offline.invalid:11434",
+                    transport=transport,
+                    trust_env=False,
+                )
+                self.addAsyncCleanup(client._client.aclose)
+                with patch("ollama.AsyncClient", return_value=client):
+                    model = OllamaEmbeddingModel(
+                        credential=_cred(),
+                        model="embeddinggemma",
+                        dimensions=2,
+                        max_retries=0,
+                    )
+                response = await model(["one"])
+                self.assertDictEqual(
+                    asdict(response),
+                    {
+                        "embeddings": [[0.25, 0.5]],
+                        "id": A,
+                        "created_at": A,
+                        "type": "embedding",
+                        "usage": {
+                            "tokens": expected,
+                            "time": A,
+                            "type": "embedding",
+                        },
+                        "source": "api",
+                    },
+                )
 
 
 class OllamaEmbeddingCacheHostTest(IsolatedAsyncioTestCase):

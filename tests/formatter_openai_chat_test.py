@@ -3,6 +3,9 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -347,6 +350,111 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{expected_b64}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_audio(self) -> None:
+        """Local file:// audio paths with spaces and '#' are decoded."""
+        audio_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.wav"
+            path.write_bytes(audio_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertEqual(
+            res[0]["content"][0],
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": expected_b64,
+                    "format": "wav",
+                },
+            },
+        )
+
+    async def test_chat_formatter_percent_encoded_local_file(self) -> None:
+        """Local file:// PDF paths with spaces and '#' are decoded."""
+        file_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(file_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.pdf"
+            path.write_bytes(file_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="application/pdf",
+                                ),
+                                name="my file #1.pdf",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertEqual(
+            res[0]["content"][0]["file"]["file_data"],
+            f"data:application/pdf;base64,{expected_b64}",
         )
 
     async def test_chat_formatter_base64_pdf(self) -> None:

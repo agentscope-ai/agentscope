@@ -203,3 +203,83 @@ class JevClassifierModelTest(IsolatedAsyncioTestCase):
                 "requires a compatible optional",
             ):
                 JevClassifierModel(TypeSafeCredential(api_key="secret"))
+
+    @staticmethod
+    def _response(model: str) -> SimpleNamespace:
+        """Build a System One response carrying one noul answer."""
+        return SimpleNamespace(
+            model=model,
+            answers={
+                "urgent": typesafe_sdk.NoulAnswer(type="noul", noul=0.8),
+            },
+            usage=typesafe_sdk.Usage(input_tokens=7, output_tokens=1),
+        )
+
+    @patch("typesafe_sdk.AsyncTypeSafeClient")
+    async def test_per_call_model_replaces_the_default(
+        self,
+        client_cls: Any,
+    ) -> None:
+        """``model=`` is forwarded once, with the caller's value."""
+        client = MagicMock()
+        client.system_one = AsyncMock(return_value=self._response("jev-1.5"))
+        client_cls.return_value = client
+        model = JevClassifierModel(
+            TypeSafeCredential(api_key="secret"),
+            model="jev-latest",
+        )
+
+        await model(
+            state="I was charged twice.",
+            questions={"urgent": BinaryQuestion(instructions="Urgent?")},
+            model="jev-1.5",
+            extra_body={"trace": True},
+        )
+
+        call_kwargs = client.system_one.await_args.kwargs
+        self.assertDictEqual(
+            {
+                **call_kwargs,
+                "questions": {
+                    name: question.model_dump()
+                    for name, question in call_kwargs["questions"].items()
+                },
+            },
+            {
+                "state": "I was charged twice.",
+                "questions": {
+                    "urgent": {
+                        "type": "noul",
+                        "instructions": "Urgent?",
+                    },
+                },
+                "model": "jev-1.5",
+                "extra_body": {"trace": True},
+            },
+        )
+
+    @patch("typesafe_sdk.AsyncTypeSafeClient")
+    async def test_per_call_model_is_not_remembered(
+        self,
+        client_cls: Any,
+    ) -> None:
+        """The instance default applies again on the next call."""
+        client = MagicMock()
+        client.system_one = AsyncMock(return_value=self._response("jev-1.5"))
+        client_cls.return_value = client
+        model = JevClassifierModel(
+            TypeSafeCredential(api_key="secret"),
+            model="jev-latest",
+        )
+        questions = {"urgent": BinaryQuestion(instructions="Urgent?")}
+
+        await model(state="one", questions=questions, model="jev-1.5")
+        await model(state="two", questions=questions)
+
+        self.assertListEqual(
+            [
+                call.kwargs["model"]
+                for call in client.system_one.await_args_list
+            ],
+            ["jev-1.5", "jev-latest"],
+        )

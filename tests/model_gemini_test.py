@@ -5,16 +5,25 @@
 Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
+import base64
 import json
 from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.formatter import GeminiChatFormatter
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ThinkingBlock,
+)
 from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
@@ -681,6 +690,184 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 json.dumps({"q": "b"}, ensure_ascii=False),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# Thought signature round-trip tests
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiThoughtSignatures(IsolatedAsyncioTestCase):
+    """Keep signatures in marked IDs without changing message schemas."""
+
+    async def test_tool_call_round_trip(self) -> None:
+        """Preserve parallel and sequential calls across JSON storage."""
+        for streaming in (False, True):
+            for provider_id in (None, "call-original", "Y2FsbA=="):
+                with self.subTest(stream=streaming, id=provider_id):
+                    with patch("google.genai.Client") as client_class:
+                        model = _make_model(stream=streaming)
+                    client = client_class.return_value
+                    history = [
+                        Msg(
+                            name="user",
+                            role="user",
+                            content=[TextBlock(text="Weather?")],
+                        ),
+                    ]
+                    expected_history = [
+                        {"role": "user", "parts": [{"text": "Weather?"}]},
+                    ]
+
+                    # Only the first of the parallel calls has a signature.
+                    # The next step gets a different signature in this turn.
+                    for step, signature in enumerate(
+                        (bytes(range(256)), b"next-step-signature"),
+                    ):
+                        call_id = "gemini_ts:" + base64.b64encode(
+                            signature,
+                        ).decode("ascii")
+                        parts = [
+                            _make_part(
+                                function_call={
+                                    "id": provider_id,
+                                    "name": "get_weather",
+                                    "args": {"city": "Tokyo"},
+                                },
+                                thought_signature=signature,
+                            ),
+                        ]
+                        if step == 0:
+                            parts.append(
+                                _make_part(
+                                    function_call={
+                                        "id": provider_id,
+                                        "name": "get_weather",
+                                        "args": {"city": "Paris"},
+                                    },
+                                ),
+                            )
+                        if streaming:
+                            generate = AsyncMock(
+                                return_value=_MockAsyncStream(
+                                    [_make_stream_chunk([p]) for p in parts],
+                                ),
+                            )
+                            client.aio.models.generate_content_stream = (
+                                generate
+                            )
+                            responses = [r async for r in await model(history)]
+                            result = responses[-1]
+                        else:
+                            generate = AsyncMock(
+                                return_value=_mock_completion(parts),
+                            )
+                            client.aio.models.generate_content = generate
+                            result = await model(history)
+
+                        self.assertEqual(
+                            generate.await_args.kwargs["contents"],
+                            expected_history,
+                        )
+                        expected_blocks = [
+                            ToolCallBlock.model_construct(
+                                id=call_id,
+                                created_at=A,
+                                name="get_weather",
+                                input=json.dumps({"city": "Tokyo"}),
+                            ),
+                        ]
+                        if step == 0:
+                            expected_blocks.append(
+                                ToolCallBlock.model_construct(
+                                    id=provider_id or A,
+                                    created_at=A,
+                                    name="get_weather",
+                                    input=json.dumps({"city": "Paris"}),
+                                ),
+                            )
+                        self.assertEqual(result.content, expected_blocks)
+                        self.assertEqual(
+                            len({b.id for b in result.content}),
+                            len(result.content),
+                        )
+                        message = AssistantMsg(
+                            name="assistant",
+                            content=[
+                                *result.content,
+                                *[
+                                    ToolResultBlock(
+                                        id=b.id,
+                                        name=b.name,
+                                        output="sunny",
+                                    )
+                                    for b in result.content
+                                ],
+                            ],
+                        )
+                        history.append(
+                            Msg.model_validate_json(message.model_dump_json()),
+                        )
+                        expected_parts = []
+                        expected_results = []
+                        for block, part in zip(result.content, parts):
+                            expected_part = {
+                                "function_call": {
+                                    "id": block.id,
+                                    "name": "get_weather",
+                                    "args": part.function_call.args,
+                                },
+                            }
+                            if part.thought_signature:
+                                expected_part["thought_signature"] = signature
+                            expected_parts.append(expected_part)
+                            expected_results.append(
+                                {
+                                    "function_response": {
+                                        "id": block.id,
+                                        "name": "get_weather",
+                                        "response": {"output": "sunny"},
+                                    },
+                                },
+                            )
+                        expected_history.extend(
+                            [
+                                {"role": "model", "parts": expected_parts},
+                                {"role": "user", "parts": expected_results},
+                            ],
+                        )
+                        self.assertEqual(
+                            await GeminiChatFormatter().format(history),
+                            expected_history,
+                        )
+
+    async def test_unmarked_ids_are_not_decoded(self) -> None:
+        """Do not infer signatures from plain or legacy Base64 IDs."""
+        for call_id in ("call-1", "Y2FsbA==", "bGVnYWN5LXNpZ25hdHVyZQ=="):
+            with self.subTest(id=call_id):
+                message = AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(id=call_id, name="search", input="{}"),
+                    ],
+                )
+                self.assertEqual(
+                    await GeminiChatFormatter().format([message]),
+                    [
+                        {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "function_call": {
+                                        "id": call_id,
+                                        "name": "search",
+                                        "args": {},
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
 
 
 # ---------------------------------------------------------------------------

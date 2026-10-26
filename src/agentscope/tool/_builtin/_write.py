@@ -2,6 +2,7 @@
 """The write tool in agentscope."""
 import difflib
 import fnmatch
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -217,7 +218,10 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        escaped = glob.escape(parent)
+        pattern = (escaped.rstrip("/\\") + "/**") if escaped else "**"
 
         return [
             PermissionRule(

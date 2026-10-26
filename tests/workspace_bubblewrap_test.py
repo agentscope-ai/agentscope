@@ -24,6 +24,8 @@ import aiofiles
 from fastapi.testclient import TestClient
 from mcp.types import Tool, ToolAnnotations
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.app.workspace_manager import BubblewrapWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import Base64Source, DataBlock, UserMsg
@@ -800,8 +802,10 @@ class TestGatewayAuth(unittest.TestCase):
     _BWRAP_OK and _BWRAP_INTEGRATION_ENABLED,
     _INTEGRATION_SKIP_REASON,
 )
-class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
+class TestBubblewrapWorkspace(CheckoutWheelTestCase):
     """Integration tests against live Bubblewrap."""
+
+    workspace_type = BubblewrapWorkspace
 
     _shared_workdir: tempfile.TemporaryDirectory[str]
     _shared_cache: tempfile.TemporaryDirectory[str]
@@ -1056,8 +1060,10 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
     _BWRAP_OK and _BWRAP_INTEGRATION_ENABLED,
     _INTEGRATION_SKIP_REASON,
 )
-class TestBubblewrapWorkspaceConcurrency(IsolatedAsyncioTestCase):
+class TestBubblewrapWorkspaceConcurrency(CheckoutWheelTestCase):
     """Concurrency scenarios that need multiple live workspaces."""
+
+    workspace_type = BubblewrapWorkspace
 
     async def asyncSetUp(self) -> None:
         """Create a shared bootstrap cache for live concurrency tests."""

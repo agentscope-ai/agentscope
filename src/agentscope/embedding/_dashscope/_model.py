@@ -431,6 +431,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "input": formatted,
             "model": self.model,
             "api_key": self.api_key,
+            "dimension": self.dimensions,
             **kwargs,
         }
 

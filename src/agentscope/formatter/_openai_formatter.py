@@ -4,6 +4,7 @@ import base64
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
+from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
@@ -103,7 +104,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -162,7 +163,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
@@ -208,7 +209,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                with open(url_str.removeprefix("file://"), "rb") as f:
+                with open(
+                    url2pathname(url_str.removeprefix("file://")),
+                    "rb",
+                ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 response = requests.get(url_str, timeout=30)

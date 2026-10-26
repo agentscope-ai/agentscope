@@ -1,0 +1,31 @@
+# Source: https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live
+type: realtime_model
+name: gemini-3.8-live
+label: Gemini 3.8 Live
+status: active
+
+# Image input is not implemented by the current realtime adapter.
+input_types:
+  - audio/pcm
+  - text/plain
+output_types:
+  - audio/pcm
+  - text/plain
+
+input_sample_rate: 16000
+output_sample_rate: 24000
+
+supports_tools: true
+max_context_tokens: 131072
+# Audio-only duration without context-window compression.
+max_session_duration_s: 900
+
+# Source: https://ai.google.dev/gemini-api/docs/live-api/capabilities
+parameter_overrides:
+  voice:
+    enum: ["Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus",
+           "Aoede", "Callirrhoe", "Autonoe", "Enceladus", "Iapetus",
+           "Umbriel", "Algieba", "Despina", "Erinome", "Algenib",
+           "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar",
+           "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+           "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat"]
