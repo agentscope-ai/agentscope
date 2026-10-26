@@ -3,7 +3,7 @@
 import inspect
 import json
 import re
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, aclosing, closing
 from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
@@ -152,22 +152,24 @@ class FunctionTool(ToolBase):
         if isinstance(result, AsyncGenerator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                async for chunk in result:
-                    if isinstance(chunk, ToolChunk):
-                        yield chunk
-                    else:
-                        yield self._convert_func_result_to_chunk(chunk)
+                async with aclosing(result):
+                    async for chunk in result:
+                        if isinstance(chunk, ToolChunk):
+                            yield chunk
+                        else:
+                            yield self._convert_func_result_to_chunk(chunk)
 
             return _stream()
 
         if isinstance(result, Generator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                for chunk in result:
-                    if isinstance(chunk, ToolChunk):
-                        yield chunk
-                    else:
-                        yield self._convert_func_result_to_chunk(chunk)
+                with closing(result):
+                    for chunk in result:
+                        if isinstance(chunk, ToolChunk):
+                            yield chunk
+                        else:
+                            yield self._convert_func_result_to_chunk(chunk)
 
             return _stream()
 
