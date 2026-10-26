@@ -292,21 +292,30 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
         offset: int = 0,
         limit: int = 30,
     ) -> list[Chunk]:
-        """List a page window of one document's RAGFlow chunks."""
+        """List a chunk window using at most two API pages."""
         if offset < 0:
             raise ValueError("offset must be non-negative")
         if limit <= 0:
             return []
-        target = offset + limit
+        page = offset // limit + 1
+        path = (
+            f"datasets/{self._config.dataset_id}/documents/"
+            f"{document_id}/chunks"
+        )
         data = await self._request(
             "GET",
-            (
-                f"datasets/{self._config.dataset_id}/documents/"
-                f"{document_id}/chunks"
-            ),
-            params={"page": 1, "page_size": target},
+            path,
+            params={"page": page, "page_size": limit},
         )
         total = int(data["total"])
+        raw_chunks = data["chunks"][offset % limit :]
+        if len(raw_chunks) < limit and page * limit < total:
+            next_data = await self._request(
+                "GET",
+                path,
+                params={"page": page + 1, "page_size": limit},
+            )
+            raw_chunks.extend(next_data["chunks"])
 
         return [
             Chunk(
@@ -328,7 +337,7 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
                 },
             )
             for index, raw in enumerate(
-                data["chunks"][offset:target],
+                raw_chunks[:limit],
                 start=offset,
             )
         ]

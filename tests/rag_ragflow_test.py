@@ -295,6 +295,9 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
                     },
                 )
             if request.method == "GET" and path.endswith("/chunks"):
+                page = int(request.url.params["page"])
+                size = int(request.url.params["page_size"])
+                start = (page - 1) * size
                 return httpx.Response(
                     200,
                     json={
@@ -313,7 +316,7 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
                                     "docnm_kwd": "manual.pdf",
                                     "available": True,
                                 },
-                            ],
+                            ][start : start + size],
                             "doc": {"name": "manual.pdf"},
                             "total": 2,
                         },
@@ -425,7 +428,7 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
                     "path": (
                         "/api/v1/datasets/dataset-1/documents/doc-1/chunks"
                     ),
-                    "query": {"page": "1", "page_size": "2"},
+                    "query": {"page": "2", "page_size": "1"},
                     "body": None,
                 },
                 {
@@ -436,6 +439,80 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_chunk_windows_do_not_download_skipped_prefix(self) -> None:
+        """Deep offsets keep response size bounded by the requested window."""
+        served: list[int] = []
+        total = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            page = int(request.url.params["page"])
+            size = int(request.url.params["page_size"])
+            indices = range((page - 1) * size, min(page * size, total))
+            served.append(len(indices))
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "chunks": [
+                            {
+                                "id": f"chunk-{index}",
+                                "content": str(index),
+                                "docnm_kwd": "manual.txt",
+                            }
+                            for index in indices
+                        ],
+                        "total": total,
+                    },
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("httpx.AsyncClient", return_value=client):
+            knowledge = RAGFlowKnowledgeBase(
+                name="handbook",
+                description="Company policies.",
+                config=RAGFlowConfig(
+                    api_key="secret",
+                    base_url="https://ragflow.example",
+                    dataset_id="dataset-1",
+                ),
+            )
+        try:
+            for offset, limit, total in (
+                (0, 3, 9),
+                (3, 3, 9),
+                (4, 3, 9),
+                (8, 3, 9),
+                (9, 3, 9),
+                (10_000, 3, 10_010),
+                (0, 0, 9),
+            ):
+                with self.subTest(offset=offset, limit=limit, total=total):
+                    served.clear()
+                    chunks = await knowledge.list_chunks(
+                        "doc-1",
+                        offset=offset,
+                        limit=limit,
+                    )
+                    expected = list(range(offset, min(offset + limit, total)))
+                    self.assertEqual(
+                        [chunk.chunk_index for chunk in chunks],
+                        expected,
+                    )
+                    self.assertEqual(
+                        [chunk.content.text for chunk in chunks],
+                        [str(index) for index in expected],
+                    )
+                    self.assertEqual(
+                        [chunk.total_chunks for chunk in chunks],
+                        [total] * len(expected),
+                    )
+                    self.assertLessEqual(len(served), 2)
+                    self.assertLessEqual(sum(served), 2 * limit)
+        finally:
+            await knowledge.aclose()
 
     async def test_delete_accepts_success_without_data(self) -> None:
         """The documented delete acknowledgement does not contain data."""
