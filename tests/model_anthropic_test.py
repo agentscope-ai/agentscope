@@ -771,6 +771,49 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             ChatUsage(input_tokens=10, output_tokens=5, time=20.0),
         )
 
+    async def test_cached_tokens_counted_in_input_tokens(self) -> None:
+        """The cache reads and writes count in ``input_tokens``, as for
+        the other providers, in both the stream and non-stream paths."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-c",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 3000,
+                },
+            },
+        )
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = MagicMock()
+        non_stream_model.client.messages.create = AsyncMock(
+            return_value=completion,
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        non_stream_usage = (await non_stream_model([])).usage
+        stream_usage = [r async for r in await self.model([])][-1].usage
+
+        for usage in (non_stream_usage, stream_usage):
+            self.assertEqual(
+                (
+                    usage.input_tokens,
+                    usage.cache_input_tokens,
+                    usage.cache_creation_input_tokens,
+                    usage.output_tokens,
+                ),
+                (3210, 3000, 200, 5),
+            )
+
     async def test_stream_redacted_thinking(self) -> None:
         """Stream redacted_thinking block is emitted at
         content_block_start."""
