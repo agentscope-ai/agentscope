@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """The unittest for memory compression."""
+from copy import deepcopy
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -114,7 +115,7 @@ class MemoryCompressionTest(IsolatedAsyncioTestCase):
                 ]
                 await agent.memory.add(messages)
                 await agent.memory.update_compressed_summary("Prior summary")
-                before = agent.memory.state_dict()
+                before = deepcopy(agent.memory.state_dict())
 
                 async def stream(
                     chunks: list[ChatResponse],
