@@ -316,7 +316,20 @@ Usage:
                 is_last=True,
             )
 
-        content = None
+        # The raw text is read even when the cache supplies the matching
+        # text: the file's own line endings must survive the write below.
+        try:
+            raw_text = (await self._backend.read_file(file_path)).decode(
+                "utf-8",
+                errors="replace",
+            )
+        except Exception as e:
+            return ToolChunk(
+                content=[TextBlock(text=f"Error reading file: {str(e)}")],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         if _agent_state is not None:
             # Take the mtime from the backend that reads the file, so the
             # cache also works for sandbox-only paths.
@@ -339,20 +352,9 @@ Usage:
                 )
             content = "".join(cache.lines)
         else:
-            # No state provided, read from backend
-            try:
-                raw = await self._backend.read_file(file_path)
-                # Normalize CRLF/CR to match the cached-content path and
-                # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(
-                    raw.decode("utf-8", errors="replace"),
-                )
-            except Exception as e:
-                return ToolChunk(
-                    content=[TextBlock(text=f"Error reading file: {str(e)}")],
-                    state=ToolResultState.ERROR,
-                    is_last=True,
-                )
+            # Normalize CRLF/CR to match the cached-content path and
+            # the LF-based old_string the caller supplies.
+            content = _normalize_newlines(raw_text)
 
         # Count occurrences
         occurrences = content.count(old_string)
@@ -396,11 +398,34 @@ Usage:
                 1,
             )
 
+        # Matching runs on LF text, but the file's own line endings must be
+        # written back: rewriting a CRLF file with LF turns a one-line edit
+        # into a whole-file diff on Windows. Replacing inside the raw text
+        # keeps every untouched byte, including mixed line endings.
+        write_content = updated_content
+        if "\r\n" in raw_text:
+            crlf_old = old_string.replace("\r\n", "\n").replace(
+                "\n",
+                "\r\n",
+            )
+            crlf_new = new_string.replace("\r\n", "\n").replace(
+                "\n",
+                "\r\n",
+            )
+            if raw_text.count(crlf_old) == occurrences:
+                write_content = raw_text.replace(
+                    crlf_old,
+                    crlf_new,
+                    -1 if replace_all else 1,
+                )
+            else:
+                write_content = updated_content.replace("\n", "\r\n")
+
         # Write updated content back to file via backend
         try:
             await self._backend.write_file(
                 file_path,
-                updated_content.encode("utf-8"),
+                write_content.encode("utf-8"),
             )
         except Exception as e:
             return ToolChunk(
