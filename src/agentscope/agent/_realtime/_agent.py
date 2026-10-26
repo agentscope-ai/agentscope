@@ -460,9 +460,7 @@ class RealtimeAgent:
             # events that produced (the interrupted ReplyEnd) before the
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
-            for turn in list(self._pending_user_turns.values()):
-                self._end_user_turn(turn)
-            self._end_user_turn()
+            self._retire_unbound_user_turns()
             while not self._out.empty():
                 queued = self._out.get_nowait()
                 self._yielded_checkpoint = (
@@ -871,6 +869,29 @@ class RealtimeAgent:
         self._end_user_turn()
         self._pending_user_turns.clear()
         self._user_turn = None
+
+    def _retire_unbound_user_turns(self) -> None:
+        """End pending user turns when their transport goes, keeping only
+        the ones a late transcript could still find.
+
+        A turn bound to a provider item id stays in
+        ``_pending_user_turns`` so a transcript that settles after the
+        transport died still lands in the reply the caller already saw
+        end. An unbound local turn has no id a late transcript could
+        match; keeping it would let it capture the next run's first
+        transcript through ``_find_user_turn``'s unbound fallback, so it
+        is dropped here.
+        """
+        turns = list(self._pending_user_turns.values())
+        if self._user_turn is not None and self._user_turn not in turns:
+            turns.append(self._user_turn)
+        for turn in turns:
+            self._end_user_turn(turn)
+        for turn in turns:
+            if not turn.item_id:
+                self._pending_user_turns.pop(turn.reply_id, None)
+                if self._user_turn is turn:
+                    self._user_turn = None
 
     def _on_transcription(self, event: me.InputTranscriptionEvent) -> None:
         """Record a settled user turn, merging a split one back together,
