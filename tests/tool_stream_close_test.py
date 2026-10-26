@@ -215,7 +215,8 @@ class ToolStreamCloseTest(IsolatedAsyncioTestCase):
                 async for chunk in stream:
                     values.append(chunk.content[0].text)
             self.assertEqual(
-                values, ["first"] if fail else ["first", "second"]
+                values,
+                ["first"] if fail else ["first", "second"],
             )
             self.assertEqual(closed, ["tool", "middleware"])
         finally:
