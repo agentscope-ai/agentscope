@@ -501,6 +501,7 @@
 		"keepAlive": "Keep Alive",
 		"keepAliveDesc": "Maintain state across interactions. Enable for browser-use or other long-running MCPs.",
 		"parseError": "Invalid JSON configuration: {{message}}",
+		"invalidStreamProgress": "{{name}}.stream_progress must be a boolean (true or false).",
 		"missingMcpServers": "Configuration must contain a \"mcpServers\" object.",
 		"emptyMcpServers": "No MCP servers found in configuration."
 	},

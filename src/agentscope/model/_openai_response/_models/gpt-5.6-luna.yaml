@@ -1,5 +1,5 @@
 name: gpt-5.6-luna
-label: GPT-5.6 Luna
+label: GPT-5.6 Luna (Responses API)
 status: active
 
 input_types:
