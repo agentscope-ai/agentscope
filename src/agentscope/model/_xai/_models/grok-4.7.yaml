@@ -1,0 +1,18 @@
+# Source: https://docs.x.ai/developers/models/grok-4.7
+name: grok-4.7
+label: Grok 4.7
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 500000
+# Local conservative cap, consistent with existing Grok cards.
+# The official model page does not publish a maximum output limit.
+output_size: 32000

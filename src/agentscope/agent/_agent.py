@@ -35,6 +35,7 @@ from .._utils._common import (
 )
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -2142,7 +2143,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls sequentially and yield the events.
@@ -2161,7 +2163,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
         """
         break_execution = False
@@ -2192,7 +2195,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls concurrently and yield the events.
@@ -2224,7 +2228,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
 
         Raises:
@@ -2433,7 +2438,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute a single tool call with permission checking and context
@@ -2465,7 +2471,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the tool call execution.
         """
         # ===================================================================
@@ -2699,6 +2706,16 @@ class Agent:
 
                 else:
                     # Intermediate ToolChunk — convert to streaming events
+                    progress = chunk.metadata.get("mcp_progress")
+                    if progress is not None:
+                        yield CustomEvent(
+                            name="mcp_progress",
+                            value={
+                                **progress,
+                                "reply_id": self.state.reply_id,
+                                "tool_call_id": tool_call.id,
+                            },
+                        )
                     async for evt in self._convert_tool_chunk_to_event(
                         tool_call.id,
                         chunk.content,
