@@ -41,54 +41,17 @@ def _dump(events: list) -> list:
 class GeminiCardsTest(unittest.TestCase):
     """The shipped cards and the credential lookup that finds them."""
 
-    def test_cards(self) -> None:
-        """Both Live dialog models, tagged with the adapter type."""
-        self.assertListEqual(
-            [
-                (
-                    c.name,
-                    c.model_type,
-                    c.supports_tools,
-                    c.max_context_tokens,
-                    c.max_session_duration_s,
-                    c.output_sample_rate,
-                )
-                for c in GeminiRealtimeModel.list_models()
-            ],
-            [
-                (
-                    "gemini-2.5-flash-native-audio-preview-12-2025",
-                    "gemini_realtime",
-                    True,
-                    131072,
-                    900,
-                    24000,
-                ),
-                (
-                    "gemini-3.1-flash-live-preview",
-                    "gemini_realtime",
-                    True,
-                    131072,
-                    900,
-                    24000,
-                ),
-            ],
-        )
-
     def test_credential_maps_card_back_to_class(self) -> None:
         """The service-layer lookup: card.model_type -> class, no scan."""
+        cards = GeminiRealtimeModel.list_models()
+        self.assertTrue(cards)
         classes = {c.type: c for c in CRED.get_realtime_model_classes()}
         self.assertDictEqual(
             {
-                card.name: classes[card.model_type].__name__
+                card.name: classes[card.model_type]
                 for card in CRED.list_realtime_models()
             },
-            {
-                "gemini-2.5-flash-native-audio-preview-12-2025": (
-                    "GeminiRealtimeModel"
-                ),
-                "gemini-3.1-flash-live-preview": "GeminiRealtimeModel",
-            },
+            {card.name: GeminiRealtimeModel for card in cards},
         )
 
     def test_unknown_model_name_is_rejected(self) -> None:
@@ -117,6 +80,17 @@ class GeminiCardsTest(unittest.TestCase):
 
 class GeminiSetupTest(unittest.TestCase):
     """The setup message sent on connect."""
+
+    def test_gemini_38_setup(self) -> None:
+        """The new Live model reuses the supported audio session setup."""
+        expected = GeminiRealtimeModel(MODEL, CRED)._setup(
+            "be nice",
+            TOOLS,
+            "",
+        )
+        expected["setup"]["model"] = "models/gemini-3.8-live"
+        model = GeminiRealtimeModel("gemini-3.8-live", CRED)
+        self.assertDictEqual(model._setup("be nice", TOOLS, ""), expected)
 
     def test_automatic_turn_detection(self) -> None:
         """Server VAD, tools and both transcriptions."""

@@ -34,16 +34,30 @@ class _OneShotTransport:
         return False
 
 
-class _FakeSession:
-    """Small ClientSession stand-in for lifecycle-only tests."""
+class _FakeClient:
+    """Small MCP 2.x Client stand-in for lifecycle-only tests."""
 
-    def __init__(self, read_stream: object, write_stream: object) -> None:
-        self.read_stream = read_stream
-        self.write_stream = write_stream
+    def __init__(
+        self,
+        transport: _OneShotTransport,
+        *,
+        mode: str,
+    ) -> None:
+        self.transport = transport
+        self.mode = mode
         self.exit_count = 0
+        self._entered = False
 
-    async def __aenter__(self) -> "_FakeSession":
-        """Enter the fake session context."""
+    async def __aenter__(self) -> "_FakeClient":
+        """Enter the fake client and clean partial connections on failure."""
+        await self.transport.__aenter__()
+        self._entered = True
+        try:
+            await self.connect()
+        except BaseException:
+            await self.transport.__aexit__(None, None, None)
+            self._entered = False
+            raise
         return self
 
     async def __aexit__(
@@ -52,13 +66,53 @@ class _FakeSession:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool:
-        """Leave the fake session context."""
+        """Leave the fake client context."""
         self.exit_count += 1
+        if self._entered:
+            await self.transport.__aexit__(exc_type, exc, traceback)
+            self._entered = False
         return False
 
-    async def initialize(self) -> None:
-        """Initialize the fake session."""
+    async def connect(self) -> None:
+        """Hook used by failure and cancellation tests."""
         return None
+
+
+class _TaskBoundClient(_FakeClient):
+    """Client that requires context entry and exit in the same task."""
+
+    instance: "_TaskBoundClient | None" = None
+
+    def __init__(
+        self,
+        transport: _OneShotTransport,
+        *,
+        mode: str,
+    ) -> None:
+        super().__init__(transport, mode=mode)
+        self.enter_task: asyncio.Task[Any] | None = None
+        self.exit_task: asyncio.Task[Any] | None = None
+        _TaskBoundClient.instance = self
+
+    async def __aenter__(self) -> "_TaskBoundClient":
+        """Record the task that owns the client context."""
+        self.enter_task = asyncio.current_task()
+        await super().__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        """Reject the AnyIO-invalid cross-task context exit."""
+        self.exit_task = asyncio.current_task()
+        if self.exit_task is not self.enter_task:
+            raise RuntimeError(
+                "Attempted to exit cancel scope in a different task",
+            )
+        return await super().__aexit__(exc_type, exc, traceback)
 
 
 class MCPClientReconnectTest(IsolatedAsyncioTestCase):
@@ -78,8 +132,8 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
             "agentscope.mcp._mcp_client.stdio_client",
             side_effect=create_transport,
         ), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _FakeSession,
+            "agentscope.mcp._mcp_client.SDKClient",
+            _FakeClient,
         ):
             client = MCPClient(
                 name="reconnect_stdio",
@@ -95,6 +149,45 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(transports), 2)
         self.assertTrue(all(_.enter_count == 1 for _ in transports))
 
+    async def test_client_context_is_closed_by_its_owner_task(self) -> None:
+        """Connect and close requests may run in different caller tasks."""
+        transport = _OneShotTransport()
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=transport,
+        ), patch(
+            "agentscope.mcp._mcp_client.SDKClient",
+            _TaskBoundClient,
+        ):
+            client = MCPClient(
+                name="task_bound",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+
+            connect_task = asyncio.create_task(client.connect())
+            await connect_task
+            close_task = asyncio.create_task(client.close())
+            await close_task
+
+        sdk_client = _TaskBoundClient.instance
+        assert sdk_client is not None
+        self.assertIs(sdk_client.enter_task, sdk_client.exit_task)
+        self.assertIsNot(sdk_client.enter_task, connect_task)
+        self.assertIsNot(sdk_client.exit_task, close_task)
+        self.assertEqual(
+            {
+                "transport_enters": transport.enter_count,
+                "transport_exits": transport.exit_count,
+                "client_exits": sdk_client.exit_count,
+            },
+            {
+                "transport_enters": 1,
+                "transport_exits": 1,
+                "client_exits": 1,
+            },
+        )
+
     async def test_failed_connect_can_be_retried(self) -> None:
         """A failed connection must discard its one-shot transport."""
         transports: list[_OneShotTransport] = []
@@ -105,22 +198,22 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
             transports.append(transport)
             return transport
 
-        class _FailOnceSession(_FakeSession):
-            """Fail the first initialization, then allow a retry."""
+        class _FailOnceClient(_FakeClient):
+            """Fail the first connection, then allow a retry."""
 
             attempts = 0
 
-            async def initialize(self) -> None:
-                _FailOnceSession.attempts += 1
-                if _FailOnceSession.attempts == 1:
+            async def connect(self) -> None:
+                _FailOnceClient.attempts += 1
+                if _FailOnceClient.attempts == 1:
                     raise RuntimeError("initialization failed")
 
         with patch(
             "agentscope.mcp._mcp_client.stdio_client",
             side_effect=create_transport,
         ), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _FailOnceSession,
+            "agentscope.mcp._mcp_client.SDKClient",
+            _FailOnceClient,
         ):
             client = MCPClient(
                 name="retry_after_failed_connect",
@@ -148,32 +241,33 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
             transports.append(transport)
             return transport
 
-        class _BlockingSession(_FakeSession):
-            """Block initialization until the test cancels the connection."""
+        class _BlockingClient(_FakeClient):
+            """Block connection until the test cancels it."""
 
-            instance: "_BlockingSession | None" = None
+            instance: "_BlockingClient | None" = None
             attempts = 0
 
             def __init__(
                 self,
-                read_stream: object,
-                write_stream: object,
+                transport: _OneShotTransport,
+                *,
+                mode: str,
             ) -> None:
-                super().__init__(read_stream, write_stream)
-                _BlockingSession.instance = self
+                super().__init__(transport, mode=mode)
+                _BlockingClient.instance = self
 
-            async def initialize(self) -> None:
-                _BlockingSession.attempts += 1
+            async def connect(self) -> None:
+                _BlockingClient.attempts += 1
                 initialize_started.set()
-                if _BlockingSession.attempts == 1:
+                if _BlockingClient.attempts == 1:
                     await never_finish.wait()
 
         with patch(
             "agentscope.mcp._mcp_client.stdio_client",
             side_effect=create_transport,
         ), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _BlockingSession,
+            "agentscope.mcp._mcp_client.SDKClient",
+            _BlockingClient,
         ):
             client = MCPClient(
                 name="cancelled_connect",
@@ -187,11 +281,11 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
 
-            session = _BlockingSession.instance
-            assert session is not None
+            sdk_client = _BlockingClient.instance
+            assert sdk_client is not None
             self.assertFalse(client.is_connected)
             self.assertEqual(transports[0].exit_count, 1)
-            self.assertEqual(session.exit_count, 1)
+            self.assertEqual(sdk_client.exit_count, 0)
 
             await client.connect()
             await client.close()
@@ -219,10 +313,10 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
                 transport_closed.set()
                 return False
 
-        class _BlockingSession(_FakeSession):
-            """Never finish initializing, so the scope cancels mid-connect."""
+        class _BlockingClient(_FakeClient):
+            """Never finish connecting, so the scope cancels mid-connect."""
 
-            async def initialize(self) -> None:
+            async def connect(self) -> None:
                 initialize_started.set()
                 await asyncio.Event().wait()
 
@@ -231,8 +325,8 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
             "agentscope.mcp._mcp_client.stdio_client",
             return_value=transport,
         ), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _BlockingSession,
+            "agentscope.mcp._mcp_client.SDKClient",
+            _BlockingClient,
         ):
             client = MCPClient(
                 name="cancel_scope",
@@ -272,8 +366,8 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
             "_create_http_client",
             side_effect=create_transport,
         ), patch(
-            "agentscope.mcp._mcp_client.ClientSession",
-            _FakeSession,
+            "agentscope.mcp._mcp_client.SDKClient",
+            _FakeClient,
         ):
             client = MCPClient(
                 name="reconnect_http",
