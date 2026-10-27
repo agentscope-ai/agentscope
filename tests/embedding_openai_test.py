@@ -174,6 +174,54 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         )
 
     @patch("openai.AsyncClient")
+    async def test_per_call_dimensions_override(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """A per-call dimensions= wins over the instance default."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 4),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="text-embedding-3-small",
+            dimensions=1536,
+        )
+        await model(["hello"], dimensions=256)
+
+        self.assertEqual(
+            mock_client.embeddings.create.await_args.kwargs["dimensions"],
+            256,
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_instance_dimensions_sent_without_override(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Without a per-call override the instance dimensions are sent."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 4),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="text-embedding-3-small",
+            dimensions=1536,
+        )
+        await model(["hello"])
+
+        self.assertEqual(
+            mock_client.embeddings.create.await_args.kwargs["dimensions"],
+            1536,
+        )
+
+    @patch("openai.AsyncClient")
     async def test_multi_batch(self, mock_client_cls: Any) -> None:
         """Inputs exceeding batch_size are split and merged."""
         mock_client = MagicMock()

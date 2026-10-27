@@ -134,10 +134,13 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             "input": inputs,
             "model": self.model,
             "encoding_format": "float",
-            **kwargs,
         }
         if self.pass_dimensions:
             api_kwargs["dimensions"] = self.dimensions
+        # Per-call kwargs win, so an explicit ``dimensions=`` on the call
+        # is not clobbered by the instance default (and gets its own
+        # cache entry, since the identifier is built from api_kwargs).
+        api_kwargs.update(kwargs)
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
