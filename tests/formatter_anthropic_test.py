@@ -757,6 +757,62 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_multiagent_text_before_media_in_same_message(
+        self,
+    ) -> None:
+        """A media part must not precede the text of its own message."""
+        fmt = AnthropicMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="alice",
+                    content=[
+                        TextBlock(text="look at this"),
+                        DataBlock(
+                            source=Base64Source(
+                                data=self.image_b64,
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+                UserMsg(
+                    name="bob",
+                    content=[TextBlock(text="ok")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                fmt.conversation_history_prompt
+                                + "<history>\nalice: look at this"
+                            ),
+                        },
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "bob: ok\n</history>",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
