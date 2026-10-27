@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import inspect
+import contextlib
 import json
 import re
-from contextlib import AbstractAsyncContextManager, aclosing, closing
+from contextlib import AbstractAsyncContextManager
 from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
@@ -152,7 +153,7 @@ class FunctionTool(ToolBase):
         if isinstance(result, AsyncGenerator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                async with aclosing(result):
+                async with contextlib.aclosing(result):
                     async for chunk in result:
                         if isinstance(chunk, ToolChunk):
                             yield chunk
@@ -164,7 +165,7 @@ class FunctionTool(ToolBase):
         if isinstance(result, Generator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                with closing(result):
+                with contextlib.closing(result):
                     for chunk in result:
                         if isinstance(chunk, ToolChunk):
                             yield chunk
