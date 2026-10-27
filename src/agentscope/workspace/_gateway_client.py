@@ -178,8 +178,8 @@ class GatewayMCPClient(MCPClient):
     from user input via :meth:`GatewayClient.make_client`). The local
     MCP machinery is short-circuited entirely:
 
-    * ``model_post_init`` does nothing (parent's ``_initialize_client``
-      is never called — no stdio context manager is built).
+    * ``model_post_init`` skips local configuration validation; no local
+      transport is constructed by the proxy.
     * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
     * ``close`` deregisters via ``DELETE /mcps/{name}``.
     * ``set_runtime_headers`` updates the registered live client.
@@ -191,9 +191,7 @@ class GatewayMCPClient(MCPClient):
     _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
-        """No-op — the parent builds local stdio/HTTP transport, which
-        the gateway-relayed client does not need.
-        """
+        """Leave configuration validation to the gateway-side MCP client."""
         return
 
     # ── lifecycle ─────────────────────────────────────────────────

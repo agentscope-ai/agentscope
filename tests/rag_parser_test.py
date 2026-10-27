@@ -2878,6 +2878,59 @@ class WordParserTest(IsolatedAsyncioTestCase):
 class WordParserParagraphTest(IsolatedAsyncioTestCase):
     """Regression coverage for paragraph and text-box extraction."""
 
+    async def test_blank_paragraph_with_a_run_is_preserved(self) -> None:
+        """A blank-looking paragraph whose only run holds a space or a line
+        break is still a blank line."""
+        from docx import Document as DocxDocument
+
+        doc = DocxDocument()
+        doc.add_paragraph("Paragraph one.")
+        doc.add_paragraph(" ")  # a run that holds only a space
+        break_only = doc.add_paragraph()  # a run that holds only <w:br/>
+        break_only.add_run().add_break()
+        doc.add_paragraph("Paragraph two.")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\n\n\nParagraph two.",
+        )
+
+    async def test_paragraph_with_a_field_code_is_not_a_blank_line(
+        self,
+    ) -> None:
+        """A paragraph holding field instructions is not a blank line, even
+        though the extractor returns no text for it."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+
+        doc = DocxDocument()
+        doc.add_paragraph("Paragraph one.")
+        field_run = doc.add_paragraph().add_run()
+        instr = OxmlElement("w:instrText")
+        instr.text = " PAGE "
+        # pylint: disable-next=protected-access
+        field_run._element.append(instr)
+        doc.add_paragraph("Paragraph two.")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+
+        self.assertEqual(
+            sections[0].content.text,
+            "Paragraph one.\nParagraph two.",
+        )
+
     async def test_text_boxes_are_separate_and_read_once(self) -> None:
         """Read modern text boxes once, with or without a VML fallback."""
         for name, template in (

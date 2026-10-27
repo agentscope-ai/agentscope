@@ -328,18 +328,15 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             texts.append(item)
 
         config_kwargs = {
+            "output_dimensionality": self.dimensions,
             **self.parameters.model_dump(exclude_none=True),
             **kwargs,
         }
-        config = types.EmbedContentConfig(
-            output_dimensionality=self.dimensions,
-            **config_kwargs,
-        )
+        config = types.EmbedContentConfig(**config_kwargs)
 
         cache_key = {
             "model": self.model,
             "contents": texts,
-            "output_dimensionality": self.dimensions,
             **config_kwargs,
         }
 
@@ -421,10 +418,11 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                     f"Invalid input: {item!r}. Expected str or DataBlock.",
                 )
 
-        config = types.EmbedContentConfig(
-            output_dimensionality=self.dimensions,
+        config_kwargs = {
+            "output_dimensionality": self.dimensions,
             **kwargs,
-        )
+        }
+        config = types.EmbedContentConfig(**config_kwargs)
 
         start_time = datetime.now()
         response = await self.client.aio.models.embed_content(

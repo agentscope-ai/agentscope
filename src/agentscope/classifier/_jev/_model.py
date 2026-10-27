@@ -136,21 +136,25 @@ class JevClassifierModel(ClassifierModelBase):
                 The typed questions keyed by name.
             **kwargs (`Any`):
                 Per-call TypeSafe options, e.g. ``extra_headers`` and
-                ``extra_body``.
+                ``extra_body``. ``model`` may also be set here, in which case
+                it overrides the instance default for this call only.
 
         Returns:
             `ClassifierResponse`:
                 The typed probabilistic answers keyed by question name.
         """
         start_time = perf_counter()
+        # Per-call options override defaults.
         response = await self.client.system_one(
-            state=state,
-            questions={
-                name: _to_sdk_question(question)
-                for name, question in questions.items()
+            **{
+                "state": state,
+                "questions": {
+                    name: _to_sdk_question(question)
+                    for name, question in questions.items()
+                },
+                "model": self.model,
+                **kwargs,
             },
-            model=self.model,
-            **kwargs,
         )
         return ClassifierResponse(
             model=response.model,

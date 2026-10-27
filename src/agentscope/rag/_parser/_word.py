@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from docx.text.paragraph import Paragraph as DocxParagraph
 
 _VML_NS = "{urn:schemas-microsoft-com:vml}"
+_MATH_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 _MC_ALTERNATE_CONTENT = (
     "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
     "AlternateContent"
@@ -103,6 +104,46 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
         own_text = para.text
     blocks = [own_text, *("".join(parts) for parts in text_boxes.values())]
     return "\n".join(block.strip() for block in blocks if block.strip())
+
+
+def _is_blank_paragraph(para: DocxParagraph) -> bool:
+    """Return whether Word renders *para* as a blank line.
+
+    A blank line has no text and no picture. It may still hold a run:
+    typing a space before Enter leaves ``<w:t> </w:t>``, and Shift+Enter
+    on an empty line leaves a run holding only ``<w:br/>``. A run that
+    carries anything else (field instructions, a symbol, an equation) is
+    not blank even when the extractor finds no text in it.
+    """
+    from docx.oxml.ns import qn
+
+    root = para._element
+    for tag in ("w:drawing", "w:pict", "w:object"):
+        if root.findall(".//" + qn(tag)):
+            return False
+    if root.findall(".//" + _MATH_NS + "oMath"):
+        return False
+
+    blank_run_tags = {
+        qn(tag)
+        for tag in (
+            "w:rPr",
+            "w:br",
+            "w:cr",
+            "w:tab",
+            "w:lastRenderedPageBreak",
+            "w:softHyphen",
+        )
+    }
+    text_tag = qn("w:t")
+    for run in root.findall(".//" + qn("w:r")):
+        for child in run:
+            if child.tag == text_tag:
+                if (child.text or "").strip():
+                    return False
+            elif child.tag not in blank_run_tags:
+                return False
+    return True
 
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
@@ -378,10 +419,9 @@ class WordParser(ParserBase):
                 text = _extract_text_from_paragraph(para)
                 if text:
                     text_buffer.append(text)
-                elif text_buffer and not para._element.findall(
-                    ".//" + qn("w:r"),
-                ):
-                    # No runs at all, i.e. a blank line in Word
+                elif text_buffer and _is_blank_paragraph(para):
+                    # A blank line in Word: an empty <w:p>, a run holding
+                    # only spaces, or a run holding only <w:br/>/<w:cr/>.
                     text_buffer.append("")
 
                 if self.include_image:
