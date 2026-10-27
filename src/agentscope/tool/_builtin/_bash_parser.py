@@ -532,6 +532,28 @@ class BashCommandParser:
 
         return prefixes
 
+    def split_into_subcommands(self, command: str) -> List[str]:
+        """Parse a command string and split it into subcommands.
+
+        Convenience wrapper around :meth:`split_compound_command` that
+        parses ``command`` first. Returns ``[command]`` when the command
+        is empty or no subcommands can be extracted.
+
+        Args:
+            command (`str`):
+                The bash command string (may be compound)
+
+        Returns:
+            `List[str]`:
+                List of individual subcommands, e.g.,
+                ``["git status", "npm install"]`` for
+                ``"git status && npm install"``
+        """
+        if not command or not command.strip():
+            return [command]
+        tree = self.parser.parse(bytes(command, "utf8"))
+        return self.split_compound_command(tree.root_node, command)
+
     def split_compound_command(self, root: Node, command: str) -> List[str]:
         """Split compound commands using tree-sitter for precise parsing.
 

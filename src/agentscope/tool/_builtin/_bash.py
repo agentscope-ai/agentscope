@@ -409,6 +409,10 @@ easier to review tool calls and give permission.
         - If rule_content is None, matches all invocations
          (tool-name-level rule)
 
+        For compound commands (``&&``, ``||``, ``;``, ``|``) the pattern
+        must match **every** subcommand, so a prefix allow rule like
+        ``git:*`` cannot silently cover ``git status && <other command>``.
+
         Args:
             rule_content: The command pattern to match, or None to match all
             tool_input: Must contain a "command" key with the command string
@@ -422,6 +426,31 @@ easier to review tool calls and give permission.
 
         command = tool_input.get("command", "")
 
+        # A rule covers a compound command only when it matches every
+        # subcommand — matching the raw string would let an allow rule
+        # like "git:*" auto-allow "git status && <arbitrary command>".
+        subcommands = self._bash_parser.split_into_subcommands(command)
+        if len(subcommands) > 1:
+            return all(
+                self._match_single_command(rule_content, sub)
+                for sub in subcommands
+            )
+        return self._match_single_command(rule_content, command)
+
+    def _match_single_command(
+        self,
+        rule_content: str,
+        command: str,
+    ) -> bool:
+        r"""Match ``rule_content`` against a single (non-compound) command.
+
+        Args:
+            rule_content: The command pattern to match
+            command: A single command string without ``&&``/``|`` etc.
+
+        Returns:
+            True if pattern matches the command
+        """
         # Check if pattern is a prefix pattern (ends with :*)
         if rule_content.endswith(":*"):
             prefix = rule_content[:-2].strip()
