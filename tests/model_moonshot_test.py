@@ -220,7 +220,8 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
         )
 
     async def test_extra_body_is_not_mutated(self) -> None:
-        """Defaulting thinking.type leaves the caller's extra_body intact."""
+        """Default parameters leave the caller's extra_body intact — no
+        ``thinking`` option is injected and the caller's dict is untouched."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
@@ -235,11 +236,51 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
         )
         self.assertDictEqual(
             mock_create.await_args.kwargs["extra_body"],
-            {
-                "custom": "value",
-                "thinking": {"budget_tokens": 1024, "type": "disabled"},
-            },
+            {"custom": "value", "thinking": {"budget_tokens": 1024}},
         )
+
+    async def test_thinking_omitted_by_default(self) -> None:
+        """Default parameters send no ``thinking`` option so the model's
+        default behavior applies."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        extra_body = mock_create.await_args.kwargs.get("extra_body") or {}
+        self.assertNotIn("thinking", extra_body)
+
+    async def test_thinking_disabled_forwarded(self) -> None:
+        """``thinking_enable=False`` sends ``thinking.type: disabled``."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        self.model.parameters = MoonshotChatModel.Parameters(
+            thinking_enable=False,
+        )
+
+        await self.model([])
+
+        extra_body = mock_create.await_args.kwargs["extra_body"]
+        self.assertEqual(extra_body["thinking"]["type"], "disabled")
+
+    async def test_thinking_enabled_forwarded(self) -> None:
+        """``thinking_enable=True`` sends ``thinking.type: enabled``."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        self.model.parameters = MoonshotChatModel.Parameters(
+            thinking_enable=True,
+        )
+
+        await self.model([])
+
+        extra_body = mock_create.await_args.kwargs["extra_body"]
+        self.assertEqual(extra_body["thinking"]["type"], "enabled")
 
     async def test_tool_call_response(
         self,

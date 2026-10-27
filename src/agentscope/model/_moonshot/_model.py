@@ -36,13 +36,15 @@ class MoonshotChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
-                "enabled by default but can be disabled."
+                "enabled by default but can be disabled. When None, no "
+                "``thinking`` option is sent and the model's default "
+                "behavior applies."
             ),
         )
 
@@ -208,7 +210,7 @@ class MoonshotChatModel(ChatModelBase):
         if is_k3:
             if self.parameters.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = self.parameters.reasoning_effort
-        else:
+        elif self.parameters.thinking_enable is not None:
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
