@@ -332,6 +332,38 @@ class GeminiMultimodalCallTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_multimodal_uses_embedding_cache(self) -> None:
+        """Multimodal results are cached and reused on repeat calls."""
+        model = self._make_multimodal_model()
+        with TemporaryDirectory() as directory:
+            model.embedding_cache = FileEmbeddingCache(cache_dir=directory)
+            model.client = MagicMock()
+            model.client.aio.models.embed_content = AsyncMock(
+                return_value=MagicMock(
+                    embeddings=[MagicMock(values=[0.1, 0.2])],
+                ),
+            )
+
+            first = await model([_img()])
+            second = await model([_img()])
+
+        self.assertEqual(first.source, "api")
+        self.assertEqual(
+            asdict(second),
+            {
+                "embeddings": [[0.1, 0.2]],
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 0, "time": 0, "type": "embedding"},
+                "source": "cache",
+            },
+        )
+        self.assertEqual(
+            model.client.aio.models.embed_content.await_count,
+            1,
+        )
+
     async def test_multimodal_batching_by_image_limit(self) -> None:
         """8 images with max_images=6 produces 2 batches (6+2)."""
         model = self._make_multimodal_model()

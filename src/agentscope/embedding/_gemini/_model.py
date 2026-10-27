@@ -424,6 +424,33 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         }
         config = types.EmbedContentConfig(**config_kwargs)
 
+        # Mirror the text path: the configured embedding_cache covers
+        # multimodal inputs too. Inputs are serialized to JSON-safe forms
+        # so the identifier can be hashed by the cache backends, keeping
+        # only the content fields — block ids and timestamps are unique
+        # per object and would make the key unstable across calls.
+        cache_key = {
+            "model": self.model,
+            "contents": [
+                item
+                if isinstance(item, str)
+                else item.model_dump(mode="json", include={"source"})
+                for item in inputs
+            ],
+            **config_kwargs,
+        }
+
+        if self.embedding_cache:
+            cached = await self.embedding_cache.retrieve(
+                identifier=cache_key,
+            )
+            if cached:
+                return EmbeddingResponse(
+                    embeddings=cached,
+                    usage=EmbeddingUsage(tokens=0, time=0),
+                    source="cache",
+                )
+
         start_time = datetime.now()
         response = await self.client.aio.models.embed_content(
             model=self.model,
@@ -433,6 +460,12 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         time = (datetime.now() - start_time).total_seconds()
 
         embeddings = [item.values for item in response.embeddings]
+
+        if self.embedding_cache:
+            await self.embedding_cache.store(
+                identifier=cache_key,
+                embeddings=embeddings,
+            )
 
         return EmbeddingResponse(
             embeddings=embeddings,
