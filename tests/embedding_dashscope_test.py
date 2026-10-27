@@ -213,6 +213,26 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         self.assertListEqual(on_loop_thread, [False])
 
     @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_text_forwards_configured_parameters(
+        self,
+        mock_api: Any,
+    ) -> None:
+        """Configured parameters (e.g. text_type) reach the API."""
+        mock_api.return_value = _text_resp([[0.1, 0.2]], 10)
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="text-embedding-v4",
+            dimensions=2,
+            parameters=DashScopeEmbeddingModel.Parameters(text_type="query"),
+        )
+        await model(["hello"])
+
+        self.assertEqual(
+            mock_api.call_args.kwargs.get("text_type"),
+            "query",
+        )
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_text_rejects_datablock(self, mock_api: Any) -> None:
         """Text mode rejects DataBlock inputs."""
         model = DashScopeEmbeddingModel(
@@ -393,6 +413,19 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
             self._assert_response(first, 512, "api")
             self._assert_response(second, 512, "cache")
             self._assert_response(reordered, 512, "cache")
+
+    @patch("dashscope.MultiModalEmbedding.call", side_effect=_multimodal_resp)
+    async def test_multimodal_forwards_configured_parameters(
+        self,
+        sdk: Any,
+    ) -> None:
+        """Configured multimodal parameters (e.g. instruct) reach the API."""
+        model = _multimodal_model(2560, "qwen3-vl-embedding")
+        model.parameters = DashScopeEmbeddingModel.Parameters(instruct="embed")
+
+        await model(["hello"])
+
+        self.assertEqual(sdk.call_args.kwargs.get("instruct"), "embed")
 
     @patch("dashscope.MultiModalEmbedding.call", side_effect=_multimodal_resp)
     async def test_multimodal_dimensions(self, sdk: Any) -> None:
