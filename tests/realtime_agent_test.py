@@ -1633,7 +1633,7 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
         # pylint: disable=protected-access
         from agentscope.message import Base64Source, DataBlock
 
-        agent = RealtimeAgent("friday", "be brief", None)
+        agent = RealtimeAgent("friday", "be brief", ScriptedModel([[]]))
 
         agent._on_transcription(
             me.InputTranscriptionEvent(item_id="u1", text="帮我订张机票"),
@@ -1671,7 +1671,7 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
         # pylint: disable=protected-access
         from agentscope.message import Base64Source, DataBlock
 
-        agent = RealtimeAgent("friday", "be brief", None)
+        agent = RealtimeAgent("friday", "be brief", ScriptedModel([[]]))
         agent._on_transcription(
             me.InputTranscriptionEvent(item_id="u1", text="你好"),
         )
