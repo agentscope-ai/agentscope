@@ -174,10 +174,6 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             "max_output_tokens": 1024,
             "temperature": 0.2,
             "top_p": 0.3,
-            "thinking_config": {
-                "include_thoughts": False,
-                "thinking_budget": 0,
-            },
         }
         cases = {
             "max_output_tokens": 2048,
@@ -201,6 +197,45 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                     sent_config,
                     {**default_config, key: value},
                 )
+
+    async def test_thinking_config_omitted_by_default(self) -> None:
+        """Default parameters send no ``thinking_config`` so the model's
+        default behavior applies (e.g. Pro models think by default and
+        reject ``thinking_budget: 0``)."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+        self.model.parameters = GeminiChatModel.Parameters()
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertNotIn("thinking_config", sent_config)
+
+    async def test_thinking_config_false_forwarded(self) -> None:
+        """``thinking_enable=False`` sends the disable configuration."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+        self.model.parameters = GeminiChatModel.Parameters(
+            thinking_enable=False,
+        )
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(
+            sent_config["thinking_config"],
+            {"include_thoughts": False, "thinking_budget": 0},
+        )
 
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
