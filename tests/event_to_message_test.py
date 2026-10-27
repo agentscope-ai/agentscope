@@ -31,6 +31,7 @@ from utils import AnyString
 
 from agentscope.event import (
     ConfirmResult,
+    CustomEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -991,6 +992,27 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 expected,
                 msg=f"Mismatch after event[{idx}] ({event.type})",
             )
+
+    async def test_custom_events_are_skipped(self) -> None:
+        """Custom notifications must not modify the accumulated message."""
+        original_dump = self.msg.model_dump()
+        events = [
+            CustomEvent(name="state_updated"),
+            CustomEvent(
+                name="mcp_progress",
+                value={
+                    "reply_id": _REPLY_ID,
+                    "tool_call_id": _TC_ALLOW,
+                    "progress": 1,
+                    "total": 2,
+                    "message": "Processing",
+                },
+            ),
+        ]
+        for event in events:
+            with self.subTest(name=event.name):
+                self.assertIs(self.msg.append_event(event), self.msg)
+                self.assertDictEqual(self.msg.model_dump(), original_dump)
 
     async def test_wrong_reply_id_is_skipped(self) -> None:
         """An event whose reply_id does not match msg.id must be ignored."""

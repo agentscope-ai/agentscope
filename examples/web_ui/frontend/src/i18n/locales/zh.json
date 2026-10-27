@@ -501,6 +501,7 @@
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
 		"parseError": "JSON 配置无效：{{message}}",
+		"invalidStreamProgress": "{{name}}.stream_progress 必须为布尔值（true 或 false）。",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
 	},
