@@ -276,14 +276,15 @@ class DeepSeekChatModel(ChatModelBase):
                 if chunk.usage:
                     u = chunk.usage
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             u,
                             "prompt_cache_hit_tokens",
                             0,
-                        ),
+                        )
+                        or 0,
                     )
 
                 if not chunk.choices:
@@ -382,14 +383,15 @@ class DeepSeekChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,
                     "prompt_cache_hit_tokens",
                     0,
-                ),
+                )
+                or 0,
             )
 
         resp_kwargs: dict[str, Any] = {

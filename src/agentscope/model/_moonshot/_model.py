@@ -282,14 +282,15 @@ class MoonshotChatModel(ChatModelBase):
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
                             0,
                         )
+                        or 0
                         if details
                         else 0,
                     )
@@ -391,14 +392,15 @@ class MoonshotChatModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )
