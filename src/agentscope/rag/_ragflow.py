@@ -140,6 +140,9 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
 
         ``score_threshold`` overrides the configured similarity threshold
         for this search.  ``None`` uses the configured default.
+
+        If a request fails, cancel and await the remaining requests before
+        propagating its error.  Caller cancellation also drains requests.
         """
         if top_k <= 0:
             return []
@@ -156,9 +159,19 @@ class RAGFlowKnowledgeBase(KnowledgeBaseBase):
             if score_threshold is None
             else score_threshold
         )
-        responses = await asyncio.gather(
-            *(self._retrieve(text, top_k, threshold) for text in query_texts),
-        )
+        retrieval_tasks = [
+            asyncio.create_task(self._retrieve(text, top_k, threshold))
+            for text in query_texts
+        ]
+        try:
+            responses = await asyncio.gather(*retrieval_tasks)
+        except BaseException:
+            # A caller may close the owned client as soon as search exits.
+            # gather alone leaves sibling requests running after an error.
+            for task in retrieval_tasks:
+                task.cancel()
+            await asyncio.gather(*retrieval_tasks, return_exceptions=True)
+            raise
         best: dict[str, VectorSearchResult] = {}
         for data in responses:
             for raw in data["chunks"]:

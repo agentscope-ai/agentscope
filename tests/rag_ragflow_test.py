@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Offline request/response tests for the RAGFlow knowledge backend."""
 
+import asyncio
 import json
 import unittest
 from email import policy
@@ -545,6 +546,127 @@ class RAGFlowKnowledgeBaseTest(unittest.IsolatedAsyncioTestCase):
             "/api/v1/datasets/dataset-1/documents",
         )
         self.assertEqual(json.loads(requests[0].content), {"ids": ["doc-1"]})
+
+    async def test_failed_query_drains_other_http_requests(self) -> None:
+        """A failed search must leave no requests using the owned client."""
+
+        async def assert_drained(
+            failure: str,
+            error_type: type[Exception],
+        ) -> None:
+            started = asyncio.Event()
+            release = asyncio.Event()
+            drained = asyncio.Event()
+            active: set[str] = set()
+
+            async def handler(request: httpx.Request) -> httpx.Response:
+                question = json.loads(request.content)["question"]
+                active.add(question)
+                try:
+                    if question == "slow":
+                        started.set()
+                        await release.wait()
+                        return httpx.Response(
+                            200,
+                            json={"code": 0, "data": {"chunks": []}},
+                        )
+                    await started.wait()
+                    if failure == "timeout":
+                        raise httpx.ReadTimeout(
+                            "retrieval timed out",
+                            request=request,
+                        )
+                    return httpx.Response(
+                        503 if failure == "http" else 200,
+                        json={
+                            "code": 102,
+                            "message": "dataset unavailable",
+                        },
+                    )
+                finally:
+                    active.remove(question)
+                    if not active:
+                        drained.set()
+
+            client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+            )
+            with patch("httpx.AsyncClient", return_value=client):
+                knowledge = RAGFlowKnowledgeBase(
+                    name="handbook",
+                    description="Company policies.",
+                    config=RAGFlowConfig(
+                        api_key="secret",
+                        base_url="https://ragflow.example",
+                        dataset_id="dataset-1",
+                    ),
+                )
+            try:
+                with self.assertRaises(error_type):
+                    await knowledge.search(["failing", "slow"])
+                self.assertFalse(
+                    active,
+                    "Search returned while another request was active",
+                )
+            finally:
+                release.set()
+                await asyncio.wait_for(drained.wait(), timeout=5)
+                await knowledge.aclose()
+
+        for failure, error_type in (
+            ("api", RuntimeError),
+            ("http", httpx.HTTPStatusError),
+            ("timeout", httpx.ReadTimeout),
+        ):
+            with self.subTest(failure=failure):
+                await assert_drained(failure, error_type)
+
+    async def test_cancelled_search_drains_http_requests(self) -> None:
+        """Caller cancellation propagates after both requests stop."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+        drained = asyncio.Event()
+        active: set[str] = set()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            question = json.loads(request.content)["question"]
+            active.add(question)
+            if len(active) == 2:
+                started.set()
+            try:
+                await release.wait()
+                return httpx.Response(
+                    200,
+                    json={"code": 0, "data": {"chunks": []}},
+                )
+            finally:
+                active.remove(question)
+                if not active:
+                    drained.set()
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("httpx.AsyncClient", return_value=client):
+            knowledge = RAGFlowKnowledgeBase(
+                name="handbook",
+                description="Company policies.",
+                config=RAGFlowConfig(
+                    api_key="secret",
+                    base_url="https://ragflow.example",
+                    dataset_id="dataset-1",
+                ),
+            )
+        search = asyncio.create_task(knowledge.search(["first", "second"]))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            search.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await search
+            self.assertFalse(active)
+        finally:
+            release.set()
+            await asyncio.gather(search, return_exceptions=True)
+            await asyncio.wait_for(drained.wait(), timeout=5)
+            await knowledge.aclose()
 
     async def test_api_errors_and_client_ownership(self) -> None:
         """API errors are surfaced and the managed client closes."""
