@@ -16,6 +16,7 @@ Text payloads may be passed either as bare ``str`` or as
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
@@ -436,10 +437,14 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         }
 
         # Exclude api_key from cache identifier to avoid persisting secrets
-        # and to keep cache valid across key rotations.
-        cache_identifier = {
-            k: v for k, v in api_kwargs.items() if k != "api_key"
-        }
+        # and to keep cache valid across key rotations. Deep-copy it: the
+        # SDK's upload preprocessing rewrites local file paths into
+        # oss:// URLs in place, which would otherwise make the store()
+        # identifier differ from the retrieve() one — the cache would
+        # never hit and every call would leave a dead entry behind.
+        cache_identifier = copy.deepcopy(
+            {k: v for k, v in api_kwargs.items() if k != "api_key"},
+        )
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(

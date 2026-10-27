@@ -330,6 +330,35 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
             },
         )
 
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_file_cache_survives_sdk_input_mutation(
+        self,
+        sdk: Any,
+    ) -> None:
+        """The store identifier matches the retrieve identifier even when
+        the SDK rewrites the input in place (upload preprocessing)."""
+
+        def mutating_call(**kwargs: Any) -> SimpleNamespace:
+            if kwargs["input"] and isinstance(kwargs["input"][0], dict):
+                kwargs["input"][0]["image"] = "oss://uploaded/img.png"
+            return _multimodal_resp(**kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            model = _multimodal_model(
+                2560,
+                "qwen3-vl-embedding",
+                cache=FileEmbeddingCache(cache_dir=directory),
+            )
+            sdk.side_effect = mutating_call
+            first = await model([_img()])
+
+            sdk.side_effect = None
+            sdk.return_value = _multimodal_resp(input=[{"image": "x"}])
+            second = await model([_img()])
+
+        self.assertEqual(first.source, "api")
+        self.assertEqual(second.source, "cache")
+
     @patch("dashscope.MultiModalEmbedding.call", side_effect=_multimodal_resp)
     async def test_file_cache_separates_dimensions(self, sdk: Any) -> None:
         """Different contracts must not read each other's stored vectors."""
