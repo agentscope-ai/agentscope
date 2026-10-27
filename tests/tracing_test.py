@@ -38,6 +38,7 @@ from agentscope.message import (
 from agentscope.middleware._tracing._attributes import SpanAttributes
 from agentscope.middleware._tracing._extractor import (
     _get_provider_name,
+    _get_llm_request_attributes,
     _get_llm_response_attributes,
 )
 from agentscope.model import (
@@ -189,6 +190,36 @@ class TracingExtractorTest(TestCase):
         )
 
         self.assertEqual(_get_provider_name(model), "volcengine")
+
+    def test_llm_request_top_p_zero_is_not_dropped(self) -> None:
+        """``p=0`` (greedy decoding) is a valid value and must reach the
+        ``top_p`` attribute instead of being dropped by an ``or``
+        fallback."""
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model="doubao-seed-2-1-pro-260628",
+        )
+
+        attributes = _get_llm_request_attributes(model, {"p": 0})
+
+        self.assertEqual(
+            attributes[SpanAttributes.GEN_AI_REQUEST_TOP_P],
+            0,
+        )
+
+    def test_llm_request_top_p_falls_back_to_top_p_key(self) -> None:
+        """When ``p`` is absent, ``top_p`` is used."""
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model="doubao-seed-2-1-pro-260628",
+        )
+
+        attributes = _get_llm_request_attributes(model, {"top_p": 0.9})
+
+        self.assertEqual(
+            attributes[SpanAttributes.GEN_AI_REQUEST_TOP_P],
+            0.9,
+        )
 
     def test_llm_response_tracing_uses_chat_response_finish_reason(
         self,
