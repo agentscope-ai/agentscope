@@ -415,7 +415,12 @@ class XAIMultiAgentFormatter(FormatterBase):
         start_index = 0
 
         if msgs and msgs[0].role == "system":
-            text = msgs[0].get_text_content()
+            # ``get_text_content`` returns ``None`` for a system Msg
+            # without any TextBlock (e.g. empty or data-only content).
+            # ``system()`` embeds the value in a proto string field, so
+            # normalize to "" like the chat branch of this formatter and
+            # the other multi-agent formatters do.
+            text = msgs[0].get_text_content() or ""
             xai_messages.append(system(text))
             start_index = 1
 

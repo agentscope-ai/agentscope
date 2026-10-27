@@ -639,6 +639,18 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
         )
         self.assertEqual(res[0], system("You're a helpful assistant."))
 
+    async def test_multiagent_formatter_system_without_text(self) -> None:
+        """A system Msg without any TextBlock becomes an empty-string
+        system() stub instead of None."""
+        fmt = XAIMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                SystemMsg(name="system", content=[]),
+                *self.msgs_conversation,
+            ],
+        )
+        self.assertEqual(res[0], system(""))
+
     async def test_multiagent_formatter_conversation_history(self) -> None:
         """Non-tool agent messages are collapsed into a user() history
         stub."""
