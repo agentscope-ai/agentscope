@@ -398,8 +398,8 @@ class OpenAIResponseModel(ChatModelBase):
                         u = resp.usage
                         details = getattr(u, "input_tokens_details", None)
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens,
-                            output_tokens=u.output_tokens,
+                            input_tokens=u.input_tokens or 0,
+                            output_tokens=u.output_tokens or 0,
                             time=(
                                 datetime.now() - start_datetime
                             ).total_seconds(),
@@ -408,6 +408,7 @@ class OpenAIResponseModel(ChatModelBase):
                                 "cached_tokens",
                                 0,
                             )
+                            or 0
                             if details
                             else 0,
                         )
@@ -526,14 +527,15 @@ class OpenAIResponseModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.input_tokens or 0,
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )
