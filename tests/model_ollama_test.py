@@ -403,6 +403,46 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertIsNone(fmt_choice)
 
 
+class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
+    """The ``think`` option is only sent when explicitly configured."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+        self.mock_client.chat = AsyncMock(
+            return_value=_mock_completion(content="Hi"),
+        )
+
+    async def _call_and_get_kwargs(self) -> dict:
+        """Run one call and return the kwargs passed to client.chat."""
+        await self.model([])
+        call = self.mock_client.chat.await_args
+        return call.kwargs
+
+    async def test_think_omitted_by_default(self) -> None:
+        """Default parameters leave ``think`` out of the request so the
+        model's own default behavior applies."""
+        kwargs = await self._call_and_get_kwargs()
+        self.assertNotIn("think", kwargs)
+
+    async def test_think_true_forwarded(self) -> None:
+        """``thinking_enable=True`` sends ``think: true``."""
+        self.model.parameters = OllamaChatModel.Parameters(
+            thinking_enable=True,
+        )
+        kwargs = await self._call_and_get_kwargs()
+        self.assertIs(kwargs["think"], True)
+
+    async def test_think_false_forwarded(self) -> None:
+        """``thinking_enable=False`` sends ``think: false``."""
+        self.model.parameters = OllamaChatModel.Parameters(
+            thinking_enable=False,
+        )
+        kwargs = await self._call_and_get_kwargs()
+        self.assertIs(kwargs["think"], False)
+
+
 def _api_chat_transport(
     messages: list[dict | list[dict]],
     stream: bool,
