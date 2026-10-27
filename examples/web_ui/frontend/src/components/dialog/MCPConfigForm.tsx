@@ -39,6 +39,11 @@ function parseMcpConfig(
 	}
 
 	return entries.map(([name, config]) => {
+		const streamProgress =
+			config.stream_progress === undefined ? false : config.stream_progress;
+		if (typeof streamProgress !== 'boolean') {
+			throw new Error(t('dialog-mcp-create.invalidStreamProgress', { name }));
+		}
 		let mcp_config: StdioMCPConfig | HttpMCPConfig;
 		if ('url' in config) {
 			mcp_config = {
@@ -56,7 +61,7 @@ function parseMcpConfig(
 				cwd: (config.cwd as string | undefined) ?? null,
 			};
 		}
-		return { name, is_stateful: keepAlive, mcp_config };
+		return { name, is_stateful: keepAlive, stream_progress: streamProgress, mcp_config };
 	});
 }
 

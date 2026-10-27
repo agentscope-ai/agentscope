@@ -10,6 +10,7 @@ export interface ChatModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	model_class: string;
 	parameters: Record<string, unknown>;
 }
 
@@ -513,6 +514,8 @@ export interface HttpMCPConfig {
 export interface MCPClient {
 	name: string;
 	is_stateful: boolean;
+	/** Opt in to tool progress streaming; omitted means false. */
+	stream_progress?: boolean;
 	mcp_config: StdioMCPConfig | HttpMCPConfig;
 }
 
@@ -818,6 +821,7 @@ export interface ScheduleListResponse {
 
 export interface ModelCard {
 	type: 'chat_model';
+	model_class: string;
 	name: string;
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
@@ -846,6 +850,7 @@ export interface RealtimeModelCard {
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
+	release_date: string | null;
 	input_types: string[];
 	output_types: string[];
 	input_sample_rate: number;

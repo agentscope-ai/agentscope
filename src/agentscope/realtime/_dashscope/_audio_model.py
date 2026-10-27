@@ -24,20 +24,52 @@ class DashScopeAudioRealtimeModel(DashScopeRealtimeModel):
     class Parameters(RealtimeModelBase.Parameters):
         """Tuneables surfaced to the UI."""
 
-        voice: str = Field(default="longanqian", title="Voice")
+        voice: str = Field(
+            default="longanqian",
+            title="Voice",
+            description="The voice used for spoken model responses.",
+        )
         turn_detection: Literal["server_vad", "smart_turn", "none"] = Field(
             default="server_vad",
             title="Turn Detection",
-            description="``none`` hands endpointing to the caller.",
+            description=(
+                "How the model detects when the user has finished speaking."
+            ),
         )
-        vad_threshold: float = Field(default=0.5, ge=-1.0, le=1.0)
-        vad_silence_duration_ms: int = Field(default=800, ge=200, le=6000)
+        vad_threshold: float = Field(
+            default=0.5,
+            ge=-1.0,
+            le=1.0,
+            description=(
+                "Speech detection sensitivity. Lower values detect quieter "
+                "speech."
+            ),
+        )
+        vad_silence_duration_ms: int = Field(
+            default=800,
+            ge=200,
+            le=6000,
+            description=(
+                "Silence required before the model considers the user's "
+                "turn complete."
+            ),
+        )
         voiceprint_audio_urls: list[str] = Field(
             default_factory=list,
             title="Voiceprint Audio URLs",
-            description="Speaker references, used by ``smart_turn`` only.",
+            description=(
+                "Reference audio URLs used by smart_turn to identify the "
+                "intended speaker."
+            ),
         )
-        max_history_turns: int = Field(default=20, ge=1, le=50)
+        max_history_turns: int = Field(
+            default=20,
+            ge=1,
+            le=50,
+            description=(
+                "Maximum number of conversation turns retained by the model."
+            ),
+        )
 
     type = "dashscope_audio_realtime"
     supports_text_input = True
