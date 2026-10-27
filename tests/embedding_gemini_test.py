@@ -126,6 +126,28 @@ class GeminiTextCallTest(IsolatedAsyncioTestCase):
         await model(["hello"])
         model.client.aio.models.embed_content.assert_awaited_once()
 
+    async def test_retry_on_transient_error(self) -> None:
+        """A retryable Gemini APIError is retried instead of raised."""
+        from google.genai import errors
+
+        model = self._make_text_model()
+        model.retry_delay = 0.0
+        model.client = MagicMock()
+        model.client.aio.models.embed_content = AsyncMock(
+            side_effect=[
+                errors.APIError(429, {}),
+                MagicMock(embeddings=[MagicMock(values=[0.1, 0.2])]),
+            ],
+        )
+
+        result = await model(["hello"])
+
+        self.assertEqual(result.embeddings, [[0.1, 0.2]])
+        self.assertEqual(
+            model.client.aio.models.embed_content.await_count,
+            2,
+        )
+
     async def test_text_rejects_datablock(self) -> None:
         """Text mode rejects DataBlock inputs."""
         model = self._make_text_model()
