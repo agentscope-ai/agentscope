@@ -281,6 +281,36 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
         )
 
 
+    async def test_enable_thinking_omitted_by_default(self) -> None:
+        """Default parameters send no ``enable_thinking`` option so the
+        model's default behavior applies."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        self.model.parameters = DashScopeChatModel.Parameters()
+
+        await self.model([])
+
+        extra_body = mock_create.await_args.kwargs["extra_body"]
+        self.assertNotIn("enable_thinking", extra_body)
+
+    async def test_enable_thinking_false_forwarded(self) -> None:
+        """``thinking_enable=False`` sends ``enable_thinking: false``."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        self.model.parameters = DashScopeChatModel.Parameters(
+            thinking_enable=False,
+        )
+
+        await self.model([])
+
+        extra_body = mock_create.await_args.kwargs["extra_body"]
+        self.assertIs(extra_body["enable_thinking"], False)
+
+
 # ---------------------------------------------------------------------------
 # Streaming tests
 # ---------------------------------------------------------------------------
