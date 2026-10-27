@@ -768,8 +768,8 @@ class Agent:
 
                 self.state.context[-1].append_usage(
                     Usage(
-                        input_tokens=res.usage.input_tokens or 0,
-                        output_tokens=res.usage.output_tokens or 0,
+                        input_tokens=res.usage.input_tokens,
+                        output_tokens=res.usage.output_tokens,
                         cache_input_tokens=res.usage.cache_input_tokens or 0,
                         cache_creation_input_tokens=(
                             res.usage.cache_creation_input_tokens or 0
@@ -1799,8 +1799,8 @@ class Agent:
         usage = completed_response.usage
         yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
-            input_tokens=(usage.input_tokens or 0) if usage else 0,
-            output_tokens=(usage.output_tokens or 0) if usage else 0,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
             cache_input_tokens=(usage.cache_input_tokens or 0) if usage else 0,
             cache_creation_input_tokens=(
                 (usage.cache_creation_input_tokens or 0) if usage else 0
@@ -3439,8 +3439,8 @@ class Agent:
         """
         msg_usage = (
             Usage(
-                input_tokens=usage.input_tokens or 0,
-                output_tokens=usage.output_tokens or 0,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
                 cache_input_tokens=usage.cache_input_tokens or 0,
                 cache_creation_input_tokens=(
                     usage.cache_creation_input_tokens or 0

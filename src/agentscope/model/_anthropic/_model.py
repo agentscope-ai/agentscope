@@ -384,8 +384,8 @@ class AnthropicChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.input_tokens or 0,
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_creation_input_tokens=getattr(
                     u,
@@ -460,8 +460,8 @@ class AnthropicChatModel(ChatModelBase):
                     if message.usage:
                         u = message.usage
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens,
-                            output_tokens=getattr(u, "output_tokens", 0),
+                            input_tokens=u.input_tokens or 0,
+                            output_tokens=getattr(u, "output_tokens", 0) or 0,
                             time=(
                                 datetime.now() - start_datetime
                             ).total_seconds(),
@@ -469,12 +469,14 @@ class AnthropicChatModel(ChatModelBase):
                                 u,
                                 "cache_creation_input_tokens",
                                 0,
-                            ),
+                            )
+                            or 0,
                             cache_input_tokens=getattr(
                                 u,
                                 "cache_read_input_tokens",
                                 0,
-                            ),
+                            )
+                            or 0,
                         )
 
                 elif event.type == "content_block_start":
@@ -563,7 +565,7 @@ class AnthropicChatModel(ChatModelBase):
 
                 elif event.type == "message_delta":
                     if event.usage and usage:
-                        usage.output_tokens = event.usage.output_tokens
+                        usage.output_tokens = event.usage.output_tokens or 0
                         # ``usage`` was stamped when ``message_start``
                         # arrived, i.e. at time-to-first-token. Refresh it
                         # here so ``time`` spans the whole generation, as
