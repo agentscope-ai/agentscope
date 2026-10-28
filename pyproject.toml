@@ -27,7 +27,7 @@ dependencies = [
     "filetype",
     "json5",
     "json_repair",
-    "mcp>=1.13",
+    "mcp>=1.13,<2",
     "numpy",
     "openai",
     "python-datauri",
@@ -75,7 +75,7 @@ tokens = [
 redis_memory = ["redis"]
 tablestore_memory = [
     "tablestore-for-agent-memory",
-    "tablestore",
+    "tablestore>=6.3.8",
 ]
 
 mem0ai = [
@@ -173,6 +173,8 @@ full = [
 dev = [
     # Include full dependencies from local package
     "agentscope[full]",
+    # Resolve the full dependency set with TableStore's protobuf range.
+    "protobuf<6",
     # Development tools
     "pre-commit",
     "pytest",
