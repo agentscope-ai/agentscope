@@ -134,13 +134,10 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             "input": inputs,
             "model": self.model,
             "encoding_format": "float",
-            # The instance dimensions is a default; a per-call ``dimensions``
-            # in ``**kwargs`` must win (mirrors the Gemini/Ollama/DashScope
-            # embedding models, where the instance value is merged before
-            # the per-call overrides).
-            **({"dimensions": self.dimensions} if self.pass_dimensions else {}),
             **kwargs,
         }
+        if self.pass_dimensions:
+            api_kwargs.setdefault("dimensions", self.dimensions)
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
