@@ -129,9 +129,9 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         mcp_tool_1 = await stateless_client.get_tool("tool_1")
         self.assertTrue(mcp_tool_1.is_read_only)
         # Repeat to ensure idempotency
-        res_1: ToolChunk = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
-        res_2: ToolChunk = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
-        res_3: ToolChunk = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
+        res_1 = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
+        res_2 = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
+        res_3 = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
 
         self.assertEqual(
             res_1.content[0].text,
@@ -218,9 +218,9 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
         mcp_tool_1 = await stateful_client.get_tool("tool_1")
         # Repeat to ensure idempotency
-        res_1: ToolChunk = await mcp_tool_1(arg1="12", arg2=[1, 2])
-        res_2: ToolChunk = await mcp_tool_1(arg1="34", arg2=[4, 5])
-        res_3: ToolChunk = await mcp_tool_1(arg1="34", arg2=[4, 5])
+        res_1 = await mcp_tool_1(arg1="12", arg2=[1, 2])
+        res_2 = await mcp_tool_1(arg1="34", arg2=[4, 5])
+        res_3 = await mcp_tool_1(arg1="34", arg2=[4, 5])
 
         self.assertEqual(
             res_1.content[0].text,
@@ -294,7 +294,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         shape for key-based SSE MCP servers, e.g. the Amap MCP at
         https://mcp.amap.com/sse?key=API_KEY). Such URLs were misdetected as
         streamable HTTP, and the client then failed to handshake against the
-        SSE server with ``McpError: Session terminated``.
+        SSE server with ``MCPError: Session terminated``.
 
         After the fix, only the URL path is inspected, so the query string no
         longer affects transport detection.
@@ -309,7 +309,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         mcp_tool_1 = await client.get_tool("tool_1")
-        res: ToolChunk = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
+        res = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
         self.assertEqual(
             res.content[0].text,
             "arg1: 123, arg2: [1, 2, 3]",

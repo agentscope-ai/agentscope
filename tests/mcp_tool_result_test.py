@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for keeping the MCP tool result content that carries the payload."""
 import base64
-from typing import Any
+import json
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import mcp.types
@@ -34,6 +35,7 @@ class _FakeSession:
         name: str,
         arguments: dict[str, Any] | None = None,
         read_timeout_seconds: float | None = None,
+        progress_callback: Any | None = None,
     ) -> mcp.types.CallToolResult:
         """Record the call and return the prepared result."""
         self.calls.append((name, arguments or {}))
@@ -70,6 +72,43 @@ class MCPStructuredResultTest(IsolatedAsyncioTestCase):
     """The model must not lose a result that only lives in
     ``structuredContent``."""
 
+    async def test_embedded_resource_preserves_json_field_names(self) -> None:
+        """Embedded resource text retains snake-case fields and metadata."""
+        resource = {
+            "uri": "https://example.com/report.txt",
+            "mime_type": "text/plain",
+            "meta": {"source": "report"},
+            "text": "Report content",
+        }
+        chunk = await _tool(
+            mcp.types.CallToolResult(
+                content=[
+                    mcp.types.EmbeddedResource(
+                        type="resource",
+                        resource=mcp.types.TextResourceContents(**resource),
+                    ),
+                ],
+            ),
+        )()
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(resource, indent=2),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
     async def test_structured_result_is_kept_when_content_is_empty(
         self,
     ) -> None:
@@ -80,7 +119,7 @@ class MCPStructuredResultTest(IsolatedAsyncioTestCase):
                 content=[],
                 structured_content=structured,
             ),
-        ).call(city="Paris")
+        )(city="Paris")
 
         self.assertEqual(
             chunk.model_dump(),
@@ -172,6 +211,33 @@ class MCPStructuredResultTest(IsolatedAsyncioTestCase):
                     if is_error
                     else ToolResultState.RUNNING,
                 )
+
+    async def test_streamed_result_keeps_summary_and_structured_payload(
+        self,
+    ) -> None:
+        """The final progress-stream chunk retains the complete result."""
+        tool = _tool(
+            mcp.types.CallToolResult(
+                content=[
+                    mcp.types.TextContent(type="text", text="Query completed"),
+                ],
+                structured_content={"city": "Paris", "temperature_c": 21.5},
+            ),
+        )
+        tool.stream_progress = True
+        stream = await tool.call(city="Paris")
+        assert isinstance(stream, AsyncGenerator)
+        chunks = [chunk async for chunk in stream]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertTrue(chunks[0].is_last)
+        self.assertEqual(
+            [block.text for block in chunks[0].content],
+            [
+                "Query completed",
+                '{"city": "Paris", "temperature_c": 21.5}',
+            ],
+        )
 
     async def test_serialized_structured_result_is_not_duplicated(
         self,

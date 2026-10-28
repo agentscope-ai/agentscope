@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
+import asyncio
 import inspect
 import json
 import re
-from contextlib import AbstractAsyncContextManager
+import warnings
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Callable, Any, AsyncGenerator, Generator
 
-from mcp import ClientSession
+import anyio
 import mcp
-from pydantic import BaseModel
+from pydantic import AnyUrl, BaseModel, ValidationError
 
 from ._types import Function
 from ._base import ToolBase, ToolMiddlewareBase
@@ -26,11 +28,11 @@ from ._utils import (
 )
 from .._logging import logger
 from ..message import (
+    Base64Source,
     TextBlock,
     DataBlock,
-    Base64Source,
-    URLSource,
     ToolResultState,
+    URLSource,
 )
 
 
@@ -214,6 +216,7 @@ class MCPTool(ToolBase):
         session: Any | None = None,
         timeout: float | None = None,
         middlewares: list[ToolMiddlewareBase] | None = None,
+        stream_progress: bool = False,
     ) -> None:
         """Initialize the MCPTool.
 
@@ -225,17 +228,23 @@ class MCPTool(ToolBase):
             client_gen (`Callable[..., AbstractAsyncContextManager[Any]] \
             | None`, optional):
                 The MCP client generator function for stateless clients.
+                Its context manager should yield a connected ``mcp.Client``.
+                Legacy transport tuples are accepted with a deprecation
+                warning; only their read and write streams are used.
                 Either this or ``session`` must be provided.
-            session (`mcp.ClientSession | None`, optional):
-                The MCP client session for stateful clients.
+            session (`mcp.Client | None`, optional):
+                The MCP high-level client for stateful clients.
                 Either this or ``client_gen`` must be provided.
             timeout (`float | None`, optional):
                 The timeout in seconds for tool execution.
             middlewares (`list[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            stream_progress (`bool`, defaults to `False`):
+                Return a progress/result stream instead of the final chunk.
         """
         super().__init__(middlewares=middlewares)
         self.mcp_name = mcp_name
+        self.stream_progress = stream_progress
 
         # LLM providers enforce ^[a-zA-Z0-9_-]+$ on tool names.
         # mcp_name is validated in MCPClient.model_post_init;
@@ -317,124 +326,222 @@ class MCPTool(ToolBase):
     async def call(
         self,
         **kwargs: Any,
-    ) -> ToolChunk:
-        """Invoke the MCP tool and convert the result to ToolChunk.
+    ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
+        """Return the final result, or stream when ``stream_progress=True``.
 
-        Preserve structured JSON alongside text unless an identical serialized
-        payload is already present.
+        Progress is best-effort snapshot delivery, not a lossless event log.
+        At most 1024 pending progress updates are retained; overflow drops
+        the oldest updates without reporting a dropped count. Consumers
+        must not depend on receiving every update. Buffer overflow does not
+        discard the final result, which is emitted separately.
 
         Args:
             **kwargs: Arguments to pass to the MCP tool.
 
         Returns:
-            `ToolChunk`: The converted tool execution result.
+            `ToolChunk | AsyncGenerator[ToolChunk, None]`:
+                The final result by default. When streaming is enabled,
+                progress chunks followed by the converted tool result.
         """
+        if self.stream_progress:
+            return self._stream_call(kwargs)
+        final_chunk: ToolChunk | None = None
+        async for chunk in self._stream_call(kwargs):
+            if chunk.is_last:
+                final_chunk = chunk
+        if final_chunk is None:
+            raise RuntimeError(
+                f"MCP tool {self.name!r} returned no final chunk.",
+            )
+        return final_chunk
 
-        # Call the MCP tool
-        if self._client_gen:
-            # Stateless client: create temporary session
-            async with self._client_gen() as cli:
-                read_stream, write_stream = cli[0], cli[1]
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    result = await session.call_tool(
-                        self._tool.name,
-                        arguments=kwargs,
-                        read_timeout_seconds=self._timeout,
+    async def _stream_call(
+        self,
+        kwargs: dict[str, Any],
+    ) -> AsyncGenerator[ToolChunk, None]:
+        """Run one MCP call and expose request-scoped progress updates."""
+        # Progress is a snapshot; retain the newest 1024 pending updates.
+        progress_queue: asyncio.Queue[ToolChunk] = asyncio.Queue(maxsize=1024)
+        accepting_progress = True
+
+        async def _on_progress(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            if accepting_progress:
+                if progress_queue.full():
+                    progress_queue.get_nowait()
+                progress_queue.put_nowait(
+                    ToolChunk(
+                        content=[],
+                        state=ToolResultState.RUNNING,
+                        is_last=False,
+                        metadata={
+                            "mcp_progress": {
+                                "progress": progress,
+                                "total": total,
+                                "message": message,
+                            },
+                        },
+                    ),
+                )
+
+        async def _invoke() -> mcp.types.CallToolResult:
+            async with AsyncExitStack() as stack:
+                client = self._session
+                if self._client_gen:
+                    client = await stack.enter_async_context(
+                        self._client_gen(),
                     )
-        else:
-            # Stateful client: use existing session
-            result = await self._session.call_tool(
-                self._tool.name,
-                arguments=kwargs,
-                read_timeout_seconds=self._timeout,
+                    if isinstance(client, tuple):
+                        warnings.warn(
+                            "MCPTool client_gen yielding transport tuples "
+                            "is deprecated; yield a connected mcp.Client "
+                            "instead.",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
+                        client = await stack.enter_async_context(
+                            mcp.ClientSession(client[0], client[1]),
+                        )
+                        await client.initialize()
+                return await client.call_tool(
+                    self._tool.name,
+                    arguments=kwargs,
+                    read_timeout_seconds=self._timeout,
+                    progress_callback=_on_progress,
+                )
+
+        call_task = asyncio.create_task(_invoke())
+        progress_task: asyncio.Task[ToolChunk] | None = None
+        try:
+            while not call_task.done():
+                progress_task = asyncio.create_task(progress_queue.get())
+                done, _ = await asyncio.wait(
+                    {call_task, progress_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if progress_task in done:
+                    yield progress_task.result()
+                    progress_task = None
+                else:
+                    progress_task.cancel()
+                    try:
+                        await progress_task
+                    except asyncio.CancelledError:
+                        pass
+                    progress_task = None
+
+            accepting_progress = False
+            while not progress_queue.empty():
+                yield progress_queue.get_nowait()
+            result = await call_task
+
+            content = self._convert_mcp_content_to_blocks(result.content)
+            if result.structured_content is not None:
+                structured_text = json.dumps(
+                    result.structured_content,
+                    ensure_ascii=False,
+                )
+                # shortcut: differently formatted JSON may repeat; normalize if
+                # duplicate payloads cause token-budget issues.
+                if not any(
+                    isinstance(block, TextBlock)
+                    and block.text == structured_text
+                    for block in content
+                ):
+                    content.append(TextBlock(text=structured_text))
+
+            yield ToolChunk(
+                content=content,
+                state=(
+                    ToolResultState.ERROR
+                    if result.is_error
+                    else ToolResultState.RUNNING
+                ),
+                is_last=True,
             )
-
-        # Convert MCP result to AgentScope blocks
-        content = self._convert_mcp_content_to_blocks(result.content)
-
-        if result.structured_content is not None:
-            structured_text = json.dumps(
-                result.structured_content,
-                ensure_ascii=False,
-            )
-            # shortcut: differently formatted JSON may repeat; normalize if
-            # duplicate payloads cause token-budget issues.
-            if not any(
-                isinstance(block, TextBlock) and block.text == structured_text
-                for block in content
-            ):
-                content.append(TextBlock(text=structured_text))
-
-        return ToolChunk(
-            content=content,
-            state=ToolResultState.ERROR
-            if result.is_error
-            else ToolResultState.RUNNING,
-        )
+        finally:
+            accepting_progress = False
+            # Repeated AnyIO cancellation must not interrupt the SDK's
+            # cancellation notification while we wait for its cleanup.
+            with anyio.CancelScope(shield=True):
+                if progress_task is not None and not progress_task.done():
+                    progress_task.cancel()
+                    try:
+                        await progress_task
+                    except asyncio.CancelledError:
+                        pass
+                if not call_task.done():
+                    call_task.cancel()
+                    try:
+                        await call_task
+                    except asyncio.CancelledError:
+                        pass
 
     @staticmethod
     def _convert_mcp_content_to_blocks(
         mcp_content_blocks: list,
     ) -> list[TextBlock | DataBlock]:
-        """Convert MCP content to AgentScope blocks.
-
-        Args:
-            mcp_content_blocks (`list`):
-                The MCP content blocks to convert.
-
-        Returns:
-            `list[TextBlock | DataBlock]`: Converted AgentScope blocks.
-        """
-
-        as_content = []
+        """Convert MCP content directly to AgentScope message blocks."""
+        blocks: list[TextBlock | DataBlock] = []
         for content in mcp_content_blocks:
             if isinstance(content, mcp.types.TextContent):
-                as_content.append(TextBlock(text=content.text))
+                blocks.append(TextBlock(text=content.text))
             elif isinstance(
                 content,
                 (mcp.types.ImageContent, mcp.types.AudioContent),
             ):
-                as_content.append(
+                blocks.append(
                     DataBlock(
                         source=Base64Source(
-                            type="base64",
                             media_type=content.mime_type,
                             data=content.data,
                         ),
                     ),
                 )
-
             elif isinstance(content, mcp.types.EmbeddedResource):
                 if isinstance(
                     content.resource,
                     mcp.types.TextResourceContents,
                 ):
-                    as_content.append(
+                    blocks.append(
                         TextBlock(
-                            text=content.resource.model_dump_json(indent=2),
+                            text=content.resource.model_dump_json(
+                                indent=2,
+                            ),
                         ),
                     )
                 else:
                     logger.error(
-                        "Unsupported EmbeddedResource content type: %s. "
-                        "Skipping this content.",
+                        "Unsupported EmbeddedResource content type: %s.",
                         type(content.resource),
                     )
-
-            elif isinstance(content, mcp.types.ResourceContents):
-                as_content.append(
+            elif isinstance(
+                content,
+                (mcp.types.ResourceLink, mcp.types.ResourceContents),
+            ):
+                media_type = content.mime_type
+                if isinstance(content, mcp.types.ResourceLink):
+                    media_type = media_type or "application/octet-stream"
+                try:
+                    url = AnyUrl(str(content.uri))
+                except ValidationError:
+                    message = (
+                        f"<unconvertible MCP resource URI: {content.uri}>"
+                    )
+                    logger.warning(message)
+                    blocks.append(TextBlock(text=message))
+                    continue
+                blocks.append(
                     DataBlock(
-                        source=URLSource(
-                            media_type=content.mime_type,
-                            url=content.uri,
-                        ),
+                        source=URLSource(media_type=media_type, url=url),
                     ),
                 )
-
             else:
                 logger.warning(
                     "Unsupported content type: %s. Skipping this content.",
                     type(content),
                 )
-        return as_content
+        return blocks
