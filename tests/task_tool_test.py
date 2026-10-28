@@ -4,7 +4,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.state import AgentState
+from agentscope.state import AgentState, Task
 from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate
 
 
@@ -1112,3 +1112,167 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
             "id": AnyString(),
         }
         self.assertDictEqual(result_dump, expected_result)
+
+
+class TestTaskIdNotReused(IsolatedAsyncioTestCase):
+    """Numeric task ids must not be reused after deletion."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.agent_state = AgentState()
+        self.task_create = TaskCreate()
+        self.task_update = TaskUpdate()
+        self.task_get = TaskGet()
+
+    async def _create(self, subject: str) -> str:
+        """Create a task and return its id."""
+        await self.task_create(
+            subject=subject,
+            description=subject,
+            _agent_state=self.agent_state,
+        )
+        return self.agent_state.tasks_context.tasks[-1].id
+
+    async def test_delete_highest_id_is_not_reused(self) -> None:
+        """Deleting the highest id must not free that id for a new task."""
+        deleted_id = await self._create("Original task")
+        await self.task_update(
+            task_id=deleted_id,
+            status="deleted",
+            _agent_state=self.agent_state,
+        )
+        new_id = await self._create("Unrelated new task")
+
+        self.assertEqual(deleted_id, "1")
+        self.assertEqual(new_id, "2")
+        self.assertEqual(len(self.agent_state.tasks_context.tasks), 1)
+        replacement = self.agent_state.tasks_context.tasks[0]
+        self.assertEqual(replacement.id, new_id)
+        self.assertEqual(replacement.subject, "Unrelated new task")
+        self.assertEqual(replacement.state, "pending")
+
+    async def test_delete_every_task_does_not_restart_ids(self) -> None:
+        """Deleting every task must not restart allocation at 1."""
+        created = [await self._create(f"Task {i}") for i in range(1, 4)]
+        for task_id in created:
+            await self.task_update(
+                task_id=task_id,
+                status="deleted",
+                _agent_state=self.agent_state,
+            )
+
+        self.assertEqual(self.agent_state.tasks_context.tasks, [])
+        new_id = await self._create("After wipe")
+        self.assertEqual(new_id, "4")
+
+    async def test_high_water_survives_serialization(self) -> None:
+        """The allocation mark is restored with the task context."""
+        deleted_id = await self._create("Original task")
+        await self.task_update(
+            task_id=deleted_id,
+            status="deleted",
+            _agent_state=self.agent_state,
+        )
+        payload = self.agent_state.model_dump(mode="json")
+        mark = payload["tasks_context"].get("task_id_high_water") or 0
+        self.assertGreaterEqual(mark, 1)
+
+        self.agent_state = AgentState.model_validate(payload)
+        new_id = await self._create("After restore")
+        self.assertEqual(new_id, "2")
+        self.assertNotEqual(new_id, deleted_id)
+
+    async def test_nonnumeric_ids_do_not_reset_allocation(self) -> None:
+        """Legacy non-numeric ids are ignored and do not rewind the mark."""
+        deleted_id = await self._create("Numeric")
+        self.agent_state.tasks_context.tasks.append(
+            Task(
+                id="legacy-uuid",
+                subject="Legacy",
+                description="Non-numeric id",
+                metadata={},
+            ),
+        )
+        await self.task_update(
+            task_id=deleted_id,
+            status="deleted",
+            _agent_state=self.agent_state,
+        )
+
+        new_id = await self._create("Next")
+        ids = [task.id for task in self.agent_state.tasks_context.tasks]
+        self.assertEqual(new_id, "2")
+        self.assertIn("legacy-uuid", ids)
+        self.assertNotIn(deleted_id, ids)
+
+    async def test_stale_update_and_get_miss_deleted_id(self) -> None:
+        """A stale id must not read or modify the task created after it."""
+        deleted_id = await self._create("Original task")
+        await self.task_update(
+            task_id=deleted_id,
+            status="deleted",
+            _agent_state=self.agent_state,
+        )
+        new_id = await self._create("Unrelated new task")
+        self.assertNotEqual(new_id, deleted_id)
+
+        update_result = await self.task_update(
+            task_id=deleted_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+        self.assertEqual(
+            update_result.content[0].text,
+            f"TaskNotFoundError: The task (id={deleted_id}) does not exist.",
+        )
+        self.assertEqual(update_result.state, "error")
+
+        replacement = self.agent_state.tasks_context.tasks[0]
+        self.assertEqual(replacement.id, new_id)
+        self.assertEqual(replacement.subject, "Unrelated new task")
+        self.assertEqual(replacement.state, "pending")
+
+        get_result = await self.task_get(
+            task_id=deleted_id,
+            _agent_state=self.agent_state,
+        )
+        self.assertEqual(get_result.content[0].text, "Task not found")
+        self.assertEqual(get_result.state, "error")
+
+    async def test_legacy_state_without_mark_uses_surviving_ids(
+        self,
+    ) -> None:
+        """Saves from before the mark continue from ids that are still stored.
+
+        An id deleted before the mark existed is not in the saved state, so
+        it cannot be recovered. Surviving numeric ids still advance the
+        sequence.
+        """
+        await self._create("Keep")
+        await self._create("Also keep")
+        payload = self.agent_state.model_dump(mode="json")
+        payload["tasks_context"].pop("task_id_high_water", None)
+
+        self.agent_state = AgentState.model_validate(payload)
+        self.assertGreaterEqual(
+            self.agent_state.tasks_context.task_id_high_water,
+            2,
+        )
+        self.assertEqual(await self._create("Next"), "3")
+
+    async def test_legacy_state_may_reuse_ids_deleted_before_the_mark(
+        self,
+    ) -> None:
+        """A pre-mark save has no record of ids that were already deleted."""
+        await self._create("Survivor")
+        await self._create("Already gone in an older save")
+        payload = self.agent_state.model_dump(mode="json")
+        payload["tasks_context"].pop("task_id_high_water", None)
+        payload["tasks_context"]["tasks"] = [
+            task
+            for task in payload["tasks_context"]["tasks"]
+            if task["subject"] == "Survivor"
+        ]
+
+        self.agent_state = AgentState.model_validate(payload)
+        self.assertEqual(await self._create("May reuse"), "2")
