@@ -1,5 +1,14 @@
 # React + TypeScript + Vite
 
+## Schedule end dates
+
+For recurring schedules, **End Date** includes the entire selected day in the
+schedule's configured timezone, even when the browser uses a different timezone.
+Leaving it unset creates a schedule without an end boundary. The backend validates
+the boundary before saving the schedule.
+
+Run the schedule date conversion tests with `pnpm test` (Node.js 22.6+).
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

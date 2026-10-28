@@ -32,6 +32,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useAgents } from '@/hooks/useAgents';
 import { useSchedules } from '@/hooks/useSchedules';
 import { useTranslation } from '@/i18n/useI18n';
+import { getScheduleEndAt } from '@/pages/schedule/schedule-utils';
 
 interface Props {
 	open: boolean;
@@ -164,6 +165,10 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				description: form.description.trim(),
 				cron_expression: cronExpression,
 				timezone: form.timezone,
+				ended_at:
+					form.freq !== 'once' && form.endDate
+						? getScheduleEndAt(form.endDate, form.timezone)
+						: undefined,
 				agent_id: form.agentId,
 				chat_model_config: form.chatModelConfig!,
 				enabled: true,
