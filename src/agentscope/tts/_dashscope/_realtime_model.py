@@ -149,7 +149,12 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
                 if self.chunk_event.is_set():
                     self.chunk_event.clear()
                 else:
-                    await asyncio.to_thread(self.chunk_event.wait)
+                    # Bound each wait so a stalled provider that never
+                    # sends a delta, session.finished, or a close frame
+                    # cannot block this generator forever; the loop
+                    # re-checks finish_event each round (CosyVoice does
+                    # the same).
+                    await asyncio.to_thread(self.chunk_event.wait, 30)
 
                 if self.finish_event.is_set():
                     continue
@@ -411,9 +416,27 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                 self._tts_client.commit()
                 self._tts_client.finish()
 
-                await asyncio.to_thread(
+                finished = await asyncio.to_thread(
                     self._callback.finish_event.wait,
+                    30,
                 )
+
+                if not finished:
+                    logger.warning(
+                        "DashScope realtime TTS: timed out waiting for "
+                        "synthesis completion (30s)",
+                    )
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(delay)
+                        await self._reconnect()
+                        unsent = full_text
+                        delay *= 2
+                        continue
+                    self._reset_state()
+                    raise RuntimeError(
+                        "DashScope realtime TTS synthesis timed out "
+                        "after 30s",
+                    )
 
                 if full_text and not self._callback.has_audio_data():
                     if attempt < self.max_retries - 1:
