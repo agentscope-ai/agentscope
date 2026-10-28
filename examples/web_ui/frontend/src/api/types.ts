@@ -545,15 +545,6 @@ export interface Skill {
 	updated_at: number;
 }
 
-/**
- * @deprecated The path is resolved on the server, which only means
- * anything for a single-host deployment. Upload a folder or install
- * from the library instead.
- */
-export interface AddSkillRequest {
-	skill_path: string;
-}
-
 // ─── Hub ──────────────────────────────────────────────────────────────────────
 
 /** One registered hub, as shown in the hub picker. */
