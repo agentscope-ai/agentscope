@@ -424,11 +424,8 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         }
         config = types.EmbedContentConfig(**config_kwargs)
 
-        # Mirror the text path: the configured embedding_cache covers
-        # multimodal inputs too. Inputs are serialized to JSON-safe forms
-        # so the identifier can be hashed by the cache backends, keeping
-        # only the content fields — block ids and timestamps are unique
-        # per object and would make the key unstable across calls.
+        # Serialize content only for stable cache keys, excluding block
+        # IDs and timestamps.
         cache_key = {
             "model": self.model,
             "contents": [
@@ -437,7 +434,12 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 else item.model_dump(mode="json", include={"source"})
                 for item in inputs
             ],
-            **config_kwargs,
+            # Transport options do not affect the embedding values.
+            **config.model_dump(
+                mode="json",
+                exclude_none=True,
+                exclude={"http_options"},
+            ),
         }
 
         if self.embedding_cache:

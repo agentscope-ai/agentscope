@@ -7,6 +7,7 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.genai import types
 from utils import AnyValue
 
 from agentscope.embedding import (
@@ -362,6 +363,70 @@ class GeminiMultimodalCallTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             model.client.aio.models.embed_content.await_count,
             1,
+        )
+
+    async def test_multimodal_cache_ignores_http_options(self) -> None:
+        """Cache by dimensions while forwarding HTTP options to the SDK."""
+        model = self._make_multimodal_model()
+        model.dimensions = 2
+        short = [0.1, 0.2]
+        long = [0.1, 0.2, 0.3, 0.4]
+        model.client = MagicMock()
+        sdk = AsyncMock(
+            side_effect=[
+                MagicMock(embeddings=[MagicMock(values=short)]),
+                MagicMock(embeddings=[MagicMock(values=long)]),
+            ],
+        )
+        model.client.aio.models.embed_content = sdk
+        cases = (
+            (types.HttpOptions(timeout=10000), 2, "api", short),
+            (types.HttpOptions(timeout=20000), 2, "cache", short),
+            ({"timeout": 30000}, 2, "cache", short),
+            (types.HttpOptions(timeout=40000), 4, "api", long),
+            ({"timeout": 50000}, 4, "cache", long),
+        )
+        with TemporaryDirectory() as directory:
+            model.embedding_cache = FileEmbeddingCache(cache_dir=directory)
+            for index, (options, dimensions, source, vector) in enumerate(
+                cases,
+            ):
+                with self.subTest(case=index):
+                    result = await model(
+                        [_img()],
+                        http_options=options,
+                        output_dimensionality=dimensions,
+                    )
+                    self.assertEqual(
+                        asdict(result),
+                        {
+                            "embeddings": [vector],
+                            "id": A,
+                            "created_at": A,
+                            "type": "embedding",
+                            "usage": {
+                                "tokens": None if source == "api" else 0,
+                                "time": A if source == "api" else 0,
+                                "type": "embedding",
+                            },
+                            "source": source,
+                        },
+                    )
+        self.assertEqual(
+            [
+                call.kwargs["config"].model_dump(exclude_none=True)
+                for call in sdk.await_args_list
+            ],
+            [
+                {
+                    "http_options": {"timeout": 10000},
+                    "output_dimensionality": 2,
+                },
+                {
+                    "http_options": {"timeout": 40000},
+                    "output_dimensionality": 4,
+                },
+            ],
         )
 
     async def test_multimodal_batching_by_image_limit(self) -> None:
