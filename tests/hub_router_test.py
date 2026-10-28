@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import zipfile
+from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import quote
 from unittest import IsolatedAsyncioTestCase
@@ -17,6 +18,7 @@ from agentscope.app.hub import (
     MCPCard,
     MCPHubBase,
     MCPHubPage,
+    SkillArchive,
     SkillCard,
     SkillHubBase,
     SkillHubPage,
@@ -193,9 +195,16 @@ class FakeSkillHub(SkillHubBase):
         user_id: str,
         card_id: str,
         version: str | None = None,
+    ) -> SkillArchive:
+        """Return the format and stream required by the hub contract."""
+        self.download_users.append(user_id)
+        return SkillArchive("zip", self._download_stream(card_id))
+
+    async def _download_stream(
+        self,
+        card_id: str,
     ) -> AsyncIterator[bytes]:
         """Yield an in-memory ZIP, or raise for an unknown card."""
-        self.download_users.append(user_id)
         if card_id == "nozip":
             yield b"not a zip at all"
             return
@@ -698,6 +707,84 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         self.assertNotIn("TaskGroup", detail)
 
     # ── install: skill ────────────────────────────────────────────
+
+    def test_server_path_skill_import_is_disabled(self) -> None:
+        """Reject a valid host skill without copying it into a workspace."""
+        with tempfile.TemporaryDirectory() as source:
+            Path(source, "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
+            Path(source, "secret.txt").write_text(
+                "sentinel secret",
+                encoding="utf-8",
+            )
+            for headers in ({}, HEADERS):
+                with self.subTest(headers=headers):
+                    response = self._client.post(
+                        "/workspace/skill",
+                        params=self._scope,
+                        json={"skill_path": source},
+                        headers=headers,
+                    )
+                    self.assertEqual(response.status_code, 405)
+                    self.assertEqual(
+                        response.json(),
+                        {"detail": "Method Not Allowed"},
+                    )
+
+        listed = self._client.get(
+            "/workspace/skill",
+            params=self._scope,
+            headers=HEADERS,
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json(), [])
+        schema = self._client.get("/openapi.json").json()
+        self.assertNotIn("post", schema["paths"]["/workspace/skill"])
+        self.assertNotIn("AddSkillRequest", schema["components"]["schemas"])
+
+    def test_workspace_skill_upload_still_installs(self) -> None:
+        """Uploading client-provided bytes remains available."""
+        content = SKILL_MD.encode("utf-8")
+        response = self._client.post(
+            "/workspace/skill/upload",
+            params=self._scope,
+            headers=HEADERS,
+            data={
+                "manifest": json.dumps(
+                    {
+                        "entries": [
+                            {"path": "pack/SKILL.md", "size": len(content)},
+                        ],
+                    },
+                ),
+            },
+            files=[("files", ("SKILL.md", content, "text/markdown"))],
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), None)
+        listed = self._client.get(
+            "/workspace/skill",
+            params=self._scope,
+            headers=HEADERS,
+        ).json()
+        self.assertEqual([skill["name"] for skill in listed], ["gifgrep"])
+
+    def test_workspace_skill_library_install_still_works(self) -> None:
+        """Installing a library skill still downloads its archive."""
+        skill_id = self._install_skill("gifgrep").json()["id"]
+        response = self._client.post(
+            "/workspace/skill/from-library",
+            params=self._scope,
+            headers=HEADERS,
+            json={"skill_ids": [skill_id]},
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {"added": ["gifgrep"], "failed": {}})
+        listed = self._client.get(
+            "/workspace/skill",
+            params=self._scope,
+            headers=HEADERS,
+        ).json()
+        self.assertEqual([skill["name"] for skill in listed], ["gifgrep"])
 
     def _install_skill(self, card_id: str, **params: str) -> Any:
         """POST a skill install. User-level, like the MCP one."""
