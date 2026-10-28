@@ -2,6 +2,7 @@
 """Tests for schedule validation before persistence and registration."""
 from datetime import datetime, timedelta
 from unittest import IsolatedAsyncioTestCase, TestCase
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -229,6 +230,95 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(storage.upserted), 1)
         self.assertEqual(storage.upserted[0].id, response.schedule_id)
         self.assertListEqual(scheduler.notified, [response.schedule_id])
+
+    async def test_create_preserves_end_time_and_stops_scheduling(
+        self,
+    ) -> None:
+        """Include the last day's occurrence and exclude the next one."""
+        storage = _Storage()
+        scheduler = _Scheduler()
+        request = CreateScheduleRequest.model_validate(
+            {
+                **_request(
+                    "59 23 * * *",
+                    timezone="Asia/Shanghai",
+                ).model_dump(mode="json"),
+                "ended_at": "2099-12-31T23:59:59.999+08:00",
+            },
+        )
+
+        response = await create_schedule(
+            request,
+            user_id="user-1",
+            storage=storage,
+            access=_Access(),
+            scheduler=scheduler,
+        )
+
+        record = storage.upserted[0]
+        self.assertEqual(record.data.ended_at, request.ended_at)
+        self.assertEqual(
+            record.data.model_dump(mode="json")["ended_at"],
+            "2099-12-31T23:59:59.999000+08:00",
+        )
+        self.assertListEqual(scheduler.notified, [response.schedule_id])
+        trigger = scheduler.validate_schedule(record)
+        last_day = datetime(2099, 12, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
+        last_fire = trigger.get_next_fire_time(None, last_day)
+        self.assertEqual(last_fire, last_day.replace(hour=23, minute=59))
+        self.assertIsNone(
+            trigger.get_next_fire_time(
+                last_fire,
+                last_fire + timedelta(seconds=1),
+            ),
+        )
+
+    async def test_create_without_end_time_remains_unbounded(self) -> None:
+        """Omitted and explicit null end times keep the existing behavior."""
+        cases: list[dict[str, None]] = [{}, {"ended_at": None}]
+        for extra in cases:
+            with self.subTest(extra=extra):
+                storage = _Storage()
+                request = CreateScheduleRequest.model_validate(
+                    {**_request("0 9 * * *").model_dump(), **extra},
+                )
+                await create_schedule(
+                    request,
+                    user_id="user-1",
+                    storage=storage,
+                    access=_Access(),
+                    scheduler=_Scheduler(),
+                )
+                record = storage.upserted[0]
+                self.assertIsNone(record.data.ended_at)
+                trigger = SchedulerManager.validate_schedule(record)
+                self.assertIsNotNone(
+                    trigger.get_next_fire_time(
+                        None,
+                        datetime(2100, 1, 1, tzinfo=ZoneInfo("UTC")),
+                    ),
+                )
+
+    async def test_create_past_end_time_does_not_persist(self) -> None:
+        """An end before activation is rejected before writing or notifying."""
+        storage = _Storage()
+        scheduler = _Scheduler()
+        request = _request("0 9 * * *")
+        request.ended_at = datetime(2000, 1, 1, tzinfo=ZoneInfo("UTC"))
+
+        with self.assertRaises(HTTPException) as raised:
+            await create_schedule(
+                request,
+                user_id="user-1",
+                storage=storage,
+                access=_Access(),
+                scheduler=scheduler,
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("ended_at", raised.exception.detail)
+        self.assertListEqual(storage.upserted, [])
+        self.assertListEqual(scheduler.notified, [])
 
     async def test_create_empty_timezone_does_not_persist(self) -> None:
         """An empty timezone must not silently mean server-local."""

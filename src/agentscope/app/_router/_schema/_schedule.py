@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the schedule router."""
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from ...storage import (
@@ -25,6 +27,13 @@ class CreateScheduleRequest(BaseModel):
         default="UTC",
         description="IANA timezone name, e.g. 'America/New_York' or "
         "'Asia/Shanghai'.",
+    )
+
+    ended_at: datetime | None = Field(
+        default=None,
+        description="Inclusive end time of the schedule. Omit or set to null "
+        "for no end boundary. Include a UTC offset for an absolute instant; "
+        "a naive value is interpreted in the schedule's timezone.",
     )
 
     agent_id: str = Field(description="Agent to run when the schedule fires.")
