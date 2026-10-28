@@ -193,6 +193,41 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         )
 
     @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_text_api_key_override_with_cache(
+        self,
+        mock_api: Any,
+    ) -> None:
+        """Use the per-call key without including it in cache identifiers."""
+        embeddings = [[0.1, 0.2]]
+        mock_api.return_value = _text_resp(embeddings, 12)
+        cache = MagicMock()
+        cache.retrieve = AsyncMock(return_value=None)
+        cache.store = AsyncMock()
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="text-embedding-v4",
+            dimensions=2,
+            embedding_cache=cache,
+        )
+
+        await model(["hello"], api_key="sk-per-call")
+
+        identifier = {
+            "input": ["hello"],
+            "model": "text-embedding-v4",
+            "dimension": 2,
+        }
+        mock_api.assert_called_once_with(
+            **identifier,
+            api_key="sk-per-call",
+        )
+        cache.retrieve.assert_awaited_once_with(identifier=identifier)
+        cache.store.assert_awaited_once_with(
+            identifier=identifier,
+            embeddings=embeddings,
+        )
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_sdk_thread(self, mock_api: Any) -> None:
         """The SDK executes on a worker instead of the event loop thread."""
         loop_thread = get_ident()
