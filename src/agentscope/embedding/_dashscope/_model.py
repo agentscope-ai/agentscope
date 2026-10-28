@@ -436,12 +436,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             **kwargs,
         }
 
-        # Exclude api_key from cache identifier to avoid persisting secrets
-        # and to keep cache valid across key rotations. Deep-copy it: the
-        # SDK's upload preprocessing rewrites local file paths into
-        # oss:// URLs in place, which would otherwise make the store()
-        # identifier differ from the retrieve() one — the cache would
-        # never hit and every call would leave a dead entry behind.
+        # Exclude api_key and isolate the cache identifier from SDK mutations.
         cache_identifier = copy.deepcopy(
             {k: v for k, v in api_kwargs.items() if k != "api_key"},
         )
