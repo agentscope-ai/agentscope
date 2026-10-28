@@ -187,8 +187,14 @@ class ScheduleHttpEndTimeTest(TestCase):
         )
 
     def test_invalid_end_time_returns_422_without_side_effects(self) -> None:
-        """Both malformed timestamps and expired windows fail before writes."""
-        for ended_at in ("not-a-date", "2000-01-01T00:00:00Z"):
+        """Malformed, naive, and expired end times fail before writes."""
+        for ended_at in (
+            "not-a-date",
+            # An offset is required: a naive value would be stored without
+            # the zone that gave it meaning.
+            "2099-12-31T23:59:59",
+            "2000-01-01T00:00:00Z",
+        ):
             with self.subTest(ended_at=ended_at):
                 response = self.client.post(
                     "/schedule/",
