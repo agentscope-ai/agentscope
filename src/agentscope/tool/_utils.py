@@ -61,10 +61,11 @@ def _resolve_annotation(
 
 
 def _resolve_partial_type_hints(
-    partial_func: partial,
+    partial_func: Callable,
     globalns: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Resolve each annotation on a partial independently."""
+    """Resolve each annotation on a callable (or partial) independently,
+    skipping the ones that cannot be resolved."""
     raw_annotations = getattr(
         partial_func,
         "__annotations__",
@@ -99,15 +100,18 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
         partial_funcs.append(annotated_func)
         annotated_func = annotated_func.func
 
+    globalns = getattr(annotated_func, "__globals__", None)
+
     try:
         type_hints = typing.get_type_hints(
             annotated_func,
             include_extras=True,
         )
     except Exception:
-        type_hints = {}
-
-    globalns = getattr(annotated_func, "__globals__", None)
+        # One unresolvable annotation (e.g. a `TYPE_CHECKING`-only import
+        # used by `_agent_state` or the return type) must not discard the
+        # hints of every other parameter.
+        type_hints = _resolve_partial_type_hints(annotated_func, globalns)
 
     for partial_func in reversed(partial_funcs):
         type_hints.update(
