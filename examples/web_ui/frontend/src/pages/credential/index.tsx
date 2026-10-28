@@ -176,7 +176,7 @@ function ModelTable({ models, variant }: ModelTableProps) {
 							const context = chat?.context_size ?? embed?.context_size;
 							return (
 								<TableRow
-									key={model.name}
+									key={chat ? `${chat.model_class}:${chat.name}` : model.name}
 									className="border-border hover:bg-row-hover"
 								>
 									<TableCell className="px-4 py-2.5 text-[12.5px] text-foreground">

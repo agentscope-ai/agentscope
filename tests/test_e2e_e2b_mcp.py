@@ -7,6 +7,8 @@ Requires: ``E2B_API_KEY`` environment variable.
 import os
 import unittest
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.workspace import E2BWorkspace
 from agentscope.mcp import MCPClient, StdioMCPConfig
 
@@ -41,8 +43,10 @@ _SKIP_REASON = "E2B_API_KEY environment variable is not set"
 
 
 @unittest.skipUnless(_E2B_API_KEY, _SKIP_REASON)
-class TestE2BPerScopeMCP(unittest.IsolatedAsyncioTestCase):
+class TestE2BPerScopeMCP(CheckoutWheelTestCase):
     """Per-``(agent_id, session_id)`` MCP isolation for E2BWorkspace."""
+
+    workspace_type = E2BWorkspace
 
     @staticmethod
     def _make_mcp(name: str) -> MCPClient:

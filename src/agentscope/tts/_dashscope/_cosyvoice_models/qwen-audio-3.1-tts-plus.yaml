@@ -1,0 +1,19 @@
+# Source: https://help.aliyun.com/zh/model-studio/tts-model
+# Uses tts_v2.SpeechSynthesizer, not the Qwen3-TTS protocol.
+name: qwen-audio-3.1-tts-plus
+label: Qwen Audio 3.1 TTS Plus
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+# Source: https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list
+# Curated system voices; explicitly pass voice when constructing the model.
+voices:
+  - longanhuan_v3.1
+  - longanlingxin_v3.1
+  - longanfengyue_v3.1
+  - xunanchuan_v3.1

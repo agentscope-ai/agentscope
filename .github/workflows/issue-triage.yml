@@ -110,6 +110,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.13.4"
           python-version: '3.11'
           # There is no uv.lock, so without this the cache key never
           # changes and the cache is never invalidated.

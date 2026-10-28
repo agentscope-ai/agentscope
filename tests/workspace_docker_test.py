@@ -36,10 +36,11 @@ import tempfile
 import unittest
 import uuid
 from typing import Any
-from unittest.async_case import IsolatedAsyncioTestCase
 from urllib.parse import urlparse
 
 import aiofiles
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.message import (
     AssistantMsg,
@@ -143,8 +144,10 @@ class _LongResultTool(ToolBase):
 
 
 @unittest.skipUnless(_DOCKER_OK, _SKIP_REASON)
-class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
+class TestDockerWorkspaceOffload(CheckoutWheelTestCase):
     """Test cases for DockerWorkspace offload functionality."""
+
+    workspace_type = DockerWorkspace
 
     async def asyncSetUp(self) -> None:
         """Build a fresh workspace bound to a temp host dir.
@@ -460,8 +463,10 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(_DOCKER_OK, _SKIP_REASON)
-class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
+class TestDockerWorkspaceSkills(CheckoutWheelTestCase):
     """Test cases for DockerWorkspace skill management."""
+
+    workspace_type = DockerWorkspace
 
     async def asyncSetUp(self) -> None:
         """Build separate temp dirs for the workspace and the skill source."""
@@ -660,8 +665,10 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(_DOCKER_OK, _SKIP_REASON)
-class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
+class TestDockerWorkspaceLifecycle(CheckoutWheelTestCase):
     """Test cases for DockerWorkspace lifecycle (init / close / restart)."""
+
+    workspace_type = DockerWorkspace
 
     async def asyncSetUp(self) -> None:
         """Per-test temp workdir; workspace built lazily inside each test."""

@@ -80,7 +80,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
                 Host directory bind-mounted to ``/workspace``. ``None``
                 makes the workspace ephemeral.
             node_version (`str | None`, optional):
-                Major Node.js version to bake into the image.
+                Node.js image version to bake into the image.
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages installed into the gateway venv
                 at image-build time.

@@ -250,6 +250,7 @@ class Msg(BaseModel):
         content blocks are appended/updated by block-level events,
         ``finished_at`` is stamped by ``REPLY_END``, and ``usage`` is
         initialized then accumulated across each ``MODEL_CALL_END``.
+        Custom events are skipped because they do not update message content.
         Events whose ``reply_id`` does not match ``self.id`` are skipped with
         a warning. Block-level delta/end events whose target block cannot be
         found are also skipped with a warning.
@@ -259,6 +260,9 @@ class Msg(BaseModel):
                 The event to apply.
         """
         from ..event import EventType  # local import to avoid circular dep
+
+        if event.type == EventType.CUSTOM:
+            return self
 
         if event.reply_id != self.id:
             logger.warning(
