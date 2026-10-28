@@ -1165,6 +1165,34 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 )
                 self.assertTrue(model._cold_start_done)
 
+    async def test_push_keeps_cold_start_buffer_on_send_failure(self) -> None:
+        """A failed streaming_call must not consume the buffered text."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(cold_start_length=10) as model:
+                model._callback.get_audio_response = Mock(
+                    return_value=TTSResponse(content=None),
+                )
+                self.mock_synthesizer.streaming_call = Mock(
+                    side_effect=RuntimeError("socket gone"),
+                )
+
+                res = await model.push("Hi there friend!")
+
+                self.assertIsNone(res.content)
+                self.assertFalse(model._cold_start_done)
+                self.assertEqual(
+                    model._cold_start_buffer,
+                    "Hi there friend!",
+                )
+
+                # The next push retries the whole buffered text.
+                self.mock_synthesizer.streaming_call = Mock()
+                await model.push("!")
+                self.mock_synthesizer.streaming_call.assert_called_once_with(
+                    "Hi there friend!!",
+                )
+                self.assertTrue(model._cold_start_done)
+
     async def test_push_after_cold_start_forwards_directly(self) -> None:
         """Once cold start is done, subsequent deltas bypass the buffer."""
         with patch.dict("sys.modules", self.mock_modules):
