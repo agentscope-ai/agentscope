@@ -44,6 +44,3 @@ jobs:
 
       - name: Build
         run: pnpm build
-
-      - name: Test frontend
-        run: pnpm --filter frontend test

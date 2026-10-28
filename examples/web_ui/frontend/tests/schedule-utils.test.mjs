@@ -5,6 +5,10 @@ import { getScheduleEndAt } from '../src/pages/schedule/schedule-utils.ts';
 
 const originalTimezone = process.env.TZ;
 
+test('omitting an end date leaves the schedule unbounded', () => {
+	assert.equal(getScheduleEndAt(undefined, 'Asia/Shanghai'), undefined);
+});
+
 afterEach(() => {
 	if (originalTimezone === undefined) delete process.env.TZ;
 	else process.env.TZ = originalTimezone;

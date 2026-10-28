@@ -2,7 +2,8 @@ import { CronDate } from 'cron-parser';
 import { format } from 'date-fns';
 
 /** Convert a picker date to the inclusive end of that day in the task's timezone. */
-export function getScheduleEndAt(date: Date, timezone: string): string {
+export function getScheduleEndAt(date: Date | undefined, timezone: string): string | undefined {
+	if (!date) return undefined;
 	// Preserve the calendar date selected in the browser, not its midnight instant.
 	const end = new CronDate(format(date, 'yyyy-MM-dd'), timezone);
 	end.setEndOfDay();

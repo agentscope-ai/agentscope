@@ -166,9 +166,9 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				cron_expression: cronExpression,
 				timezone: form.timezone,
 				ended_at:
-					form.freq !== 'once' && form.endDate
-						? getScheduleEndAt(form.endDate, form.timezone)
-						: undefined,
+					form.freq === 'once'
+						? undefined
+						: getScheduleEndAt(form.endDate, form.timezone),
 				agent_id: form.agentId,
 				chat_model_config: form.chatModelConfig!,
 				enabled: true,
