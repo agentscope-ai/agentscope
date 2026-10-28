@@ -4,13 +4,18 @@ from datetime import datetime, timedelta
 from unittest import IsolatedAsyncioTestCase, TestCase
 from zoneinfo import ZoneInfo
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from agentscope.app._manager import SchedulerManager
 from agentscope.app._manager._scheduler._tools._schedule_create import (
     ScheduleCreate,
 )
-from agentscope.app._router._schedule import create_schedule, update_schedule
+from agentscope.app._router._schedule import (
+    create_schedule,
+    schedule_router,
+    update_schedule,
+)
 from agentscope.app._router._schema._schedule import (
     CreateScheduleRequest,
     UpdateScheduleRequest,
@@ -19,6 +24,12 @@ from agentscope.app.storage import (
     ChatModelConfig,
     ScheduleData,
     ScheduleRecord,
+)
+from agentscope.app.deps import (
+    get_current_user_id,
+    get_resource_access_service,
+    get_scheduler_manager,
+    get_storage,
 )
 from agentscope.permission import PermissionMode
 
@@ -63,6 +74,10 @@ class _Storage:
         _ = user_id
         self.upserted.append(record)
         return record.id
+
+    async def list_schedules(self, user_id: str) -> list[ScheduleRecord]:
+        """Return records persisted through the route under test."""
+        return [r for r in self.upserted if r.user_id == user_id]
 
 
 class _Scheduler(SchedulerManager):
@@ -120,6 +135,71 @@ def _record() -> ScheduleRecord:
             permission_mode=PermissionMode.DONT_ASK,
         ),
     )
+
+
+class ScheduleHttpEndTimeTest(TestCase):
+    """Exercise request validation and response serialization over HTTP."""
+
+    def setUp(self) -> None:
+        """Keep real routes and schemas, replacing external services only."""
+        self.storage = _Storage()
+        self.scheduler = _Scheduler()
+        app = FastAPI()
+        app.include_router(schedule_router)
+        app.dependency_overrides.update(
+            {
+                get_current_user_id: lambda: "user-1",
+                get_storage: lambda: self.storage,
+                get_resource_access_service: _Access,
+                get_scheduler_manager: lambda: self.scheduler,
+            },
+        )
+        self.client = self.enterContext(TestClient(app))
+
+    def test_end_time_round_trips_through_create_and_list(self) -> None:
+        """An offset-bearing end time survives JSON input and list output."""
+        payload = {
+            **_request("59 23 * * *", "Asia/Shanghai").model_dump(mode="json"),
+            "ended_at": "2099-12-31T23:59:59.999+08:00",
+        }
+        created = self.client.post("/schedule/", json=payload)
+        self.assertEqual(created.status_code, 201, created.text)
+        listed = self.client.get("/schedule/")
+        self.assertEqual(listed.status_code, 200, listed.text)
+        records = listed.json()["schedules"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["id"], created.json()["schedule_id"])
+        self.assertEqual(
+            datetime.fromisoformat(records[0]["data"]["ended_at"]),
+            datetime.fromisoformat(payload["ended_at"]),
+        )
+        trigger = SchedulerManager.validate_schedule(
+            ScheduleRecord.model_validate(records[0]),
+        )
+        last_day = datetime(2099, 12, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
+        last_fire = trigger.get_next_fire_time(None, last_day)
+        self.assertEqual(last_fire, last_day.replace(hour=23, minute=59))
+        self.assertIsNone(
+            trigger.get_next_fire_time(
+                last_fire,
+                last_fire + timedelta(seconds=1),
+            ),
+        )
+
+    def test_invalid_end_time_returns_422_without_side_effects(self) -> None:
+        """Both malformed timestamps and expired windows fail before writes."""
+        for ended_at in ("not-a-date", "2000-01-01T00:00:00Z"):
+            with self.subTest(ended_at=ended_at):
+                response = self.client.post(
+                    "/schedule/",
+                    json={
+                        **_request("0 9 * * *").model_dump(mode="json"),
+                        "ended_at": ended_at,
+                    },
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertListEqual(self.storage.upserted, [])
+                self.assertListEqual(self.scheduler.notified, [])
 
 
 class ScheduleWeekdayTest(TestCase):
@@ -231,48 +311,6 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
         self.assertEqual(storage.upserted[0].id, response.schedule_id)
         self.assertListEqual(scheduler.notified, [response.schedule_id])
 
-    async def test_create_preserves_end_time_and_stops_scheduling(
-        self,
-    ) -> None:
-        """Include the last day's occurrence and exclude the next one."""
-        storage = _Storage()
-        scheduler = _Scheduler()
-        request = CreateScheduleRequest.model_validate(
-            {
-                **_request(
-                    "59 23 * * *",
-                    timezone="Asia/Shanghai",
-                ).model_dump(mode="json"),
-                "ended_at": "2099-12-31T23:59:59.999+08:00",
-            },
-        )
-
-        response = await create_schedule(
-            request,
-            user_id="user-1",
-            storage=storage,
-            access=_Access(),
-            scheduler=scheduler,
-        )
-
-        record = storage.upserted[0]
-        self.assertEqual(record.data.ended_at, request.ended_at)
-        self.assertEqual(
-            record.data.model_dump(mode="json")["ended_at"],
-            "2099-12-31T23:59:59.999000+08:00",
-        )
-        self.assertListEqual(scheduler.notified, [response.schedule_id])
-        trigger = scheduler.validate_schedule(record)
-        last_day = datetime(2099, 12, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
-        last_fire = trigger.get_next_fire_time(None, last_day)
-        self.assertEqual(last_fire, last_day.replace(hour=23, minute=59))
-        self.assertIsNone(
-            trigger.get_next_fire_time(
-                last_fire,
-                last_fire + timedelta(seconds=1),
-            ),
-        )
-
     async def test_create_without_end_time_remains_unbounded(self) -> None:
         """Omitted and explicit null end times keep the existing behavior."""
         cases: list[dict[str, None]] = [{}, {"ended_at": None}]
@@ -298,27 +336,6 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
                         datetime(2100, 1, 1, tzinfo=ZoneInfo("UTC")),
                     ),
                 )
-
-    async def test_create_past_end_time_does_not_persist(self) -> None:
-        """An end before activation is rejected before writing or notifying."""
-        storage = _Storage()
-        scheduler = _Scheduler()
-        request = _request("0 9 * * *")
-        request.ended_at = datetime(2000, 1, 1, tzinfo=ZoneInfo("UTC"))
-
-        with self.assertRaises(HTTPException) as raised:
-            await create_schedule(
-                request,
-                user_id="user-1",
-                storage=storage,
-                access=_Access(),
-                scheduler=scheduler,
-            )
-
-        self.assertEqual(raised.exception.status_code, 422)
-        self.assertIn("ended_at", raised.exception.detail)
-        self.assertListEqual(storage.upserted, [])
-        self.assertListEqual(scheduler.notified, [])
 
     async def test_create_empty_timezone_does_not_persist(self) -> None:
         """An empty timezone must not silently mean server-local."""
