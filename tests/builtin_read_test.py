@@ -2,6 +2,7 @@
 """Read tool test case."""
 import base64
 import io
+import json
 import os
 import tempfile
 import uuid
@@ -9,13 +10,37 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from utils import AnyString
 
-from agentscope.tool import ToolChunk, Read
+from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
     PermissionRule,
 )
-from agentscope.message import TextBlock
+from agentscope.state import AgentState
+from agentscope.tool import Read, ToolChunk, Toolkit, ToolResponse
+
+
+async def _toolkit_read(path: str, **arguments: int) -> ToolResponse:
+    """Call ``Read`` through the toolkit and return the final response.
+
+    ``Toolkit.call_tool`` is the model path: it repairs JSON types and does
+    not apply the published numeric bounds itself.
+    """
+    toolkit = Toolkit(tools=[Read()])
+    response: ToolResponse | None = None
+    async for result in toolkit.call_tool(
+        ToolCallBlock(
+            id="read",
+            name="Read",
+            input=json.dumps({"file_path": path, **arguments}),
+        ),
+        AgentState(),
+    ):
+        if isinstance(result, ToolResponse):
+            response = result
+    if response is None:
+        raise AssertionError("toolkit produced no ToolResponse")
+    return response
 
 
 # pylint: disable=too-many-public-methods
@@ -720,3 +745,71 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
             },
         )
+
+    async def test_read_never_numbers_lines_below_one(self) -> None:
+        """An offset below 1 must error, not succeed with a line under 1."""
+        for offset in (0, -1):
+            response = await _toolkit_read(
+                self.temp_file.name,
+                offset=offset,
+            )
+            line_numbers: list[int] = []
+            if response.state == "success":
+                line_numbers = [
+                    int(line.split("\t", 1)[0])
+                    for line in response.content[0].text.splitlines()
+                    if line.strip()
+                ]
+            self.assertTrue(
+                response.state != "success"
+                or all(number >= 1 for number in line_numbers),
+                f"state={response.state}, line numbers={line_numbers}",
+            )
+            self.assertEqual(response.state, "error")
+            self.assertEqual(
+                response.content[0].text,
+                f"Error: offset must be >= 1, got: {offset}",
+            )
+
+    async def test_read_honours_the_documented_line_cap(self) -> None:
+        """A limit above 2000 must error instead of returning the file."""
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            delete=False,
+            suffix=".txt",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(
+                "".join(f"row {index}\n" for index in range(1, 5001)),
+            )
+        self.addCleanup(os.unlink, handle.name)
+
+        response = await _toolkit_read(handle.name, limit=99999)
+        returned = (
+            len(response.content[0].text.splitlines())
+            if response.state == "success"
+            else 0
+        )
+        self.assertLessEqual(returned, 2000)
+        self.assertEqual(response.state, "error")
+        self.assertEqual(
+            response.content[0].text,
+            "Error: limit must be between 1 and 2000, got: 99999",
+        )
+
+        # The published bounds are inclusive. Values outside either end are
+        # the same class of error.
+        capped = await _toolkit_read(self.temp_file.name, limit=2000)
+        self.assertEqual(capped.state, "success")
+        self.assertEqual(len(capped.content[0].text.splitlines()), 10)
+        for bad_limit in (0, 2001):
+            rejected = await _toolkit_read(
+                self.temp_file.name,
+                limit=bad_limit,
+            )
+            self.assertEqual(rejected.state, "error")
+            self.assertEqual(
+                rejected.content[0].text,
+                "Error: limit must be between 1 and 2000, "
+                f"got: {bad_limit}",
+            )

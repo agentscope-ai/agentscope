@@ -6,7 +6,7 @@ import os
 import re
 from typing import Any, List
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from .._base import ParamsBase, ToolBase, ToolMiddlewareBase
 from ...permission import (
@@ -77,6 +77,47 @@ class _ReadParams(ParamsBase):
         f"PDFs over {_PDF_MAX_PAGES_WITHOUT_RANGE} pages. Only applies to "
         "PDF files.",
     )
+
+
+def _read_bounds_error(offset: int, limit: int) -> str | None:
+    """Return an error when ``offset`` or ``limit`` violate ``_ReadParams``.
+
+    ``Toolkit.call_tool`` repairs JSON types and does not apply the numeric
+    bounds this model publishes. Reject the bad argument here so a mis-set
+    window cannot come back as file content.
+
+    Args:
+        offset (`int`):
+            The 1-based line number to start reading from.
+        limit (`int`):
+            The maximum number of lines to read.
+
+    Returns:
+        `str | None`:
+            An error naming the bad argument, or ``None`` when both values
+            are inside the published bounds.
+    """
+    try:
+        _ReadParams(file_path="/", offset=offset, limit=limit)
+    except ValidationError as exc:
+        bounds = _ReadParams.model_json_schema()["properties"]
+        for err in exc.errors():
+            loc = err.get("loc") or ()
+            if not loc:
+                continue
+            field = loc[0]
+            if field == "offset":
+                minimum = bounds["offset"]["minimum"]
+                return f"Error: offset must be >= {minimum}, got: {offset}"
+            if field == "limit":
+                low = bounds["limit"]["minimum"]
+                high = bounds["limit"]["maximum"]
+                return (
+                    f"Error: limit must be between {low} and {high}, "
+                    f"got: {limit}"
+                )
+        return "Error: invalid offset or limit."
+    return None
 
 
 class Read(ToolBase):
@@ -270,7 +311,20 @@ Usage:
         - PDF: text extraction via RAG parser
         - Image: base64-encoded DataBlock
         - Other: line-numbered text (TextBlock)
+
+        ``offset`` and ``limit`` are validated against ``_ReadParams``
+        before the file is opened. A value outside those bounds returns an
+        error chunk naming that argument.
         """
+        # The published schema is not applied on the toolkit path. Check it
+        # before touching the file so a bad window cannot look like content.
+        bounds_error = _read_bounds_error(offset, limit)
+        if bounds_error is not None:
+            return ToolChunk(
+                content=[TextBlock(text=bounds_error)],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         # Validate file_path is absolute
         if not self._backend.isabs(file_path):
