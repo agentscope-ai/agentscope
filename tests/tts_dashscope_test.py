@@ -20,7 +20,7 @@ import io
 import wave
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from utils import AnyString, AnyValue
 
@@ -699,6 +699,38 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
             async with model:
                 self.assertTrue(model._connected)
             self.assertFalse(model._connected)
+
+    async def test_synthesize_finish_wait_timeout_retries(self) -> None:
+        """A timed-out finish wait reconnects and resends instead of
+        being silently ignored."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(max_retries=2) as model:
+                self._mock_synthesize_callback(model)
+                model._callback.finish_event.wait = Mock(
+                    side_effect=[False, True],
+                )
+                model._reconnect = AsyncMock()
+
+                res = await model.synthesize("Hello")
+                chunks = [chunk async for chunk in res]
+
+                self.assertTrue(chunks)
+                self.assertEqual(
+                    model._callback.finish_event.wait.call_count,
+                    2,
+                )
+                model._reconnect.assert_awaited_once()
+
+    async def test_synthesize_finish_wait_timeout_exhausts(self) -> None:
+        """Timeouts on every attempt raise RuntimeError instead of
+        hanging forever."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(max_retries=1) as model:
+                self._mock_synthesize_callback(model)
+                model._callback.finish_event.wait = Mock(return_value=False)
+
+                with self.assertRaises(RuntimeError):
+                    await model.synthesize("Hello")
 
     # -- push --
 
