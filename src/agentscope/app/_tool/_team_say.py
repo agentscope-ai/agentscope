@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
 import json
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from pydantic import Field
 
@@ -11,6 +11,9 @@ from .._bus_ops import deliver_to_inbox
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
+
+if TYPE_CHECKING:
+    from .._service._access import ResourceAccessService
 
 
 class _TeamSayParams(ParamsBase):
@@ -100,6 +103,7 @@ class TeamSay(_TeamToolBase):
         self,
         *args: Any,
         role: str = "leader",
+        resource_access_service: "ResourceAccessService | None" = None,
         **kwargs: Any,
     ) -> None:
         """Initialise with role-specific description.
@@ -108,12 +112,18 @@ class TeamSay(_TeamToolBase):
             role (`str`, defaults to ``"leader"``):
                 Either ``"leader"`` or ``"worker"``. Determines which
                 description the agent sees for this tool.
+            resource_access_service (`ResourceAccessService | None`, \
+optional):
+                Resolves a cross-owner shared leader agent against the
+                caller's current access grants. ``None`` keeps leader
+                resolution owner-scoped for owner-only integrations.
             *args:
                 Forwarded to :class:`_TeamToolBase.__init__`.
             **kwargs:
                 Forwarded to :class:`_TeamToolBase.__init__`.
         """
         super().__init__(*args, **kwargs)
+        self._resource_access_service = resource_access_service
         self.description = (
             _LEADER_DESCRIPTION if role == "leader" else _WORKER_DESCRIPTION
         )
@@ -166,6 +176,7 @@ class TeamSay(_TeamToolBase):
                 self._storage,
                 self._user_id,
                 team,
+                access=self._resource_access_service,
             )
             if leader is None:
                 return ToolChunk(
