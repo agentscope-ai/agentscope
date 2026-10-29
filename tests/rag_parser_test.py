@@ -2875,6 +2875,140 @@ class WordParserTest(IsolatedAsyncioTestCase):
             WordParser(table_format="csv")  # type: ignore[arg-type]
 
 
+class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
+    """Regression coverage for inline tabs and breaks in Word paragraphs."""
+
+    async def test_inline_tabs_and_soft_breaks_are_preserved(self) -> None:
+        """Tabs and consecutive soft breaks remain inside a paragraph."""
+        from docx import Document as DocxDocument
+
+        expected = "Name\tAlice\nDepartment\t\tEngineering\n\nEnd"
+        docx_bytes = _make_docx_simple([expected])
+        self.assertEqual(
+            DocxDocument(io.BytesIO(docx_bytes)).paragraphs[0].text,
+            expected,
+        )
+
+        sections = await WordParser(include_image=False).parse(
+            docx_bytes,
+            "inline.docx",
+        )
+
+        self.assertEqual([s.content.text for s in sections], [expected])
+
+    async def test_inline_separators_across_runs_keep_order(self) -> None:
+        """Separators in their own runs retain their position and count."""
+        from docx import Document as DocxDocument
+
+        doc = DocxDocument()
+        paragraph = doc.add_paragraph()
+        parts = ["First", "\t", "second", "\n\t", "third", "\n", "last"]
+        for part in parts:
+            paragraph.add_run(part)
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "runs.docx",
+        )
+
+        self.assertEqual(
+            [s.content.text for s in sections],
+            ["First\tsecond\n\tthird\nlast"],
+        )
+
+    async def test_inline_break_types(self) -> None:
+        """Text wrapping and carriage returns differ from layout breaks."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = DocxDocument()
+        paragraph = doc.add_paragraph()
+        run = parse_xml(
+            f'<w:r {nsdecls("w")}>'
+            "<w:t>One</w:t><w:cr/><w:t>Two</w:t>"
+            '<w:br w:type="textWrapping"/><w:t>Three</w:t>'
+            '<w:br w:type="page"/><w:t>Four</w:t>'
+            '<w:br w:type="column"/><w:t>Five</w:t></w:r>',
+        )
+        paragraph._element.append(run)  # pylint: disable=protected-access
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "breaks.docx",
+        )
+
+        self.assertEqual(
+            [s.content.text for s in sections],
+            ["One\nTwo\nThreeFourFive"],
+        )
+
+    async def test_inline_separators_in_hyperlinks_and_revisions(self) -> None:
+        """Nested runs keep both their text and their inline separators."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = DocxDocument()
+        paragraph = doc.add_paragraph("Before ")
+        hyperlink = parse_xml(
+            f'<w:hyperlink {nsdecls("w")} w:anchor="bookmark">'
+            "<w:r><w:t>linked</w:t><w:tab/><w:t>label</w:t></w:r>"
+            "</w:hyperlink>",
+        )
+        # pylint: disable-next=protected-access
+        paragraph._element.append(hyperlink)
+        paragraph.add_run(" ")
+        revision = parse_xml(
+            f'<w:ins {nsdecls("w")} w:id="1" w:author="test">'
+            "<w:r><w:t>revised</w:t><w:br/><w:t>text</w:t></w:r></w:ins>",
+        )
+        paragraph._element.append(revision)  # pylint: disable=protected-access
+        paragraph.add_run(" after")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "nested-runs.docx",
+        )
+
+        self.assertEqual(
+            [s.content.text for s in sections],
+            ["Before linked\tlabel revised\ntext after"],
+        )
+
+    async def test_inline_separators_preserve_text_fallback(self) -> None:
+        """Separators alone do not hide non-w:t text from the fallback."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        for separator in ("tab", "br"):
+            with self.subTest(separator=separator):
+                doc = DocxDocument()
+                paragraph = doc.add_paragraph()
+                run = parse_xml(
+                    f'<w:r {nsdecls("w")}>'
+                    f"<w:noBreakHyphen/><w:{separator}/></w:r>",
+                )
+                # pylint: disable-next=protected-access
+                paragraph._element.append(run)
+                buffer = io.BytesIO()
+                doc.save(buffer)
+
+                sections = await WordParser(include_image=False).parse(
+                    buffer.getvalue(),
+                    "fallback.docx",
+                )
+
+                self.assertEqual([s.content.text for s in sections], ["-"])
+
+
 class WordParserParagraphTest(IsolatedAsyncioTestCase):
     """Regression coverage for paragraph and text-box extraction."""
 
@@ -2945,6 +3079,82 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     [section.model_dump() for section in sections],
                     _expected_word_sections("Paragraph text\nCallout\nAfter"),
+                )
+
+    async def test_inline_separators_with_text_box_branches(self) -> None:
+        """Preserve inline separators while reading each text box once."""
+        for name, template in (
+            ("modern", _DOCX_MODERN_TEXT_BOX),
+            ("with_fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(shape=name):
+                template = template.replace(
+                    "<w:t>{before}</w:t>",
+                    "<w:t>Before</w:t><w:tab/><w:t>text</w:t>",
+                ).replace(
+                    "<w:t>{inside}</w:t>",
+                    "<w:t>Callout</w:t><w:tab/><w:t>value</w:t>"
+                    "<w:br/><w:t>next</w:t>",
+                )
+                sections = await WordParser(include_image=False).parse(
+                    _make_docx_with_text_box(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(
+                        "Before\ttext\nCallout\tvalue\nnext\nAfter",
+                    ),
+                )
+
+    async def test_separator_only_choice_keeps_readable_fallback(
+        self,
+    ) -> None:
+        """Inline separators alone do not make a text-box branch readable."""
+        for choice_xml in (
+            "<w:tab/>",
+            "<w:br/>",
+            "<w:cr/>",
+            "<w:tab/><w:br/><w:cr/>",
+        ):
+            with self.subTest(choice_xml=choice_xml):
+                template = _DOCX_TEXT_BOX_WITH_VML_FALLBACK.replace(
+                    "<w:t>{inside}</w:t>",
+                    choice_xml,
+                    1,
+                )
+                sections = await WordParser(include_image=False).parse(
+                    _make_docx_with_text_box(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections("Paragraph text\nCallout\nAfter"),
+                )
+
+    async def test_separator_only_text_box_keeps_paragraph_fallback(
+        self,
+    ) -> None:
+        """Text-box separators do not hide non-w:t paragraph characters."""
+        for name, template in (
+            ("modern", _DOCX_MODERN_TEXT_BOX),
+            ("with_fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(shape=name):
+                template = template.replace(
+                    "<w:t>{before}</w:t>",
+                    "<w:noBreakHyphen/><w:tab/>",
+                ).replace(
+                    "<w:t>{inside}</w:t>",
+                    "<w:tab/><w:br/>",
+                )
+                sections = await WordParser(include_image=False).parse(
+                    _make_docx_with_text_box(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections("-\nAfter"),
                 )
 
     async def test_text_box_fallback_is_used_without_readable_choice(
