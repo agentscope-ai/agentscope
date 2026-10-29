@@ -811,15 +811,29 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         ``MEMORY.md`` — :meth:`BackendBase.write_file` creates parent
         directories — which avoids a platform-specific ``mkdir -p`` shell
         invocation that is not portable on Windows.
+
+        Every other backend call in this middleware degrades gracefully on
+        failure (see ``_retrieve_relevant_files``, ``_list_md_files``); this
+        one runs from ``on_system_prompt`` on every reply, so an unreachable
+        backend must not raise out of it and abort the turn.
         """
-        if not await self._backend.file_exists(self._get_memory_md_path()):
-            logger.info(
-                "Creating 'MEMORY.md' file in '%s'",
-                self._workdir,
-            )
-            await self._backend.write_file(
+        try:
+            if not await self._backend.file_exists(
                 self._get_memory_md_path(),
-                b"",
+            ):
+                logger.info(
+                    "Creating 'MEMORY.md' file in '%s'",
+                    self._workdir,
+                )
+                await self._backend.write_file(
+                    self._get_memory_md_path(),
+                    b"",
+                )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "Could not ensure the memory layout in '%s'; the backend "
+                "may be unreachable. Skipping memory for this reply.",
+                self._workdir,
             )
 
     def _get_memory_dir(self) -> str:
