@@ -6,12 +6,13 @@ import json
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
-from typing import Type, Any, AsyncGenerator
+from typing import Type, Any, AsyncGenerator, Callable
 
 import jsonschema
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from ._model_response import StructuredResponse, ChatResponse, FinishedReason
+from ._model_usage import ChatUsage
 from ._model_card import ModelCard
 from ._utils import _StreamAccumulator
 from .._logging import logger
@@ -468,6 +469,8 @@ class ChatModelBase:
         self,
         messages: list[Msg],
         structured_model: Type[BaseModel] | dict,
+        *,
+        on_usage: Callable[[ChatUsage], None] | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
         """Generate structured output, trying fallback strategies in order.
@@ -494,6 +497,22 @@ class ChatModelBase:
                 The context for LLM to generate the structured output.
             structured_model (`Type[BaseModel] | dict`):
                 A Pydantic model or a dict of JSON schemas.
+            on_usage (`Callable[[ChatUsage], None] | None`):
+                Optional synchronous observer (default `None`) called once
+                per attempt with a
+                detached copy of its last reported usage, including attempts
+                whose output fails validation. Usage received before a stream
+                error or cancellation is also reported. An attempt without
+                reported usage produces no callback; this does not imply zero
+                consumption. The callback runs before the next attempt or
+                before this method returns or raises. Callback exceptions
+                propagate without model retries or fallback. The returned
+                response's usage still describes only its own attempt.
+
+                For example, pass ``on_usage=records.append`` to collect known
+                usage in a caller-owned list, which remains available even
+                when this method raises. Do not also add the returned usage
+                to that list, as it has already been reported.
 
         Returns:
             `StructuredResponse`:
@@ -504,6 +523,13 @@ class ChatModelBase:
                 "The input messages cannot be empty for the "
                 "`generate_structured_output` method.",
             )
+
+        if on_usage is not None and (
+            not callable(on_usage)
+            or inspect.iscoroutinefunction(on_usage)
+            or inspect.iscoroutinefunction(getattr(on_usage, "__call__", None))
+        ):
+            raise TypeError("on_usage must be a synchronous callable.")
 
         user_tool_choice = kwargs.pop("tool_choice", None)
         if user_tool_choice is None:
@@ -541,13 +567,17 @@ class ChatModelBase:
                     merged[key] = {**kwargs[key], **val}
 
             for attempt in range(self.max_retries + 1):
+                attempt_usage: list[ChatUsage] = []
+                attempt_kwargs = dict(merged)
+                if on_usage is not None:
+                    attempt_kwargs["on_usage"] = attempt_usage.append
                 try:
                     result = await self._call_api_with_structured_output(
                         self.model,
                         messages=messages,
                         structured_model=structured_model,
                         tool_choice=tool_choice,
-                        **merged,
+                        **attempt_kwargs,
                     )
                     if name not in ("forced", "explicit"):
                         logger.info(
@@ -592,6 +622,13 @@ class ChatModelBase:
                         e,
                     )
                     break
+                finally:
+                    # Keep user callbacks outside the retry/fallback handler:
+                    # even a provider-shaped callback error must not trigger
+                    # another model request. Buffers are local to this attempt.
+                    if on_usage is not None:
+                        for usage in attempt_usage:
+                            on_usage(usage)
 
         if last_error is None:
             raise RuntimeError(
@@ -608,6 +645,8 @@ class ChatModelBase:
         messages: list[Msg],
         structured_model: Type[BaseModel] | dict,
         tool_choice: ToolChoice | None = None,
+        *,
+        on_usage: Callable[[ChatUsage], None] | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
         """Run a single structured-output attempt via a forced tool call.
@@ -630,6 +669,9 @@ class ChatModelBase:
                 required output structure.
             tool_choice (`ToolChoice | None`, defaults to `None`):
                 The tool_choice forwarded to ``_call_api``, used as-is.
+            on_usage (`Callable[[ChatUsage], None] | None`):
+                Internal observer for a detached snapshot of this attempt's
+                last known usage. It is consumed here, never sent to the API.
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
         """
@@ -677,27 +719,36 @@ class ChatModelBase:
         )
 
         completed_response: ChatResponse | None = None
-        if self.stream:
-            # ``_call_api`` yields raw incremental chunks whose ``is_last``
-            # is always ``False``; subclasses rely on the ``__call__``
-            # wrapper to accumulate them and emit a final ``is_last=True``
-            # chunk. Since this method calls ``_call_api`` directly (to
-            # avoid duplicating the retry logic in ``__call__``), we must
-            # replicate that accumulation here, otherwise the stream may
-            # end without ever producing an ``is_last=True`` chunk.
-            acc_res = _StreamAccumulator()
+        attempt_usage = None
+        try:
+            if self.stream:
+                # ``_call_api`` yields raw incremental chunks whose ``is_last``
+                # is always ``False``; subclasses rely on the ``__call__``
+                # wrapper to accumulate them and emit a final ``is_last=True``
+                # chunk. Since this method calls ``_call_api`` directly (to
+                # avoid duplicating the retry logic in ``__call__``), we must
+                # replicate that accumulation here, otherwise the stream may
+                # end without ever producing an ``is_last=True`` chunk.
+                acc_res = _StreamAccumulator()
 
-            async for chunk in res:
-                if chunk.is_last:
-                    completed_response = chunk
-                    break
-                acc_res.append_chat_response(chunk)
-                acc_res.id = chunk.id
+                async for chunk in res:
+                    if chunk.usage is not None:
+                        attempt_usage = chunk.usage
+                    if chunk.is_last:
+                        completed_response = chunk
+                        break
+                    acc_res.append_chat_response(chunk)
+                    acc_res.id = chunk.id
 
-            if completed_response is None:
-                completed_response = acc_res.build()
-        else:
-            completed_response = res
+                if completed_response is None:
+                    completed_response = acc_res.build()
+            else:
+                completed_response = res
+                if completed_response is not None:
+                    attempt_usage = completed_response.usage
+        finally:
+            if on_usage is not None and attempt_usage is not None:
+                on_usage(deepcopy(attempt_usage))
 
         if completed_response is None or not completed_response.content:
             raise StructuredOutputError(
