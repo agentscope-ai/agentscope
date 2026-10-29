@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -117,17 +118,21 @@ class ToolContext(BaseModel):
             sum(len(line.encode("utf-8")) for line in lines) / 1024
         )
 
+        # An entry that cannot fit even in an empty cache must not evict
+        # unrelated entries or make the configured byte limit ineffective.
+        # This check has to run before the existing-entry removal below;
+        # otherwise a re-read of a file whose size grew past
+        # ``max_cache_bytes`` would silently drop the old (smaller) entry
+        # without inserting anything in its place.
+        if new_entry_bytes > self.max_cache_bytes:
+            return
+
         # Remove existing cache for this file if present
         self.read_file_cache = [
             entry
             for entry in self.read_file_cache
             if entry.file_path != file_path
         ]
-
-        # An entry that cannot fit even in an empty cache must not evict
-        # unrelated entries or make the configured byte limit ineffective.
-        if new_entry_bytes > self.max_cache_bytes:
-            return
 
         # Evict the oldest entries if exceeding max_cache_files
         while len(self.read_file_cache) >= self.max_cache_files:
