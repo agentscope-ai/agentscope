@@ -48,6 +48,8 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
     ) -> list[dict[str, Any]]:
         """Format message objects into DeepSeek API format.
 
+        Unsupported user attachments are represented by text placeholders.
+
         Args:
             msgs (`list[Msg]`):
                 The list of message objects to format.
@@ -78,6 +80,16 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
                     formatted = self._format_openai_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
+                    else:
+                        content_blocks.append(
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"[{block.source.media_type} attached, "
+                                    "not supported by this provider]"
+                                ),
+                            },
+                        )
 
                 elif isinstance(block, ThinkingBlock):
                     reasoning_content_blocks.append(block.thinking)
@@ -317,7 +329,8 @@ class DeepSeekMultiAgentFormatter(_OpenAIFormatterBase):
         is_first: bool = True,
     ) -> list[dict[str, Any]]:
         """Given a sequence of messages without tool calls/results, format
-        them into the required format for the DeepSeek API."""
+        them into the required format for the DeepSeek API. Unsupported
+        attachments retain their sender and a text placeholder."""
 
         if is_first:
             conversation_history_prompt = self.conversation_history_prompt
@@ -351,6 +364,12 @@ class DeepSeekMultiAgentFormatter(_OpenAIFormatterBase):
                         )
                         has_history = True
                         has_image = True
+                    else:
+                        content_blocks[-1]["text"] += (
+                            f"{msg.name}: [{block.source.media_type} "
+                            "attached, not supported by this provider]\n"
+                        )
+                        has_history = True
 
         if has_history:
             content_blocks[-1]["text"] += "</history>"
