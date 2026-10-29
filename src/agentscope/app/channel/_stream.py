@@ -48,33 +48,61 @@ async def open_reply_stream(
     """
     event_key = MessageBusKeys.session_events(session_id)
     ready = asyncio.Event()
-    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue: asyncio.Queue[dict | Exception] = asyncio.Queue()
 
     async def feeder() -> None:
         """Buffer live subscription events into the local queue."""
         try:
             async for evt in bus.subscribe(event_key, on_ready=ready.set):
                 await queue.put(evt)
-        except asyncio.CancelledError:
-            pass
+        except Exception as error:
+            await queue.put(error)
+            raise
+        subscription_error = RuntimeError(
+            "Reply stream subscription ended unexpectedly",
+        )
+        await queue.put(subscription_error)
+        raise subscription_error
 
     feeder_task = asyncio.create_task(feeder())
+    ready_task = asyncio.create_task(ready.wait())
     try:
-        await asyncio.wait_for(ready.wait(), timeout=_SUBSCRIBE_TIMEOUT_SECS)
+        done, _ = await asyncio.wait(
+            {ready_task, feeder_task},
+            timeout=_SUBSCRIBE_TIMEOUT_SECS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if feeder_task in done:
+            await feeder_task
+        if ready_task not in done:
+            raise TimeoutError("Timed out waiting for the bus subscription")
         cursor = await bus.registry_get(
             MessageBusKeys.session_event_checkpoint(session_id),
             MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
         )
     except BaseException:
         feeder_task.cancel()
+        try:
+            await feeder_task
+        except (
+            asyncio.CancelledError,
+            Exception,
+        ):  # pylint: disable=broad-except
+            pass
         raise
+    finally:
+        ready_task.cancel()
+        try:
+            await ready_task
+        except asyncio.CancelledError:
+            pass
     return _read(bus, event_key, queue, feeder_task, cursor)
 
 
 async def _read(
     bus: MessageBus,
     event_key: str,
-    queue: "asyncio.Queue[dict]",
+    queue: "asyncio.Queue[dict | Exception]",
     feeder_task: "asyncio.Task",
     after: str | None,
 ) -> AsyncGenerator[dict, None]:
@@ -86,7 +114,8 @@ async def _read(
     Args:
         bus (`MessageBus`): The application message bus.
         event_key (`str`): The session's event log / channel key.
-        queue (`asyncio.Queue[dict]`): Live events buffered so far.
+        queue (`asyncio.Queue[dict | Exception]`): Live events or a
+            subscription failure buffered so far.
         feeder_task (`asyncio.Task`): The subscription, cancelled on close.
         after (`str | None`): Persisted checkpoint cursor to replay after.
 
@@ -106,6 +135,8 @@ async def _read(
                 return
         while True:
             evt = await queue.get()
+            if isinstance(evt, Exception):
+                raise evt
             eid = evt.get("_entry_id")
             if eid is not None:
                 if str(eid) in seen:
