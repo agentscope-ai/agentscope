@@ -90,6 +90,43 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             written_content = f.read()
         self.assertEqual(written_content, content)
 
+    async def test_diff_preserves_missing_final_newline(self) -> None:
+        """Diff records stay separate without changing the written bytes."""
+        marker = "\\ No newline at end of file\n"
+        cases = (
+            ("old", "new", "-old\n" + marker + "+new\n" + marker),
+            ("old", "new\n", "-old\n" + marker + "+new\n"),
+            ("old\n", "new", "-old\n+new\n" + marker),
+            ("old\n", "new\n", "-old\n+new\n"),
+        )
+        file_path = os.path.join(self.temp_dir, "no-newline.txt")
+        for original, updated, records in cases:
+            with self.subTest(original=original, updated=updated):
+                with open(file_path, "wb") as stream:
+                    stream.write(original.encode("utf-8"))
+                chunk = await self.write_tool(
+                    file_path=file_path,
+                    content=updated,
+                )
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(
+                    chunk.metadata["diff"],
+                    f"--- a/{file_path}\n+++ b/{file_path}\n"
+                    "@@ -1 +1 @@\n" + records,
+                )
+                with open(file_path, "rb") as stream:
+                    self.assertEqual(stream.read(), updated.encode("utf-8"))
+
+        new_path = os.path.join(self.temp_dir, "new-no-newline.txt")
+        chunk = await self.write_tool(file_path=new_path, content="new")
+        self.assertEqual(
+            chunk.metadata["diff"],
+            f"--- /dev/null\n+++ b/{new_path}\n"
+            "@@ -0,0 +1 @@\n+new\n" + marker,
+        )
+        with open(new_path, "rb") as stream:
+            self.assertEqual(stream.read(), b"new")
+
     async def test_write_overwrites_existing(self) -> None:
         """Test that write overwrites existing files."""
         file_path = os.path.join(self.temp_dir, "test.txt")

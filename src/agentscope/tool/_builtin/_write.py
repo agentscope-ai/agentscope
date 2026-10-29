@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The write tool in agentscope."""
-import difflib
 import fnmatch
 import glob
 from typing import Any, List
@@ -21,6 +20,7 @@ from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
 from ._backend import BackendBase, _normalize_newlines
+from ._diff import _unified_diff
 
 
 class Write(ToolBase):
@@ -315,16 +315,11 @@ Usage:
         # Build the unified diff between previous and new content. When the
         # file is brand new, ``unified_diff`` over an empty old side naturally
         # produces a single "all add" hunk starting at line 1.
-        diff_text = "".join(
-            difflib.unified_diff(
-                previous_content.splitlines(keepends=True),
-                content.splitlines(keepends=True),
-                fromfile=(
-                    "/dev/null" if not file_existed else f"a/{file_path}"
-                ),
-                tofile=f"b/{file_path}",
-                n=3,
-            ),
+        diff_text = _unified_diff(
+            previous_content,
+            content,
+            fromfile="/dev/null" if not file_existed else f"a/{file_path}",
+            tofile=f"b/{file_path}",
         )
 
         # Return success message
