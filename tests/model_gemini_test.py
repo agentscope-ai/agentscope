@@ -166,6 +166,7 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         self.model.parameters.max_tokens = 1024
         self.model.parameters.temperature = 0.2
         self.model.parameters.top_p = 0.3
+        self.model.parameters.thinking_enable = True
         self.mock_client.aio.models.generate_content = AsyncMock(
             return_value=_mock_completion([_make_part(text="ok")]),
         )
@@ -174,6 +175,10 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             "max_output_tokens": 1024,
             "temperature": 0.2,
             "top_p": 0.3,
+            "thinking_config": {
+                "include_thoughts": True,
+                "thinking_budget": 1024,
+            },
         }
         cases = {
             "max_output_tokens": 2048,
@@ -214,7 +219,7 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 "config"
             ]
         )
-        self.assertNotIn("thinking_config", sent_config)
+        self.assertEqual(sent_config, {})
 
     async def test_thinking_config_false_forwarded(self) -> None:
         """``thinking_enable=False`` sends the disable configuration."""
@@ -233,9 +238,42 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ]
         )
         self.assertEqual(
-            sent_config["thinking_config"],
-            {"include_thoughts": False, "thinking_budget": 0},
+            sent_config,
+            {
+                "thinking_config": {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                },
+            },
         )
+
+    async def test_thinking_config_true_forwarded(self) -> None:
+        """Enabled thinking uses the default or explicitly provided budget."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        for budget, expected_budget in [(None, 1024), (8192, 8192)]:
+            with self.subTest(thinking_budget=budget):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    thinking_enable=True,
+                    thinking_budget=budget,
+                )
+
+                await self.model([])
+
+                call_args = (
+                    self.mock_client.aio.models.generate_content.call_args
+                )
+                self.assertEqual(
+                    call_args.kwargs["config"],
+                    {
+                        "thinking_config": {
+                            "include_thoughts": True,
+                            "thinking_budget": expected_budget,
+                        },
+                    },
+                )
 
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
