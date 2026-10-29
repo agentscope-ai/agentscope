@@ -166,7 +166,9 @@ def _sop(user_id: str, verifier: Any, keys: tuple[str, str]) -> SOPRecord:
     )
 
 
-class SOPServiceTest(IsolatedAsyncioTestCase):
+class SOPServiceTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """End-to-end tests over in-memory SQLite."""
 
     async def asyncSetUp(self) -> None:
@@ -844,6 +846,37 @@ class SOPServiceTest(IsolatedAsyncioTestCase):
             [session.config.workspace_id],
         )
         self.assertFalse(await service.delete_run("user-1", run.id))
+
+    async def test_unowned_run_delete_does_not_cancel_advance(self) -> None:
+        """A different user cannot interrupt a live run by naming its ID."""
+        sop = _sop("user-1", None, ("modeller", "modeller"))
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(
+            self.storage,
+            _Workspaces(),
+            self.bus,
+            None,
+            self.sessions,
+        )
+        run = await service.create_run("user-1", sop.id)
+        started = asyncio.Event()
+
+        async def pending_advance() -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(pending_advance())
+        await started.wait()
+        service._advancing[run.id] = {task}  # pylint: disable=protected-access
+        try:
+            self.assertFalse(await service.delete_run("other-user", run.id))
+            self.assertFalse(task.done())
+            self.assertIsNotNone(
+                await self.storage.get_sop_run("user-1", run.id),
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def test_a_run_that_fails_to_open_leaves_no_sessions(self) -> None:
         """Nothing could reach them without the run record."""

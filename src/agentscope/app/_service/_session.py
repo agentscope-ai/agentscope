@@ -367,6 +367,12 @@ class SessionService:
                 ``False`` otherwise. Mirrors
                 :meth:`StorageBase.delete_session`.
         """
+        # A missing or unowned session must not cancel a run or purge bus
+        # state belonging to someone else who knows the session ID.
+        record = await self._storage.get_session(user_id, agent_id, session_id)
+        if record is None:
+            return False
+
         # Identify all bus-purge targets before storage mutates anything.
         worker_sids = await self._team_worker_session_ids(
             user_id,
@@ -376,8 +382,7 @@ class SessionService:
         all_sids = [session_id, *worker_sids]
 
         # Resolve the workspace binding while the record still exists.
-        record = await self._storage.get_session(user_id, agent_id, session_id)
-        workspace_id = record.config.workspace_id if record else None
+        workspace_id = record.config.workspace_id
 
         # Clean leader-side subagent HITL projections before storage
         # cascades remove the records we need to resolve roles from.
