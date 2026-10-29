@@ -1713,6 +1713,79 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
         self.assertIn("# Current State\ncomplete", agent.state.summary)
 
+    async def test_compression_tool_report_tracks_the_summary(
+        self,
+    ) -> None:
+        """The tool must not claim "unchanged" after a real compression.
+
+        ``_compress_context_tool`` used to decide what to report by
+        comparing the context length before and after. That is not a reliable
+        proxy: when the first message is itself over the reserve budget it is
+        chosen as the boundary message and split by content block, so the
+        reserved list comes out the same length as the original context even
+        though a summary was generated and the context rewritten.
+
+        The context size and the first message's size are swept, because the
+        tokenizer decides which configuration lands on the split boundary. The
+        invariant is asserted directly, so a size that does not reach the
+        boundary simply passes and can never produce a false failure.
+        """
+        for context_size in (180, 200, 220, 240, 260, 280, 320):
+            for block_len in (60, 90, 120, 160, 200):
+                model = RecordingStructuredMockModel(
+                    context_size=context_size,
+                )
+                model.set_structured_response(
+                    StructuredResponse(
+                        content={
+                            "task_overview": "task",
+                            "current_state": "complete",
+                            "important_discoveries": "none",
+                            "next_steps": "None",
+                            "context_to_preserve": "none",
+                        },
+                    ),
+                )
+                agent = Agent(
+                    name="Friday",
+                    system_prompt="You are helpful.",
+                    model=model,
+                    context_config=ContextConfig(
+                        trigger_ratio=0.9,
+                        reserve_ratio=0.3,
+                        context_buffer_ratio=0.4,
+                        compression_tool_enabled=True,
+                    ),
+                    state=AgentState(
+                        session_id="123",
+                        context=[
+                            UserMsg(
+                                "User",
+                                [
+                                    TextBlock(text="a" * block_len),
+                                    TextBlock(text="b" * block_len),
+                                    TextBlock(text="c" * block_len),
+                                ],
+                            ),
+                            UserMsg("User", "d" * block_len, id="2"),
+                            UserMsg("User", "e" * block_len, id="3"),
+                        ],
+                    ),
+                    toolkit=Toolkit(),
+                )
+
+                before = agent.state.summary
+                chunk = await agent._compress_context_tool()
+                text = chunk.content[0].text
+                summarised = agent.state.summary != before
+
+                self.assertFalse(
+                    summarised and "remains unchanged" in text,
+                    f"context_size={context_size} block_len={block_len} "
+                    f"reported 'remains unchanged' after producing a "
+                    f"summary: {text!r}",
+                )
+
     async def test_compression_tool_skips_small_context(self) -> None:
         """The tool leaves a context below the recommended ratio untouched,
         so that a spontaneous call doesn't lose details for nothing."""
