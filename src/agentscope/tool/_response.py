@@ -76,15 +76,22 @@ class ToolResponse(BaseModel):
         data blocks and update the state and metadata."""
 
         # Update content blocks
+        # The mapping key includes the block type: ``ToolChunk.content``
+        # documents that the blocks of one multimodal data share an id so
+        # the agent can group them, and a tool labeling its whole output
+        # stream with one id (e.g. a text status line followed by binary
+        # chunks under the same id) must not break that grouping. Keying by
+        # ``id`` alone made a same-id block of another type hijack the
+        # mapping — every later same-id DataBlock was split into its own
+        # block instead of accumulating.
         current_ids_to_index = {
-            _.id: index for index, _ in enumerate(self.content)
+            (_.id, type(_)): index for index, _ in enumerate(self.content)
         }
         for chunk_block in chunk.content:
-            if chunk_block.id in current_ids_to_index:
+            chunk_key = (chunk_block.id, type(chunk_block))
+            if chunk_key in current_ids_to_index:
                 # Append to the existing block
-                target_block = self.content[
-                    current_ids_to_index[chunk_block.id]
-                ]
+                target_block = self.content[current_ids_to_index[chunk_key]]
 
                 if isinstance(target_block, TextBlock) and isinstance(
                     chunk_block,
@@ -130,7 +137,7 @@ class ToolResponse(BaseModel):
                 self.content.append(chunk_block.model_copy(deep=True))
 
                 # Update the index mapping for the new block
-                current_ids_to_index[chunk_block.id] = len(self.content) - 1
+                current_ids_to_index[chunk_key] = len(self.content) - 1
 
         # Update id, state and metadata
         # Only reserve the failure state and keep the previous state if not

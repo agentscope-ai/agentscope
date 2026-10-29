@@ -491,6 +491,87 @@ class ToolkitTest(IsolatedAsyncioTestCase):
         )
 
 
+    def test_tool_response_groups_data_blocks_after_text_reuses_id(self) -> None:
+        """Same-id DataBlocks must still merge when a TextBlock used the id.
+
+        ``ToolChunk.content`` documents that the blocks of one multimodal
+        data share an id so the agent can group them. A tool labeling its
+        whole output stream with one id (a text status line first, then
+        binary chunks under the same id) must not break that grouping —
+        keying the accumulation map by ``id`` alone split every later
+        same-id DataBlock into its own block.
+        """
+        response = ToolResponse()
+        part1 = base64.b64encode(b"part1").decode("ascii")
+        part2 = base64.b64encode(b"part2").decode("ascii")
+
+        response.append_chunk(
+            ToolChunk(content=[TextBlock(id="s", text="progress")]),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="s",
+                        source=Base64Source(data=part1, media_type="image/png"),
+                    ),
+                ],
+            ),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="s",
+                        source=Base64Source(data=part2, media_type="image/png"),
+                    ),
+                ],
+            ),
+        )
+
+        data_blocks = [
+            b for b in response.content if isinstance(b, DataBlock)
+        ]
+        self.assertEqual(len(data_blocks), 1)
+        self.assertEqual(
+            base64.b64decode(data_blocks[0].source.data),
+            b"part1part2",
+        )
+        texts = [b for b in response.content if isinstance(b, TextBlock)]
+        self.assertEqual(len(texts), 1)
+        self.assertEqual(texts[0].text, "progress")
+
+    def test_tool_response_merges_same_id_data_blocks_within_one_chunk(self) -> None:
+        """Two same-id DataBlocks in one chunk also accumulate into one."""
+        response = ToolResponse()
+        part1 = base64.b64encode(b"aa").decode("ascii")
+        part2 = base64.b64encode(b"bb").decode("ascii")
+
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="img",
+                        source=Base64Source(data=part1, media_type="image/png"),
+                    ),
+                    DataBlock(
+                        id="img",
+                        source=Base64Source(data=part2, media_type="image/png"),
+                    ),
+                ],
+            ),
+        )
+
+        data_blocks = [
+            b for b in response.content if isinstance(b, DataBlock)
+        ]
+        self.assertEqual(len(data_blocks), 1)
+        self.assertEqual(
+            base64.b64decode(data_blocks[0].source.data),
+            b"aabb",
+        )
+
+
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
 
