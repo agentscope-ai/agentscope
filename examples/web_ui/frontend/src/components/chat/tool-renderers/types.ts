@@ -8,6 +8,11 @@ export interface ToolCallWithResult {
 	result?: ToolResultBlock;
 }
 
+export interface ToolRenderContext {
+	agentId: string | null;
+	sessionId: string | null;
+}
+
 /**
  * A tool renderer only supplies *content*; the shared `ToolCallRow` owns the
  * collapsible shell, state icon, chevron and layout. Two render paths exist:
@@ -27,5 +32,5 @@ export interface ToolRenderer {
 	/** Trigger-line content, laid out before the state icon / chevron. */
 	renderHeader?: (pair: ToolCallWithResult, t: TFunction) => ReactNode;
 	/** Expandable body; return `null`/`undefined` for a non-expandable row. */
-	renderBody?: (pair: ToolCallWithResult, t: TFunction) => ReactNode;
+	renderBody?: (pair: ToolCallWithResult, t: TFunction, context?: ToolRenderContext) => ReactNode;
 }

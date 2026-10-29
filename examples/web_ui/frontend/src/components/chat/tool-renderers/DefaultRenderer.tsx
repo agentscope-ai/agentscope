@@ -3,7 +3,8 @@ import * as mime from 'mime-types';
 import type { ReactNode } from 'react';
 
 import { getResultText, toolArgClass, toolLabelClass } from './_shared';
-import type { TFunction, ToolCallWithResult } from './types';
+import { dataBlockName, isOfficeDocument } from '../OfficeFilePreview';
+import type { TFunction, ToolCallWithResult, ToolRenderContext } from './types';
 
 export function defaultGetDisplayName(call: ToolCallBlock): string {
 	return call.name;
@@ -36,7 +37,11 @@ export function defaultRenderHeader(pair: ToolCallWithResult, t: TFunction): Rea
  * height and scrolls, so no line counting / truncation is needed. Returns
  * `null` before the call has any result so the row stays non-expandable.
  */
-export function defaultRenderBody(pair: ToolCallWithResult, t: TFunction): ReactNode {
+export function defaultRenderBody(
+	pair: ToolCallWithResult,
+	t: TFunction,
+	context?: ToolRenderContext,
+): ReactNode {
 	const { call, result } = pair;
 	if (!result) return null;
 	if (call.state === 'asking' || result.state === 'running') {
@@ -57,24 +62,36 @@ export function defaultRenderBody(pair: ToolCallWithResult, t: TFunction): React
 		);
 	}
 
-	// TODO: render multimodal outputs
 	let text: string;
 	if (typeof result.output === 'string') {
 		text = result.output;
 	} else {
 		text = result.output
-			.map((b) => {
-				if (b.type === 'text') return b.text;
-				const mainType = b.source.media_type.split('/')[0].toUpperCase();
-				const ext = (mime.extension(b.source.media_type) || 'bin').toLowerCase();
+			.map((block) => {
+				if (block.type === 'text') return block.text;
+				const name = dataBlockName(block);
+				if (
+					context?.agentId &&
+					context.sessionId &&
+					isOfficeDocument(name, block.source.media_type)
+				) {
+					return '';
+				}
+				const mainType = block.source.media_type.split('/')[0].toUpperCase();
+				const ext = (mime.extension(block.source.media_type) || 'bin').toLowerCase();
 				return `[${mainType}.${ext}]`;
 			})
+			.filter(Boolean)
 			.join('\n');
 	}
 
 	return (
-		<pre className="border rounded-sm bg-background p-2 text-xs overflow-auto max-h-[200px] whitespace-pre-wrap">
-			{text}
-		</pre>
+		<div className="flex min-w-0 flex-col gap-2">
+			{text && (
+				<pre className="border rounded-sm bg-background p-2 text-xs overflow-auto max-h-[200px] whitespace-pre-wrap">
+					{text}
+				</pre>
+			)}
+		</div>
 	);
 }

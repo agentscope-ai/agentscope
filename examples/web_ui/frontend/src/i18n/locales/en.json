@@ -877,5 +877,20 @@
 		"empty": "This folder is empty",
 		"pressEnter": "Press Enter to check this path first",
 		"gitTooltip": "{{staged}} staged · {{unstaged}} modified · {{untracked}} untracked\nLine counts exclude untracked files"
+	},
+	"workspaceFiles": {
+		"title": "Workspace files",
+		"description": "Browse files created in this session.",
+		"root": "Workspace root",
+		"parent": "Up one level",
+		"refresh": "Refresh files",
+		"empty": "No files here",
+		"emptyDescription": "Files created in this session will appear here.",
+		"preview": "Preview",
+		"previewTitle": "Preview: {{name}}",
+		"closePreview": "Close preview",
+		"download": "Download",
+		"downloadFile": "Download {{name}}",
+		"noSession": "Select a session first."
 	}
 }
