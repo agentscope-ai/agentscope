@@ -3,10 +3,13 @@
 """Tests for the interactive console cancellation boundary."""
 
 import asyncio
+import subprocess
+import sys
 from collections.abc import AsyncGenerator
+from importlib.util import find_spec
 from io import StringIO
 from typing import cast
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 
 from rich.console import Console
@@ -244,3 +247,38 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
         self.assertEqual(member_msg.get_text_content(), "before after")
         self.assertEqual(self.renderer.last_msg.id, "leader")
         self.assertEqual(self.renderer._active_msgs, {})
+
+
+class ConsoleReadlineTest(TestCase):
+    """Importing the console must enable readline-backed line editing.
+
+    Without readline, ``input`` falls back to the kernel tty line
+    editor, which erases multi-byte characters one byte per backspace —
+    leaving broken glyphs on screen and, worse, a truncated (invalid)
+    UTF-8 line once Enter is pressed.
+    """
+
+    def test_importing_console_loads_readline(self) -> None:
+        """A fresh interpreter importing the console gets line editing."""
+        # Run in a subprocess: the test process itself (pytest) may
+        # already have readline loaded, which would mask a regression.
+        script = (
+            "import sys\n"
+            "import agentscope.console\n"
+            "sys.stdout.write("
+            "'READLINE:' + str('readline' in sys.modules) + '\\n')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # readline is unavailable on some platforms (e.g. Windows), where
+        # the console import must still succeed via its ImportError guard.
+        expected = (
+            "READLINE:True"
+            if find_spec("readline") is not None
+            else "READLINE:False"
+        )
+        self.assertIn(expected, result.stdout)
