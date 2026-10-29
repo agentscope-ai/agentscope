@@ -43,10 +43,15 @@ class AnthropicChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="The thinking enable for the LLM output.",
+            description=(
+                "Whether to enable budget-based thinking. False sends "
+                "thinking.type='disabled'. When None, this toggle does not "
+                "add a thinking configuration. An explicit thinking_mode "
+                "takes precedence."
+            ),
         )
 
         thinking_budget: int | None = Field(
@@ -178,10 +183,12 @@ class AnthropicChatModel(ChatModelBase):
         """Resolve the effective thinking mode.
 
         ``thinking_mode`` is the modern control; ``thinking_enable`` is the
-        legacy toggle that only ever meant the budget-based mode.
+        legacy toggle that enables budget-based thinking or disables it.
         """
         if self.parameters.thinking_mode is not None:
             return self.parameters.thinking_mode
+        if self.parameters.thinking_enable is False:
+            return "disabled"
         return "enabled" if self.parameters.thinking_enable else None
 
     def _build_thinking_config(
