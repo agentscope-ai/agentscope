@@ -60,8 +60,11 @@ _MODEL_LIMITS: dict[str, _MultimodalLimits] = {
         max_videos=1,
     ),
     "qwen2.5-vl-embedding": _MultimodalLimits(
-        max_elements=20,
-        max_images=5,
+        # The API always fuses all contents into one vector.  The
+        # EmbeddingModelBase contract needs one vector per input item,
+        # so each request may contain only one item.
+        max_elements=1,
+        max_images=1,
         max_videos=1,
     ),
     "tongyi-embedding-vision-plus": _MultimodalLimits(

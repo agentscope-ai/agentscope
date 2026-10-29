@@ -275,6 +275,42 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
 class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
     """Test multimodal batching, SDK requests, and embedding caches."""
 
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_qwen25_fusion_keeps_one_vector_per_input(
+        self,
+        sdk: Any,
+    ) -> None:
+        """A fused-only provider response must not collapse multiple inputs."""
+
+        def _fused_response(**kwargs: Any) -> SimpleNamespace:
+            first = kwargs["input"][0]
+            value = (
+                1.0
+                if "text" in first and first["text"] == "first"
+                else 2.0
+                if "image" in first
+                else 3.0
+            )
+            return SimpleNamespace(
+                status_code=200,
+                output={"embeddings": [{"embedding": [value]}]},
+                usage={"input_tokens": 1, "image_tokens": 0},
+            )
+
+        sdk.side_effect = _fused_response
+        model = _multimodal_model(1, name="qwen2.5-vl-embedding")
+
+        result = await model(["first", _img(), "last"])
+
+        self.assertEqual(result.embeddings, [[1.0], [2.0], [3.0]])
+        self.assertEqual(sdk.call_count, 3)
+        self.assertTrue(
+            all(
+                len(invocation.kwargs["input"]) == 1
+                for invocation in sdk.call_args_list
+            ),
+        )
+
     async def test_multimodal_text_and_image(self) -> None:
         """Multimodal call with text + image."""
         model = DashScopeEmbeddingModel(
