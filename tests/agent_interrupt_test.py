@@ -1146,3 +1146,35 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+
+class AgentInterruptIdleTest(IsolatedAsyncioTestCase):
+    """A :class:`UserInterruptEvent` delivered to an idle agent.
+
+    With no parked reply to abort, ``_reply_impl`` treats the interrupt as a
+    silent no-op (it yields no events and no message), so the buffered
+    ``Agent.reply`` would end with ``final_msg is None`` — and crashed with
+    ``RuntimeError("Agent did not produce a final message.")`` while the
+    streaming twin silently produced an empty stream. ``reply`` must honor
+    its contract and return the interrupted fallback message instead.
+    """
+
+    async def test_reply_interrupt_on_idle_agent(self) -> None:
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a test agent.",
+            model=MockModel(model="mock-model", stream=True),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        # No reply is parked: nothing is awaiting a HITL result.
+        evt = UserInterruptEvent(reply_id=agent.state.reply_id)
+
+        final = await agent.reply(evt)
+
+        self.assertIsNotNone(final)
+        self.assertEqual(final.name, "Friday")
+        self.assertEqual(
+            final.get_text_content() or final.content,
+            agent.react_config.interruption_message,
+        )

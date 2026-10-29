@@ -376,6 +376,18 @@ class Agent:
             if isinstance(evt_or_msg, Msg):
                 final_msg = evt_or_msg
         if final_msg is None:
+            if isinstance(inputs, UserInterruptEvent):
+                # An interrupt with no parked reply is a silent no-op for
+                # the stream (``_reply_impl`` returns without yielding a
+                # message), but ``reply`` still owes its caller a final
+                # message — mirror the parked path's interrupted fallback
+                # instead of crashing with ``RuntimeError``.
+                return AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content=self.react_config.interruption_message,
+                    finished_reason=ReplyFinishedReason.INTERRUPTED,
+                )
             raise RuntimeError("Agent did not produce a final message.")
         return final_msg
 
