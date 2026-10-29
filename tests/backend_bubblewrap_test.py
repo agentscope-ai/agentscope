@@ -72,16 +72,7 @@ class TestBubblewrapBackendUnit(IsolatedAsyncioTestCase):
         self.assertIn("--clearenv", argv)
 
     def test_smoke_probe_covers_clearenv(self) -> None:
-        """The smoke probe must exercise ``--clearenv``.
-
-        Every sandboxed command clears the environment and rebuilds it
-        through ``--setenv``, so a bwrap build without ``--clearenv``
-        (added in bwrap 0.5.0; Ubuntu 20.04 ships 0.4.0) cannot run the
-        backend at all. The probe is the availability gate — it must
-        fail on such builds (surfacing the clear startup error) instead
-        of passing and then failing every exec/read/write with
-        "Unknown option --clearenv".
-        """
+        """Verify the probe includes required environment setup options."""
         self.assertIn("--clearenv", BWRAP_SMOKE_PROBE_ARGV)
         self.assertIn("--setenv", BWRAP_SMOKE_PROBE_ARGV)
 
