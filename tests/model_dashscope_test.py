@@ -251,6 +251,59 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_thinking_enable_not_sent_when_unset(self) -> None:
+        """Unset thinking leaves the server default unchanged."""
+        self.model = DashScopeChatModel(
+            credential=DashScopeCredential(api_key="test"),
+            model="qwen3-max",
+            stream=False,
+        )
+        self.model.client = self.mock_client
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertEqual(
+            (
+                self.model.parameters.thinking_enable,
+                mock_create.await_args.kwargs,
+            ),
+            (
+                None,
+                {
+                    "model": "qwen3-max",
+                    "messages": [],
+                    "stream": False,
+                    "extra_body": {},
+                },
+            ),
+        )
+
+    async def test_thinking_enable_explicit_false_is_sent(self) -> None:
+        """Explicitly disabling thinking is forwarded to the API."""
+        self.model.parameters = DashScopeChatModel.Parameters(
+            thinking_enable=False,
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "qwen3-max",
+                "messages": [],
+                "stream": False,
+                "extra_body": {"enable_thinking": False},
+            },
+        )
+
     async def test_extra_body_is_not_mutated(self) -> None:
         """Model defaults do not mutate the caller-owned extra body."""
         mock_create = AsyncMock(
