@@ -5,7 +5,9 @@ import unittest
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import Mock, patch
 
 from utils import AnyString
 
@@ -582,3 +584,34 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             [c.content.text for c in chunks],
             ["v2-chunk0", "v2-chunk1"],
         )
+
+
+class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
+    """Check delete predicates without starting a Milvus service."""
+
+    async def test_milvus_delete_filter(self) -> None:
+        """Milvus keeps document escaping and ANDs both metadata fields."""
+        store = MilvusLiteStore()
+        client = SimpleNamespace(delete=Mock())
+        with patch.object(store, "get_client", return_value=client):
+            await store.delete(
+                "shared",
+                'doc"id',
+                metadata_filter={"tenant": "alpha", "project": 2},
+            )
+        client.delete.assert_called_once_with(
+            collection_name="shared",
+            filter=(
+                'document_id == "doc\\"id" and '
+                'metadata["tenant"] == "alpha" and metadata["project"] == 2'
+            ),
+        )
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                client.delete.reset_mock()
+                with patch.object(store, "get_client", return_value=client):
+                    await store.delete("shared", "doc", metadata_filter=scope)
+                client.delete.assert_called_once_with(
+                    collection_name="shared",
+                    filter='document_id == "doc"',
+                )

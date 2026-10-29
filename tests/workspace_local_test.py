@@ -267,6 +267,27 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             msg = Msg.model_validate_json(line)
             self.assertIsNotNone(msg)
 
+    async def test_offload_context_empty_msgs_appends_nothing(self) -> None:
+        """Offloading an empty batch must not append a blank JSONL line.
+
+        The empty join used to be written as a standalone ``\\n``, which
+        is not a JSON record and broke every line-oriented consumer of
+        ``context.jsonl``.
+        """
+        session_id = "test_session_empty_batch"
+        msgs1 = [UserMsg(name="user", content="First message")]
+        file_path = await self.workspace.offload_context(session_id, msgs1)
+        await self.workspace.offload_context(session_id, [])
+
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
+
+        self.assertFalse(content.endswith(b"\n\n"))
+        for line in content.decode("utf-8").splitlines():
+            self.assertTrue(line.strip())
+            Msg.model_validate_json(line)
+            json.loads(line)
+
     async def test_offload_context_with_datablock(self) -> None:
         """Test offloading messages with DataBlock content.
 
@@ -1795,6 +1816,38 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
                 )
             ],
             ["seed"],
+        )
+
+    async def test_mcp_file_with_utf8_bom_is_restored(self) -> None:
+        """A BOM-prefixed .mcp still restores the persisted declarations.
+
+        The file is ordinary JSON in the workspace; a Windows editor may
+        re-save it with a byte order mark. Plain UTF-8 used to fail to
+        parse, silently dropping every declaration and falling back to
+        ``default_mcps``.
+        """
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with open(self.mcp_file, "rb") as f:
+            payload = f.read()
+        with open(self.mcp_file, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + payload)
+        await ws.close()
+
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
         )
 
     async def test_reset_returns_to_factory_defaults(self) -> None:

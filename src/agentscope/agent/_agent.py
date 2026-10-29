@@ -35,6 +35,7 @@ from .._utils._common import (
 )
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -2142,7 +2143,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls sequentially and yield the events.
@@ -2161,7 +2163,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
         """
         break_execution = False
@@ -2192,7 +2195,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls concurrently and yield the events.
@@ -2212,11 +2216,7 @@ class Agent:
         tasks are cancelled explicitly (to avoid orphan tasks), any events
         already queued by the workers (including interruption chunks emitted
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
-        flushed to the caller, and the generator returns normally. The
-        caller is expected to detect the interruption via the flushed
-        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
-        event-based propagation used by
-        :meth:`_execute_sequential_tool_calls`.
+        flushed to the caller before re-raising ``CancelledError``.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -2228,10 +2228,14 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
 
         Raises:
+            `asyncio.CancelledError`:
+                Re-raised after cancelling workers and draining queued events
+                when the caller task is cancelled.
             `ExceptionGroup`:
                 Raised after all tool calls finish when one or more of them
                 raised an exception. Each individual exception is included in
@@ -2298,13 +2302,9 @@ class Agent:
                 if event is sentinel:
                     continue
                 yield event
-            # Consume the cancel so this generator returns normally. The
-            # caller relies on the flushed ``ToolResultEndEvent(state=
-            # INTERRUPTED)`` events, not on the exception, to detect the
-            # interruption — mirroring the event-based propagation used by
-            # :meth:`_execute_sequential_tool_calls`.
-            asyncio.current_task().uncancel()
-            return
+            # Calls cancelled before reaching the toolkit emit no interrupted
+            # result, so propagate to let the reply loop close them
+            raise
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
@@ -2438,7 +2438,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute a single tool call with permission checking and context
@@ -2470,7 +2471,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the tool call execution.
         """
         # ===================================================================
@@ -2704,6 +2706,16 @@ class Agent:
 
                 else:
                     # Intermediate ToolChunk — convert to streaming events
+                    progress = chunk.metadata.get("mcp_progress")
+                    if progress is not None:
+                        yield CustomEvent(
+                            name="mcp_progress",
+                            value={
+                                **progress,
+                                "reply_id": self.state.reply_id,
+                                "tool_call_id": tool_call.id,
+                            },
+                        )
                     async for evt in self._convert_tool_chunk_to_event(
                         tool_call.id,
                         chunk.content,
@@ -3915,6 +3927,8 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        # Keep the block id so replay groups one payload.
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
@@ -3922,6 +3936,7 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )

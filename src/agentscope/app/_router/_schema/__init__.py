@@ -19,7 +19,6 @@ from ._hub_skill import SkillView
 from ._workspace import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
-    AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
     DirectoryListing,
@@ -119,7 +118,6 @@ __all__ = [
     # Workspace
     "AddFromLibraryRequest",
     "AddFromLibraryResponse",
-    "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
     "DirectoryEntry",
     "DirectoryListing",

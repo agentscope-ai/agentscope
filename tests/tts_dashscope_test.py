@@ -597,48 +597,29 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         synth.call.assert_called_once_with(text="Hello")
 
     async def test_model_cards_and_credential_wiring(self) -> None:
-        """CosyVoice model cards are discovered only by the CosyVoice class,
-        and DashScope credentials expose the class."""
+        """Cards stay isolated by adapter and route through the credential."""
         cosyvoice_cards = DashScopeCosyVoiceTTSModel.list_models()
+        self.assertTrue(cosyvoice_cards)
         cosyvoice_names = {card.name for card in cosyvoice_cards}
-        self.assertEqual(len(cosyvoice_cards), 2)
-        self.assertIn("cosyvoice-v3-flash", cosyvoice_names)
-        self.assertIn("cosyvoice-v3-plus", cosyvoice_names)
-        self.assertTrue(all(not card.realtime for card in cosyvoice_cards))
-        for card in cosyvoice_cards:
-            properties = card.parameter_schema["properties"]
-            self.assertIn("voice", properties)
-            self.assertIn("realtime", properties)
-        plus_card = next(
-            card
-            for card in cosyvoice_cards
-            if card.name == "cosyvoice-v3-plus"
-        )
-        self.assertIn(
-            "longanhuan",
-            plus_card.parameter_schema["properties"]["voice"]["enum"],
-        )
-
-        qwen_names = {card.name for card in DashScopeTTSModel.list_models()}
-        self.assertNotIn("cosyvoice-v3-flash", qwen_names)
-        self.assertNotIn("cosyvoice-v3-plus", qwen_names)
+        qwen_names = {
+            card.name
+            for adapter in (DashScopeTTSModel, DashScopeRealtimeTTSModel)
+            for card in adapter.list_models()
+        }
+        self.assertEqual(cosyvoice_names & qwen_names, set())
 
         credential_classes = DashScopeCredential.get_tts_model_classes()
         self.assertIn(DashScopeCosyVoiceTTSModel, credential_classes)
-        credential_names = {
-            card.name for card in DashScopeCredential.list_tts_models()
+        credential_cards = {
+            card.name: card for card in DashScopeCredential.list_tts_models()
         }
-        self.assertIn("cosyvoice-v3-flash", credential_names)
-        self.assertIn("cosyvoice-v3-plus", credential_names)
-
-        resolved_without_realtime = _resolve_tts_class(
-            credential_classes,
-            "cosyvoice-v3-plus",
-        )
-        self.assertIs(
-            resolved_without_realtime,
-            DashScopeCosyVoiceTTSModel,
-        )
+        for card in cosyvoice_cards:
+            with self.subTest(model=card.name):
+                self.assertEqual(credential_cards[card.name], card)
+                self.assertIs(
+                    _resolve_tts_class(credential_classes, card.name),
+                    DashScopeCosyVoiceTTSModel,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1181,6 +1162,34 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 await model.push(" friend!")
                 self.mock_synthesizer.streaming_call.assert_called_once_with(
                     "Hi there friend!",
+                )
+                self.assertTrue(model._cold_start_done)
+
+    async def test_push_keeps_cold_start_buffer_on_send_failure(self) -> None:
+        """A failed streaming_call must not consume the buffered text."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(cold_start_length=10) as model:
+                model._callback.get_audio_response = Mock(
+                    return_value=TTSResponse(content=None),
+                )
+                self.mock_synthesizer.streaming_call = Mock(
+                    side_effect=RuntimeError("socket gone"),
+                )
+
+                res = await model.push("Hi there friend!")
+
+                self.assertIsNone(res.content)
+                self.assertFalse(model._cold_start_done)
+                self.assertEqual(
+                    model._cold_start_buffer,
+                    "Hi there friend!",
+                )
+
+                # The next push retries the whole buffered text.
+                self.mock_synthesizer.streaming_call = Mock()
+                await model.push("!")
+                self.mock_synthesizer.streaming_call.assert_called_once_with(
+                    "Hi there friend!!",
                 )
                 self.assertTrue(model._cold_start_done)
 

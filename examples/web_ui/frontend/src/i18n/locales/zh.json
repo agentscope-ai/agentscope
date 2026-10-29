@@ -501,6 +501,7 @@
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
 		"parseError": "JSON 配置无效：{{message}}",
+		"invalidStreamProgress": "{{name}}.stream_progress 必须为布尔值（true 或 false）。",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
 	},
@@ -557,6 +558,9 @@
 	},
 	"model-parameters": {
 		"title": "模型参数",
+		"booleanDefault": "默认",
+		"booleanEnabled": "开启",
+		"booleanDisabled": "关闭",
 		"description": "调整所选模型的推理参数。",
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",

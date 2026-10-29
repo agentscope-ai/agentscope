@@ -178,6 +178,13 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		// Whether any file is still being processed (block send until all done)
 		const hasProcessing = files.some((f) => f.status === 'processing');
 
+		// A finished attachment is content on its own: the composer can send it
+		// without any text, and the file processor already built the DataBlock.
+		const hasReadyAttachment = files.some((f) => f.status === 'done' && f.block !== null);
+
+		// Something to send: either text or a processed attachment.
+		const hasContent = value.trim().length > 0 || hasReadyAttachment;
+
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
 		}));
@@ -231,7 +238,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const handleSend = () => {
 			// ``phase`` is guarded here rather than only on the button, since Enter
 			// calls this directly and would otherwise send during a running reply.
-			if (phase !== 'idle' || !value.trim() || disabled || hasProcessing) return;
+			if (phase !== 'idle' || !hasContent || disabled || hasProcessing) return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -306,7 +313,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onInterrupt,
 				};
 			}
-			if (value.trim()) {
+			if (hasContent) {
 				return {
 					icon: ArrowUp,
 					tooltip: t('textInput.send'),

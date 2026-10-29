@@ -601,9 +601,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             if msgs is not None:
                 self._cached_input = "\n".join(
                     [
-                        f"{_.name}: " + _.get_text_content()
+                        f"{_.name}: {_.get_text_content()}"
                         for _ in msgs
-                        if _.get_text_content() is not None
+                        if _.has_content_blocks("text")
                     ],
                 )
 
@@ -861,8 +861,11 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             errors="replace",
         )
 
+    # ``$`` covers a fence that ends the string. The discovery scan only
+    # reads a byte-capped prefix, so the newline after ``---`` is often
+    # outside that prefix; requiring it drops every field.
     _FRONTMATTER_RE = re.compile(
-        r"^\s*---\s*\n(?P<body>.*?)\n---\s*\n",
+        r"^\s*---\s*\n(?P<body>.*?)\n---\s*(?:\n|$)",
         re.DOTALL,
     )
     _FIELD_RE = re.compile(r"^(?P<key>\w+)\s*:\s*(?P<value>.+)$", re.MULTILINE)
@@ -871,7 +874,8 @@ class AgenticMemoryMiddleware(MiddlewareBase):
     def _parse_frontmatter_fields(cls, content: str) -> dict[str, str]:
         """Return a dict of YAML-like key/value pairs from the first
         frontmatter block.  Only scalar ``key: value`` lines are parsed;
-        nested structures are intentionally ignored.
+        nested structures are intentionally ignored.  The closing fence
+        may end the string.
 
         Args:
             content (`str`):

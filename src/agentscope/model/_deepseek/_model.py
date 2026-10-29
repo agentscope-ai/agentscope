@@ -36,13 +36,12 @@ class DeepSeekChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable thinking mode. When enabled, the model "
-                "outputs a chain-of-thought reasoning before the final "
-                "answer via the reasoning_content field."
+                "Whether to enable or disable thinking mode. When unset, "
+                "DeepSeek uses its default behavior for the model."
             ),
         )
 
@@ -204,18 +203,19 @@ class DeepSeekChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        thinking_type = (
-            "enabled" if self.parameters.thinking_enable else "disabled"
-        )
-        # Build a new dict so the caller's extra_body is never mutated
-        extra_body = kwargs.get("extra_body") or {}
-        kwargs["extra_body"] = {
-            **extra_body,
-            "thinking": {
-                "type": thinking_type,
-                **extra_body.get("thinking", {}),
-            },
-        }
+        if self.parameters.thinking_enable is not None:
+            thinking_type = (
+                "enabled" if self.parameters.thinking_enable else "disabled"
+            )
+            # Build a new dict so the caller's extra_body is never mutated
+            extra_body = kwargs.get("extra_body") or {}
+            kwargs["extra_body"] = {
+                **extra_body,
+                "thinking": {
+                    "type": thinking_type,
+                    **extra_body.get("thinking", {}),
+                },
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -276,14 +276,15 @@ class DeepSeekChatModel(ChatModelBase):
                 if chunk.usage:
                     u = chunk.usage
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             u,
                             "prompt_cache_hit_tokens",
                             0,
-                        ),
+                        )
+                        or 0,
                     )
 
                 if not chunk.choices:
@@ -382,14 +383,15 @@ class DeepSeekChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,
                     "prompt_cache_hit_tokens",
                     0,
-                ),
+                )
+                or 0,
             )
 
         resp_kwargs: dict[str, Any] = {

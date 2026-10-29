@@ -23,6 +23,8 @@ from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.tool import ExecResult
 from agentscope.workspace import OpenSandboxWorkspace
 from agentscope.workspace import OpenSandboxBackend
@@ -37,13 +39,15 @@ _SKIP_REASON = "OPENSANDBOX_DOMAIN environment variable is not set"
 
 
 @unittest.skipUnless(_DOMAIN, _SKIP_REASON)
-class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
+class TestOpenSandboxBackend(CheckoutWheelTestCase):
     """Test cases for ``OpenSandboxBackend`` against a live sandbox.
 
     Each test creates a real OpenSandbox sandbox via
     ``OpenSandboxWorkspace`` and tears it down (``close`` → sandbox
     pause) afterwards.
     """
+
+    workspace_type = OpenSandboxWorkspace
 
     async def asyncSetUp(self) -> None:
         """Start a workspace and reuse its wired backend."""

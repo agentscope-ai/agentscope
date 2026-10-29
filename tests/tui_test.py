@@ -802,6 +802,55 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                 str(app.query_one("#as-hitl-body", Static).render()),
             )
 
+    async def test_reused_tool_call_id_stays_pending_in_new_reply(
+        self,
+    ) -> None:
+        """Dismissing one reply must not hide a later call with the same
+        provider-generated id."""
+        first = AssistantMsg(
+            name="agent",
+            id="reply-1",
+            content=[
+                ToolCallBlock(
+                    id="call-1",
+                    name="Read",
+                    input="{}",
+                    state="asking",
+                ),
+            ],
+        )
+        app = _ChatApp([first])
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+
+            chat = app.query_one(ChatUI)
+            await chat.set_messages(
+                [
+                    AssistantMsg(
+                        name="agent",
+                        id="reply-2",
+                        content=[
+                            ToolCallBlock(
+                                id="call-1",
+                                name="Bash",
+                                input="{}",
+                                state="asking",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+            await pilot.pause()
+
+            hitl = app.query_one(HitlUI)
+            self.assertTrue(hitl.display)
+            self.assertFalse(app.query_one(OptionList).disabled)
+            self.assertIn(
+                "Bash",
+                str(app.query_one("#as-hitl-body", Static).render()),
+            )
+
     async def test_permission_rules_are_embedded_in_always_option(
         self,
     ) -> None:
@@ -956,12 +1005,23 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                 app.query_one(".as-ask-user-preview", Static).display,
             )
 
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 0)
+            self.assertListEqual(observed, [])
+
             await pilot.press("enter")
             await pilot.pause()
             self.assertIn(
                 "Enable the render pipeline.",
                 str(options.get_option_at_index(0).prompt),
             )
+            await pilot.press("left")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 0)
+            await pilot.press("right")
+            await pilot.pause()
+            self.assertEqual(ask_user._question_index, 1)
             await pilot.press("enter", "down", "down", "down", "enter")
             await pilot.pause()
 
@@ -1039,6 +1099,64 @@ class ChatUITest(unittest.IsolatedAsyncioTestCase):
                 },
             )
             await AskUser().check_external_result(result)
+
+    async def test_reused_ask_user_id_loads_the_new_reply(self) -> None:
+        """AskUser state is scoped by reply as well as tool-call id."""
+
+        def ask(reply_id: str, question: str) -> AssistantMsg:
+            return AssistantMsg(
+                name="agent",
+                id=reply_id,
+                content=[
+                    ToolCallBlock(
+                        id="ask-1",
+                        name="AskUser",
+                        input=json.dumps(
+                            {
+                                "questions": [
+                                    {
+                                        "header": "Choice",
+                                        "question": question,
+                                        "options": [
+                                            {
+                                                "label": "A",
+                                                "description": "Choose A.",
+                                            },
+                                            {
+                                                "label": "B",
+                                                "description": "Choose B.",
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ),
+                        state="submitted",
+                    ),
+                ],
+            )
+
+        app = _ChatApp([ask("reply-1", "First question?")])
+        async with app.run_test() as pilot:
+            await pilot.press("enter")
+            await pilot.pause()
+
+            chat = app.query_one(ChatUI)
+            await chat.set_messages([ask("reply-2", "Second question?")])
+            await pilot.pause()
+
+            ask_user = app.query_one(AskUserUI)
+            self.assertTrue(ask_user.display)
+            self.assertFalse(app.query_one(OptionList).disabled)
+            self.assertIn(
+                "Second question?",
+                str(
+                    app.query_one(
+                        ".as-ask-user-question",
+                        Static,
+                    ).render(),
+                ),
+            )
 
     async def test_invalid_ask_user_input_returns_error_result(self) -> None:
         observed: list[ChatUI.ExternalExecutionSubmitted] = []
@@ -1301,7 +1419,7 @@ class LauncherTest(unittest.IsolatedAsyncioTestCase):
                     msg.get_text_content()
                     for msg in app.query_one(ChatUI).messages
                 ],
-                ["first", None, "second"],
+                ["first", "", "second"],
             )
 
             target.release_first.set()

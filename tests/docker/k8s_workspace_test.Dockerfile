@@ -27,21 +27,27 @@ FROM python:3.11-slim
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \
         curl ca-certificates ripgrep \
+ && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # uv — matches the bootstrap command exactly.
-RUN curl -LsSf https://astral.sh/uv/install.sh \
-  | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+# Keep in sync with agentscope.workspace._utils.UV_VERSION.
+RUN curl -LsSf -o /tmp/uv-installer.sh \
+        https://astral.sh/uv/0.13.4/install.sh \
+ && env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 \
+        sh /tmp/uv-installer.sh \
+ && rm /tmp/uv-installer.sh
 
 # Keep in sync with agentscope.workspace._k8s._k8s_bootstrap.GATEWAY_HOME
 ENV GATEWAY_HOME=/root/.agentscope
 
 # Gateway venv + base runtime requirements
-# (mirrors ``_GATEWAY_BASE_REQUIREMENTS`` in _sandboxed_base.py)
+# (mirrors ``_GATEWAY_BASE_REQUIREMENTS`` in _utils.py)
 RUN mkdir -p "${GATEWAY_HOME}" \
  && uv venv "${GATEWAY_HOME}/.venv" \
  && uv pip install --python "${GATEWAY_HOME}/.venv/bin/python" \
-        'mcp<2.0.0' uvicorn fastapi httpx
+        'mcp>=2.0.0' uvicorn fastapi httpx 'httpx2>=2.5.0' \
+        'certifi>=2026.10.19'
 
 # Install agentscope itself from the local checkout.
 # Build context is repo root, so pyproject.toml + src/ are visible at /src.

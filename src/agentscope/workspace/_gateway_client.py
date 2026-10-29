@@ -85,8 +85,8 @@ class GatewayMCPTool(ToolBase):
                 ``mcp__{mcp}__{tool}`` name and the URL path.
             tool (`mcp.types.Tool`):
                 Raw upstream tool descriptor as returned by the gateway.
-                ``inputSchema`` is forwarded verbatim;
-                ``annotations.readOnlyHint`` drives the permission
+                ``input_schema`` is forwarded verbatim;
+                ``annotations.read_only_hint`` drives the permission
                 policy.
             gateway (`GatewayClient`):
                 Facade dispatching every call through
@@ -102,7 +102,7 @@ class GatewayMCPTool(ToolBase):
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
-        schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        schema = dict(tool.input_schema) if tool.input_schema else {}
         schema.setdefault("type", "object")
         schema.setdefault("properties", {})
         schema.setdefault("required", [])
@@ -112,8 +112,8 @@ class GatewayMCPTool(ToolBase):
         self.is_external_tool = False
 
         self.is_read_only = False
-        if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
-            self.is_read_only = tool.annotations.readOnlyHint or False
+        if tool.annotations:
+            self.is_read_only = tool.annotations.read_only_hint or False
 
         self._tool = tool
         self._gateway = gateway
@@ -178,8 +178,8 @@ class GatewayMCPClient(MCPClient):
     from user input via :meth:`GatewayClient.make_client`). The local
     MCP machinery is short-circuited entirely:
 
-    * ``model_post_init`` does nothing (parent's ``_initialize_client``
-      is never called — no stdio context manager is built).
+    * ``model_post_init`` skips local configuration validation; no local
+      transport is constructed by the proxy.
     * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
     * ``close`` deregisters via ``DELETE /mcps/{name}``.
     * ``set_runtime_headers`` updates the registered live client.
@@ -191,9 +191,7 @@ class GatewayMCPClient(MCPClient):
     _session_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
-        """No-op — the parent builds local stdio/HTTP transport, which
-        the gateway-relayed client does not need.
-        """
+        """Leave configuration validation to the gateway-side MCP client."""
         return
 
     # ── lifecycle ─────────────────────────────────────────────────

@@ -7,7 +7,6 @@ from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-import httpx
 from fastapi.testclient import TestClient
 from mcp.client.streamable_http import create_mcp_http_client
 
@@ -32,7 +31,7 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
         async def fake_transport(
             url: str,
             *,
-            http_client: httpx.AsyncClient,
+            http_client: Any,
         ) -> AsyncGenerator[tuple[object, object, object], None]:
             self.seen.update(url=url, http_client=http_client)
             yield object(), object(), object()
@@ -241,6 +240,7 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
             },
         )
 
@@ -458,6 +458,7 @@ class GatewayMCPClientRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
             },
         )
 
@@ -493,6 +494,7 @@ class GatewayMCPClientRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
                 "runtime_headers": {"Authorization": "Bearer runtime"},
             },
         )

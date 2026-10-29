@@ -5,12 +5,6 @@ from pydantic import BaseModel, Field
 from ....mcp import MCPClient
 
 
-class AddSkillRequest(BaseModel):
-    """The request to add skill."""
-
-    skill_path: str
-
-
 class AddFromLibraryRequest(BaseModel):
     """The request to put library MCPs into a workspace."""
 

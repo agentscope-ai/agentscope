@@ -2,6 +2,8 @@
 """Console renderer test cases."""
 from io import StringIO
 from unittest import TestCase
+from unittest.mock import patch
+from weakref import ref
 
 from rich.console import Console
 
@@ -81,6 +83,146 @@ class ConsoleRendererTest(TestCase):
         )
         self.assertIn("Friday", self.output())
         self.assertIn("hello world", self.output())
+
+    def test_interleaved_replies_preserve_tool_results(self) -> None:
+        """A member reply must not discard its leader's pending result."""
+        events = [
+            ReplyStartEvent(session_id="s", reply_id="leader", name="Leader"),
+            ToolResultStartEvent(
+                reply_id="leader",
+                tool_call_id="c1",
+                tool_call_name="TeamAssign",
+            ),
+            ReplyStartEvent(session_id="s", reply_id="member", name="Member"),
+            ToolResultStartEvent(
+                reply_id="member",
+                tool_call_id="c1",
+                tool_call_name="lookup",
+            ),
+            ToolResultTextDeltaEvent(
+                reply_id="member",
+                tool_call_id="c1",
+                delta="member result",
+            ),
+            ToolResultTextDeltaEvent(
+                reply_id="leader",
+                tool_call_id="c1",
+                delta="assigned result",
+            ),
+            ToolResultEndEvent(
+                reply_id="member",
+                tool_call_id="c1",
+                state=ToolResultState.SUCCESS,
+            ),
+            ReplyEndEvent(session_id="s", reply_id="member"),
+            ToolResultEndEvent(
+                reply_id="leader",
+                tool_call_id="c1",
+                state=ToolResultState.SUCCESS,
+            ),
+            ReplyEndEvent(session_id="s", reply_id="leader"),
+        ]
+        with patch("agentscope.message._base.logger.warning") as warning:
+            self.render_all(events)
+        warning.assert_not_called()
+        self.assertIn("✓ lookup", self.output())
+        self.assertIn("member result", self.output())
+        self.assertIn("✓ TeamAssign", self.output())
+        self.assertIn("assigned result", self.output())
+        self.assertEqual(self.renderer.last_msg.id, "leader")
+        self.assertEqual(self.renderer.last_msg.name, "Leader")
+
+    def test_repeated_reply_start_preserves_existing_content(self) -> None:
+        """A resumed reply keeps text collected before an agent switch."""
+        self.render_all(
+            [
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id=REPLY_ID,
+                    name="Friday",
+                ),
+                *self.text_events("first part"),
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id="other",
+                    name="Other",
+                ),
+                ReplyEndEvent(session_id="s", reply_id="other"),
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id=REPLY_ID,
+                    name="Friday",
+                ),
+                *self.text_events("second part", block_id="t2"),
+            ],
+        )
+        self.assertEqual(
+            self.renderer.last_msg.get_text_content(),
+            "first part\nsecond part",
+        )
+
+    def test_completed_replies_are_not_retained(self) -> None:
+        """Retain the latest reply, but release earlier completed messages."""
+        self.render_all(
+            [
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id=REPLY_ID,
+                    name="Friday",
+                ),
+                ReplyEndEvent(session_id="s", reply_id=REPLY_ID),
+            ],
+        )
+        previous = ref(self.renderer.last_msg)
+        self.assertIsNotNone(previous())
+        self.render_all(
+            [
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id="next",
+                    name="Friday",
+                ),
+                ReplyEndEvent(session_id="s", reply_id="next"),
+            ],
+        )
+        self.assertIsNone(previous())
+
+    def test_reset_releases_unfinished_replies(self) -> None:
+        """Discard abandoned replies and allow the renderer to be reused."""
+        self.renderer.verbosity = "quiet"
+        messages = []
+        for reply_id in (REPLY_ID, "member"):
+            self.renderer.render(
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id=reply_id,
+                    name="Friday",
+                ),
+            )
+            messages.append(ref(self.renderer.last_msg))
+
+        self.render_all(self.text_events("partial")[:-1])
+        self.renderer.reset()
+        self.renderer.reset()
+
+        self.assertIsNone(self.renderer.last_msg)
+        self.assertEqual([message() for message in messages], [None, None])
+        self.assertEqual(self.output(), "partial\n")
+        self.render_all(
+            [
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id=REPLY_ID,
+                    name="Friday",
+                ),
+                *self.text_events("recovered"),
+            ],
+        )
+        self.assertEqual(
+            self.renderer.last_msg.get_text_content(),
+            "recovered",
+        )
+        self.assertEqual(self.output(), "partial\nrecovered\n")
 
     def test_quiet_hides_everything_but_text(self) -> None:
         """Quiet verbosity only prints the streamed reply text."""

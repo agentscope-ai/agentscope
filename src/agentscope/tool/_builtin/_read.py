@@ -313,7 +313,15 @@ Usage:
         ext = os.path.splitext(self._backend.basename(file_path))[1].lower()
 
         if ext == ".pdf":
-            return await self._read_pdf(file_path, pages)
+            # PDF decoding and page serialization can fail after opening.
+            try:
+                return await self._read_pdf(file_path, pages)
+            except Exception as e:
+                return ToolChunk(
+                    content=[TextBlock(text=f"Error reading PDF: {str(e)}")],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
         if ext in _IMAGE_EXTENSIONS:
             return await self._read_image_file(file_path, ext)
 

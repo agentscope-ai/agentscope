@@ -42,6 +42,8 @@ async def get_model(
         `HTTPException`:
             404 when the credential is neither owned by ``user_id`` nor
             shared to them.
+        `ValueError`:
+            If the credential does not support the explicit model class.
     """
     credential_record = await access.resolve_credential(
         user_id,
@@ -49,7 +51,18 @@ async def get_model(
     )
 
     credential = CredentialFactory.from_dict(credential_record.data)
-    model_cls = credential.get_chat_model_class()
+    if config.model_class:
+        for model_cls in credential.get_chat_model_classes():
+            if getattr(model_cls, "type", "") == config.model_class:
+                break
+        else:
+            raise ValueError(
+                f"Chat model class {config.model_class!r} is not available "
+                f"for credential {config.credential_id!r}.",
+            )
+    else:
+        model_cls = credential.get_chat_model_class()
+
     card = None
     try:
         card = next(

@@ -31,6 +31,8 @@ from _daytona_live_utils import (
     live_daytona_workspace_id,
 )
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import BackgroundTaskManager, SchedulerManager
 from agentscope.app._service import ResourceAccessService, get_toolkit
@@ -1178,6 +1180,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
                                 "enable_tools": None,
                                 "disable_tools": None,
                                 "execution_timeout": None,
+                                "stream_progress": False,
                             },
                         ],
                     },
@@ -1330,10 +1333,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
 
 
 def _mcp_server_script() -> bytes:
-    """Minimal FastMCP stdio server used by live reattach tests."""
-    return b"""from mcp.server import FastMCP
+    """Minimal MCPServer stdio server used by live reattach tests."""
+    return b"""from mcp.server import MCPServer
 
-mcp = FastMCP("Persist")
+mcp = MCPServer("Persist")
 
 
 @mcp.tool()
@@ -1404,8 +1407,10 @@ def _response_text(response: ToolResponse) -> str:
 
 
 @unittest.skipUnless(DAYTONA_API_KEY, SKIP_REASON)
-class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
+class TestDaytonaWorkspaceLive(CheckoutWheelTestCase):
     """Live Daytona workspace coverage, skipped without credentials."""
+
+    workspace_type = DaytonaWorkspace
 
     @asynccontextmanager
     async def _live_workspace(

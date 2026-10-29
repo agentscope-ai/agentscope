@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -18,6 +19,9 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    URLSource,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
@@ -2127,6 +2131,47 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_event_block_id_matches_data_block_id(self) -> None:
+        """Base64 and URL DataBlocks keep their id on the emitted event."""
+        agent = Agent(
+            name="test",
+            system_prompt="",
+            model=MockModel(),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        chunks = [
+            DataBlock(
+                id="b64-block",
+                source=Base64Source(
+                    data=base64.b64encode(b"hello").decode("ascii"),
+                    media_type="audio/wav",
+                ),
+            ),
+            DataBlock(
+                id="url-block",
+                source=URLSource(
+                    url="https://example.com/a.wav",
+                    media_type="audio/wav",
+                ),
+            ),
+        ]
+        # pylint: disable=protected-access
+        events = [
+            event
+            async for event in agent._convert_tool_chunk_to_event(
+                "tc-1",
+                chunks,
+            )
+        ]
+        self.assertListEqual(
+            [(type(e).__name__, e.block_id) for e in events],
+            [
+                ("ToolResultDataDeltaEvent", "b64-block"),
+                ("ToolResultDataDeltaEvent", "url-block"),
+            ],
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

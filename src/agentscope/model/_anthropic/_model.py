@@ -43,10 +43,15 @@ class AnthropicChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="The thinking enable for the LLM output.",
+            description=(
+                "Whether to enable budget-based thinking. False sends "
+                "thinking.type='disabled'. When None, this toggle does not "
+                "add a thinking configuration. An explicit thinking_mode "
+                "takes precedence."
+            ),
         )
 
         thinking_budget: int | None = Field(
@@ -178,10 +183,12 @@ class AnthropicChatModel(ChatModelBase):
         """Resolve the effective thinking mode.
 
         ``thinking_mode`` is the modern control; ``thinking_enable`` is the
-        legacy toggle that only ever meant the budget-based mode.
+        legacy toggle that enables budget-based thinking or disables it.
         """
         if self.parameters.thinking_mode is not None:
             return self.parameters.thinking_mode
+        if self.parameters.thinking_enable is False:
+            return "disabled"
         return "enabled" if self.parameters.thinking_enable else None
 
     def _build_thinking_config(
@@ -384,8 +391,8 @@ class AnthropicChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.input_tokens or 0,
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_creation_input_tokens=getattr(
                     u,
@@ -460,8 +467,8 @@ class AnthropicChatModel(ChatModelBase):
                     if message.usage:
                         u = message.usage
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens,
-                            output_tokens=getattr(u, "output_tokens", 0),
+                            input_tokens=u.input_tokens or 0,
+                            output_tokens=getattr(u, "output_tokens", 0) or 0,
                             time=(
                                 datetime.now() - start_datetime
                             ).total_seconds(),
@@ -469,12 +476,14 @@ class AnthropicChatModel(ChatModelBase):
                                 u,
                                 "cache_creation_input_tokens",
                                 0,
-                            ),
+                            )
+                            or 0,
                             cache_input_tokens=getattr(
                                 u,
                                 "cache_read_input_tokens",
                                 0,
-                            ),
+                            )
+                            or 0,
                         )
 
                 elif event.type == "content_block_start":
@@ -563,7 +572,7 @@ class AnthropicChatModel(ChatModelBase):
 
                 elif event.type == "message_delta":
                     if event.usage and usage:
-                        usage.output_tokens = event.usage.output_tokens
+                        usage.output_tokens = event.usage.output_tokens or 0
                         # ``usage`` was stamped when ``message_start``
                         # arrived, i.e. at time-to-first-token. Refresh it
                         # here so ``time`` spans the whole generation, as

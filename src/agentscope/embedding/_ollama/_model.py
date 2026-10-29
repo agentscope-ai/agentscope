@@ -139,5 +139,8 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
 
         return EmbeddingResponse(
             embeddings=response.embeddings,
-            usage=EmbeddingUsage(time=time),
+            usage=EmbeddingUsage(
+                tokens=getattr(response, "prompt_eval_count", None),
+                time=time,
+            ),
         )

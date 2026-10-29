@@ -7,7 +7,10 @@ dicts), a lightweight xai_sdk stub is built at module load so that tests run
 without the real package.  The stub objects support __eq__ and __repr__ so
 full assertListEqual comparisons work.
 """
+import base64
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
@@ -273,6 +276,40 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 user("What is the capital of Germany?"),
                 assistant("The capital of Germany is Berlin."),
                 user("What is the capital of Japan?"),
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = XAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                user(
+                    "What's in this image?",
+                    image(f"data:image/png;base64,{expected_b64}"),
+                ),
             ],
             res,
         )
@@ -593,6 +630,13 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     # -------------------------------------------------------------------
     # XAIMultiAgentFormatter tests
     # -------------------------------------------------------------------
+
+    async def test_multiagent_formatter_textless_system_message(self) -> None:
+        """A system message without text blocks passes an empty string."""
+        res = await XAIMultiAgentFormatter().format(
+            [SystemMsg(name="system", content=[])],
+        )
+        self.assertEqual(res, [system("")])
 
     async def test_multiagent_formatter_system_message(self) -> None:
         """System message is passed through as a system() stub."""

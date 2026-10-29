@@ -12,7 +12,7 @@
   loop.
 """
 import asyncio
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
@@ -29,12 +29,14 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.model import ChatResponse
+from agentscope.middleware import MiddlewareBase
 from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
     PermissionDecision,
 )
 from agentscope.tool import (
+    FunctionTool,
     ToolBase,
     ToolChunk,
     Toolkit,
@@ -316,6 +318,90 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             ),
         )
         return agent, model
+
+    async def test_cancel_before_toolkit_entry(self) -> None:
+        """A concurrent call cancelled in acting middleware is not re-run."""
+        waiting = asyncio.Event()
+        tool_entries: list[str] = []
+
+        class WaitingMiddleware(MiddlewareBase):
+            """Block the call before it reaches the toolkit."""
+
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Wait on the first entry only."""
+                if not waiting.is_set():
+                    waiting.set()
+                    await asyncio.Event().wait()
+                async for chunk in next_handler(**input_kwargs):
+                    yield chunk
+
+        async def record() -> ToolChunk:
+            """Record the invocation."""
+            tool_entries.append("record")
+            return ToolChunk(content=[TextBlock(text="done")])
+
+        tool = FunctionTool(
+            record,
+            is_concurrency_safe=True,
+            is_read_only=True,
+        )
+        model = MockModel(model="mock-model", stream=True)
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(id="c1", name="record", input="{}"),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a test agent.",
+            model=model,
+            toolkit=Toolkit(tools=[tool]),
+            middlewares=[WaitingMiddleware()],
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        events: list[Any] = []
+
+        async def drive() -> None:
+            """Collect the reply events."""
+            async for event in agent.reply_stream(
+                UserMsg(name="user", content="Hi"),
+            ):
+                events.append(event)
+
+        task = asyncio.create_task(drive())
+        await asyncio.wait_for(waiting.wait(), timeout=5)
+        task.cancel()
+        await asyncio.wait_for(task, timeout=5)
+
+        self.assertDictEqual(
+            {
+                "tool_entries": tool_entries,
+                "model_calls": model.cnt,
+                "finished_reason": [
+                    _.finished_reason
+                    for _ in events
+                    if isinstance(_, ReplyEndEvent)
+                ],
+            },
+            {
+                "tool_entries": [],
+                "model_calls": 1,
+                "finished_reason": ["interrupted"],
+            },
+        )
 
     async def test_cancelled_error_propagates_after_tool_cleanup(self) -> None:
         """With ``interruption_raise_cancelled_error`` the cancellation
