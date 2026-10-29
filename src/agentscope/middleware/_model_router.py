@@ -2,13 +2,14 @@
 """Route each reply to a chat model chosen by a classifier."""
 import json
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from typing import AsyncGenerator, Callable, Sequence, TYPE_CHECKING
 
 from ._base import MiddlewareBase
 from .._logging import logger
 from ..classifier import ChoiceAnswer, ChoiceQuestion, ClassifierModelBase
 from ..event import ReplyStartEvent
-from ..message import Msg, SystemMsg, UserMsg
+from ..message import DataBlock, Msg, SystemMsg, UserMsg
 from ..model import ChatModelBase
 
 if TYPE_CHECKING:
@@ -39,7 +40,8 @@ class ModelRouterMiddleware(MiddlewareBase):
 
     The decision is made once per reply and kept when the reply resumes,
     e.g. after a user confirmation. When the routing model fails or picks
-    an unknown candidate, the agent keeps its own model.
+    an unknown candidate, the agent keeps its own model. The agent also keeps
+    its model when the selected candidate cannot accept media in user history.
     """
 
     def __init__(
@@ -103,6 +105,33 @@ class ModelRouterMiddleware(MiddlewareBase):
                     name = await self._route(
                         self._latest_user_text(input_kwargs["inputs"]),
                     )
+                    candidate = self._models.get(name)
+                    if candidate is not None:
+                        supported = (
+                            candidate.formatter.supported_input_media_types
+                        )
+                        # The next model call includes prior user messages too.
+                        unsupported = sorted(
+                            {
+                                block.source.media_type
+                                for msg in agent.state.context
+                                if msg.role == "user"
+                                for block in msg.content
+                                if isinstance(block, DataBlock)
+                                and not any(
+                                    fnmatch(block.source.media_type, pattern)
+                                    for pattern in supported
+                                )
+                            },
+                        )
+                        if unsupported:
+                            logger.warning(
+                                "Chat model candidate %r does not support "
+                                "input media %s; keeping the agent's model",
+                                name,
+                                ", ".join(unsupported),
+                            )
+                            name = None
                     agent.state.middle_context[key] = {event.reply_id: name}
                     agent.model = self._models.get(name, original_model)
                 yield event

@@ -273,6 +273,63 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_media_unsupported_by_candidate_keeps_primary(self) -> None:
+        """Do not route an image request to a text-only candidate."""
+        self.fast.formatter = OpenAIChatFormatter(input_types=["text/plain"])
+        self.primary.context_size = 100000
+        self.fast.context_size = 100000
+        middleware = ModelRouterMiddleware(
+            _MockClassifier(["fast"]),
+            self.candidates,
+        )
+
+        agent, called = await self._reply(
+            middleware,
+            [
+                TextBlock(text="What is in this image?"),
+                DataBlock(
+                    source=Base64Source(data="AA==", media_type="image/png"),
+                ),
+            ],
+        )
+
+        self.assertListEqual(called, ["primary"])
+        self.assertEqual(self.fast.cnt, 0)
+        self.assertDictEqual(
+            agent.state.middle_context,
+            {"ModelRouterMiddleware": {agent.state.reply_id: None}},
+        )
+        formatted = await self.primary.formatter.format(agent.state.context)
+        user_msg = next(_ for _ in formatted if _["role"] == "user")
+        self.assertListEqual(
+            [_["type"] for _ in user_msg["content"]],
+            ["text", "image_url"],
+        )
+
+    async def test_media_in_history_blocks_text_only_route(self) -> None:
+        """A text-only candidate must not lose an earlier user image."""
+        self.fast.formatter = OpenAIChatFormatter(input_types=["text/plain"])
+        for model in (self.primary, self.fast, self.reasoning):
+            model.context_size = 100000
+        middleware = ModelRouterMiddleware(
+            _MockClassifier(["reasoning", "fast"]),
+            self.candidates,
+        )
+
+        _, called = await self._reply(
+            middleware,
+            [
+                TextBlock(text="Remember this image."),
+                DataBlock(
+                    source=Base64Source(data="AA==", media_type="image/png"),
+                ),
+            ],
+            [TextBlock(text="What was in that image?")],
+        )
+
+        self.assertListEqual(called, ["reasoning-model", "primary"])
+        self.assertEqual(self.fast.cnt, 0)
+
     async def test_chat_model_routes_with_structured_output(self) -> None:
         """A chat model routes through a structured choice."""
         routing_model = _MockRoutingChatModel("fast")
