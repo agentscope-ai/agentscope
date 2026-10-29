@@ -204,7 +204,8 @@ class GeminiTTSModel(TTSModelBase):
 
         audio_bytes = bytearray()
         candidates = getattr(response, "candidates", None) or []
-        for candidate in candidates:
+        # Candidates are alternative recordings, not consecutive audio parts.
+        for candidate in candidates[:1]:
             content = getattr(candidate, "content", None)
             parts = getattr(content, "parts", None) or []
             for part in parts:
@@ -272,7 +273,7 @@ class GeminiTTSModel(TTSModelBase):
                 usage_metadata = chunk_usage
 
             candidates = getattr(chunk, "candidates", None) or []
-            for candidate in candidates:
+            for candidate in candidates[:1]:
                 content = getattr(candidate, "content", None)
                 parts = getattr(content, "parts", None) or []
                 for part in parts:

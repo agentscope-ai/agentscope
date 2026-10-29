@@ -183,25 +183,163 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "deepseek-1")
 
-    async def test_extra_body_is_not_mutated(self) -> None:
-        """Defaulting thinking.type leaves the caller's extra_body intact."""
+    async def test_thinking_enable_unset_not_sent(self) -> None:
+        """An unset thinking_enable must not inject a thinking type."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
         self.mock_client.chat.completions.create = mock_create
-        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
+
+        await self.model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+            },
+        )
+
+    async def test_thinking_enable_explicit_none_not_sent(self) -> None:
+        """Explicit None leaves thinking behavior to the server."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=None),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+            },
+        )
+
+    async def test_thinking_enable_unset_preserves_extra_body(self) -> None:
+        """Unset thinking preserves the caller's complete extra body."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        extra_body = {"custom": "value", "thinking": {"type": "enabled"}}
 
         await self.model([], extra_body=extra_body)
+
+        self.assertDictEqual(
+            extra_body,
+            {"custom": "value", "thinking": {"type": "enabled"}},
+        )
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {
+                    "custom": "value",
+                    "thinking": {"type": "enabled"},
+                },
+            },
+        )
+
+    async def test_thinking_enable_explicit_false_sends_disabled(self) -> None:
+        """An explicit thinking_enable=False still disables thinking."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=False),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        )
+
+    async def test_thinking_enable_explicit_true_sends_enabled(self) -> None:
+        """An explicit thinking_enable=True sends thinking.type=enabled."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=True),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        )
+
+    async def test_extra_body_is_not_mutated(self) -> None:
+        """Defaulting thinking.type leaves the caller's extra_body intact."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=False),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
+
+        await model([], extra_body=extra_body)
 
         self.assertDictEqual(
             extra_body,
             {"custom": "value", "thinking": {"budget_tokens": 1024}},
         )
         self.assertDictEqual(
-            mock_create.await_args.kwargs["extra_body"],
+            mock_create.await_args.kwargs,
             {
-                "custom": "value",
-                "thinking": {"budget_tokens": 1024, "type": "disabled"},
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {
+                    "custom": "value",
+                    "thinking": {"budget_tokens": 1024, "type": "disabled"},
+                },
             },
         )
 
