@@ -615,3 +615,49 @@ class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
                     collection_name="shared",
                     filter='document_id == "doc"',
                 )
+
+
+class MilvusReadLoadsCollectionTest(IsolatedAsyncioTestCase):
+    """Read paths load the collection before touching Milvus.
+
+    Milvus can leave a collection in the ``released`` state, e.g. after the
+    host process restarts; searching or querying it then raises
+    ``Collection ... is in state 'released'``. The read helpers must
+    therefore call ``load_collection`` first. A mocked client keeps these
+    tests independent of a running Milvus service.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Create a store without connecting to Milvus."""
+        self.store = MilvusLiteStore()
+        self.client = Mock()
+
+    async def test_search_loads_collection_first(self) -> None:
+        """search() loads the collection before issuing the search."""
+        self.client.search.return_value = [[]]
+        with patch.object(self.store, "get_client", return_value=self.client):
+            await self.store.search("kb_1", query_vector=[1.0, 0.0, 0.0])
+
+        self.assertEqual(
+            [call[0] for call in self.client.method_calls],
+            ["load_collection", "search"],
+        )
+        self.client.load_collection.assert_called_once_with(
+            collection_name="kb_1",
+        )
+
+    async def test_list_documents_loads_collection_first(self) -> None:
+        """list_documents() loads the collection before querying it."""
+        with (
+            patch.object(self.store, "get_client", return_value=self.client),
+            patch.object(self.store, "_query_all_rows", return_value=[]),
+        ):
+            await self.store.list_documents("kb_1")
+
+        self.assertEqual(
+            [call[0] for call in self.client.method_calls],
+            ["load_collection"],
+        )
+        self.client.load_collection.assert_called_once_with(
+            collection_name="kb_1",
+        )

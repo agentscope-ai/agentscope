@@ -188,6 +188,31 @@ class MilvusLiteStore(VectorStoreBase):
             collection_name=name,
         )
 
+    async def _ensure_loaded(
+        self,
+        client: "MilvusClient",
+        collection: str,
+    ) -> None:
+        """Make sure a collection is loaded before reading from it.
+
+        Milvus may leave a collection in the ``released`` state — for
+        example after the server (or, for Milvus Lite, the host process)
+        restarts. Searching or querying a released collection fails with
+        ``MilvusException: Collection ... is in state 'released'; call
+        load() before search/get/query``. ``load_collection`` is
+        idempotent, so calling it before every read is safe.
+
+        Args:
+            client (`MilvusClient`):
+                The client bound to this store.
+            collection (`str`):
+                The collection that is about to be read.
+        """
+        await asyncio.to_thread(
+            client.load_collection,
+            collection_name=collection,
+        )
+
     # ------------------------------------------------------------------
     # Data operations
     # ------------------------------------------------------------------
@@ -315,8 +340,11 @@ class MilvusLiteStore(VectorStoreBase):
                 cosine / inner product metrics, or ascending distance
                 semantics for L2 as exposed by Milvus.
         """
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
+
         response = await asyncio.to_thread(
-            self.get_client().search,
+            client.search,
             collection_name=collection,
             data=[query_vector],
             anns_field="vector",
@@ -364,6 +392,7 @@ class MilvusLiteStore(VectorStoreBase):
                 One summary per distinct ``document_id``.
         """
         client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
             self._query_all_rows,
             client,
