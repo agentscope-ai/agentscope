@@ -659,6 +659,59 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_multiagent_hint_only_message_precedes_history(self) -> None:
+        """A hint-only message is emitted before following history."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            AssistantMsg(
+                name="memory",
+                content=[HintBlock(hint="Remember the user's preference.")],
+            ),
+            UserMsg(name="alice", content="What should I remember?"),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                user("Remember the user's preference."),
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nalice: What should I remember?\n</history>",
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_hint_splits_mixed_history_in_order(self) -> None:
+        """A hint embedded in a message separates ordered history segments."""
+        fmt = XAIMultiAgentFormatter()
+        msg = AssistantMsg(
+            name="memory",
+            content=[
+                TextBlock(text="Context before the hint."),
+                HintBlock(hint="Keep this instruction."),
+                TextBlock(text="Context after the hint."),
+            ],
+        )
+
+        res = await fmt.format([msg])
+
+        self.assertListEqual(
+            [
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nmemory: Context before the hint.\n"
+                    + "</history>",
+                ),
+                user("Keep this instruction."),
+                user(
+                    "<history>\nmemory: Context after the hint.\n</history>",
+                ),
+            ],
+            res,
+        )
+
     async def test_multiagent_formatter_first_group_has_hist_prompt(
         self,
     ) -> None:

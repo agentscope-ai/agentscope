@@ -361,8 +361,9 @@ class XAIMultiAgentFormatter(FormatterBase):
     Produces ``xai_sdk`` protobuf ``Message`` objects (same as
     :class:`XAIChatFormatter`).  Prior agent-to-agent messages are collapsed
     into a single ``user`` message with ``<history></history>`` tags; the
-    images of those messages are appended to the same ``user`` message, and
-    tool call / result sequences are delegated to :class:`XAIChatFormatter`.
+    images of those messages are appended to the same ``user`` message.
+    Hint blocks and tool call / result sequences are delegated to
+    :class:`XAIChatFormatter`.
 
     .. note:: ``format()`` returns ``list[Any]`` (protobuf messages), not
         ``list[dict]``.
@@ -428,28 +429,52 @@ class XAIMultiAgentFormatter(FormatterBase):
                     ).format(group),
                 )
             elif typ == "agent_message":
-                history_text = self._build_history_text(
+                for is_hint, segment in self._split_agent_messages_at_hints(
                     group,
-                    is_first=is_first_agent_message,
-                )
-                user_args = _xai_user_args_from_blocks(
-                    [
-                        block
-                        for msg in group
-                        for block in msg.get_content_blocks()
-                        if isinstance(block, DataBlock)
-                    ],
-                    image,
-                    self.supported_input_media_types,
-                )
-                if history_text:
-                    user_args.insert(0, history_text)
-                if user_args:
-                    xai_messages.append(user(*user_args))
+                ):
+                    if is_hint:
+                        xai_messages.extend(
+                            await self._format_hint_message(segment),
+                        )
+                        continue
+
+                    history_text = self._build_history_text(
+                        segment,
+                        is_first=is_first_agent_message,
+                    )
+                    user_args = _xai_user_args_from_blocks(
+                        [
+                            block
+                            for msg in segment
+                            for block in msg.get_content_blocks()
+                            if isinstance(block, DataBlock)
+                        ],
+                        image,
+                        self.supported_input_media_types,
+                    )
                     if history_text:
-                        is_first_agent_message = False
+                        user_args.insert(0, history_text)
+                    if user_args:
+                        xai_messages.append(user(*user_args))
+                        if history_text:
+                            is_first_agent_message = False
 
         return xai_messages
+
+    async def _format_hint_message(self, msgs: list[Msg]) -> list[Any]:
+        """Format hint messages with the xAI chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[Any]`:
+                The xAI user-message representation.
+        """
+        return await XAIChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
 
     def _build_history_text(self, msgs: list[Msg], *, is_first: bool) -> str:
         """Build a ``<history>…</history>`` text block from agent messages.
