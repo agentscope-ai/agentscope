@@ -558,6 +558,9 @@
 	},
 	"model-parameters": {
 		"title": "模型参数",
+		"booleanDefault": "默认",
+		"booleanEnabled": "开启",
+		"booleanDisabled": "关闭",
 		"description": "调整所选模型的推理参数。",
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",

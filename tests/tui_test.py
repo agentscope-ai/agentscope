@@ -1419,7 +1419,7 @@ class LauncherTest(unittest.IsolatedAsyncioTestCase):
                     msg.get_text_content()
                     for msg in app.query_one(ChatUI).messages
                 ],
-                ["first", None, "second"],
+                ["first", "", "second"],
             )
 
             target.release_first.set()

@@ -48,6 +48,8 @@ interface ParameterProperty {
 	exclusiveMaximum?: number;
 	enum?: unknown[];
 	anyOf?: ParameterProperty[];
+	/** Reset these parameters on edit only when their controls are hidden. */
+	'x-reset-hidden-on-change'?: Record<string, unknown>;
 }
 
 interface ParameterSchema {
@@ -105,16 +107,57 @@ interface FieldProps {
 }
 
 function BooleanField({ id, label, prop, value, onChange }: FieldProps) {
+	const { t } = useTranslation();
+	const nullable = prop.anyOf?.some((variant) => variant.type === 'null');
+	const current = value !== undefined ? value : prop.default;
+	const selected = current === true ? 'true' : current === false ? 'false' : 'default';
+	const options = [
+		{ value: 'default', label: t('model-parameters.booleanDefault') },
+		{ value: 'true', label: t('model-parameters.booleanEnabled') },
+		{ value: 'false', label: t('model-parameters.booleanDisabled') },
+	];
+
 	return (
 		<>
 			<Label htmlFor={id} className="min-w-0 whitespace-normal leading-tight">
 				{label}
 			</Label>
-			<Switch
-				id={id}
-				checked={value !== undefined ? !!value : !!prop.default}
-				onCheckedChange={(checked) => onChange(!!checked)}
-			/>
+			{nullable ? (
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							id={id}
+							variant="outline"
+							className="min-w-0 w-full justify-between gap-1"
+						>
+							<span className="truncate">
+								{options.find((option) => option.value === selected)?.label}
+							</span>
+							<ChevronDown className="size-3.5 opacity-50 shrink-0" />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="start" onPointerDown={(e) => e.stopPropagation()}>
+						<DropdownMenuRadioGroup
+							value={selected}
+							onValueChange={(next) =>
+								onChange(next === 'default' ? null : next === 'true')
+							}
+						>
+							{options.map((option) => (
+								<DropdownMenuRadioItem key={option.value} value={option.value}>
+									{option.label}
+								</DropdownMenuRadioItem>
+							))}
+						</DropdownMenuRadioGroup>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			) : (
+				<Switch
+					id={id}
+					checked={!!current}
+					onCheckedChange={(checked) => onChange(!!checked)}
+				/>
+			)}
 		</>
 	);
 }
@@ -309,10 +352,17 @@ export function ModelParametersPopover({
 			if (value === '' || value === undefined) {
 				delete next[key];
 			}
+			const properties = schema?.properties ?? {};
+			const resets = properties[key]?.['x-reset-hidden-on-change'] ?? {};
+			for (const [target, resetValue] of Object.entries(resets)) {
+				if (!Object.hasOwn(properties, target)) {
+					next[target] = resetValue;
+				}
+			}
 			setValues(next);
 			onChange(next);
 		},
-		[values, onChange],
+		[values, onChange, schema],
 	);
 
 	const handleSelectFallback = (

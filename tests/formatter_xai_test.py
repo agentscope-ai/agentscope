@@ -631,6 +631,13 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     # XAIMultiAgentFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_multiagent_formatter_textless_system_message(self) -> None:
+        """A system message without text blocks passes an empty string."""
+        res = await XAIMultiAgentFormatter().format(
+            [SystemMsg(name="system", content=[])],
+        )
+        self.assertEqual(res, [system("")])
+
     async def test_multiagent_formatter_system_message(self) -> None:
         """System message is passed through as a system() stub."""
         fmt = XAIMultiAgentFormatter()
