@@ -293,6 +293,48 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_skips_empty_thinking_only_message(
+        self,
+    ) -> None:
+        """An assistant message holding only an empty ThinkingBlock is
+        dropped instead of sending content=None with
+        reasoning_content=""."""
+        fmt = VolcengineChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[ThinkingBlock(thinking="")],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual([], res)
+
+    async def test_chat_formatter_skips_empty_thinking_with_text(
+        self,
+    ) -> None:
+        """An empty ThinkingBlock next to real text emits no
+        reasoning_content."""
+        fmt = VolcengineChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking=""),
+                    TextBlock(text="Answer"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Answer"}],
+                },
+            ],
+            res,
+        )
+
     # ------------------------------------------------------------------
     # VolcengineMultiAgentFormatter tests
     # ------------------------------------------------------------------
