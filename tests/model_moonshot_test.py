@@ -265,7 +265,10 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
         await self.model([])
 
         extra_body = mock_create.await_args.kwargs["extra_body"]
-        self.assertEqual(extra_body["thinking"]["type"], "disabled")
+        self.assertEqual(
+            extra_body,
+            {"thinking": {"type": "disabled"}},
+        )
 
     async def test_thinking_enabled_forwarded(self) -> None:
         """``thinking_enable=True`` sends ``thinking.type: enabled``."""
@@ -280,7 +283,10 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
         await self.model([])
 
         extra_body = mock_create.await_args.kwargs["extra_body"]
-        self.assertEqual(extra_body["thinking"]["type"], "enabled")
+        self.assertEqual(
+            extra_body,
+            {"thinking": {"type": "enabled"}},
+        )
 
     async def test_tool_call_response(
         self,
