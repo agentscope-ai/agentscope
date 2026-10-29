@@ -854,8 +854,8 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
         with self.assertRaises(RuntimeError):
             await workspace.list_tools()
 
-    async def test_list_tools_returns_six_builtin_tools(self) -> None:
-        """Initialized workspace exposes the six builtin tools."""
+    async def test_list_tools_returns_builtin_tools(self) -> None:
+        """Initialized workspace exposes the builtin tools."""
         workspace = DaytonaWorkspace(workspace_id="wid-8")
         await workspace.initialize()
 
@@ -863,7 +863,16 @@ class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
 
         self.assertEqual(
             sorted(tool.name for tool in tools),
-            ["Bash", "Edit", "Glob", "Grep", "Read", "Write"],
+            [
+                "ArtifactAdd",
+                "ArtifactRemove",
+                "Bash",
+                "Edit",
+                "Glob",
+                "Grep",
+                "Read",
+                "Write",
+            ],
         )
 
     async def test_mcp_file_roundtrip_uses_sdk_workdir(self) -> None:
