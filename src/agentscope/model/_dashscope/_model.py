@@ -50,10 +50,13 @@ class DashScopeChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="The thinking enable for the LLM output.",
+            description=(
+                "Whether to enable or disable thinking mode. When unset, "
+                "DashScope uses its default behavior for the model."
+            ),
         )
 
         thinking_budget: int | None = Field(
