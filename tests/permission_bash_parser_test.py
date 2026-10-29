@@ -392,6 +392,58 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"(contains non-read-only subcommand)",
                 )
 
+    async def test_separator_hidden_commands_not_read_only(self) -> None:
+        """Test newline- and ``&``-separated commands hide no mutations.
+
+        Newlines and a single ``&`` are command separators just like
+        ``;`` and ``&&``; every segment must be checked, otherwise a
+        payload hidden behind a read-only prefix would be auto-allowed.
+        """
+        hidden_commands = [
+            "cat file.txt\nrm -rf /tmp/victim",
+            "cat file.txt\nmkdir new_dir",
+            "cat file.txt & rm -rf /tmp/victim",
+            "cat file.txt & touch file.txt",
+            "ls\nshutdown now",
+            "ls\r\nshutdown now",
+        ]
+        for cmd in hidden_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be non-read-only "
+                    f"(contains non-read-only subcommand)",
+                )
+
+    async def test_separator_compound_all_read_only(self) -> None:
+        """Test newline- and ``&``-separated all-read-only compounds."""
+        read_only_commands = [
+            "git status\ngit diff",
+            "cat file1.txt\ncat file2.txt",
+            "git status & git log",
+            "cat file.txt &",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only "
+                    f"(all subcommands are read-only)",
+                )
+
+    async def test_separator_lookalikes_stay_read_only(self) -> None:
+        """Test quoted ``&`` and heredoc newlines are not separators."""
+        read_only_commands = [
+            'grep "a&b" file.txt',
+            "cat <<EOF\nhello world\nEOF",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only",
+                )
+
     async def test_commands_with_output_redirection(self) -> None:
         """Test commands with output redirections are not read-only."""
         redirect_commands = [

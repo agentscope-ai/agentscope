@@ -151,8 +151,13 @@ class BashCommandParser:
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
-        For compound commands (&&, ||, ;, |), ALL subcommands must be
-        read-only for the entire command to be considered read-only.
+        For compound commands (&&, ||, ;, |, newline, &), ALL subcommands
+        must be read-only for the entire command to be considered read-only.
+
+        Newlines and a single ``&`` are command separators just like ``;``
+        and ``&&`` — without them in the list, ``cat file\\nrm -rf x`` would
+        reach the single-command prefix match and hide the second command
+        from inspection.
 
         Commands with output redirections (>, >>) are NOT considered read-only.
 
@@ -172,8 +177,11 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command
-        if any(op in cmd for op in ["&&", "||", ";", "|"]):
+        # Check if it's a compound command. The separator check is a
+        # substring pre-filter only: quoted separators (e.g. ``grep "a&b"
+        # f``) are re-joined into one subcommand by the AST-based split
+        # below, so they are not falsely flagged.
+        if any(op in cmd for op in ["&&", "||", ";", "|", "\n", "&"]):
             # Split into subcommands and check each one
             try:
                 tree = self.parser.parse(bytes(cmd, "utf8"))
