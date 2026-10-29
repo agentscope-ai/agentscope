@@ -21,4 +21,5 @@ context_size: 1000000
 output_size: 131072
 
 parameter_overrides:
+  reasoning_effort: {"hidden": true}
   max_tokens: {"maximum": 524288}

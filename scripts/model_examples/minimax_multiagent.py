@@ -2,7 +2,7 @@
 """Example of MiniMax chat model calls with MiniMaxMultiAgentFormatter.
 
 The multi-agent formatter wraps prior conversation history in
-``<history></history>`` tags, enabling MiniMax-M3 to handle multi-agent
+``<history></history>`` tags, enabling MiniMax-M3.1-Flash to handle multi-agent
 conversations where more than one non-user agent is involved.
 """
 
@@ -17,7 +17,7 @@ from agentscope.model import MiniMaxChatModel
 
 
 async def example_multiagent() -> None:
-    """Simulate a multi-agent conversation and let MiniMax-M3 summarize.
+    """Summarize a multi-agent conversation with MiniMax-M3.1-Flash.
 
     Alice and Bob discuss the weather, then a moderator (the model) is asked
     to summarize the conversation.
@@ -28,7 +28,7 @@ async def example_multiagent() -> None:
         credential=MiniMaxCredential(
             api_key=os.environ["MINIMAX_API_KEY"],
         ),
-        model="MiniMax-M3",
+        model="MiniMax-M3.1-Flash",
         stream=True,
         parameters=MiniMaxChatModel.Parameters(
             thinking_enable=True,

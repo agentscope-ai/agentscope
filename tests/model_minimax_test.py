@@ -125,7 +125,10 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
 
     def test_model_cards(self) -> None:
         """The MiniMax model cards carry the documented limits."""
-        cards = sorted(MiniMaxChatModel.list_models(), key=lambda _: _.name)
+        cards = sorted(
+            MiniMaxChatModel.list_models(include_legacy=True),
+            key=lambda _: _.name,
+        )
 
         self.assertListEqual(
             [
@@ -154,6 +157,22 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
                     "name": "MiniMax-M3",
                     "context_size": 1000000,
                     "output_size": 131072,
+                    "input_types": [
+                        "text/plain",
+                        "application/x-thinking",
+                        "image/jpeg",
+                        "image/png",
+                        "image/gif",
+                        "image/webp",
+                        "video/mp4",
+                        "video/x-msvideo",
+                        "video/x-matroska",
+                    ],
+                },
+                {
+                    "name": "MiniMax-M3.1-Flash",
+                    "context_size": 1000000,
+                    "output_size": 524288,
                     "input_types": [
                         "text/plain",
                         "application/x-thinking",

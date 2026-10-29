@@ -3,7 +3,7 @@
 from ._access import ResourceAccessService
 from ..storage import ChatModelConfig, RealtimeModelConfig
 from ...credential import CredentialFactory
-from ...model import ChatModelBase
+from ...model import ChatModelBase, MiniMaxChatModel
 from ...realtime import RealtimeModelBase
 from ..._logging import logger
 
@@ -75,7 +75,11 @@ async def get_model(
     # built-in model card's when one matches; custom models have no card,
     # so keep the defaults.
     try:
-        for card in model_cls.list_models():
+        if issubclass(model_cls, MiniMaxChatModel):
+            cards = model_cls.list_models(include_legacy=True)
+        else:
+            cards = model_cls.list_models()
+        for card in cards:
             if card.name == config.model:
                 model.context_size = card.context_size
                 model.formatter.input_types = card.input_types

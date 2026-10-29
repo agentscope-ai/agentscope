@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Examples of MiniMax chat model calls.
 
-The MiniMax M-series chat models (e.g. ``MiniMax-M3``) are exposed via
+The MiniMax M-series chat models (e.g. ``MiniMax-M3.1-Flash``) are exposed via
 MiniMax's officially recommended Anthropic-compatible API, so the
 controls and outputs match
 ``scripts/model_examples/anthropic_call.py``.
@@ -32,12 +32,12 @@ from agentscope.tool import Toolkit, ToolChoice, FunctionTool
 
 
 async def example_simple_call() -> None:
-    """Call MiniMax-M3 with a simple text message and extended thinking."""
+    """Call MiniMax-M3.1-Flash with a text message and adaptive thinking."""
     model = MiniMaxChatModel(
         credential=MiniMaxCredential(
             api_key=os.environ["MINIMAX_API_KEY"],
         ),
-        model="MiniMax-M3",
+        model="MiniMax-M3.1-Flash",
         stream=True,
         parameters=MiniMaxChatModel.Parameters(
             thinking_enable=True,
@@ -74,7 +74,7 @@ def get_weather(city: str) -> str:
 
 
 async def example_tool_call() -> None:
-    """Call MiniMax-M3 with tool calling enabled."""
+    """Call MiniMax-M3.1-Flash with tool calling enabled."""
     toolkit = Toolkit(tools=[FunctionTool(get_weather)])
     tools = await toolkit.get_tool_schemas()
 
@@ -82,7 +82,7 @@ async def example_tool_call() -> None:
         credential=MiniMaxCredential(
             api_key=os.environ["MINIMAX_API_KEY"],
         ),
-        model="MiniMax-M3",
+        model="MiniMax-M3.1-Flash",
         stream=True,
         parameters=MiniMaxChatModel.Parameters(
             thinking_enable=True,
@@ -150,12 +150,12 @@ class MathSolution(BaseModel):
 
 
 async def example_structured_output() -> None:
-    """Call MiniMax-M3 and force a structured (JSON) output."""
+    """Call MiniMax-M3.1-Flash and force a structured (JSON) output."""
     model = MiniMaxChatModel(
         credential=MiniMaxCredential(
             api_key=os.environ["MINIMAX_API_KEY"],
         ),
-        model="MiniMax-M3",
+        model="MiniMax-M3.1-Flash",
         stream=True,
         parameters=MiniMaxChatModel.Parameters(
             thinking_enable=True,
