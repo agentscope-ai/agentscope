@@ -87,7 +87,7 @@ class EmbeddingModelBase(Generic[InputT]):
     """Maximum input length (in tokens) per single input item."""
 
     batch_size: int
-    """Maximum number of input items per API call."""
+    """Positive maximum number of input items per API call."""
 
     max_retries: int
     """The maximum number of retries for the underlying API."""
@@ -134,7 +134,7 @@ class EmbeddingModelBase(Generic[InputT]):
             context_size (`int`):
                 Maximum input length (in tokens) per single input item.
             batch_size (`int`):
-                Maximum number of input items per API call.  When
+                Positive maximum number of input items per API call.  When
                 ``__call__`` receives more items, it splits them into
                 batches and calls :meth:`_call_api` concurrently.
             max_retries (`int`):
@@ -170,6 +170,10 @@ class EmbeddingModelBase(Generic[InputT]):
         if dimensions <= 0:
             raise ValueError(
                 f"dimensions must be a positive integer, got {dimensions}.",
+            )
+        if batch_size <= 0:
+            raise ValueError(
+                f"batch_size must be a positive integer, got {batch_size}.",
             )
 
         self.credential = credential
