@@ -353,6 +353,9 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "model": self.model,
             "api_key": self.api_key,
             "dimension": self.dimensions,
+            # Forward configured provider parameters (e.g. text_type);
+            # per-call kwargs keep precedence.
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
         }
 
@@ -439,6 +442,9 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "model": self.model,
             "api_key": self.api_key,
             "dimension": self.dimensions,
+            # Forward configured provider parameters (e.g. instruct,
+            # fps); per-call kwargs keep precedence.
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
         }
 
