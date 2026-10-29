@@ -135,6 +135,28 @@ class ClassifyErrorTest(unittest.TestCase):
         )
         self.assertEqual(_classify_type(ValueError("x")), ErrorType.UNKNOWN)
 
+    def test_framework_error_in_exception_group(self) -> None:
+        """Concurrent tool execution wraps the fatal exception in an
+        ExceptionGroup; the classifier must look inside it, not just at
+        the outer type."""
+        group = ExceptionGroup(
+            "One or more tool calls raised an exception",
+            [DeveloperOrientedException("boom")],
+        )
+        self.assertEqual(_classify_type(group), ErrorType.INTERNAL)
+
+        # Nested groups (e.g. from multiple concurrent batches) must also
+        # be unwrapped.
+        nested = ExceptionGroup(
+            "outer",
+            [ExceptionGroup("inner", [DeveloperOrientedException("boom")])],
+        )
+        self.assertEqual(_classify_type(nested), ErrorType.INTERNAL)
+
+        # A group with no DeveloperOrientedException inside stays UNKNOWN.
+        unrelated = ExceptionGroup("outer", [ValueError("x")])
+        self.assertEqual(_classify_type(unrelated), ErrorType.UNKNOWN)
+
     def test_classify_error_returns_generic_message(self) -> None:
         """The ErrorInfo carries the generic per-type message, never the
         raw exception text."""
