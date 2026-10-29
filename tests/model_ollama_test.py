@@ -6,6 +6,7 @@ Tests cover both non-streaming and streaming modes.
 Ollama uses ollama.AsyncClient with async iterator streaming.
 """
 import json
+from importlib.util import find_spec
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -403,6 +404,10 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertIsNone(fmt_choice)
 
 
+@unittest.skipUnless(
+    find_spec("ollama"),
+    "Ollama tests require the ollama extra",
+)
 class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
     """The ``think`` option is only sent when explicitly configured."""
 
@@ -424,7 +429,14 @@ class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
         """Default parameters leave ``think`` out of the request so the
         model's own default behavior applies."""
         kwargs = await self._call_and_get_kwargs()
-        self.assertNotIn("think", kwargs)
+        self.assertEqual(
+            kwargs,
+            {
+                "model": "qwen3:8b",
+                "messages": [],
+                "stream": False,
+            },
+        )
 
     async def test_think_true_forwarded(self) -> None:
         """``thinking_enable=True`` sends ``think: true``."""
@@ -432,7 +444,15 @@ class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
             thinking_enable=True,
         )
         kwargs = await self._call_and_get_kwargs()
-        self.assertIs(kwargs["think"], True)
+        self.assertEqual(
+            kwargs,
+            {
+                "model": "qwen3:8b",
+                "messages": [],
+                "stream": False,
+                "think": True,
+            },
+        )
 
     async def test_think_false_forwarded(self) -> None:
         """``thinking_enable=False`` sends ``think: false``."""
@@ -440,7 +460,15 @@ class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
             thinking_enable=False,
         )
         kwargs = await self._call_and_get_kwargs()
-        self.assertIs(kwargs["think"], False)
+        self.assertEqual(
+            kwargs,
+            {
+                "model": "qwen3:8b",
+                "messages": [],
+                "stream": False,
+                "think": False,
+            },
+        )
 
 
 def _api_chat_transport(
