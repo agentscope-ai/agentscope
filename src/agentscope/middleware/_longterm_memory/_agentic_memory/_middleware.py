@@ -476,11 +476,10 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         self._parameters = parameters or self.Parameters()
         self._backend = backend or LocalBackend()
 
-        self._cached_input: str | None = None
-        # The in-flight asynchronous retrieval task started in ``on_reply``
-        # and consumed in ``on_reasoning``. Kept on the instance so the
-        # reasoning hook can poll for completion across iterations.
-        self._retrieval_task: asyncio.Task | None = None
+        # In-flight asynchronous retrieval tasks started in ``on_reply`` and
+        # consumed in ``on_reasoning``. Keyed per session/agent so a shared
+        # middleware instance never lets one concurrent reply clobber another.
+        self._retrieval_tasks: dict[tuple[str | None, int], asyncio.Task] = {}
 
     @staticmethod
     def _truncate_if_needed(content: str, max_length: int) -> str:
@@ -587,6 +586,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
                 Items yielded by ``next_handler``.
         """
 
+        retrieval_key = self._retrieval_key_of(agent)
         if self._parameters.retrieval_async:
             inputs = input_kwargs.get("inputs")
 
@@ -598,8 +598,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             elif isinstance(inputs, Msg):
                 msgs = [inputs]
 
+            cached_input = None
             if msgs is not None:
-                self._cached_input = "\n".join(
+                cached_input = "\n".join(
                     [
                         f"{_.name}: " + _.get_text_content()
                         for _ in msgs
@@ -607,12 +608,16 @@ class AgenticMemoryMiddleware(MiddlewareBase):
                     ],
                 )
 
+            stale = self._retrieval_tasks.pop(retrieval_key, None)
+            if stale is not None and not stale.done():
+                stale.cancel()
+
             # Start an asynchronous retrieval task that uses an LLM to decide
             # which memory files are relevant to the current user input. The
             # result is consumed by ``on_reasoning``.
-            if self._cached_input:
-                self._retrieval_task = asyncio.create_task(
-                    self._retrieve_relevant_files(agent, self._cached_input),
+            if cached_input:
+                self._retrieval_tasks[retrieval_key] = asyncio.create_task(
+                    self._retrieve_relevant_files(agent, cached_input),
                 )
 
         try:
@@ -620,17 +625,13 @@ class AgenticMemoryMiddleware(MiddlewareBase):
                 yield _
         finally:
             # Ensure the retrieval task does not outlive the reply.
-            if (
-                self._retrieval_task is not None
-                and not self._retrieval_task.done()
-            ):
-                self._retrieval_task.cancel()
+            retrieval_task = self._retrieval_tasks.pop(retrieval_key, None)
+            if retrieval_task is not None and not retrieval_task.done():
+                retrieval_task.cancel()
                 try:
-                    await self._retrieval_task
+                    await retrieval_task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-            self._retrieval_task = None
-            self._cached_input = None
 
     async def on_reasoning(
         self,
@@ -655,9 +656,10 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         """
         # Poll the in-flight retrieval task; if it has finished, consume its
         # result and inject it into the agent context exactly once.
-        if self._retrieval_task is not None and self._retrieval_task.done():
-            task = self._retrieval_task
-            self._retrieval_task = None
+        retrieval_key = self._retrieval_key_of(agent)
+        task = self._retrieval_tasks.get(retrieval_key)
+        if task is not None and task.done():
+            self._retrieval_tasks.pop(retrieval_key, None)
             try:
                 retrieval_result = task.result()
             except (asyncio.CancelledError, Exception):
@@ -679,6 +681,12 @@ class AgenticMemoryMiddleware(MiddlewareBase):
     # ========================================================================
     # Helper functions
     # ========================================================================
+
+    @staticmethod
+    def _retrieval_key_of(agent: "Agent") -> tuple[str | None, int]:
+        """Return the key used to isolate one in-flight retrieval task."""
+        session_id = getattr(getattr(agent, "state", None), "session_id", None)
+        return (session_id, id(agent))
 
     @staticmethod
     def _format_manifest(headers: list[_MemoryFileHeader]) -> str:
