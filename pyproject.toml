@@ -82,7 +82,11 @@ mem0ai = [
     "mem0ai<=1.0.3",
     "packaging"
 ]
-reme = ["reme-ai>=0.2.0.3"]
+reme = [
+    # Keep the legacy ReMeApp API and its flowllm.core dependencies.
+    "reme-ai>=0.2.0.3,<0.3",
+    "flowllm<0.3",
+]
 memory = [
     "agentscope[redis_memory]",
     "agentscope[mem0ai]",
