@@ -201,6 +201,20 @@ class TeamPipeline:
                     yield evt
             if self.leader.react_config.interruption_raise_cancelled_error:
                 raise
+        except Exception:
+            # A member's model can fail while the leader is parked on its
+            # TeamAssign call, and nothing else clears that call: the next turn
+            # would fail with "Agent is waiting for ... external execution
+            # results ... but received no event". Clear it the same way an
+            # interrupt does, then let the original error propagate.
+            # GeneratorExit is deliberately not covered -- a consumer closing
+            # the stream is not a member failure.
+            if self.leader.state.has_awaiting_tool_calls(self.leader.name):
+                async for evt in self.reply_stream(
+                    UserInterruptEvent(reply_id=self.leader.state.reply_id),
+                ):
+                    yield evt
+            raise
 
     async def _reply(
         self,
