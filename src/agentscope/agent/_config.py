@@ -388,9 +388,11 @@ class ReActConfig(BaseModel):
         description="Whether to stop replying when being rejected to "
         "execute tools.",
     )
-    """If stop reasoning when tool call(s) are rejected. If `True`, the agent
-    won't continue reasoning and wait for outside interaction from the user.
-    """
+    """If `True`, a tool call denied by the permission check during acting
+    ends the reply with ``ReplyFinishedReason.TOOL_REJECTED`` instead of
+    feeding the denial back for another reasoning round, and the agent waits
+    for the next user input. Denials from a HITL user confirmation still
+    feed back, so the agent can react to the user's choice."""
 
     interruption_message: str = Field(
         title="Interruption Message",
