@@ -42,7 +42,7 @@ from agentscope.app.storage import (
     RedisStorage,
 )
 from agentscope.app.workspace_manager._base import WorkspaceManagerBase
-from agentscope.rag import VectorStoreBase
+from agentscope.rag import RecursiveTokenChunker, VectorStoreBase
 from agentscope.rag._vdb._vector_store import (
     DocumentSummary,
     VectorRecord,
@@ -499,3 +499,31 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["items"], [])
+
+    async def test_default_chunker_registry(self) -> None:
+        """The API should expose both built-in chunker strategies."""
+        headers = {"X-User-ID": "user-1"}
+        self.assertEqual(
+            [
+                chunker.chunker_type
+                for chunker in self._app.state.knowledge_chunkers
+            ],
+            ["approx_token", "recursive_token"],
+        )
+
+        with TestClient(self._app) as client:
+            resp = client.get(
+                "/knowledge_bases/chunkers",
+                headers=headers,
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(
+            [chunker["type"] for chunker in payload["chunkers"]],
+            ["approx_token", "recursive_token"],
+        )
+        self.assertEqual(
+            payload["chunkers"][1]["parameter_schema"],
+            RecursiveTokenChunker.Parameters.model_json_schema(),
+        )
