@@ -307,6 +307,33 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_initial_drain_exhausts_multiple_batches(self) -> None:
+        """A backlog larger than one batch needs no later pub/sub signal."""
+        bus = _FakeBus()
+        worker = _RecordingWorker()
+        queue = MessageBusKeys.index_tasks_queue()
+        for document_id in ("first", "second", "third"):
+            await bus.queue_push(
+                queue,
+                {
+                    "user_id": "u",
+                    "knowledge_base_id": "kb",
+                    "document_id": document_id,
+                },
+            )
+
+        async with IndexTaskConsumer(
+            message_bus=bus,
+            worker=worker,
+            max_batch=2,
+        ):
+            await _yield_a_few_times()
+            self.assertEqual(bus.queues[queue], [])
+            self.assertEqual(
+                {call["document_id"] for call in worker.calls},
+                {"first", "second", "third"},
+            )
+
     async def test_malformed_entry_skipped(self) -> None:
         """A queue entry missing required fields is logged and
         skipped, not raised; later valid entries still dispatch."""
