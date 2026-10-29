@@ -271,6 +271,15 @@ Set up task dependencies:
                 "available task or see if your work unblocked others."
             )
 
+        if not updated_fields:
+            # Nothing was actually applied (no field given, or every value
+            # was unchanged): report the no-op as an error so that the
+            # model does not mistake it for a successful update.
+            return ToolChunk(
+                content=[TextBlock(text=res)],
+                state=ToolResultState.ERROR,
+            )
+
         return ToolChunk(content=[TextBlock(text=res)])
 
     @staticmethod
