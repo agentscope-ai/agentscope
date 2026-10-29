@@ -12,6 +12,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import AnyString
 
@@ -21,9 +22,16 @@ from agentscope.app._bus_ops import (
 )
 from agentscope.app.channel._base import (
     ChannelBase,
+    ChannelAuthConfirmationResultEvent,
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     _EVENT_ADAPTER,
+)
+from agentscope.app.channel._approval import (
+    ChannelApprovalRecord,
+    load_approval,
+    store_approval,
 )
 from agentscope.app.channel._gateway import ChannelGateway
 from agentscope.app.channel._routing import resolve
@@ -699,31 +707,49 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
 
 
 class DecisionRoutingTest(IsolatedAsyncioTestCase):
-    """A click resumes the run that is waiting, not the one routing picks."""
+    """Approval routing and authorization come only from server state."""
+
+    @staticmethod
+    async def _approval(bus: InMemoryMessageBus) -> str:
+        approval_id = "approval-1"
+        await store_approval(
+            bus,
+            approval_id,
+            ChannelApprovalRecord(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                agent_id="agent-x",
+                session_id="the-parked-session",
+                reply_id="reply-1",
+                tool_call_id="call_abc",
+                requester_id="requester-1",
+            ),
+        )
+        return approval_id
 
     async def test_decision_finds_the_waiting_session(self) -> None:
         record = _channel_record("user-1")
-        # Not what routing derives: the platform names the clicker
-        # differently than it named the sender.
         storage = _AwaitingStorage(record, "the-parked-session")
         bus = InMemoryMessageBus()
+        approval_id = await self._approval(bus)
         gw = ChannelGateway(
             storage=storage,
             message_bus=bus,
             workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
         )
 
-        await gw.process(
+        status = await gw.process(
             ChannelConfirmationResultEvent(
                 channel_id="chan-1",
                 chat_id="group:cid-1",
-                channel_user_id="300905",
-                tool_call_id="call_abc",
+                channel_user_id="requester-1",
                 approved=True,
-                actor="300905",
+                actor="requester-1",
+                approval_id=approval_id,
             ),
         )
 
+        self.assertIs(status, ChannelDecisionStatus.ACCEPTED)
         queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
         self.assertEqual(len(queued), 1)
         payload = queued[0][1]
@@ -761,6 +787,244 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
                 },
             },
         )
-        # The routing guess was tried first, then the parked session.
-        self.assertNotEqual(storage.asked[0], "the-parked-session")
-        self.assertIn("the-parked-session", storage.asked)
+        self.assertEqual(storage.asked, ["the-parked-session"])
+        self.assertIsNone(await load_approval(bus, approval_id))
+
+    async def test_non_requester_is_rejected_without_consuming_card(
+        self,
+    ) -> None:
+        record = _channel_record("user-1")
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        approval_id = await self._approval(bus)
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        status = await gw.process(
+            ChannelConfirmationResultEvent(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                channel_user_id="other-user",
+                approved=False,
+                actor="other-user",
+                approval_id=approval_id,
+            ),
+        )
+
+        self.assertIs(status, ChannelDecisionStatus.UNAUTHORIZED)
+        self.assertEqual(
+            await bus.queue_drain(MessageBusKeys.wakeup_queue()),
+            [],
+        )
+        self.assertIsNotNone(await load_approval(bus, approval_id))
+        self.assertEqual(storage.asked, [])
+
+    async def test_missing_requester_fails_closed(self) -> None:
+        record = _channel_record("user-1")
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        approval_id = "approval-without-requester"
+        await store_approval(
+            bus,
+            approval_id,
+            ChannelApprovalRecord(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                agent_id="agent-x",
+                session_id="the-parked-session",
+                reply_id="reply-1",
+                tool_call_id="call_abc",
+                requester_id="",
+            ),
+        )
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        with self.assertLogs("as", level="WARNING"):
+            status = await gw.process(
+                ChannelConfirmationResultEvent(
+                    channel_id="chan-1",
+                    chat_id="group:cid-1",
+                    channel_user_id="any-user",
+                    approved=True,
+                    actor="any-user",
+                    approval_id=approval_id,
+                ),
+            )
+
+        self.assertIs(status, ChannelDecisionStatus.STALE)
+        self.assertEqual(
+            await bus.queue_drain(MessageBusKeys.wakeup_queue()),
+            [],
+        )
+        self.assertIsNotNone(await load_approval(bus, approval_id))
+        self.assertEqual(storage.asked, [])
+
+    async def test_authorization_event_does_not_claim_or_resume(self) -> None:
+        record = _channel_record("user-1")
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        approval_id = await self._approval(bus)
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        status = await gw.process(
+            ChannelAuthConfirmationResultEvent(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                channel_user_id="requester-1",
+                approved=True,
+                actor="requester-1",
+                approval_id=approval_id,
+            ),
+        )
+
+        self.assertIs(status, ChannelDecisionStatus.AUTHORIZED)
+        self.assertEqual(
+            await bus.queue_drain(MessageBusKeys.wakeup_queue()),
+            [],
+        )
+        self.assertIsNotNone(await load_approval(bus, approval_id))
+        self.assertEqual(storage.asked, [])
+
+    async def test_enqueue_failure_releases_decision_claim(self) -> None:
+        record = _channel_record("user-1")
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        approval_id = await self._approval(bus)
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        bus.queue_push = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("queue unavailable"),
+        )
+
+        with self.assertLogs("as", level="ERROR"):
+            status = await gw.process(
+                ChannelConfirmationResultEvent(
+                    channel_id="chan-1",
+                    chat_id="group:cid-1",
+                    channel_user_id="requester-1",
+                    approved=True,
+                    actor="requester-1",
+                    approval_id=approval_id,
+                ),
+            )
+
+        self.assertIs(status, ChannelDecisionStatus.ERROR)
+        self.assertFalse(
+            await bus.is_locked(
+                MessageBusKeys.channel_approval_claim(approval_id),
+            ),
+        )
+        self.assertIsNotNone(await load_approval(bus, approval_id))
+
+    async def test_cancellation_releases_decision_claim(self) -> None:
+        record = _channel_record("user-1")
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        approval_id = await self._approval(bus)
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        enqueue_started = asyncio.Event()
+        keep_enqueue_blocked = asyncio.Event()
+
+        async def blocked_enqueue(*_args: Any, **_kwargs: Any) -> str:
+            enqueue_started.set()
+            await keep_enqueue_blocked.wait()
+            return "never-reached"
+
+        bus.queue_push = AsyncMock(  # type: ignore[method-assign]
+            side_effect=blocked_enqueue,
+        )
+        task = asyncio.create_task(
+            gw.process(
+                ChannelConfirmationResultEvent(
+                    channel_id="chan-1",
+                    chat_id="group:cid-1",
+                    channel_user_id="requester-1",
+                    approved=True,
+                    actor="requester-1",
+                    approval_id=approval_id,
+                ),
+            ),
+        )
+        await asyncio.wait_for(enqueue_started.wait(), timeout=1.0)
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertFalse(
+            await bus.is_locked(
+                MessageBusKeys.channel_approval_claim(approval_id),
+            ),
+        )
+        self.assertIsNotNone(await load_approval(bus, approval_id))
+
+    async def test_concurrent_double_click_enqueues_exactly_once(self) -> None:
+        record = _channel_record("user-1")
+        storage = _AwaitingStorage(record, "the-parked-session")
+        bus = InMemoryMessageBus()
+        approval_id = await self._approval(bus)
+        gw = ChannelGateway(
+            storage=storage,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        event = ChannelConfirmationResultEvent(
+            channel_id="chan-1",
+            chat_id="group:cid-1",
+            channel_user_id="requester-1",
+            approved=True,
+            actor="requester-1",
+            approval_id=approval_id,
+        )
+
+        statuses = await asyncio.gather(gw.process(event), gw.process(event))
+
+        self.assertCountEqual(
+            statuses,
+            [ChannelDecisionStatus.ACCEPTED, ChannelDecisionStatus.STALE],
+        )
+        queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+        self.assertEqual(len(queued), 1)
+
+    async def test_missing_opaque_id_fails_closed(self) -> None:
+        record = _channel_record("user-1")
+        bus = InMemoryMessageBus()
+        gw = ChannelGateway(
+            storage=_AwaitingStorage(record, "the-parked-session"),
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+
+        status = await gw.process(
+            ChannelConfirmationResultEvent(
+                channel_id="chan-1",
+                chat_id="group:cid-1",
+                channel_user_id="requester-1",
+                approved=True,
+                actor="requester-1",
+            ),
+        )
+
+        self.assertIs(status, ChannelDecisionStatus.STALE)
+        self.assertEqual(
+            await bus.queue_drain(MessageBusKeys.wakeup_queue()),
+            [],
+        )

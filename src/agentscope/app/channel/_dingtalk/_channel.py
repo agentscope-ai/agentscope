@@ -13,7 +13,7 @@ import json
 import mimetypes
 import re
 import time
-from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
@@ -29,10 +29,13 @@ from ....message import (
     ToolCallBlock,
     ToolResultBlock,
 )
+from .._approval import approval_id_for
 from .._base import (
+    _EVENT_ADAPTER,
     ChannelBase,
     ChannelCapability,
     ChannelConfirmationResultEvent,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelStatus,
     ChatKind,
@@ -40,13 +43,11 @@ from .._base import (
     WikiNode,
     WikiPage,
     WikiSpace,
-    _EVENT_ADAPTER,
 )
 from ._card import (
     _approval_card_data,
     _parse_card_callback,
     _resolved_card_data,
-    _tracking_id,
 )
 from ._openapi import _DingTalkOpenAPI
 
@@ -194,7 +195,7 @@ class DingTalkChannel(ChannelBase):
         self._emit: (
             Callable[
                 [ChannelEvent | ChannelConfirmationResultEvent],
-                Awaitable[None],
+                Awaitable[ChannelDecisionStatus | None],
             ]
             | None
         ) = None
@@ -209,7 +210,7 @@ class DingTalkChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Start the DingTalk Stream connection until cancelled.
@@ -965,12 +966,25 @@ class DingTalkChannel(ChannelBase):
             else ""
         )
         for tool in request.tool_calls:
+            approval_id = approval_id_for(request, tool.id)
+            if not approval_id:
+                logger.error(
+                    "DingTalk '%s' cannot present approval for tool call '%s' "
+                    "without an approval id",
+                    self._channel_id,
+                    tool.id,
+                )
+                continue
             out_track_id = await self._api().create_approval_card(
                 event.chat_id,
                 approver_id,
                 template_id,
-                _approval_card_data(tool, agent_name),
-                _tracking_id(tool.id),
+                _approval_card_data(tool, agent_name, approval_id),
+                # DingTalk always returns outTrackId on a card callback,
+                # while only explicitly configured button params are echoed.
+                # Reuse the already-random opaque id so built-in and custom
+                # templates can both recover the server-side approval record.
+                approval_id,
             )
             if out_track_id is None:
                 await self._api().send_text(
@@ -997,18 +1011,31 @@ class DingTalkChannel(ChannelBase):
             return
         if self._emit is None:
             return
-        await self._emit(
+        status = await self._emit(
             ChannelConfirmationResultEvent(
                 channel_id=self._channel_id,
                 chat_id=decision.chat_id,
                 channel_user_id=decision.user_id,
-                agent_id=decision.agent_id,
-                session_id=decision.session_id,
-                tool_call_id=decision.tool_call_id,
                 approved=decision.approved,
                 actor=decision.user_id,
+                approval_id=decision.approval_id,
             ),
         )
+        status = status or ChannelDecisionStatus.ACCEPTED
+        if status is not ChannelDecisionStatus.ACCEPTED:
+            if status is ChannelDecisionStatus.UNAUTHORIZED:
+                notice = (
+                    "Only the requester can approve or deny this tool call."
+                )
+            elif status is ChannelDecisionStatus.STALE:
+                notice = "This approval request is no longer pending."
+            else:
+                notice = (
+                    "Your approval permission could not be verified. Please "
+                    "try again later."
+                )
+            await self._api().send_text(decision.chat_id, notice)
+            return
         await self._api().update_approval_card(
             decision.out_track_id,
             _resolved_card_data(decision.approved),
