@@ -52,6 +52,16 @@ class SessionDeleteOwnershipTest(IsolatedAsyncioTestCase):
             MessageBusKeys.inbox(self.session.id),
             {"type": "hint", "hint": "pending work"},
         )
+        self.events_key = MessageBusKeys.session_events(self.session.id)
+        self.checkpoint_key = MessageBusKeys.session_event_checkpoint(
+            self.session.id,
+        )
+        await self.bus.log_append(self.events_key, {"type": "REPLY_START"})
+        await self.bus.registry_set(
+            self.checkpoint_key,
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            "cursor-1",
+        )
         self.service = SessionService(self.storage, self.bus)
 
     async def asyncTearDown(self) -> None:
@@ -83,6 +93,14 @@ class SessionDeleteOwnershipTest(IsolatedAsyncioTestCase):
             [payload["hint"] for _, payload in entries],
             ["pending work"],
         )
+        self.assertEqual(len(await self.bus.log_read(self.events_key)), 1)
+        self.assertEqual(
+            await self.bus.registry_get(
+                self.checkpoint_key,
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            ),
+            "cursor-1",
+        )
 
     async def test_owned_delete_still_cancels_and_purges(self) -> None:
         """The owner still gets the full cancel, delete and purge flow."""
@@ -105,4 +123,11 @@ class SessionDeleteOwnershipTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             await self.bus.queue_drain(MessageBusKeys.inbox(self.session.id)),
             [],
+        )
+        self.assertEqual(await self.bus.log_read(self.events_key), [])
+        self.assertIsNone(
+            await self.bus.registry_get(
+                self.checkpoint_key,
+                MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            ),
         )
