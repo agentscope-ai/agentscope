@@ -11,6 +11,7 @@ from agentscope.message import (
     Base64Source,
     ThinkingBlock,
     AssistantMsg,
+    SystemMsg,
     HintBlock,
     Msg,
     ToolCallBlock,
@@ -218,6 +219,36 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "usage": None,
             },
         )
+
+
+    async def test_single_content_block(self) -> None:
+        """A lone ContentBlock is wrapped like a plain string (#3305)."""
+        user_text = UserMsg(name="user", content=TextBlock(text="hi"))
+        self.assertEqual(len(user_text.content), 1)
+        self.assertEqual(user_text.content[0].type, "text")
+        self.assertEqual(user_text.content[0].text, "hi")
+
+        user_data = UserMsg(
+            name="user",
+            content=DataBlock(
+                source=Base64Source(
+                    data="aGVsbG8=",
+                    media_type="text/plain",
+                ),
+            ),
+        )
+        self.assertEqual(len(user_data.content), 1)
+        self.assertEqual(user_data.content[0].type, "data")
+        self.assertEqual(user_data.content[0].source.data, "aGVsbG8=")
+
+        assistant = AssistantMsg(name="assistant", content=TextBlock(text="ok"))
+        self.assertEqual(len(assistant.content), 1)
+        self.assertEqual(assistant.content[0].text, "ok")
+
+        system = SystemMsg(name="system", content=TextBlock(text="rules"))
+        self.assertEqual(len(system.content), 1)
+        self.assertEqual(system.content[0].text, "rules")
+
 
     async def test_invalid_message(self) -> None:
         """Test invalid message creation."""

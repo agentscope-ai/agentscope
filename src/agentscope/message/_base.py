@@ -47,10 +47,28 @@ def _assert_system_content_blocks(
             raise ValueError("System message can only contain text blocks.")
 
 
-def _to_blocks(content: str | list) -> list:
-    """Convert a plain string to a single-element TextBlock list."""
+def _to_blocks(content: str | list | ContentBlock) -> list:
+    """Normalize message content to a list of content blocks.
+
+    A plain string becomes a single-element :class:`TextBlock` list. A lone
+    :class:`ContentBlock` is wrapped the same way so callers bridging from a
+    UI event or tool result can pass one block without hitting a multi-error
+    pydantic ``ValidationError`` on ``Msg.content``.
+    """
     if isinstance(content, str):
         return [TextBlock(text=content)]
+    if isinstance(
+        content,
+        (
+            TextBlock,
+            ThinkingBlock,
+            HintBlock,
+            ToolCallBlock,
+            ToolResultBlock,
+            DataBlock,
+        ),
+    ):
+        return [content]
     return content
 
 
@@ -568,7 +586,7 @@ class Msg(BaseModel):
 
 def UserMsg(
     name: str,
-    content: str | list[TextBlock | DataBlock],
+    content: str | TextBlock | DataBlock | list[TextBlock | DataBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
@@ -580,10 +598,11 @@ def UserMsg(
     Args:
         name (`str`):
             The name of the sender.
-        content (`str | list[TextBlock | DataBlock]`):
-            The message content. A plain string will be automatically wrapped
-            in a :class:`TextBlock`. Only :class:`TextBlock` and
-            :class:`DataBlock` are allowed for user messages.
+        content (`str | TextBlock | DataBlock | list[TextBlock | DataBlock]`):
+            The message content. A plain string or a single block will be
+            automatically wrapped in a one-element list. Only
+            :class:`TextBlock` and :class:`DataBlock` are allowed for user
+            messages.
         metadata (`dict | None`, optional):
             Arbitrary key-value metadata attached to the message. Defaults to
             an empty dict when not provided.
@@ -621,7 +640,7 @@ def UserMsg(
 
 def AssistantMsg(
     name: str,
-    content: str | list[ContentBlock],
+    content: str | ContentBlock | list[ContentBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
@@ -635,10 +654,11 @@ def AssistantMsg(
     Args:
         name (`str`):
             The name of the sender.
-        content (`str | list[ContentBlock]`):
-            The message content. A plain string will be automatically wrapped
-            in a :class:`TextBlock`. Any :class:`ContentBlock` subtype is
-            permitted for assistant messages.
+        content (`str | ContentBlock | list[ContentBlock]`):
+            The message content. A plain string or a single block will be
+            automatically wrapped in a one-element list. Any
+            :class:`ContentBlock` subtype is permitted for assistant
+            messages.
         metadata (`dict | None`, optional):
             Arbitrary key-value metadata attached to the message. Defaults to
             an empty dict when not provided.
@@ -678,7 +698,7 @@ def AssistantMsg(
 
 def SystemMsg(
     name: str,
-    content: str | list[TextBlock],
+    content: str | TextBlock | list[TextBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
@@ -690,10 +710,10 @@ def SystemMsg(
     Args:
         name (`str`):
             The name of the sender.
-        content (`str | list[TextBlock]`):
-            The message content. A plain string will be automatically wrapped
-            in a :class:`TextBlock`. Only :class:`TextBlock` is allowed for
-            system messages.
+        content (`str | TextBlock | list[TextBlock]`):
+            The message content. A plain string or a single :class:`TextBlock`
+            will be automatically wrapped in a one-element list. Only
+            :class:`TextBlock` is allowed for system messages.
         metadata (`dict | None`, optional):
             Arbitrary key-value metadata attached to the message. Defaults to
             an empty dict when not provided.
