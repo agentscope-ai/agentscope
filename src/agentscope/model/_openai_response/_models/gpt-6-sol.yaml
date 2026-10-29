@@ -18,9 +18,5 @@ context_size: 1050000
 output_size: 128000
 
 parameter_overrides:
-  # The adapter gates effort on thinking_enable, which is auto-hidden.
-  # Keep the provider's default reasoning until that gate is updated.
-  reasoning_effort:
-    hidden: true
   temperature:
     hidden: true

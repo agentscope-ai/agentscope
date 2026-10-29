@@ -558,6 +558,9 @@
 	},
 	"model-parameters": {
 		"title": "Model Parameters",
+		"booleanDefault": "Default",
+		"booleanEnabled": "On",
+		"booleanDisabled": "Off",
 		"description": "Adjust inference parameters for the selected model.",
 		"empty": "No configurable parameters.",
 		"fallbackLabel": "Fallback model",

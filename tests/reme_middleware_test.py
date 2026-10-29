@@ -21,6 +21,7 @@ from typing import Any
 from utils import MockModel
 
 from agentscope.agent import Agent
+from agentscope.credential import OpenAICredential
 from agentscope.event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
@@ -34,6 +35,9 @@ from agentscope.message import (
 )
 from agentscope.embedding import EmbeddingModelBase
 from agentscope.middleware import ReMeMiddleware
+from agentscope.middleware._longterm_memory._reme._config import (
+    _build_reme_app_config,
+)
 from agentscope.middleware._longterm_memory._reme._utils import (
     _extract_memory_texts,
     _extract_query_text,
@@ -341,7 +345,7 @@ def _msg_text(m: Any) -> str:
     records dicts whose ``content`` is a list of typed blocks.
     """
     if hasattr(m, "get_text_content"):
-        return m.get_text_content() or ""
+        return m.get_text_content()
     content = m.get("content") if isinstance(m, dict) else None
     if isinstance(content, str):
         return content
@@ -525,6 +529,10 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             ["daily_dir", "digest_dir"],
         )
         components = captured["components"]
+        self.assertEqual(
+            components["as_llm"]["default"]["parameters"],
+            {"max_tokens": 65_536, "thinking_enable": None},
+        )
         self.assertEqual(set(components["file_catalog"]), {"dream"})
         self.assertNotIn("as_embedding", components)
         self.assertNotIn("embedding_store", components)
@@ -532,6 +540,55 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             components["file_store"]["default"]["embedding_store"],
             "",
         )
+
+    async def test_default_llm_omits_thinking_request_parameters(self) -> None:
+        """The environment-backed OpenAI path leaves thinking unspecified."""
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "LLM_API_KEY": "test",
+                "LLM_BASE_URL": "https://example.test/compatible-mode/v1",
+            },
+            clear=True,
+        ):
+            config = _build_reme_app_config(workspace_dir="memory")
+
+        llm_config = config["components"]["as_llm"]["default"]
+        self.assertEqual(llm_config["backend"], "openai")
+        credential = OpenAICredential(**llm_config["credential"])
+        model_cls = credential.get_chat_model_class()
+        parameters = model_cls.Parameters(**llm_config["parameters"])
+        stream = mock.MagicMock()
+        stream.__aenter__.return_value = stream
+        stream.__aiter__.return_value = []
+        mock_create = mock.AsyncMock(return_value=stream)
+
+        with mock.patch("openai.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.chat.completions.create = mock_create
+            model = model_cls(
+                credential=credential,
+                model=llm_config["model"],
+                parameters=parameters,
+                stream=llm_config["stream"],
+                context_size=llm_config["context_size"],
+                max_retries=llm_config["max_retries"],
+            )
+            response = await model([])
+            assert not isinstance(response, ChatResponse)
+            async for _ in response:
+                pass
+
+        self.assertEqual(
+            mock_create.call_args.kwargs,
+            {
+                "model": "qwen3.7-plus",
+                "messages": [],
+                "stream": True,
+                "max_completion_tokens": 65_536,
+                "stream_options": {"include_usage": True},
+            },
+        )
+        mock_create.assert_awaited_once()
 
     def test_embedding_model_enables_internal_vector_store(self) -> None:
         """An embedding model extends the minimal config with vector search."""

@@ -214,6 +214,58 @@ class TestXAINonStream(IsolatedAsyncioTestCase):
         self.model = _make_model(stream=False)
 
     @patch("xai_sdk.AsyncClient")
+    async def test_thinking_enable_nullable(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Null and true toggles allow an explicit reasoning effort."""
+        self.assertIsNone(XAIChatModel.Parameters().thinking_enable)
+        mock_create = mock_client_cls.return_value.chat.create
+        mock_create.return_value = _MockChatStream(
+            sample_response=_mock_completion(text="Hi"),
+        )
+        mock_client_cls.return_value.close = AsyncMock()
+
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": True},
+        ):
+            for effort in (None, "high"):
+                with self.subTest(params=params, effort=effort):
+                    self.model.parameters = XAIChatModel.Parameters(
+                        **params,
+                        reasoning_effort=effort,
+                    )
+                    await self.model([])
+
+                    expected = {"model": "grok-3"}
+                    if effort is not None:
+                        expected["reasoning_effort"] = "high"
+                    self.assertEqual(mock_create.call_args.kwargs, expected)
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_thinking_disable_rejected(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Reject disabling thinking before creating an SDK client."""
+        for stream in (False, True):
+            for effort in (None, "high"):
+                with self.subTest(stream=stream, effort=effort):
+                    self.model.stream = stream
+                    self.model.parameters = XAIChatModel.Parameters(
+                        thinking_enable=False,
+                        reasoning_effort=effort,
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "xAI SDK does not support disabling thinking",
+                    ):
+                        await self.model([])
+                    mock_client_cls.assert_not_called()
+
+    @patch("xai_sdk.AsyncClient")
     async def test_text_response(self, mock_client_cls: MagicMock) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_chat = _MockChatStream(

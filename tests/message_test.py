@@ -23,6 +23,43 @@ from agentscope.message import (
 class MessageTest(IsolatedAsyncioTestCase):
     """The template test case."""
 
+    def test_get_text_content(self) -> None:
+        """Extract only top-level text and always return a string."""
+        data = DataBlock(
+            source=URLSource(
+                url="https://example.com/image.png",
+                media_type="image/png",
+            ),
+        )
+        thinking = ThinkingBlock(thinking="internal reasoning")
+        result = ToolResultBlock(
+            id="tool-result",
+            name="tool",
+            output=[TextBlock(text="nested text")],
+        )
+        cases = [
+            ([], "\n", ""),
+            ([data, thinking, result], "\n", ""),
+            ([TextBlock(text="")], "\n", ""),
+            ([TextBlock(text="hello")], "\n", "hello"),
+            (
+                [TextBlock(text="first"), data, TextBlock(text="second")],
+                "\n",
+                "first\nsecond",
+            ),
+            (
+                [TextBlock(text="first"), thinking, TextBlock(text="last")],
+                " | ",
+                "first | last",
+            ),
+            ([TextBlock(text=""), TextBlock(text="")], "\n", "\n"),
+            ([TextBlock(text="a"), TextBlock(text="b")], "", "ab"),
+        ]
+        for content, separator, expected in cases:
+            with self.subTest(content=content, separator=separator):
+                msg = AssistantMsg(name="assistant", content=content)
+                self.assertEqual(msg.get_text_content(separator), expected)
+
     async def test_creating_message(self) -> None:
         """The template test."""
         # Test string content
