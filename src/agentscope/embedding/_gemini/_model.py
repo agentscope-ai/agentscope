@@ -267,6 +267,17 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
 
         return batches
 
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[type[Exception], ...]:
+        """Return Gemini exceptions that warrant a retry."""
+        from google.genai import errors
+
+        # Mirrors the Gemini chat model: APIError is the common parent of
+        # ClientError (4xx) and ServerError (5xx), and 429 surfaces as
+        # ClientError — so we accept the wider set to make sure rate
+        # limits are retried.
+        return (errors.APIError,)
+
     # ------------------------------------------------------------------
     # _call_api — single batch
     # ------------------------------------------------------------------
