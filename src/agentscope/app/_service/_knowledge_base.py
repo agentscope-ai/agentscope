@@ -186,6 +186,11 @@ class KnowledgeBaseService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=str(exc),
             ) from exc
+        except KnowledgeBaseNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
 
     async def list_knowledge_bases(
         self,
@@ -288,7 +293,16 @@ class KnowledgeBaseService:
                 view.embedding_model_config.credential_id,
             )
             if cache_key not in credential_names:
-                credential = await self._storage.get_credential(*cache_key)
+                try:
+                    credential = await self._access.get_resource(
+                        view.owner_id,
+                        ResourceKind.CREDENTIAL,
+                        view.embedding_model_config.credential_id,
+                    )
+                except HTTPException as exc:
+                    if exc.status_code != status.HTTP_404_NOT_FOUND:
+                        raise
+                    credential = None
                 credential_names[cache_key] = (
                     credential.data.get("name")
                     if credential is not None
