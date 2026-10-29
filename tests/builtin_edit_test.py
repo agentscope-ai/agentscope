@@ -4,7 +4,8 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import Edit
+from agentscope.state import AgentState
+from agentscope.tool import Edit, Read
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -125,6 +126,48 @@ class EditToolTest(IsolatedAsyncioTestCase):
                             "metadata": {},
                         },
                     )
+
+    async def test_preserves_crlf_line_endings(self) -> None:
+        """A CRLF file keeps its line endings after an edit."""
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"line1\r\nHello World\r\nline3\r\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="Hello World",
+            new_string="Hi",
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(
+                stream.read(),
+                b"line1\r\nHi\r\nline3\r\n",
+            )
+
+    async def test_preserves_crlf_line_endings_after_read(self) -> None:
+        """The cached Read text must not flatten CRLF on a later edit."""
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"line1\r\nHello World\r\nline3\r\n")
+        state = AgentState()
+
+        await Read()(
+            file_path=self.temp_file.name,
+            _agent_state=state,
+        )
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="Hello World",
+            new_string="Hi",
+            _agent_state=state,
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(
+                stream.read(),
+                b"line1\r\nHi\r\nline3\r\n",
+            )
 
     async def test_whitespace_target_can_be_deleted(self) -> None:
         """A nonempty whitespace target and an empty replacement are valid."""
