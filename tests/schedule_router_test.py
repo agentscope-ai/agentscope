@@ -164,17 +164,44 @@ class ScheduleHttpEndTimeTest(TestCase):
         }
         created = self.client.post("/schedule/", json=payload)
         self.assertEqual(created.status_code, 201, created.text)
+        record = self.storage.upserted[0]
+        # Reuse generated metadata, but derive business fields from input.
+        expected_record = {
+            "id": record.id,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+            "user_id": "user-1",
+            "agent_id": "agent-1",
+            "data": {
+                **{k: v for k, v in payload.items() if k != "agent_id"},
+                "started_at": record.data.started_at,
+                "ended_at": datetime.fromisoformat(payload["ended_at"]),
+                "permission_mode": PermissionMode(payload["permission_mode"]),
+                "source": "USER",
+                "source_session_id": "",
+            },
+        }
+        self.assertEqual(created.json(), {"schedule_id": record.id})
+        self.assertEqual(
+            [r.model_dump() for r in self.storage.upserted],
+            [expected_record],
+        )
+        self.assertEqual(self.scheduler.notified, [record.id])
         listed = self.client.get("/schedule/")
         self.assertEqual(listed.status_code, 200, listed.text)
-        records = listed.json()["schedules"]
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["id"], created.json()["schedule_id"])
         self.assertEqual(
-            datetime.fromisoformat(records[0]["data"]["ended_at"]),
-            datetime.fromisoformat(payload["ended_at"]),
+            listed.json(),
+            {
+                "schedules": [
+                    ScheduleRecord.model_validate(expected_record).model_dump(
+                        mode="json",
+                    ),
+                ],
+                "total": 1,
+            },
         )
         trigger = SchedulerManager.validate_schedule(
-            ScheduleRecord.model_validate(records[0]),
+            ScheduleRecord.model_validate(listed.json()["schedules"][0]),
         )
         last_day = datetime(2099, 12, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
         last_fire = trigger.get_next_fire_time(None, last_day)
@@ -188,13 +215,37 @@ class ScheduleHttpEndTimeTest(TestCase):
 
     def test_invalid_end_time_returns_422_without_side_effects(self) -> None:
         """Malformed, naive, and expired end times fail before writes."""
-        for ended_at in (
-            "not-a-date",
-            # An offset is required: a naive value would be stored without
-            # the zone that gave it meaning.
-            "2099-12-31T23:59:59",
-            "2000-01-01T00:00:00Z",
-        ):
+        cases = (
+            (
+                "not-a-date",
+                [
+                    {
+                        "type": "datetime_from_date_parsing",
+                        "loc": ["body", "ended_at"],
+                        "msg": "Input should be a valid datetime or date, "
+                        "invalid character in year",
+                        "input": "not-a-date",
+                        "ctx": {"error": "invalid character in year"},
+                    },
+                ],
+            ),
+            (
+                "2099-12-31T23:59:59",
+                [
+                    {
+                        "type": "timezone_aware",
+                        "loc": ["body", "ended_at"],
+                        "msg": "Input should have timezone info",
+                        "input": "2099-12-31T23:59:59",
+                    },
+                ],
+            ),
+            (
+                "2000-01-01T00:00:00Z",
+                "ended_at must be later than started_at",
+            ),
+        )
+        for ended_at, expected_detail in cases:
             with self.subTest(ended_at=ended_at):
                 response = self.client.post(
                     "/schedule/",
@@ -204,6 +255,7 @@ class ScheduleHttpEndTimeTest(TestCase):
                     },
                 )
                 self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(response.json(), {"detail": expected_detail})
                 self.assertListEqual(self.storage.upserted, [])
                 self.assertListEqual(self.scheduler.notified, [])
 
@@ -323,18 +375,45 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
         for extra in cases:
             with self.subTest(extra=extra):
                 storage = _Storage()
+                scheduler = _Scheduler()
+                payload = {
+                    **_request("0 9 * * *").model_dump(
+                        exclude={"ended_at"},
+                    ),
+                    **extra,
+                }
                 request = CreateScheduleRequest.model_validate(
-                    {**_request("0 9 * * *").model_dump(), **extra},
+                    payload,
                 )
-                await create_schedule(
+                self.assertEqual(
+                    "ended_at" in request.model_fields_set,
+                    "ended_at" in extra,
+                )
+                response = await create_schedule(
                     request,
                     user_id="user-1",
                     storage=storage,
                     access=_Access(),
-                    scheduler=_Scheduler(),
+                    scheduler=scheduler,
                 )
                 record = storage.upserted[0]
-                self.assertIsNone(record.data.ended_at)
+                self.assertEqual(
+                    [r.data.model_dump() for r in storage.upserted],
+                    [
+                        {
+                            **request.model_dump(exclude={"agent_id"}),
+                            "ended_at": None,
+                            "started_at": record.data.started_at,
+                            "source": "USER",
+                            "source_session_id": "",
+                        },
+                    ],
+                )
+                self.assertEqual(
+                    response.model_dump(),
+                    {"schedule_id": record.id},
+                )
+                self.assertEqual(scheduler.notified, [record.id])
                 trigger = SchedulerManager.validate_schedule(record)
                 self.assertIsNotNone(
                     trigger.get_next_fire_time(
