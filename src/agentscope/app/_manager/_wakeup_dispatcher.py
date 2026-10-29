@@ -272,6 +272,60 @@ class WakeupDispatcher:
                 )
                 return
 
+        try:
+            await self._spawn_or_defer(
+                user_id,
+                session_id,
+                agent_id,
+                kind,
+                input_msg,
+            )
+        except Exception:  # pylint: disable=broad-except
+            # A bus or storage error must not escape: it would end
+            # ``_loop`` (no trigger is dispatched again until restart) and
+            # strand the rest of the drained batch, which is already off
+            # the queue. Re-queue this trigger like a busy session's.
+            logger.exception(
+                "WakeupDispatcher: failed to dispatch %s trigger for "
+                "session %s; re-queuing it.",
+                kind,
+                session_id,
+            )
+            self._schedule_retry(
+                user_id,
+                session_id,
+                agent_id,
+                kind,
+                input_msg,
+            )
+
+    async def _spawn_or_defer(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        kind: str,
+        input_msg: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | UserInterruptEvent
+        | Msg
+        | None,
+    ) -> None:
+        """Spawn the run for a parsed trigger, or re-queue it while the
+        session is busy.
+
+        Args:
+            user_id (`str`):
+                The owning user id.
+            session_id (`str`):
+                The session to trigger.
+            agent_id (`str`):
+                The agent that owns the session.
+            kind (`str`):
+                Trigger kind (``wake`` / ``resume`` / ``message``).
+            input_msg:
+                The parsed input to deliver, ``None`` for ``wake``.
+        """
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
