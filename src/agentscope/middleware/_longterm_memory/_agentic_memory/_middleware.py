@@ -601,9 +601,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             if msgs is not None:
                 self._cached_input = "\n".join(
                     [
-                        f"{_.name}: " + _.get_text_content()
+                        f"{_.name}: {_.get_text_content()}"
                         for _ in msgs
-                        if _.get_text_content() is not None
+                        if _.has_content_blocks("text")
                     ],
                 )
 

@@ -152,10 +152,14 @@ class Msg(BaseModel):
         typs = [block_type] if isinstance(block_type, str) else block_type
         return any(b.type in typs for b in self.content)
 
-    def get_text_content(self, separator: str = "\n") -> str | None:
-        """Get the concatenated text from all TextBlocks."""
+    def get_text_content(self, separator: str = "\n") -> str:
+        """Join all top-level TextBlocks, returning "" if none are present.
+
+        Use ``has_content_blocks("text")`` to distinguish missing text
+        blocks from text blocks containing empty strings.
+        """
         gathered = [b.text for b in self.content if b.type == "text"]
-        return separator.join(gathered) if gathered else None
+        return separator.join(gathered)
 
     @overload
     def get_content_blocks(
