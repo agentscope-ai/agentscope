@@ -379,11 +379,12 @@ class MongoDBStore(VectorStoreBase):
             },
         ]
 
+        sign = -1 if self._distance == "euclidean" else 1
         results: list[VectorSearchResult] = []
         async for doc in await col.aggregate(pipeline):
             results.append(
                 VectorSearchResult(
-                    score=float(doc["score"]),
+                    score=sign * float(doc["score"]),
                     document_id=doc["document_id"],
                     chunk=Chunk.model_validate(doc["chunk"]),
                 ),

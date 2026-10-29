@@ -585,6 +585,40 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                     ],
                 )
 
+    async def test_euclidean_search_negates_distance(self) -> None:
+        """Euclidean distances follow the higher-is-better score contract."""
+        store = MongoDBStore(
+            uri="mongodb://mock",
+            database="test-db",
+            distance="euclidean",
+        )
+        record = _make_record("A", [1.0, 0.0, 0.0], document_id="doc-1")
+        collection = SimpleNamespace(
+            aggregate=AsyncMock(
+                return_value=_FakeAsyncIterator(
+                    [
+                        {
+                            "document_id": "doc-1",
+                            "chunk": record.chunk.model_dump(mode="json"),
+                            "score": 2.5,
+                        },
+                    ],
+                ),
+            ),
+        )
+
+        with (
+            patch.object(store, "_ensure_index_ready", new=AsyncMock()),
+            patch.object(store, "_col", return_value=collection),
+        ):
+            results = await store.search(
+                "kb-1",
+                query_vector=[1.0, 0.0, 0.0],
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].score, -2.5)
+
     async def test_search_top_k_exceeds_limit(self) -> None:
         """An oversized search is rejected before accessing MongoDB."""
         store = MongoDBStore(uri="mongodb://mock", database="test-db")
