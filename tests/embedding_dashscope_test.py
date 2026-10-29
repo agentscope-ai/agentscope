@@ -193,6 +193,32 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         )
 
     @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_text_response_indices_restore_input_order(
+        self,
+        mock_api: Any,
+    ) -> None:
+        """Indexed vectors must match their inputs even when reversed."""
+        response = _text_resp([[0.0, 1.0], [1.0, 0.0]])
+        response.output["embeddings"][0]["text_index"] = 1
+        response.output["embeddings"][1]["text_index"] = 0
+        mock_api.return_value = response
+
+        with tempfile.TemporaryDirectory() as directory:
+            model = DashScopeEmbeddingModel(
+                credential=_cred(),
+                model="text-embedding-v4",
+                dimensions=2,
+                embedding_cache=FileEmbeddingCache(cache_dir=directory),
+            )
+            first = await model(["first", "second"])
+            cached = await model(["first", "second"])
+
+        self.assertEqual(first.embeddings, [[1.0, 0.0], [0.0, 1.0]])
+        self.assertEqual(cached.embeddings, first.embeddings)
+        self.assertEqual(cached.source, "cache")
+        mock_api.assert_called_once()
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_text_api_key_override_with_cache(
         self,
         mock_api: Any,
@@ -274,6 +300,29 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
 
 class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
     """Test multimodal batching, SDK requests, and embedding caches."""
+
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_multimodal_response_indices_restore_input_order(
+        self,
+        sdk: Any,
+    ) -> None:
+        """Independent text and image vectors follow input indices."""
+        sdk.return_value = SimpleNamespace(
+            status_code=200,
+            output={
+                "embeddings": [
+                    {"index": 1, "embedding": [0.0, 1.0]},
+                    {"index": 0, "embedding": [1.0, 0.0]},
+                ],
+            },
+            usage={"input_tokens": 2, "image_tokens": 0},
+        )
+        model = _multimodal_model(2, name="qwen3-vl-embedding")
+
+        result = await model(["first", _img()])
+
+        self.assertEqual(result.embeddings, [[1.0, 0.0], [0.0, 1.0]])
+        sdk.assert_called_once()
 
     async def test_multimodal_text_and_image(self) -> None:
         """Multimodal call with text + image."""

@@ -112,7 +112,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         credential: CredentialBase,
         model: str,
         dimensions: int | None,
-        parameters: "DashScopeEmbeddingModel.Parameters | None" = None,
+        parameters: "EmbeddingModelBase.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
         max_retries: int = 3,
@@ -387,9 +387,10 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope text embedding API error: {response}",
             )
 
-        embeddings = [
-            entry["embedding"] for entry in response.output["embeddings"]
-        ]
+        embeddings = self._ordered_embeddings(
+            response.output["embeddings"],
+            "text_index",
+        )
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,
@@ -472,7 +473,10 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        embeddings = self._ordered_embeddings(
+            res.output["embeddings"],
+            "index",
+        )
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,
@@ -491,6 +495,28 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _ordered_embeddings(
+        entries: list[dict[str, Any]],
+        index_key: str,
+    ) -> list[list[float]]:
+        """Restore input order when every response entry has an index.
+
+        Responses without indices keep their existing positional behavior.
+
+        Args:
+            entries (`list[dict[str, Any]]`):
+                Embedding entries returned by the provider.
+            index_key (`str`):
+                Provider field containing the input position.
+
+        Returns:
+            `list[list[float]]`: Vectors in input order.
+        """
+        if all(index_key in entry for entry in entries):
+            entries = sorted(entries, key=lambda entry: entry[index_key])
+        return [entry["embedding"] for entry in entries]
 
     @staticmethod
     def _format_data_block(block: DataBlock) -> dict[str, str]:
