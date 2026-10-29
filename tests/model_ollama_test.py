@@ -6,7 +6,6 @@ Tests cover both non-streaming and streaming modes.
 Ollama uses ollama.AsyncClient with async iterator streaming.
 """
 import json
-from importlib.util import find_spec
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -404,10 +403,6 @@ class TestOllamaFormatTools(unittest.TestCase):
         self.assertIsNone(fmt_choice)
 
 
-@unittest.skipUnless(
-    find_spec("ollama"),
-    "Ollama tests require the ollama extra",
-)
 class TestOllamaThinkParameter(IsolatedAsyncioTestCase):
     """The ``think`` option is only sent when explicitly configured."""
 
