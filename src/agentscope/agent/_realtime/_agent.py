@@ -523,7 +523,7 @@ class RealtimeAgent:
                     if isinstance(inputs, str)
                     else inputs
                 )
-                text = msg.get_text_content() or ""
+                text = msg.get_text_content()
                 await self._barge_in()
                 # A typed turn reconnects the session the way audio does,
                 # and takes the audio kept meanwhile along with it.
@@ -915,13 +915,13 @@ class RealtimeAgent:
         context = self.state.context
         if context and context[-1].role == "assistant":
             tail = context[-1]
-            if not (tail.get_text_content() or "").strip() and all(
+            if not tail.get_text_content().strip() and all(
                 isinstance(b, TextBlock) for b in tail.content
             ):
                 context.pop()
         if not context or context[-1].role != "user":
             return False
-        previous = context[-1].get_text_content() or ""
+        previous = context[-1].get_text_content()
         context[-1].content = [TextBlock(text=f"{previous}{text}")]
         return True
 
