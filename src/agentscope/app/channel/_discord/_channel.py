@@ -40,6 +40,24 @@ _MAX_LEN = 2000
 _MAX_CONNECT_ATTEMPTS = 2
 
 
+def _is_expected_discord_lookup_error(exc: Exception) -> bool:
+    """Return whether ``exc`` is an expected discord.py lookup failure."""
+    try:
+        import discord
+    except ImportError:
+        return False
+    expected_errors = tuple(
+        error_type
+        for error_type in (
+            getattr(discord, "NotFound", None),
+            getattr(discord, "Forbidden", None),
+            getattr(discord, "HTTPException", None),
+        )
+        if isinstance(error_type, type)
+    )
+    return bool(expected_errors) and isinstance(exc, expected_errors)
+
+
 class DiscordChannel(ChannelBase):
     """Discord platform channel."""
 
@@ -392,15 +410,20 @@ class DiscordChannel(ChannelBase):
 
         client = await self._ensure_client()
         results: list[dict] = []
-        async for guild in client.fetch_guilds():
-            for channel in await guild.fetch_channels():
-                if isinstance(channel, discord.TextChannel):
-                    results.append(
-                        {
-                            "chat_id": str(channel.id),
-                            "name": f"{guild.name}#{channel.name}",
-                        },
-                    )
+        try:
+            async for guild in client.fetch_guilds():
+                for channel in await guild.fetch_channels():
+                    if isinstance(channel, discord.TextChannel):
+                        results.append(
+                            {
+                                "chat_id": str(channel.id),
+                                "name": f"{guild.name}#{channel.name}",
+                            },
+                        )
+        except Exception as exc:  # pylint: disable=broad-except
+            if not _is_expected_discord_lookup_error(exc):
+                raise
+            logger.debug("Discord chat listing failed", exc_info=True)
         return results
 
     async def chat_kind(self, chat_id: str) -> ChatKind | None:
@@ -410,11 +433,11 @@ class DiscordChannel(ChannelBase):
         Args:
             chat_id (`str`): The Discord channel id as a string.
         """
-        import discord
-
         channel = await self._channel(chat_id)
         if channel is None:
             return None
+        import discord
+
         return (
             ChatKind.PRIVATE
             if isinstance(channel, discord.DMChannel)
@@ -444,14 +467,25 @@ class DiscordChannel(ChannelBase):
 
         Returns:
             `discord.abc.Messageable | None`:
-                The channel, or ``None`` if the id is malformed.
+                The channel, or ``None`` if the id is malformed or the
+                platform lookup fails.
         """
         try:
             cid = int(chat_id)
         except (TypeError, ValueError):
             return None
         client = await self._ensure_client()
-        return client.get_channel(cid) or await client.fetch_channel(cid)
+        try:
+            return client.get_channel(
+                cid,
+            ) or await client.fetch_channel(
+                cid,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            if not _is_expected_discord_lookup_error(exc):
+                raise
+            logger.debug("Discord channel lookup failed", exc_info=True)
+            return None
 
     def _build_view(
         self,
