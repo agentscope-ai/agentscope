@@ -22,7 +22,7 @@ from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool import ExecResult, LocalBackend
-from agentscope.tool._builtin._backend import _normalize_newlines
+from agentscope.tool._builtin._backend import BackendBase, _normalize_newlines
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -336,6 +336,49 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
         await self.backend.write_file(path, b"abcdefg")
         chunks = [c async for c in self.backend.read_stream(path, 3)]
         self.assertEqual(chunks, [b"abc", b"def", b"g"])
+
+    async def test_read_stream_rejects_nonpositive_chunk_sizes(self) -> None:
+        """Invalid sizes must fail consistently instead of losing data."""
+        path = os.path.join(self.temp_dir.name, "stream.bin")
+        for content in (b"", b"abcdefg"):
+            await self.backend.write_file(path, content)
+            for backend_type in (BackendBase, LocalBackend):
+                for chunk_size in (0, -1):
+                    with self.subTest(
+                        content=content,
+                        backend=backend_type.__name__,
+                        chunk_size=chunk_size,
+                    ):
+                        with self.assertRaisesRegex(
+                            ValueError,
+                            "^chunk_size must be greater than zero$",
+                        ):
+                            _ = [
+                                chunk
+                                async for chunk in backend_type.read_stream(
+                                    self.backend,
+                                    path,
+                                    chunk_size,
+                                )
+                            ]
+
+    async def test_default_read_stream_preserves_chunk_boundaries(
+        self,
+    ) -> None:
+        """The fallback reader retains exact data with valid sizes."""
+        path = os.path.join(self.temp_dir.name, "fallback.bin")
+        await self.backend.write_file(path, b"abcdefg")
+        self.assertEqual(
+            [
+                chunk
+                async for chunk in BackendBase.read_stream(
+                    self.backend,
+                    path,
+                    3,
+                )
+            ],
+            [b"abc", b"def", b"g"],
+        )
 
     async def test_read_stream_empty_file_yields_nothing(self) -> None:
         """An empty file produces no chunks, not one empty chunk."""

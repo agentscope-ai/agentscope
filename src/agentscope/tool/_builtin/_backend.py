@@ -396,7 +396,12 @@ class BackendBase(ABC):
         Yields:
             `bytes`:
                 Successive chunks of the file, in order.
+
+        Raises:
+            `ValueError`: If ``chunk_size`` is not greater than zero.
         """
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than zero")
         data = await self.read_file(path)
         for start in range(0, len(data), chunk_size):
             yield data[start : start + chunk_size]
@@ -901,7 +906,12 @@ class LocalBackend(BackendBase):
         Yields:
             `bytes`:
                 Successive chunks of the file, in order.
+
+        Raises:
+            `ValueError`: If ``chunk_size`` is not greater than zero.
         """
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than zero")
         async with aiofiles.open(path, mode="rb") as f:
             while chunk := await f.read(chunk_size):
                 yield chunk
