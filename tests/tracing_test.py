@@ -39,6 +39,7 @@ from agentscope.middleware._tracing._attributes import SpanAttributes
 from agentscope.middleware._tracing._extractor import (
     _get_provider_name,
     _get_llm_response_attributes,
+    _get_llm_request_attributes,
 )
 from agentscope.model import (
     ChatResponse,
@@ -213,6 +214,39 @@ class TracingExtractorTest(TestCase):
             output_messages[0]["finish_reason"],
             "interrupted",
         )
+
+    def test_llm_request_attributes_preserves_zero_top_p(self) -> None:
+        """top_p=0 or p=0 must be preserved in request attributes rather than
+        silently dropped or overridden by falsy evaluation."""
+
+        class _DummyModel:
+            model = "gpt-4o"
+
+        model = _DummyModel()
+
+        # 1. top_p=0 must be preserved
+        attrs1 = _get_llm_request_attributes(model, {"top_p": 0})
+        self.assertEqual(attrs1[SpanAttributes.GEN_AI_REQUEST_TOP_P], 0)
+
+        # 2. p=0 must be preserved
+        attrs2 = _get_llm_request_attributes(model, {"p": 0})
+        self.assertEqual(attrs2[SpanAttributes.GEN_AI_REQUEST_TOP_P], 0)
+
+        # 3. p=0 must take precedence over top_p fallback
+        attrs3 = _get_llm_request_attributes(model, {"p": 0, "top_p": 0.8})
+        self.assertEqual(attrs3[SpanAttributes.GEN_AI_REQUEST_TOP_P], 0)
+
+        # 4. p=0.0 float must also be preserved
+        attrs4 = _get_llm_request_attributes(model, {"p": 0.0})
+        self.assertEqual(attrs4[SpanAttributes.GEN_AI_REQUEST_TOP_P], 0.0)
+
+        # 5. fallback to top_p when p is None
+        attrs5 = _get_llm_request_attributes(model, {"top_p": 0.7})
+        self.assertEqual(attrs5[SpanAttributes.GEN_AI_REQUEST_TOP_P], 0.7)
+
+        # 6. neither p nor top_p provided -> key should not be present
+        attrs6 = _get_llm_request_attributes(model, {})
+        self.assertNotIn(SpanAttributes.GEN_AI_REQUEST_TOP_P, attrs6)
 
 
 def _make_tool_call_response(tool_id: str, city: str) -> ChatResponse:

@@ -202,8 +202,11 @@ def _get_llm_request_attributes(
         SpanAttributes.GEN_AI_REQUEST_MODEL: instance.model,
         # recommended attributes
         SpanAttributes.GEN_AI_REQUEST_TEMPERATURE: kwargs.get("temperature"),
-        SpanAttributes.GEN_AI_REQUEST_TOP_P: kwargs.get("p")
-        or kwargs.get("top_p"),
+        SpanAttributes.GEN_AI_REQUEST_TOP_P: (
+            kwargs.get("p")
+            if kwargs.get("p") is not None
+            else kwargs.get("top_p")
+        ),
         SpanAttributes.GEN_AI_REQUEST_TOP_K: kwargs.get("top_k"),
         SpanAttributes.GEN_AI_REQUEST_MAX_TOKENS: kwargs.get("max_tokens"),
         SpanAttributes.GEN_AI_REQUEST_PRESENCE_PENALTY: kwargs.get(
