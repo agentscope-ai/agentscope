@@ -122,7 +122,7 @@ easier to review tool calls and give permission.
                 ),
                 "default": 120000,
                 "maximum": 600000,
-                "minimum": 0,
+                "minimum": 1,
             },
         },
         "required": ["command"],
@@ -694,6 +694,21 @@ easier to review tool calls and give permission.
         Yields:
             ToolChunk: The tool execution result with stdout/stderr content.
         """
+
+        if timeout < 1:
+            yield ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            f"Error: timeout must be at least 1ms, "
+                            f"got: {timeout}."
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+            return
 
         # Clamp timeout to max 600000ms and convert to seconds
         timeout_ms = min(timeout, 600000)
