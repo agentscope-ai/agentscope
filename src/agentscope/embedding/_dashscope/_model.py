@@ -472,7 +472,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        # multimodal-embedding-one-peace-v1 predates the plural list and
+        # returns its single fused vector under the singular key; the
+        # dashscope v2 client normalizes that shape the same way.
+        raw = res.output.get("embeddings") or []
+        if not raw and res.output.get("embedding"):
+            raw = [{"embedding": res.output["embedding"]}]
+        embeddings = [entry["embedding"] for entry in raw]
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,

@@ -458,6 +458,22 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
             self._assert_response(second, 512, "cache")
             self._assert_response(reordered, 512, "cache")
 
+    @patch("dashscope.MultiModalEmbedding.call")
+    async def test_multimodal_one_peace_singular_key(self, sdk: Any) -> None:
+        """multimodal-embedding-one-peace-v1's singular output.embedding
+        is normalized instead of raising KeyError."""
+        sdk.return_value = SimpleNamespace(
+            status_code=200,
+            output={"embedding": [0.1, 0.2, 0.3]},
+            usage={"input_tokens": 1, "image_tokens": 0},
+        )
+        model = _multimodal_model(3, "multimodal-embedding-one-peace-v1")
+
+        result = await model(["hello", "world"])
+
+        self.assertEqual(result.embeddings, [[0.1, 0.2, 0.3]])
+        self.assertEqual(result.source, "api")
+
     @patch("dashscope.MultiModalEmbedding.call", side_effect=_multimodal_resp)
     async def test_multimodal_dimensions(self, sdk: Any) -> None:
         """Qwen3 and other multimodal models forward dimensions."""
