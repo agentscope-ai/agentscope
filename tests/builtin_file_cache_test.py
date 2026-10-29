@@ -385,6 +385,28 @@ class FileCacheTest(  # pylint: disable=too-many-public-methods
             ],
         )
 
+    async def test_cached_lines_split_only_on_newlines(self) -> None:
+        """Lines cached by Write and Edit are numbered like a fresh Read."""
+        await self.write_tool(
+            file_path=self.test_file,
+            content="alpha\fbeta\ngamma\n",
+            _agent_state=self.state,
+        )
+        cache = await self.state.tool_context.get_cache(self.test_file)
+        self.assertListEqual(cache.lines, ["alpha\fbeta\n", "gamma\n"])
+
+        await self.edit_tool(
+            file_path=self.test_file,
+            old_string="gamma",
+            new_string="delta\u2028epsilon",
+            _agent_state=self.state,
+        )
+        cache = await self.state.tool_context.get_cache(self.test_file)
+        self.assertListEqual(
+            cache.lines,
+            ["alpha\fbeta\n", "delta\u2028epsilon\n"],
+        )
+
     async def test_cache_without_state(self) -> None:
         """Test tools work without state (fallback mode)."""
         # Create a file
