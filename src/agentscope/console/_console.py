@@ -8,18 +8,36 @@ from ..agent import Agent
 from ..pipeline import PipelineProtocol
 from ..event import (
     ConfirmResult,
+    ExternalExecutionResultEvent,
+    RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
-from ..message import Msg, UserMsg
+from ..message import (
+    Msg,
+    ToolResultBlock,
+    ToolResultState,
+    UserMsg,
+)
+from ..tool import (
+    AskUser,
+    AskUserAnswer,
+    AskUserMetadata,
+    AskUserParams,
+)
 
 
 async def _run_reply(
     agent: Agent | PipelineProtocol,
     renderer: ConsoleRenderer,
-    inputs: Msg | UserConfirmResultEvent | UserInterruptEvent,
-) -> RequireUserConfirmEvent | None:
+    inputs: (
+        Msg
+        | UserConfirmResultEvent
+        | UserInterruptEvent
+        | ExternalExecutionResultEvent
+    ),
+) -> RequireUserConfirmEvent | RequireExternalExecutionEvent | None:
     """Consume one ``reply_stream`` call, rendering every event.
 
     Ctrl+C during streaming cancels the reply task; the agent handles the
@@ -28,18 +46,26 @@ async def _run_reply(
     its default ``False``.
 
     Returns:
-        `RequireUserConfirmEvent | None`:
-            The pending confirmation request if the reply parked on
-            human-in-the-loop, otherwise `None`.
+        `RequireUserConfirmEvent | RequireExternalExecutionEvent | None`:
+            The pending outside-interaction request if the reply parked,
+            otherwise `None`.
     """
-    pending: RequireUserConfirmEvent | None = None
+    pending: RequireUserConfirmEvent | RequireExternalExecutionEvent | None = (
+        None
+    )
 
     async def consume() -> None:
         nonlocal pending
         try:
             async for event in agent.reply_stream(inputs):
                 renderer.render(event)
-                if isinstance(event, RequireUserConfirmEvent):
+                if isinstance(
+                    event,
+                    (
+                        RequireUserConfirmEvent,
+                        RequireExternalExecutionEvent,
+                    ),
+                ):
                     pending = event
         except BaseException:
             # Failed streams may omit REPLY_END for several participants.
@@ -102,6 +128,103 @@ async def _confirm(
     )
 
 
+async def _read_other() -> str:
+    """Read a non-empty custom answer for the Other option."""
+    while True:
+        answer = (
+            await asyncio.to_thread(input, "Enter your answer: ")
+        ).strip()
+        if answer:
+            return answer
+        print("The answer cannot be empty.")
+
+
+async def _ask_user(input_json: str) -> tuple[str, dict]:
+    """Collect native question answers and their structured metadata."""
+    params = AskUserParams.model_validate_json(input_json)
+    answers = []
+    for question in params.questions:
+        print(f"\n[{question.header}] {question.question}")
+        if question.context:
+            print(f"{question.context}")
+        for index, option in enumerate(question.options, start=1):
+            print(f"  {index}. {option.label}: {option.description}")
+            if option.preview and not question.multi_select:
+                print(f"     {option.preview}")
+        other_index = len(question.options) + 1
+        print(f"  {other_index}. Other")
+        prompt = (
+            f"Select numbers [1-{other_index}] separated by commas, "
+            f"or type your answer: "
+            if question.multi_select
+            else f"Select a number [1-{other_index}], or type your answer: "
+        )
+        while True:
+            raw = (await asyncio.to_thread(input, prompt)).strip()
+            if not raw:
+                continue
+            parts = [part.strip() for part in raw.split(",")]
+            if not all(part.isdigit() for part in parts):
+                selected, other = [], raw
+                break
+            try:
+                indexes = {int(part) for part in parts}
+            except ValueError:
+                continue
+            if not indexes <= set(range(1, other_index + 1)) or (
+                not question.multi_select and len(indexes) > 1
+            ):
+                print(f"Choose option numbers from 1 to {other_index}.")
+                continue
+            selected = [
+                option.label
+                for i, option in enumerate(question.options, start=1)
+                if i in indexes
+            ]
+            other = await _read_other() if other_index in indexes else None
+            break
+        answers.append(
+            AskUserAnswer(
+                question=question.question,
+                selected=selected,
+                other=other,
+            ),
+        )
+    lines = []
+    for answer in answers:
+        values = answer.selected + ([answer.other] if answer.other else [])
+        lines.append(f"{answer.question}\n{', '.join(values)}")
+    output = "\n\n".join(lines)
+    return output, AskUserMetadata(answers=answers).model_dump(mode="json")
+
+
+async def _request_user_input(
+    pending: RequireExternalExecutionEvent,
+) -> ExternalExecutionResultEvent:
+    """Collect answers for pending native AskUser calls."""
+    results: list[ToolResultBlock] = []
+    for tool_call in pending.tool_calls:
+        if tool_call.name != AskUser.name:
+            raise ValueError(
+                f"The console cannot execute external tool "
+                f"'{tool_call.name}'.",
+            )
+        output, metadata = await _ask_user(tool_call.input)
+        results.append(
+            ToolResultBlock(
+                id=tool_call.id,
+                name=tool_call.name,
+                output=output,
+                metadata=metadata,
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+    return ExternalExecutionResultEvent(
+        reply_id=pending.reply_id,
+        execution_results=results,
+    )
+
+
 async def launch_console(
     agent: Agent | PipelineProtocol,
     user_name: str = "user",
@@ -114,9 +237,9 @@ async def launch_console(
     persistence: the conversation lives in ``agent.state`` and ends with
     the process. Reads user messages from stdin, renders every streamed
     :class:`~agentscope.event.AgentEvent`, asks for tool-call
-    confirmation (y/n) when the agent requires it, and turns Ctrl+C into
-    an interruption of the current reply. Type ``exit``/``quit`` or
-    press Ctrl+D to leave.
+    confirmation (y/n) when the agent requires it, handles structured
+    ``AskUser`` choices, and turns Ctrl+C into an interruption
+    of the current reply. Type ``exit``/``quit`` or press Ctrl+D to leave.
 
     .. code-block:: python
 
@@ -160,16 +283,24 @@ async def launch_console(
         if not query:
             continue
 
-        inputs: Msg | UserConfirmResultEvent | UserInterruptEvent = UserMsg(
-            name=user_name,
-            content=query,
-        )
+        inputs: (
+            Msg
+            | UserConfirmResultEvent
+            | UserInterruptEvent
+            | ExternalExecutionResultEvent
+        ) = UserMsg(name=user_name, content=query)
         while True:
             pending = await _run_reply(agent, renderer, inputs)
             if pending is None:
                 break
             try:
-                inputs = await _confirm(pending)
+                if isinstance(pending, RequireUserConfirmEvent):
+                    inputs = await _confirm(pending)
+                else:
+                    inputs = await _request_user_input(pending)
             except (EOFError, KeyboardInterrupt):
                 # Abort the parked reply so the next input starts clean
+                inputs = UserInterruptEvent(reply_id=pending.reply_id)
+            except ValueError as error:
+                renderer.console.print(str(error), style="red")
                 inputs = UserInterruptEvent(reply_id=pending.reply_id)

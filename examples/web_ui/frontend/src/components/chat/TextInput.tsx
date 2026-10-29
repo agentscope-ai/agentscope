@@ -85,6 +85,8 @@ interface TextInputProps {
 	 *   - ``interrupting`` — Stop (disabled while the interrupt is in flight)
 	 */
 	phase?: ReplyPhase;
+	/** Allow sending while a reply is parked awaiting structured input. */
+	acceptsInput?: boolean;
 	onInterrupt?: () => void;
 	/** Current browser realtime voice connection state. */
 	voiceState?: RealtimeConnectionState;
@@ -146,6 +148,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			phase = 'idle',
+			acceptsInput = false,
 			onInterrupt,
 			voiceState = 'idle',
 			onVoiceToggle,
@@ -237,8 +240,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 		const handleSend = () => {
 			// ``phase`` is guarded here rather than only on the button, since Enter
-			// calls this directly and would otherwise send during a running reply.
-			if (phase !== 'idle' || !hasContent || disabled || hasProcessing) return;
+			// calls this directly. A parked client tool may still accept an answer.
+			if (
+				(phase !== 'idle' && !(phase === 'streaming' && acceptsInput)) ||
+				!hasContent ||
+				disabled ||
+				hasProcessing ||
+				(acceptsInput && files.length > 0)
+			)
+				return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -295,7 +305,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onVoiceToggle,
 				};
 			}
-			if (phase === 'streaming') {
+			if (phase === 'streaming' && !acceptsInput) {
 				return {
 					icon: Square,
 					tooltip: t('textInput.stop'),
@@ -313,11 +323,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					onClick: onInterrupt,
 				};
 			}
-			if (hasContent) {
+			if (hasContent || acceptsInput) {
 				return {
 					icon: ArrowUp,
 					tooltip: t('textInput.send'),
-					disabled: disabled || hasProcessing,
+					disabled:
+						disabled ||
+						!hasContent ||
+						hasProcessing ||
+						(acceptsInput && files.length > 0),
 					variant: 'default',
 					onClick: handleSend,
 				};

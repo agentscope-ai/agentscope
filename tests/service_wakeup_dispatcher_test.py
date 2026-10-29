@@ -20,7 +20,11 @@ from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
+from agentscope.app._client_external_tool import (
+    ClientExternalToolDefinition,
+)
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
+from agentscope.message import ToolResultBlock, UserMsg
 
 
 class _FakeStorage:
@@ -219,16 +223,22 @@ class _FakeChatService:
         session_id: str,
         agent_id: str,
         input_msg: Any = None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        client_builtin_tools: list[str] | None = None,
     ) -> None:
         """Record the call and signal a waiter."""
-        self.calls.append(
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "agent_id": agent_id,
-                "input_msg": input_msg,
-            },
-        )
+        call: dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "input_msg": input_msg,
+        }
+        if client_external_tools is not None:
+            call["client_external_tools"] = client_external_tools
+        if client_builtin_tools is not None:
+            call["client_builtin_tools"] = client_builtin_tools
+        self.calls.append(call)
         self.notify.set()
 
 
@@ -435,6 +445,145 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         self.assertIsInstance(call["input_msg"], UserConfirmResultEvent)
         self.assertEqual(call["input_msg"].reply_id, "r1")
 
+    async def test_resume_preserves_client_external_tools(self) -> None:
+        """Queued resume triggers retain active-client tool schemas."""
+        from agentscope.event import UserConfirmResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        event = UserConfirmResultEvent.model_construct(
+            reply_id="r1",
+            confirm_results=[],
+        )
+        definition = ClientExternalToolDefinition(
+            name="client__choose_option",
+            description="Ask the user to choose.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                },
+            },
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                    "client_external_tools": [
+                        definition.model_dump(mode="json"),
+                    ],
+                    "client_builtin_tools": ["AskUser"],
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(
+            chat.calls[0]["client_external_tools"],
+            [definition],
+        )
+        self.assertEqual(chat.calls[0]["client_builtin_tools"], ["AskUser"])
+
+    async def test_invalid_client_tools_do_not_drop_resume(self) -> None:
+        """Invalid optional tools cannot strand an external result."""
+        from agentscope.event import ExternalExecutionResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        event = ExternalExecutionResultEvent(
+            reply_id="r1",
+            execution_results=[
+                ToolResultBlock(
+                    id="tool-call-1",
+                    name="client__choose_option",
+                    output="Minimal change",
+                ),
+            ],
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                    "client_external_tools": [{"name": "invalid"}],
+                    "client_builtin_tools": ["unknown"],
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(
+            chat.calls,
+            [
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "input_msg": event,
+                },
+            ],
+        )
+
+    async def test_invalid_client_tools_do_not_drop_message(self) -> None:
+        """Invalid optional tools cannot discard a valid user message."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        message = UserMsg(name="user", content="Keep this message.")
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                    "input": message.model_dump(mode="json"),
+                    "client_external_tools": [{"name": "invalid"}],
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(
+            chat.calls,
+            [
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "input_msg": message,
+                },
+            ],
+        )
+
     async def test_resume_running_session_requeues_until_free(self) -> None:
         """A ``resume`` whose target is still running is NOT dropped: it
         is re-queued (with backoff) and dispatched once the session lock
@@ -465,6 +614,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "agent_id": "wa1",
                     "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
                     "input": event.model_dump(mode="json"),
+                    "client_builtin_tools": ["AskUser"],
                 },
             )
             await bus.publish(MessageBusKeys.wakeup_signal(), {})
@@ -479,6 +629,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chat.calls), 1)
         self.assertEqual(chat.calls[0]["session_id"], "w1")
+        self.assertEqual(chat.calls[0]["client_builtin_tools"], ["AskUser"])
         self.assertIsInstance(
             chat.calls[0]["input_msg"],
             UserConfirmResultEvent,

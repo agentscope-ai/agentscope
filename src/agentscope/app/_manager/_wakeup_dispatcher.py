@@ -41,6 +41,10 @@ from ...event import (
 )
 from ...message import Msg
 from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+)
 from ..message_bus import MessageBusKeys
 from .._bus_ops import enqueue_run_trigger, publish_session_event
 
@@ -54,6 +58,12 @@ if TYPE_CHECKING:
 # discriminated by the ``type`` field shared by these result events.
 _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
     UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
+)
+_CLIENT_EXTERNAL_TOOLS_ADAPTER: TypeAdapter = TypeAdapter(
+    list[ClientExternalToolDefinition],
+)
+_CLIENT_BUILTIN_TOOLS_ADAPTER: TypeAdapter = TypeAdapter(
+    list[ClientBuiltinToolName],
 )
 
 # Delay before re-queuing a trigger whose target session still holds
@@ -206,6 +216,10 @@ class WakeupDispatcher:
                 agent_id=agent_id,
                 kind=kind,
                 raw_input=payload.get("input"),
+                raw_client_external_tools=payload.get(
+                    "client_external_tools",
+                ),
+                raw_client_builtin_tools=payload.get("client_builtin_tools"),
             )
 
     async def _dispatch_one(
@@ -215,6 +229,8 @@ class WakeupDispatcher:
         agent_id: str,
         kind: str,
         raw_input: dict | None,
+        raw_client_external_tools: list[dict] | None = None,
+        raw_client_builtin_tools: list[str] | None = None,
     ) -> None:
         """Dispatch a single trigger entry by its ``kind``.
 
@@ -230,6 +246,10 @@ class WakeupDispatcher:
             raw_input (`dict | None`):
                 Serialised input event for ``resume`` triggers, else
                 ``None``.
+            raw_client_external_tools (`list[dict] | None`):
+                Serialised client tool definitions for this run.
+            raw_client_builtin_tools (`list[str] | None`):
+                Native external tool names supported by this run's client.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
         is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
@@ -247,6 +267,39 @@ class WakeupDispatcher:
             | Msg
             | None
         ) = None
+        try:
+            client_external_tools = (
+                _CLIENT_EXTERNAL_TOOLS_ADAPTER.validate_python(
+                    raw_client_external_tools,
+                )
+                if raw_client_external_tools is not None
+                else []
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "WakeupDispatcher: ignoring invalid client external tools "
+                "on %s trigger for session %s: %r",
+                kind,
+                session_id,
+                raw_client_external_tools,
+            )
+            client_external_tools = []
+
+        try:
+            client_builtin_tools = (
+                _CLIENT_BUILTIN_TOOLS_ADAPTER.validate_python(
+                    raw_client_builtin_tools,
+                )
+                if raw_client_builtin_tools is not None
+                else []
+            )
+        except ValueError:
+            message = (
+                f"Ignoring invalid client builtin tools for {session_id}."
+            )
+            logger.exception(message)
+            client_builtin_tools = []
+
         if carries_input:
             if raw_input is None:
                 logger.warning(
@@ -289,6 +342,8 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
+                client_external_tools,
+                client_builtin_tools,
             )
             return
 
@@ -329,13 +384,16 @@ class WakeupDispatcher:
             return
 
         try:
+            run = self._chat_service.run(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                input_msg=input_msg,
+                client_external_tools=client_external_tools or None,
+                client_builtin_tools=client_builtin_tools or None,
+            )
             self._registry.spawn(
-                self._chat_service.run(
-                    user_id=user_id,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    input_msg=input_msg,
-                ),
+                run,
                 session_id=session_id,
                 name=f"{kind}-run:{session_id}",
             )
@@ -350,6 +408,8 @@ class WakeupDispatcher:
                 agent_id,
                 kind,
                 input_msg,
+                client_external_tools,
+                client_builtin_tools,
             )
 
     def _schedule_retry(
@@ -363,6 +423,8 @@ class WakeupDispatcher:
         | UserInterruptEvent
         | Msg
         | None,
+        client_external_tools: list[ClientExternalToolDefinition],
+        client_builtin_tools: list[ClientBuiltinToolName],
     ) -> None:
         """Re-enqueue an input-carrying (``resume``/``message``) trigger
         after a short backoff.
@@ -383,6 +445,10 @@ class WakeupDispatcher:
                 The trigger kind to re-enqueue (``resume`` / ``message``).
             input_msg:
                 The parsed input to redeliver.
+            client_external_tools:
+                Client tool definitions to preserve across a retry.
+            client_builtin_tools:
+                Native tool names to preserve across a retry.
         """
 
         async def _retry() -> None:
@@ -395,6 +461,8 @@ class WakeupDispatcher:
                     agent_id=agent_id,
                     kind=kind,  # type: ignore[arg-type]  # resume | message
                     inputs=input_msg,
+                    client_external_tools=client_external_tools,
+                    client_builtin_tools=client_builtin_tools,
                 )
             except asyncio.CancelledError:
                 pass

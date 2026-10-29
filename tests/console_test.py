@@ -18,6 +18,7 @@ from agentscope.event import (
     AgentEvent,
     ReplyEndEvent,
     ReplyStartEvent,
+    RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     TextBlockDeltaEvent,
     TextBlockStartEvent,
@@ -174,6 +175,36 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.renderer._active_msgs, {})
         self.assertEqual(self.renderer.last_msg.id, "next")
+
+    async def test_external_execution_pause_preserves_reply(self) -> None:
+        """External input pauses retain the reply and return the request."""
+        pending = RequireExternalExecutionEvent(
+            reply_id="external",
+            tool_calls=[],
+        )
+        agent = _EventAgent(
+            [
+                ReplyStartEvent(
+                    session_id="s",
+                    reply_id="external",
+                    name="Agent",
+                ),
+                pending,
+            ],
+        )
+
+        result = await _run_reply(
+            cast(Agent, agent),
+            self.renderer,
+            UserMsg(name="user", content="hello"),
+        )
+
+        self.assertIs(result, pending)
+        self.assertEqual(self.renderer.last_msg.id, "external")
+        self.assertEqual(
+            self.renderer._active_msgs,
+            {"external": self.renderer.last_msg},
+        )
 
     async def test_hitl_keeps_pending_replies_across_streams(self) -> None:
         """A normal HITL pause retains both leader and member content."""

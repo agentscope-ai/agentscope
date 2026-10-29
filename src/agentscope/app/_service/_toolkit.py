@@ -9,6 +9,11 @@ tools, and caller-supplied extras — into one :class:`Toolkit`.
 from typing import Any, Literal
 
 from .._manager import BackgroundTaskManager, SchedulerManager
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalTool,
+    ClientExternalToolDefinition,
+)
 from ..message_bus import MessageBus
 from .._tool import (
     SubmitHandover,
@@ -24,6 +29,7 @@ from ..storage import AgentRecord, SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
+    AskUser,
     TaskCreate,
     TaskGet,
     TaskList,
@@ -54,7 +60,9 @@ async def get_toolkit(
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
     team_role: Literal["leader", "worker"] | None = None,
     channel_tools: list[ToolBase] | None = None,
+    client_external_tools: list[ClientExternalToolDefinition] | None = None,
     sop_dispatch: str | None = None,
+    client_builtin_tools: list[ClientBuiltinToolName] | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -75,6 +83,7 @@ async def get_toolkit(
     6. Caller-supplied extras (``extra_factory``)
     7. Channel platform tools — the caller resolves them (once, shared
        with the system-prompt attachment) and passes ``channel_tools``.
+    8. Client external tools declared for this chat run.
 
     Plus the workspace's skills and MCPs, which become the toolkit's
     ``skills_or_loaders`` and ``mcps`` parameters.
@@ -88,6 +97,9 @@ async def get_toolkit(
             Pre-resolved per-session workspace (caller resolves it
             via :meth:`WorkspaceManagerBase.get_workspace`). Used here
             for tool / skill / MCP discovery.
+        workspace_manager (`WorkspaceManagerBase`):
+            Workspace manager passed to team tools so they can resolve
+            session workspaces during cross-agent operations.
         scheduler_manager (`SchedulerManager`):
             Application scheduler. Provides the four schedule tools and
             persists schedules through it.
@@ -111,6 +123,9 @@ async def get_toolkit(
         session_record (`SessionRecord`):
             Pre-loaded session record (loaded once by the caller).
             Used for the schedule-tool model configuration.
+        resource_access_service (`ResourceAccessService`):
+            Resource access service used to list agents visible to the
+            caller when constructing the optional ``AgentInvite`` tool.
         extra_factory (`AgentToolFactory | None`, optional):
             Async factory invoked once per assembly to produce
             user/session-specific extra tools.
@@ -129,6 +144,13 @@ optional):
         channel_tools (`list[ToolBase] | None`, optional):
             Platform tools of the originating channel, resolved once
             by the caller. ``None`` / empty when channel-less.
+        client_external_tools (`list[ClientExternalToolDefinition] | None`, \
+optional):
+            Validated external tools supported by the active client for this
+            run. They are not persisted in the session.
+        client_builtin_tools (`list[ClientBuiltinToolName] | None`):
+            Native external tools enabled by the active client for this run.
+            Unattended callers leave this empty.
 
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
@@ -266,6 +288,25 @@ time or interval"
     # the channel section of the system prompt).
     if channel_tools:
         tools += channel_tools
+
+    if "AskUser" in (client_builtin_tools or []):
+        tools.append(AskUser())
+
+    # Client-provided tools are appended last, but never replace a server
+    # tool. Fail closed on a conflict because the client dispatches pending
+    # calls by name and cannot safely guess which implementation won.
+    server_tool_names = {tool.name for tool in tools}
+    server_tool_names.update(
+        tool.name for group in tool_groups for tool in group.tools
+    )
+    for definition in client_external_tools or []:
+        if definition.name in server_tool_names:
+            raise ValueError(
+                f"Client external tool '{definition.name}' conflicts with "
+                "a server tool.",
+            )
+        tools.append(ClientExternalTool(definition))
+        server_tool_names.add(definition.name)
 
     return Toolkit(
         tools=tools,

@@ -58,6 +58,10 @@ from .._types import (
     EventProjector,
     SubAgentTemplate,
 )
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+)
 from ._access import ResourceAccessService
 from ._model import get_model
 from ._tts_model import get_tts_model
@@ -280,7 +284,10 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
         sop_dispatch: str | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -320,6 +327,10 @@ class ChatService:
                 - ``UserInterruptEvent``: abort a parked reply — the
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
+            client_external_tools:
+                External tools supported by the active client for this run.
+            client_builtin_tools:
+                Native external tools enabled by this client for this run.
             sop_dispatch (`str | None`, optional):
                 ``"<run id>:<step index>"`` when a SOP run dispatched
                 this turn, which gives it a submit tool.
@@ -330,7 +341,9 @@ class ChatService:
                 session_id,
                 agent_id,
                 input_msg,
-                sop_dispatch,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
+                sop_dispatch=sop_dispatch,
             )
         except Exception as e:
             logger.exception(
@@ -795,7 +808,10 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
         sop_dispatch: str | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -1104,6 +1120,8 @@ class ChatService:
                     sub_agent_templates=self._sub_agent_templates,
                     team_role=team_ctx.role if team_ctx else None,
                     channel_tools=channel_tools,
+                    client_external_tools=client_external_tools,
+                    client_builtin_tools=client_builtin_tools,
                     sop_dispatch=sop_dispatch,
                 )
 

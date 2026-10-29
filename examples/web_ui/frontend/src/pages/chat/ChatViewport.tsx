@@ -266,6 +266,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		phase,
 		send,
 		onUserConfirm,
+		onClientExternalToolResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
@@ -920,6 +921,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onClientExternalToolResult={onClientExternalToolResult}
 									onInterrupt={interrupt}
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}

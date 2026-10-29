@@ -190,6 +190,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 worker_session.id,
                 worker_agent.id,
                 None,
+                client_builtin_tools=["AskUser"],
             )
 
         self.assertDictEqual(
@@ -197,6 +198,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": storage.get_team_calls,
                 "team_role": toolkit_kwargs["team_role"],
                 "channel_tools": toolkit_kwargs["channel_tools"],
+                "client_builtin_tools": toolkit_kwargs["client_builtin_tools"],
                 "leader_names": [
                     mw._leader_name
                     for mws in equipped
@@ -208,6 +210,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": 1,
                 "team_role": "worker",
                 "channel_tools": [],
+                "client_builtin_tools": ["AskUser"],
                 "leader_names": ["Leader"],
             },
         )
