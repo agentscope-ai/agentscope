@@ -566,6 +566,25 @@ class AnthropicChatModel(ChatModelBase):
                 elif event.type == "message_delta":
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens or 0
+                        # The usage of a ``message_delta`` is cumulative:
+                        # with server tools (web search, ...) its input and
+                        # cache counts grow past the ``message_start``
+                        # values, so keep the larger one. A field the delta
+                        # leaves out keeps its ``message_start`` value.
+                        for source, target in (
+                            ("input_tokens", "input_tokens"),
+                            (
+                                "cache_creation_input_tokens",
+                                "cache_creation_input_tokens",
+                            ),
+                            ("cache_read_input_tokens", "cache_input_tokens"),
+                        ):
+                            value = getattr(event.usage, source, None)
+                            if isinstance(value, int) and value > getattr(
+                                usage,
+                                target,
+                            ):
+                                setattr(usage, target, value)
                         # ``usage`` was stamped when ``message_start``
                         # arrived, i.e. at time-to-first-token. Refresh it
                         # here so ``time`` spans the whole generation, as

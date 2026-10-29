@@ -615,6 +615,102 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].id, "msg-1")
 
+    async def test_stream_takes_cumulative_message_delta_usage(self) -> None:
+        """With server tools the message_delta usage carries the larger
+        cumulative input and cache counts."""
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 120
+        msg_usage.output_tokens = 1
+        msg_usage.cache_creation_input_tokens = 0
+        msg_usage.cache_read_input_tokens = 0
+
+        message = MagicMock()
+        message.id = "msg-cumulative"
+        message.usage = msg_usage
+
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "Hello"
+
+        msg_delta_usage = MagicMock()
+        msg_delta_usage.input_tokens = 5120
+        msg_delta_usage.output_tokens = 300
+        msg_delta_usage.cache_creation_input_tokens = 32
+        msg_delta_usage.cache_read_input_tokens = 64
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
+            _make_event("content_block_delta", index=0, delta=text_delta),
+            _make_event("message_delta", usage=msg_delta_usage),
+        ]
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        usage = responses[-1].usage
+        self.assertEqual(usage.input_tokens, 5120)
+        self.assertEqual(usage.output_tokens, 300)
+        self.assertEqual(usage.cache_creation_input_tokens, 32)
+        self.assertEqual(usage.cache_input_tokens, 64)
+
+    async def test_stream_message_delta_without_input_keeps_start(
+        self,
+    ) -> None:
+        """A message_delta without input counts keeps the start ones."""
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 120
+        msg_usage.output_tokens = 1
+        msg_usage.cache_creation_input_tokens = 7
+        msg_usage.cache_read_input_tokens = 9
+
+        message = MagicMock()
+        message.id = "msg-no-input"
+        message.usage = msg_usage
+
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "Hello"
+
+        msg_delta_usage = MagicMock(spec=["output_tokens"])
+        msg_delta_usage.output_tokens = 5
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
+            _make_event("content_block_delta", index=0, delta=text_delta),
+            _make_event("message_delta", usage=msg_delta_usage),
+        ]
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        usage = responses[-1].usage
+        self.assertEqual(usage.input_tokens, 120)
+        self.assertEqual(usage.output_tokens, 5)
+        self.assertEqual(usage.cache_creation_input_tokens, 7)
+        self.assertEqual(usage.cache_input_tokens, 9)
+
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()
