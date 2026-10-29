@@ -31,6 +31,8 @@ from ._task import (
     TaskCreate,
 )
 from ._tool_group import ToolGroup
+from ._selector import ToolSelection, ToolSelectorBase
+from ._embedding_selector import EmbeddingToolSelector
 
 __all__ = [
     "AskUser",
@@ -50,6 +52,9 @@ __all__ = [
     "ToolChunk",
     "ToolResponse",
     "RegisteredTool",
+    "ToolSelection",
+    "ToolSelectorBase",
+    "EmbeddingToolSelector",
     # Builtin tools
     "BackendBase",
     "LocalBackend",
