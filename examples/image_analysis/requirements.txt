@@ -1,0 +1,2 @@
+# This dependency is needed only by the image-analysis example.
+Pillow>=10.4,<13
