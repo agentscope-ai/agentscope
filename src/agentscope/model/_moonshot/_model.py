@@ -22,9 +22,19 @@ else:
     ChatCompletion = Any
     AsyncStream = Any
 
+_K31_MODELS = {"kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"}
+
 
 class MoonshotChatModel(ChatModelBase):
-    """The Moonshot AI chat model."""
+    """The Moonshot AI chat model.
+
+    For Kimi K3.1 Pro and Highspeed, thinking is always enabled. Fixed
+    sampling parameters (``temperature``, ``top_p``, ``n``,
+    ``presence_penalty``, ``frequency_penalty``) and ``thinking`` are
+    omitted, including values supplied through ``extra_body``. Call-level
+    reasoning and token budgets override :class:`Parameters`; an explicit
+    ``max_completion_tokens`` takes precedence over call-level ``max_tokens``.
+    """
 
     class Parameters(BaseModel):
         """The parameters for the Moonshot AI chat model."""
@@ -32,7 +42,10 @@ class MoonshotChatModel(ChatModelBase):
         max_tokens: int | None = Field(
             default=None,
             title="Max Tokens",
-            description="The maximum number of tokens for the LLM output.",
+            description=(
+                "The maximum number of tokens for the LLM output. "
+                "Sent as max_completion_tokens for Kimi K3 and K3.1 Pro."
+            ),
             gt=0,
         )
 
@@ -42,7 +55,8 @@ class MoonshotChatModel(ChatModelBase):
             description=(
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
-                "enabled by default but can be disabled."
+                "enabled by default but can be disabled. "
+                "Ignored for Kimi K3.1 Pro, which always thinks."
             ),
         )
 
@@ -50,7 +64,7 @@ class MoonshotChatModel(ChatModelBase):
             default=None,
             title="Reasoning Effort",
             description=(
-                "The reasoning effort level for kimi-k3. "
+                "The reasoning effort level for Kimi K3 and K3.1 Pro. "
                 "Supports 'low', 'high', and 'max' "
                 "(default 'max')."
             ),
@@ -93,7 +107,8 @@ class MoonshotChatModel(ChatModelBase):
             credential (`MoonshotCredential`):
                 The Moonshot AI credential used to authenticate API calls.
             model (`str`):
-                The model name, e.g. ``moonshot-v1-8k``, ``kimi-k2.6``.
+                The model name, e.g. ``moonshot-v1-8k``, ``kimi-k3.1-pro``,
+                or ``kimi-k3.1-pro-highspeed``.
             parameters (`MoonshotChatModel.Parameters | None`, defaults to \
             `None`):
                 The API parameters. When ``None``, the default parameters
@@ -189,7 +204,8 @@ class MoonshotChatModel(ChatModelBase):
             "stream": self.stream,
         }
 
-        is_k3 = model_name == "kimi-k3"
+        is_k31 = model_name in _K31_MODELS
+        is_k3 = model_name == "kimi-k3" or is_k31
 
         if self.parameters.max_tokens is not None:
             if is_k3:
@@ -206,7 +222,9 @@ class MoonshotChatModel(ChatModelBase):
         kwargs.update(generate_kwargs)
 
         if is_k3:
-            if self.parameters.reasoning_effort is not None:
+            if self.parameters.reasoning_effort is not None and (
+                not is_k31 or "reasoning_effort" not in kwargs
+            ):
                 kwargs["reasoning_effort"] = self.parameters.reasoning_effort
         else:
             thinking_type = (
@@ -221,6 +239,30 @@ class MoonshotChatModel(ChatModelBase):
                     **extra_body.get("thinking", {}),
                 },
             }
+
+        if is_k31:
+            if "max_tokens" in kwargs:
+                max_tokens = kwargs.pop("max_tokens")
+                if "max_completion_tokens" not in generate_kwargs:
+                    kwargs["max_completion_tokens"] = max_tokens
+            # The API fixes these settings. Copy extra_body before filtering
+            # so SDK-level overrides cannot reintroduce them or mutate input.
+            omitted = {
+                "temperature",
+                "top_p",
+                "n",
+                "presence_penalty",
+                "frequency_penalty",
+                "thinking",
+            }
+            for key in omitted:
+                kwargs.pop(key, None)
+            if isinstance(kwargs.get("extra_body"), dict):
+                kwargs["extra_body"] = {
+                    key: value
+                    for key, value in kwargs["extra_body"].items()
+                    if key not in omitted
+                }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -456,7 +498,9 @@ class MoonshotChatModel(ChatModelBase):
         return tools, mode
 
     def _get_disable_thinking_kwargs(self) -> dict:
-        """Moonshot uses ``thinking.type=disabled`` in extra_body."""
+        """Skip the disable-thinking fallback for K3.1 Pro variants."""
+        if self.model in _K31_MODELS:
+            return {}
         return {
             "extra_body": {"thinking": {"type": "disabled"}},
         }
