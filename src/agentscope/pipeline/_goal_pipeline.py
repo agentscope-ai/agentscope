@@ -246,6 +246,12 @@ class GoalPipeline:
                 # The executor parked, so there is nothing to verify yet.
                 break
 
+            # A valid report resets the executor's retry budget: the budget
+            # guards one structured-output generation, not the whole
+            # pipeline, so a long goal that needs one nudge per iteration
+            # must not exhaust it.
+            self._executor_retries = 0
+
             # Verifier
             final_msg = None
             instruction = verifier_inputs or UserMsg(
@@ -335,6 +341,9 @@ class GoalPipeline:
                     "pass",
                     "impossible",
                 ):
+                    # A valid verdict resets the verifier's retry budget —
+                    # same scope rule as the executor's report above.
+                    self._verifier_retries = 0
                     if final_msg.structured_output["result"] == "impossible":
                         logger.info(
                             "The verifier judged the goal impossible: %s",
@@ -343,6 +352,9 @@ class GoalPipeline:
                     # Settled either way, so the loop ends here.
                     break_loop = True
                 else:
+                    # A "fail" verdict is still a valid structured output;
+                    # it resets the budget just like pass/impossible.
+                    self._verifier_retries = 0
                     self._iters += 1
                     if self.verifier_reset_context:
                         # Only the conversation, tool/task state stays
