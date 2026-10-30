@@ -2,6 +2,7 @@
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import asyncio
 import inspect
+import contextlib
 import json
 import re
 import warnings
@@ -154,22 +155,24 @@ class FunctionTool(ToolBase):
         if isinstance(result, AsyncGenerator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                async for chunk in result:
-                    if isinstance(chunk, ToolChunk):
-                        yield chunk
-                    else:
-                        yield self._convert_func_result_to_chunk(chunk)
+                async with contextlib.aclosing(result):
+                    async for chunk in result:
+                        if isinstance(chunk, ToolChunk):
+                            yield chunk
+                        else:
+                            yield self._convert_func_result_to_chunk(chunk)
 
             return _stream()
 
         if isinstance(result, Generator):
 
             async def _stream() -> AsyncGenerator[ToolChunk, None]:
-                for chunk in result:
-                    if isinstance(chunk, ToolChunk):
-                        yield chunk
-                    else:
-                        yield self._convert_func_result_to_chunk(chunk)
+                with contextlib.closing(result):
+                    for chunk in result:
+                        if isinstance(chunk, ToolChunk):
+                            yield chunk
+                        else:
+                            yield self._convert_func_result_to_chunk(chunk)
 
             return _stream()
 
