@@ -424,7 +424,7 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             [
                 ChatResponse(
                     content=[
-                        ToolCallBlock(id="tc_1", name="dummy", input="{}")
+                        ToolCallBlock(id="tc_1", name="dummy", input="{}"),
                     ],
                     is_last=True,
                     usage=ChatUsage(
