@@ -2,10 +2,204 @@
 """ClawHub card-building test case, without any network."""
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
+from datetime import datetime, timezone
 
 import httpx
 
 from agentscope.app.hub import ClawSkillHub
+from agentscope.app.hub._error import HubError
+
+
+_RETRY_NOW = datetime(2026, 10, 8, tzinfo=timezone.utc).timestamp()
+_RETRY_DATE = "Thu, 08 Oct 2026 00:00:45 GMT"
+
+
+class ClawRetryDelayTest(TestCase):
+    """Retry-After dates take precedence over rate-limit fallbacks."""
+
+    def test_http_dates_are_relative_to_utc(self) -> None:
+        """HTTP dates must not fall through to a one-second retry."""
+        for value in (
+            _RETRY_DATE,
+            "Thursday, 08-Oct-26 00:00:45 GMT",
+            "Thu Oct  8 00:00:45 2026",
+        ):
+            with (
+                self.subTest(value=value),
+                patch("time.time", return_value=_RETRY_NOW),
+            ):
+                # pylint: disable=protected-access
+                self.assertEqual(
+                    ClawSkillHub._retry_delay(
+                        httpx.Headers({"Retry-After": value}),
+                    ),
+                    45.0,
+                )
+
+    def test_expired_http_date_has_no_negative_delay(self) -> None:
+        """An expired date does not defer to a longer fallback."""
+        with patch("time.time", return_value=_RETRY_NOW):
+            # pylint: disable=protected-access
+            self.assertEqual(
+                ClawSkillHub._retry_delay(
+                    {
+                        "retry-after": "Wed, 07 Oct 2026 23:59:59 GMT",
+                        "RateLimit-Reset": "90",
+                    },
+                ),
+                0.0,
+            )
+
+    def test_numeric_and_invalid_header_fallbacks(self) -> None:
+        """Existing numeric delays and reset priorities are retained."""
+        cases = (
+            ({"Retry-After": "2.5", "RateLimit-Reset": "90"}, 2.5),
+            ({"Retry-After": "-2"}, 0.0),
+            ({"Retry-After": "invalid", "RateLimit-Reset": "7"}, 7.0),
+            (
+                {
+                    "Retry-After": "Thu, 99 Oct 2026 00:00:45 GMT",
+                    "ratelimit-reset": "7",
+                },
+                7.0,
+            ),
+            (
+                {
+                    "Retry-After": "invalid",
+                    "X-RateLimit-Reset": str(_RETRY_NOW + 12),
+                },
+                12.0,
+            ),
+            ({"Retry-After": "invalid", "RateLimit-Reset": "invalid"}, 1.0),
+            ({}, 1.0),
+        )
+        with patch("time.time", return_value=_RETRY_NOW):
+            for headers, expected in cases:
+                with self.subTest(headers=headers):
+                    # pylint: disable=protected-access
+                    self.assertEqual(
+                        ClawSkillHub._retry_delay(headers),
+                        expected,
+                    )
+
+
+class ClawHttpDateRetryTest(IsolatedAsyncioTestCase):
+    """Both real HTTP client paths honor the date before retrying."""
+
+    async def test_request_waits_for_http_date(self) -> None:
+        """A rate-limited API request waits for the server's deadline."""
+        attempts = []
+        delays = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            attempts.append(request)
+            if len(attempts) == 1:
+                return httpx.Response(
+                    429,
+                    headers={"Retry-After": _RETRY_DATE},
+                )
+            return httpx.Response(200, json={"ok": True})
+
+        async def sleep(delay: float) -> None:
+            delays.append(delay)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(respond),
+        ) as client:
+            hub = ClawSkillHub(max_retries=1)
+            # pylint: disable=protected-access
+            hub._client = client
+            with (
+                patch("time.time", return_value=_RETRY_NOW),
+                patch(
+                    "agentscope.app.hub._skill._claw_hub.asyncio.sleep",
+                    sleep,
+                ),
+                patch(
+                    "agentscope.app.hub._skill._claw_hub.random.uniform",
+                    return_value=0.25,
+                ),
+            ):
+                response = await hub._request("GET", "/api/v1/skills")
+            self.assertEqual(response.json(), {"ok": True})
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(delays, [45.25])
+
+    async def test_download_waits_for_date_and_closes_retry_response(
+        self,
+    ) -> None:
+        """A streamed retry closes the first response and preserves bytes."""
+        responses = []
+        delays = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.params["slug"], "demo")
+            if not responses:
+                response = httpx.Response(
+                    429,
+                    headers={"retry-after": _RETRY_DATE},
+                    content=b"busy",
+                )
+            else:
+                self.assertTrue(responses[0].is_closed)
+                response = httpx.Response(200, content=b"archive bytes")
+            responses.append(response)
+            return response
+
+        async def sleep(delay: float) -> None:
+            delays.append(delay)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(respond),
+        ) as client:
+            hub = ClawSkillHub(max_retries=1)
+            # pylint: disable=protected-access
+            hub._client = client
+            with (
+                patch("time.time", return_value=_RETRY_NOW),
+                patch(
+                    "agentscope.app.hub._skill._claw_hub.asyncio.sleep",
+                    sleep,
+                ),
+                patch(
+                    "agentscope.app.hub._skill._claw_hub.random.uniform",
+                    return_value=0.25,
+                ),
+            ):
+                archive = await hub.download("user", "demo")
+                body = b"".join([chunk async for chunk in archive.stream])
+            self.assertEqual(body, b"archive bytes")
+            self.assertEqual(len(responses), 2)
+            self.assertTrue(responses[-1].is_closed)
+            self.assertFalse(client.is_closed)
+            self.assertEqual(delays, [45.25])
+
+    async def test_final_rate_limit_raises_without_sleeping(self) -> None:
+        """Date parsing does not bypass the configured retry limit."""
+
+        async def sleep(_delay: float) -> None:
+            self.fail("No retry is available")
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    429,
+                    headers={"Retry-After": _RETRY_DATE},
+                    text="busy",
+                ),
+            ),
+        ) as client:
+            hub = ClawSkillHub(max_retries=0)
+            # pylint: disable=protected-access
+            hub._client = client
+            with patch(
+                "agentscope.app.hub._skill._claw_hub.asyncio.sleep",
+                sleep,
+            ):
+                with self.assertRaises(HubError):
+                    await hub._request("GET", "/api/v1/skills")
+                with self.assertRaises(HubError):
+                    await hub.download("user", "demo")
 
 
 class ClawSkillContentTest(IsolatedAsyncioTestCase):
