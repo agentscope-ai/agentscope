@@ -156,10 +156,11 @@ class ScheduleHttpEndTimeTest(TestCase):
         )
         self.client = self.enterContext(TestClient(app))
 
-    def test_end_time_round_trips_through_create_and_list(self) -> None:
-        """An offset-bearing end time survives JSON input and list output."""
+    def test_start_and_end_round_trip_through_create_and_list(self) -> None:
+        """Both absolute boundaries survive persistence and list output."""
         payload = {
             **_request("59 23 * * *", "Asia/Shanghai").model_dump(mode="json"),
+            "started_at": "2099-12-01T15:59:00Z",
             "ended_at": "2099-12-31T23:59:59.999+08:00",
         }
         created = self.client.post("/schedule/", json=payload)
@@ -174,7 +175,7 @@ class ScheduleHttpEndTimeTest(TestCase):
             "agent_id": "agent-1",
             "data": {
                 **{k: v for k, v in payload.items() if k != "agent_id"},
-                "started_at": record.data.started_at,
+                "started_at": datetime.fromisoformat(payload["started_at"]),
                 "ended_at": datetime.fromisoformat(payload["ended_at"]),
                 "permission_mode": PermissionMode(payload["permission_mode"]),
                 "source": "USER",
@@ -258,128 +259,6 @@ class ScheduleHttpEndTimeTest(TestCase):
                 self.assertEqual(response.json(), {"detail": expected_detail})
                 self.assertListEqual(self.storage.upserted, [])
                 self.assertListEqual(self.scheduler.notified, [])
-
-    def test_start_time_round_trip_and_frequency_boundaries(self) -> None:
-        """All frequencies retain their rules and inclusive start/end times."""
-        cases = (
-            ("daily", "26 20 * * *", "20:26", ("2026-11-01", "2026-11-02")),
-            ("midnight", "15 0 * * *", "00:15", ("2030-01-01", "2030-01-02")),
-            ("weekly", "26 20 * * 0", "20:26", ("2026-11-01", "2026-11-08")),
-            ("monthly", "26 20 1 * *", "20:26", ("2026-11-01", "2026-12-01")),
-            (
-                "month-end",
-                "15 0 31 * *",
-                "00:15",
-                ("2030-01-31", "2030-03-31"),
-            ),
-            ("once", "26 20 1 11 *", "20:26", ("2030-11-01",)),
-            ("once-leap-day", "26 20 29 2 *", "20:26", ("2032-02-29",)),
-        )
-        for frequency, cron, time, dates in cases:
-            expected_fires = [
-                datetime.fromisoformat(f"{day}T{time}:00+08:00")
-                for day in dates
-            ]
-            first = expected_fires[0]
-            utc_start = first.astimezone(ZoneInfo("UTC")).isoformat()
-            starts = (
-                first.isoformat(),
-                utc_start.replace("+00:00", "Z"),
-            )
-            for start in starts:
-                for bounded in (True, False):
-                    with self.subTest(
-                        frequency=frequency,
-                        start=start,
-                        bounded=bounded,
-                    ):
-                        self.storage.upserted.clear()
-                        self.scheduler.notified.clear()
-                        end = expected_fires[-1] if bounded else None
-                        if end is not None and end == first:
-                            end += timedelta(days=1)
-                        payload = {
-                            **_request(cron, "Asia/Shanghai").model_dump(
-                                mode="json",
-                            ),
-                            "started_at": start,
-                            "ended_at": end.isoformat() if end else None,
-                        }
-                        created = self.client.post("/schedule/", json=payload)
-                        self.assertEqual(
-                            created.status_code,
-                            201,
-                            created.text,
-                        )
-                        record = self.storage.upserted[0]
-                        expected_record = {
-                            "id": record.id,
-                            "created_at": record.created_at,
-                            "updated_at": record.updated_at,
-                            "user_id": "user-1",
-                            "agent_id": payload["agent_id"],
-                            "data": {
-                                **{
-                                    k: v
-                                    for k, v in payload.items()
-                                    if k != "agent_id"
-                                },
-                                "started_at": datetime.fromisoformat(start),
-                                "ended_at": end,
-                                "permission_mode": PermissionMode.DONT_ASK,
-                                "source": "USER",
-                                "source_session_id": "",
-                            },
-                        }
-                        self.assertEqual(
-                            [r.model_dump() for r in self.storage.upserted],
-                            [expected_record],
-                        )
-                        self.assertEqual(
-                            created.json(),
-                            {"schedule_id": record.id},
-                        )
-                        self.assertEqual(self.scheduler.notified, [record.id])
-                        listed = self.client.get("/schedule/")
-                        self.assertEqual(listed.status_code, 200, listed.text)
-                        expected = ScheduleRecord.model_validate(
-                            expected_record,
-                        )
-                        self.assertEqual(
-                            listed.json(),
-                            {
-                                "schedules": [
-                                    expected.model_dump(mode="json"),
-                                ],
-                                "total": 1,
-                            },
-                        )
-                        restored = ScheduleRecord.model_validate(
-                            listed.json()["schedules"][0],
-                        )
-                        trigger = SchedulerManager.validate_schedule(restored)
-                        self.assertEqual(
-                            [
-                                trigger.get_next_fire_time(None, reference)
-                                for reference in (
-                                    first - timedelta(days=2000),
-                                    first - timedelta(microseconds=1),
-                                    first,
-                                )
-                            ],
-                            [first] * 3,
-                        )
-                        actual_fires = []
-                        fire = first
-                        for _ in expected_fires:
-                            actual_fires.append(fire)
-                            fire = trigger.get_next_fire_time(
-                                fire,
-                                fire + timedelta(seconds=1),
-                            )
-                        self.assertEqual(actual_fires, expected_fires)
-                        if bounded:
-                            self.assertIsNone(fire)
 
     def test_ambiguous_start_keeps_first_occurrence_for_every_frequency(
         self,
@@ -494,6 +373,76 @@ class ScheduleHttpEndTimeTest(TestCase):
                     (self.storage.upserted, self.scheduler.notified),
                     ([], []),
                 )
+
+
+class ScheduleStartBoundaryTest(TestCase):
+    """Cron frequency rules and absolute activation boundaries."""
+
+    def test_start_time_frequency_boundaries(self) -> None:
+        """All frequencies retain their rules and inclusive start/end times."""
+        cases = (
+            ("daily", "26 20 * * *", "20:26", ("2026-11-01", "2026-11-02")),
+            ("midnight", "15 0 * * *", "00:15", ("2030-01-01", "2030-01-02")),
+            ("weekly", "26 20 * * 0", "20:26", ("2026-11-01", "2026-11-08")),
+            ("monthly", "26 20 1 * *", "20:26", ("2026-11-01", "2026-12-01")),
+            (
+                "month-end",
+                "15 0 31 * *",
+                "00:15",
+                ("2030-01-31", "2030-03-31"),
+            ),
+            ("once", "26 20 1 11 *", "20:26", ("2030-11-01",)),
+            ("once-leap-day", "26 20 29 2 *", "20:26", ("2032-02-29",)),
+        )
+        for frequency, cron, time, dates in cases:
+            expected_fires = [
+                datetime.fromisoformat(f"{day}T{time}:00+08:00")
+                for day in dates
+            ]
+            first = expected_fires[0]
+            utc_start = first.astimezone(ZoneInfo("UTC")).isoformat()
+            starts = (
+                first.isoformat(),
+                utc_start.replace("+00:00", "Z"),
+            )
+            for start in starts:
+                for bounded in (True, False):
+                    with self.subTest(
+                        frequency=frequency,
+                        start=start,
+                        bounded=bounded,
+                    ):
+                        end = expected_fires[-1] if bounded else None
+                        if end is not None and end == first:
+                            end += timedelta(days=1)
+                        record = _record()
+                        record.data.cron_expression = cron
+                        record.data.timezone = "Asia/Shanghai"
+                        record.data.started_at = datetime.fromisoformat(start)
+                        record.data.ended_at = end
+                        trigger = SchedulerManager.validate_schedule(record)
+                        self.assertEqual(
+                            [
+                                trigger.get_next_fire_time(None, reference)
+                                for reference in (
+                                    first - timedelta(days=2000),
+                                    first - timedelta(microseconds=1),
+                                    first,
+                                )
+                            ],
+                            [first] * 3,
+                        )
+                        actual_fires = []
+                        fire = first
+                        for _ in expected_fires:
+                            actual_fires.append(fire)
+                            fire = trigger.get_next_fire_time(
+                                fire,
+                                fire + timedelta(seconds=1),
+                            )
+                        self.assertEqual(actual_fires, expected_fires)
+                        if bounded:
+                            self.assertIsNone(fire)
 
 
 class ScheduleWeekdayTest(TestCase):
