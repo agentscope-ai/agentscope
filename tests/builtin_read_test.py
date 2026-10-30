@@ -15,7 +15,7 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionRule,
 )
-from agentscope.message import TextBlock, ToolResultState
+from agentscope.message import TextBlock
 from agentscope.state import AgentState, ToolContext
 
 
@@ -227,17 +227,29 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                         **{parameter: value},
                     )
 
-                    self.assertIsInstance(chunk, ToolChunk)
-                    self.assertEqual(chunk.state, ToolResultState.ERROR)
-                    self.assertTrue(chunk.is_last)
-                    self.assertEqual(len(chunk.content), 1)
-                    self.assertIsInstance(chunk.content[0], TextBlock)
-                    self.assertEqual(
-                        chunk.content[0].text,
+                    expected_text = (
                         f"Error: offset must be at least 1, got: {value}."
                         if parameter == "offset"
                         else "Error: limit must be between 1 and 2000, "
-                        f"got: {value}.",
+                        f"got: {value}."
+                    )
+                    self.assertDictEqual(
+                        chunk.model_dump(mode="json"),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "id": AnyString(),
+                                    "text": expected_text,
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                            "id": AnyString(),
+                        },
                     )
                     read_file.assert_not_called()
                     stat_mtime.assert_not_called()
@@ -261,11 +273,24 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                     limit=limit,
                 )
 
-                self.assertEqual(chunk.state, ToolResultState.RUNNING)
-                self.assertTrue(chunk.is_last)
-                self.assertEqual(len(chunk.content), 1)
-                self.assertIsInstance(chunk.content[0], TextBlock)
-                self.assertEqual(chunk.content[0].text, expected)
+                self.assertDictEqual(
+                    chunk.model_dump(mode="json"),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "id": AnyString(),
+                                "text": expected,
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "running",
+                        "is_last": True,
+                        "metadata": {},
+                        "id": AnyString(),
+                    },
+                )
 
     async def test_read_empty_file_with_valid_pagination(self) -> None:
         """An empty file remains a successful empty result."""
@@ -275,11 +300,24 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
         chunk = await self.read_tool(file_path=f.name, offset=1, limit=1)
 
-        self.assertEqual(chunk.state, ToolResultState.RUNNING)
-        self.assertTrue(chunk.is_last)
-        self.assertEqual(len(chunk.content), 1)
-        self.assertIsInstance(chunk.content[0], TextBlock)
-        self.assertEqual(chunk.content[0].text, "")
+        self.assertDictEqual(
+            chunk.model_dump(mode="json"),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
 
     async def test_read_nonexistent_file(self) -> None:
         """Test reading a non-existent file."""
