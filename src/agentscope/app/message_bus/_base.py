@@ -40,9 +40,11 @@ should fan out at write time — push one entry per recipient inbox using
 Mode A. The bus stays simple; deduplication is the producer's
 responsibility.
 """
+import asyncio
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Self
 
 from typing_extensions import deprecated
@@ -154,6 +156,52 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``(entry_id, payload)`` pairs in arrival order. Empty
                 list when the queue is empty.
         """
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Read queue entries without removing them.
+
+        Entries are returned oldest first. Callers that need a consistent
+        read-modify-write cycle must hold an application-level lock shared
+        with every writer of that queue.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                ``(entry_id, payload)`` pairs in queue order.
+        """
+        raise NotImplementedError("This bus does not support editable queues.")
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Atomically replace a queue's contents with ``payloads``.
+
+        The replacement preserves the supplied order and assigns fresh
+        transport-level entry ids. Business-level identities therefore
+        belong inside each payload rather than in the transport id.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete new queue contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Newly assigned transport-level entry ids.
+        """
+        raise NotImplementedError("This bus does not support editable queues.")
 
     @abstractmethod
     async def queue_delete(self, key: str) -> None:
@@ -355,6 +403,40 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         if False:  # pylint: disable=using-constant-test
             yield  # pylint: disable=unreachable
 
+    @asynccontextmanager
+    async def acquire_lock_bounded(
+        self,
+        key: str,
+        *,
+        ttl_secs: int = 600,
+        timeout_secs: float = 2.0,
+    ) -> AsyncGenerator[None, None]:
+        """Bound contention waiting without timing out the lock body.
+
+        Custom buses must make cancellation during ``acquire_lock`` safe:
+        resolve ambiguous acquisitions and release only their own lease.
+        Redis attempts cleanup within its own finite deadline, so cleanup
+        may outlast the contention deadline. If transport cleanup times out,
+        the lock TTL is the final fallback.
+
+        Args:
+            key (`str`): Lock identifier.
+            ttl_secs (`int`): Renewable lease duration.
+            timeout_secs (`float`): Maximum contention wait.
+
+        Yields:
+            `None`: While holding the lock.
+
+        Raises:
+            `TimeoutError`: The contention deadline expired.
+        """
+        async with AsyncExitStack() as stack:
+            async with asyncio.timeout(timeout_secs):
+                await stack.enter_async_context(
+                    self.acquire_lock(key, ttl_secs=ttl_secs),
+                )
+            yield
+
     @abstractmethod
     async def is_locked(self, key: str) -> bool:
         """Return whether ``key`` currently holds a lock.
@@ -544,6 +626,17 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 The stored value, or ``None`` if missing.
         """
 
+    async def registry_get_many(
+        self,
+        namespace: str,
+        fields: list[str],
+    ) -> list[str | None]:
+        """Read selected fields in order, using None for missing values.
+
+        Custom buses may override this compatible fallback with a batch read.
+        """
+        return [await self.registry_get(namespace, field) for field in fields]
+
     @abstractmethod
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire registry at ``namespace``.
@@ -700,6 +793,30 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """Delete all per-session bus state."""
         await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
         await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
+        await self.queue_delete(MessageBusKeys.chat_inputs(session_id))
+        routing = await self.registry_get(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+        if routing is not None:
+            await self.registry_del(
+                MessageBusKeys.chat_input_user_sessions(
+                    json.loads(routing)["user_id"],
+                ),
+                session_id,
+            )
+        await self.registry_drop(
+            MessageBusKeys.chat_input_payloads(session_id),
+        )
+        await self.registry_drop(MessageBusKeys.chat_input_claim(session_id))
+        await self.registry_del(
+            MessageBusKeys.chat_input_pending_registry(),
+            session_id,
+        )
+        await self.registry_del(
+            MessageBusKeys.chat_input_inflight_registry(),
+            session_id,
+        )
         await self.registry_drop(self._BG_TASKS_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------

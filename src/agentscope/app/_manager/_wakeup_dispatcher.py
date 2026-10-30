@@ -12,15 +12,18 @@ funnels through this one serial consumer.
 Each queue entry carries a ``kind`` that selects how a busy session is
 handled:
 
-- ``wake`` (idle-session wake-up, ``input_msg=None``): produced only
-  when no run is registered as the session's inbox consumer, so it
-  always has something to deliver.
-- ``resume`` (a parked HITL run being fed its result): carries the
-  event the parked run is waiting for.
-
-No kind is ever dropped. A trigger whose session still holds its run
-lock is re-queued after a short backoff until the lock frees, then
-spawned.
+- ``wake`` (idle-session wake-up, ``input_msg=None``): delivers pending
+  inbox content and is retried while the session is running.
+- ``resume`` (a parked HITL run being fed its result): must *not* be
+  skipped while running, because the session is typically still running
+  the parked tail at trigger time. It is re-queued after a short backoff
+  until the parked run releases its session lock, then spawned with the
+  carried input event.
+- ``message`` (an inbound-channel ``Msg``): carries a genuine user message
+  and is retried until it can start a run.
+- ``queued_message`` (ordinary browser input): drains a per-session FIFO
+  only after the current reply is complete and the session is not parked
+  on HITL. Durable recovery replaces per-session hot retries.
 
 All bus keys live on the :class:`MessageBus` base class (see
 ``enqueue_wakeup`` / ``enqueue_input``, ``dequeue_wakeups``,
@@ -42,7 +45,12 @@ from ...event import (
 from ...message import Msg
 from ...types import ErrorInfo, ErrorType, ReplyFinishedReason
 from ..message_bus import MessageBusKeys
-from .._bus_ops import enqueue_run_trigger, publish_session_event
+from ._chat_input_queue import ChatInputQueue
+
+from .._bus_ops import (
+    enqueue_run_trigger,
+    publish_session_event,
+)
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -60,6 +68,10 @@ _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
 # its run lock. Short enough to feel instant to the user, long enough
 # to avoid a hot re-enqueue loop while the lock is held.
 _RESUME_RETRY_BACKOFF_SECS = 0.1
+
+# Durably indexed pending queues are revisited at this low frequency.
+# This is a crash/lost-signal safety net, not a per-session hot poll.
+_MESSAGE_FALLBACK_TICK_SECS = 30.0
 
 
 class WakeupDispatcher:
@@ -105,18 +117,21 @@ class WakeupDispatcher:
         self._chat_service = chat_service
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
-        # Detached backoff timers for deferred ``resume`` re-enqueues.
-        # Held so they are not garbage-collected mid-sleep and can be
-        # cancelled on shutdown.
+        self._fallback_task: asyncio.Task | None = None
+        self._chat_queue = ChatInputQueue(message_bus, storage, chat_service)
+        # Detached resume timers. Held
+        # so they are not garbage-collected mid-await and can be cancelled
+        # on shutdown.
         self._retry_tasks: set[asyncio.Task] = set()
 
     async def __aenter__(self) -> Self:
         """Start the dispatcher loop and wait until its bus
         subscription is live.
 
-        Also performs an initial drain right after subscription so
-        triggers produced while this process was down (durable in
-        the queue) are picked up immediately on startup.
+        After subscribing, publishes a signal for durable triggers that
+        predate process startup. The potentially O(N) pending-session
+        recovery sweep runs in a retained background task so application
+        startup is not blocked by the number of indexed sessions.
 
         Returns:
             `Self`: This dispatcher instance.
@@ -127,7 +142,12 @@ class WakeupDispatcher:
             name="wakeup-dispatcher",
         )
         await ready.wait()
-        await self._drain_and_dispatch()
+        self._fallback_task = asyncio.create_task(
+            self._fallback_loop(),
+            name="wakeup-dispatcher:fallback",
+        )
+        await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
+        self._chat_queue.schedule_recovery()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -141,14 +161,17 @@ class WakeupDispatcher:
             except asyncio.CancelledError:
                 pass
         self._retry_tasks.clear()
-        if self._task is None:
-            return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
+        for task in (self._fallback_task, self._task):
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._fallback_task = None
         self._task = None
+        await self._chat_queue.close()
 
     # ------------------------------------------------------------------
     # Internals
@@ -174,6 +197,24 @@ class WakeupDispatcher:
             logger.exception(
                 "WakeupDispatcher loop crashed; subscription ended.",
             )
+
+    async def _fallback_loop(self) -> None:
+        """Periodically signal the sole drain loop and schedule recovery."""
+        while True:
+            await asyncio.sleep(_MESSAGE_FALLBACK_TICK_SECS)
+            try:
+                # Never drain here: Redis queue_drain is XRANGE + XDEL and
+                # therefore requires a single in-process consumer. All
+                # actual draining remains serialized in ``_loop``.
+                await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("WakeupDispatcher fallback signal failed.")
+            try:
+                self._chat_queue.schedule_recovery()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher recovery scheduling failed.",
+                )
 
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of trigger entries and dispatch each."""
@@ -214,7 +255,7 @@ class WakeupDispatcher:
         session_id: str,
         agent_id: str,
         kind: str,
-        raw_input: dict | None,
+        raw_input: dict | list[dict] | None,
     ) -> None:
         """Dispatch a single trigger entry by its ``kind``.
 
@@ -226,13 +267,33 @@ class WakeupDispatcher:
             agent_id (`str`):
                 The agent that owns the session.
             kind (`str`):
-                Trigger kind (``wake`` / ``resume``); see module docstring.
-            raw_input (`dict | None`):
+                Trigger kind (``wake`` / ``resume`` / ``message`` /
+                ``queued_message``); see the module docstring.
+            raw_input (`dict | list[dict] | None`):
                 Serialised input event for ``resume`` triggers, else
                 ``None``.
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
         is_message = kind == MessageBusKeys.WAKEUP_KIND_MESSAGE
+        is_queued_message = kind == MessageBusKeys.WAKEUP_KIND_QUEUED_MESSAGE
+
+        # Queued-message triggers are only hints. Avoid storage/lock work
+        # for stale completion nudges after the durable queue is empty.
+        if is_queued_message:
+            pending = await self._bus.queue_read(
+                MessageBusKeys.chat_inputs(session_id),
+                max_count=1,
+            )
+            claimed = await self._bus.registry_exists(
+                MessageBusKeys.chat_input_inflight_registry(),
+                session_id,
+            )
+            if not pending and not claimed:
+                return
+            if await self._bus.is_locked(
+                MessageBusKeys.chat_input_dispatch_lock(session_id),
+            ):
+                return
         # ``resume`` and ``message`` both carry input that must be
         # delivered — never dropped while the session is busy.
         carries_input = is_resume or is_message
@@ -275,21 +336,18 @@ class WakeupDispatcher:
         if await self._bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ):
-            # The session is busy, so nothing can be spawned right now:
-            # re-queue after a short backoff rather than dropping.
-            #
-            # ``wake`` needs this as much as the input-carrying kinds. A
-            # producer only enqueues one after finding no registered
-            # inbox consumer, which a finished run gives up *before* it
-            # releases the session lock — so a held lock is no evidence
-            # that anyone is still going to drain the inbox.
-            self._schedule_retry(
-                user_id,
-                session_id,
-                agent_id,
-                kind,
-                input_msg,
-            )
+            # The durable pending-session registry plus fallback tick
+            # revisits browser queues without per-session hot polling.
+            # Every other kind carries work that is not durably indexed
+            # there, so it must be retried until the run lock is free.
+            if not is_queued_message:
+                self._schedule_retry(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    kind,
+                    input_msg,
+                )
             return
 
         # Orphan guard: the queue is unaware of session lifecycle. A
@@ -297,10 +355,12 @@ class WakeupDispatcher:
         # BG-task completion callback or a schedule trigger) will still
         # arrive here. Drop it rather than letting ChatService.run crash
         # on a missing storage record.
-        if (
-            await self._storage.get_session(user_id, agent_id, session_id)
-            is None
-        ):
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session is None:
             logger.warning(
                 "WakeupDispatcher: dropping %s trigger for session %s "
                 "(agent %s, user %s) — session no longer exists in "
@@ -329,28 +389,66 @@ class WakeupDispatcher:
             return
 
         try:
-            self._registry.spawn(
-                self._chat_service.run(
+            run_coro = (
+                self._chat_queue.drain_chat_inputs(
+                    user_id,
+                    session_id,
+                    agent_id,
+                )
+                if is_queued_message
+                else self._chat_queue.run_resume_serialized(
                     user_id=user_id,
                     session_id=session_id,
                     agent_id=agent_id,
                     input_msg=input_msg,
-                ),
+                )
+                if is_resume
+                else self._chat_service.run(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    input_msg=input_msg,
+                )
+            )
+            task = self._registry.spawn(
+                run_coro,
                 session_id=session_id,
                 name=f"{kind}-run:{session_id}",
             )
+            if is_queued_message:
+                # Registry cleanup is registered inside spawn() before this
+                # callback. A successful/cancelled pump therefore nudges
+                # the next turn only after its local run slot is free.
+                task.add_done_callback(
+                    lambda completed: self._chat_queue.message_pump_done(
+                        completed,
+                        user_id,
+                        session_id,
+                        agent_id,
+                    ),
+                )
+            else:
+                task.add_done_callback(
+                    lambda _completed: self._chat_queue.schedule_message_nudge(
+                        user_id,
+                        session_id,
+                        agent_id,
+                    ),
+                )
         except RuntimeError:
             # A local run was registered between the running-check and
-            # the spawn. Re-queue so neither the carried input nor a
-            # queued inbox payload is stranded — that run may already be
-            # past its last drain.
-            self._schedule_retry(
-                user_id,
-                session_id,
-                agent_id,
-                kind,
-                input_msg,
-            )
+            # the spawn. Close the unscheduled coroutine first. Browser
+            # queue work remains durably indexed; all other trigger kinds
+            # must be re-enqueued because no durable queue owns their input.
+            run_coro.close()
+            if not is_queued_message:
+                self._schedule_retry(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    kind,
+                    input_msg,
+                )
 
     def _schedule_retry(
         self,
@@ -393,7 +491,7 @@ class WakeupDispatcher:
                     user_id=user_id,
                     session_id=session_id,
                     agent_id=agent_id,
-                    kind=kind,  # type: ignore[arg-type]  # resume | message
+                    kind=kind,  # type: ignore[arg-type]
                     inputs=input_msg,
                 )
             except asyncio.CancelledError:

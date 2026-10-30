@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, patch
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._service import ChatService
+from agentscope.app._bus_ops import enqueue_chat_input
+from agentscope.app._manager._chat_input_queue import ChatInputQueue
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.storage import (
     AgentData,
@@ -21,6 +23,7 @@ from agentscope.app.storage import (
     TTSModelConfig,
 )
 from agentscope.middleware import TTSMiddleware
+from agentscope.message import UserMsg
 from agentscope.state import AgentState
 
 
@@ -91,7 +94,17 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
         """A missing profile skips TTS while the worker still replies."""
         await self._assert_worker_run(tts_available=False)
 
-    async def _assert_worker_run(self, tts_available: bool) -> None:
+    async def test_queue_and_direct_input_each_saved_once(self) -> None:
+        """Queue persistence replaces the initial save in ChatService."""
+        for queued in (False, True):
+            with self.subTest(queued=queued):
+                await self._assert_worker_run(True, queued=queued)
+
+    async def _assert_worker_run(
+        self,
+        tts_available: bool,
+        queued: bool | None = None,
+    ) -> None:
         """Exercise assembly and reply with or without a usable TTS model."""
         user_id = "user-1"
         worker_agent = AgentRecord(
@@ -206,6 +219,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             resource_access_service=_Access(),
             custom_agent_cls=_Agent,
         )
+        message = UserMsg("user", "run once") if queued is not None else None
         with (
             patch(
                 "agentscope.app._service._chat.get_toolkit",
@@ -220,15 +234,44 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "agentscope.app._service._chat.publish_session_event",
                 new_callable=AsyncMock,
             ) as publish,
+            patch.object(
+                storage,
+                "upsert_message",
+                wraps=storage.upsert_message,
+            ) as save,
         ):
             if not tts_available:
                 get_tts_model.return_value = None
-            await service._run_impl(
-                user_id,
-                worker_session.id,
-                worker_agent.id,
-                None,
-            )
+            if queued:
+                queue = ChatInputQueue(service._message_bus, storage, service)
+                self.addAsyncCleanup(queue.close)
+                await enqueue_chat_input(
+                    service._message_bus,
+                    user_id,
+                    worker_session.id,
+                    worker_agent.id,
+                    message,
+                )
+                self.assertTrue(
+                    await queue.drain_chat_inputs(
+                        user_id,
+                        worker_session.id,
+                        worker_agent.id,
+                    ),
+                )
+            else:
+                await service._run_impl(
+                    user_id,
+                    worker_session.id,
+                    worker_agent.id,
+                    message,
+                )
+            if message is not None:
+                save.assert_awaited_once_with(
+                    user_id,
+                    worker_session.id,
+                    message,
+                )
 
         failures = [
             call.args[2]
@@ -283,7 +326,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": 1,
                 "team_role": "worker",
                 "channel_tools": [],
-                "replies": [None],
+                "replies": [message],
                 "tts_models": (
                     [get_tts_model.return_value] if tts_available else []
                 ),

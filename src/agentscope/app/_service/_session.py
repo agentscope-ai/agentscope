@@ -48,6 +48,7 @@ imports the bus; bus code never imports storage.
 import asyncio
 from enum import StrEnum
 
+from .._chat_input_store import cleanup_session
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ..workspace_manager import WorkspaceManagerBase
@@ -658,6 +659,14 @@ class SessionService:
         await self._bus.queue_delete(
             MessageBusKeys.inbox(session_id),
         )
+        await self._bus.queue_delete(
+            MessageBusKeys.chat_inputs(session_id),
+        )
+        await self._bus.registry_del(
+            MessageBusKeys.chat_input_inflight_registry(),
+            session_id,
+        )
+        await cleanup_session(self._bus, session_id)
         await self._bus.registry_drop(
             MessageBusKeys.inbox_consumer(session_id),
         )
