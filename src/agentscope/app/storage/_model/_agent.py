@@ -9,6 +9,7 @@ from pydantic.json_schema import SkipJsonSchema
 from ...._utils._common import _generate_id
 from ._base import _RecordBase
 from ....agent import ContextConfig, ReActConfig
+from ....agent._config import _validate_context_config_ratios
 
 
 class InviteConfig(BaseModel):
@@ -89,6 +90,15 @@ class AgentChatConfig(BaseModel):
         description="The invite config for the agent.",
         title="Invite Config",
     )
+
+    @model_validator(mode="after")
+    def _validate_context_ratios(self) -> Self:
+        """Reject app settings that fail with the default Agent runtime."""
+        _validate_context_config_ratios(
+            self.context_config,
+            inject_runtime_state=True,
+        )
+        return self
 
 
 class AgentData(BaseModel):

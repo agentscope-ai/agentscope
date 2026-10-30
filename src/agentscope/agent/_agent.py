@@ -23,7 +23,13 @@ from typing import (
 import jsonschema
 from pydantic import BaseModel
 
-from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    InjectionConfig,
+    _validate_context_config_ratios,
+)
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -253,34 +259,10 @@ class Agent:
                 If the reserved/buffer ratios don't leave room ahead of the
                 context compression threshold.
         """
-        if (
-            self.context_config.reserve_ratio
-            >= self.context_config.trigger_ratio
-        ):
-            raise ValueError(
-                "The 'reserve_ratio' of the context config must be smaller "
-                "than its 'trigger_ratio', got "
-                f"{self.context_config.reserve_ratio} and "
-                f"{self.context_config.trigger_ratio}.",
-            )
-
-        # The buffer is only consumed by the runtime state injection and
-        # the compression tool, so it's checked only when one of them is on
-        if (
-            self.injection_config.inject_runtime_state
-            or self.context_config.compression_tool_enabled
-        ) and (
-            self.context_config.context_buffer_ratio
-            >= self.context_config.trigger_ratio
-        ):
-            raise ValueError(
-                "The 'context_buffer_ratio' of the context config must be "
-                "smaller than its 'trigger_ratio', so that the context "
-                "length is injected and the compression tool takes effect "
-                "before the hard compression, got "
-                f"{self.context_config.context_buffer_ratio} and "
-                f"{self.context_config.trigger_ratio}.",
-            )
+        _validate_context_config_ratios(
+            self.context_config,
+            self.injection_config.inject_runtime_state,
+        )
 
     # =======================================================================
     # Agent public methods

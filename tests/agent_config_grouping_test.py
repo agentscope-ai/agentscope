@@ -152,6 +152,68 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_create_rejects_context_ratios_that_make_agent_unusable(
+        self,
+    ) -> None:
+        """POST rejects settings that Agent construction would reject."""
+        invalid_configs = (
+            {"trigger_ratio": 0.1},
+            {"trigger_ratio": 0.15},
+            {"context_buffer_ratio": 0.8},
+        )
+
+        for index, context_config in enumerate(invalid_configs):
+            with self.subTest(context_config=context_config):
+                response = self.client.post(
+                    "/agent/",
+                    headers=HEADERS,
+                    json={
+                        "name": f"invalid-{index}",
+                        "chat_config": {"context_config": context_config},
+                    },
+                )
+                self.assertEqual(response.status_code, 422)
+
+        valid = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "valid-default"},
+        )
+        self.assertEqual(valid.status_code, 201)
+
+    def test_update_rejects_invalid_context_ratio_without_mutating_record(
+        self,
+    ) -> None:
+        """PATCH rejects and does not persist a context ratio violation."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "valid-agent"},
+        ).json()["agent_id"]
+
+        response = self.client.patch(
+            f"/agent/{agent_id}",
+            headers=HEADERS,
+            json={
+                "chat_config": {
+                    "context_config": {"trigger_ratio": 0.15},
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        saved = self.client.get("/agent/", headers=HEADERS)
+        self.assertEqual(saved.status_code, 200)
+        saved_agent = next(
+            agent["data"]
+            for agent in saved.json()["agents"]
+            if agent["id"] == agent_id
+        )
+        self.assertEqual(
+            saved_agent["chat_config"]["context_config"]["trigger_ratio"],
+            0.8,
+        )
+
     def test_update_keeps_untouched_sub_configs(self) -> None:
         """A legacy PATCH replaces its own sub-config and nothing else."""
         agent_id = self.client.post(
