@@ -782,6 +782,7 @@ export interface CreateScheduleRequest {
 	description?: string;
 	cron_expression: string;
 	timezone?: string;
+	ended_at?: string | null;
 	agent_id: string;
 	chat_model_config: ChatModelConfig;
 	enabled?: boolean;

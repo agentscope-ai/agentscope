@@ -388,7 +388,11 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             )
 
         embeddings = [
-            entry["embedding"] for entry in response.output["embeddings"]
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(response.output["embeddings"]),
+                key=lambda item: item[1].get("text_index", item[0]),
+            )
         ]
         if self.embedding_cache:
             await self.embedding_cache.store(
@@ -472,7 +476,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        embeddings = [
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(res.output["embeddings"]),
+                key=lambda item: item[1].get("index", item[0]),
+            )
+        ]
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,
