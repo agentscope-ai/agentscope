@@ -27,7 +27,9 @@ from agentscope.event import (
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
     ReplyEndEvent,
+    ConfirmResult,
 )
+from agentscope.message import ToolCallBlock
 
 
 class _FakeProjection:
@@ -129,8 +131,12 @@ def _projector(team: TeamRecord | None = None) -> SubagentHitlProjector:
     return SubagentHitlProjector(_FakeStorage(team if team else _team()))
 
 
-def _entry_id() -> str:
-    return SubagentHitlProjector.entry_id(_WORKER_SID, "r1")
+def _entry_id(call_id: str = "call-1") -> str:
+    return SubagentHitlProjector.entry_id(_WORKER_SID, "r1", call_id)
+
+
+def _call(call_id: str = "call-1") -> ToolCallBlock:
+    return ToolCallBlock.model_construct(id=call_id)
 
 
 class TestSubagentHitlProjectorRequire(IsolatedAsyncioTestCase):
@@ -152,7 +158,7 @@ class TestSubagentHitlProjectorRequire(IsolatedAsyncioTestCase):
         fires the live require notification."""
         event = RequireUserConfirmEvent.model_construct(
             reply_id="r1",
-            tool_calls=[],
+            tool_calls=[_call()],
         )
         projection = await self._run_require(event)
 
@@ -173,7 +179,7 @@ class TestSubagentHitlProjectorRequire(IsolatedAsyncioTestCase):
         ``event_type`` discriminator."""
         event = RequireExternalExecutionEvent.model_construct(
             reply_id="r1",
-            tool_calls=[],
+            tool_calls=[_call()],
         )
         projection = await self._run_require(event)
 
@@ -182,6 +188,34 @@ class TestSubagentHitlProjectorRequire(IsolatedAsyncioTestCase):
             card[_entry_id()]["event_type"],
             "require_external_execution",
         )
+
+    async def test_separate_requests_in_one_reply_keep_distinct_entries(
+        self,
+    ) -> None:
+        """Requests for different tool calls in one reply must not collide."""
+        projection = _FakeProjection()
+        projector = _projector()
+        for call_id in ("call-a", "call-b"):
+            await projector.maybe_project(
+                "u",
+                _session(_WORKER_SID),
+                _agent(),
+                RequireUserConfirmEvent.model_construct(
+                    reply_id="r1",
+                    tool_calls=[ToolCallBlock.model_construct(id=call_id)],
+                ),
+                projection,
+            )
+
+        entries = await projection.list(
+            _LEADER_SID, SubagentHitlProjector.KIND
+        )
+        projected = {
+            call["id"]
+            for entry in entries
+            for call in entry["event"]["tool_calls"]
+        }
+        self.assertEqual(projected, {"call-a", "call-b"})
 
     async def test_invited_agent_source_user_still_projects(self) -> None:
         """An ``AgentInvite``-borrowed session runs on a
@@ -195,7 +229,7 @@ class TestSubagentHitlProjectorRequire(IsolatedAsyncioTestCase):
             _agent(source="user"),  # invited agents keep source='user'
             RequireUserConfirmEvent.model_construct(
                 reply_id="r1",
-                tool_calls=[],
+                tool_calls=[_call()],
             ),
             projection,
         )
@@ -216,7 +250,7 @@ class TestSubagentHitlProjectorClear(IsolatedAsyncioTestCase):
             _agent(),
             RequireUserConfirmEvent.model_construct(
                 reply_id="r1",
-                tool_calls=[],
+                tool_calls=[_call()],
             ),
             projection,
         )
@@ -250,6 +284,45 @@ class TestSubagentHitlProjectorClear(IsolatedAsyncioTestCase):
         self.assertEqual(value["worker_session_id"], _WORKER_SID)
         self.assertEqual(value["reply_id"], "r1")
 
+    async def test_partial_confirm_result_clears_only_answered_call(
+        self,
+    ) -> None:
+        projection = _FakeProjection()
+        projector = _projector()
+        for call_id in ("call-a", "call-b"):
+            await projector.maybe_project(
+                "u",
+                _session(_WORKER_SID),
+                _agent(),
+                RequireUserConfirmEvent.model_construct(
+                    reply_id="r1",
+                    tool_calls=[_call(call_id)],
+                ),
+                projection,
+            )
+
+        await projector.maybe_project(
+            "u",
+            _session(_WORKER_SID),
+            _agent(),
+            UserConfirmResultEvent.model_construct(
+                reply_id="r1",
+                confirm_results=[
+                    ConfirmResult.model_construct(
+                        confirmed=True,
+                        tool_call=_call("call-b"),
+                    ),
+                ],
+            ),
+            projection,
+        )
+
+        card = projection.store[(_LEADER_SID, SubagentHitlProjector.KIND)]
+        self.assertEqual(set(card), {_entry_id("call-a")})
+        self.assertEqual(
+            projection.published[-1][2]["tool_call_ids"], ["call-b"]
+        )
+
     async def test_external_execution_result_clears_card(self) -> None:
         """An ``ExternalExecutionResultEvent`` also clears the card."""
         projection = await self._seed_then(
@@ -278,6 +351,38 @@ class TestSubagentHitlProjectorClear(IsolatedAsyncioTestCase):
             SubagentHitlProjector.EVT_RESULT,
         )
 
+    async def test_reply_end_clears_all_pending_calls(self) -> None:
+        projection = _FakeProjection()
+        projector = _projector()
+        for call_id in ("call-a", "call-b"):
+            await projector.maybe_project(
+                "u",
+                _session(_WORKER_SID),
+                _agent(),
+                RequireUserConfirmEvent.model_construct(
+                    reply_id="r1",
+                    tool_calls=[_call(call_id)],
+                ),
+                projection,
+            )
+
+        await projector.maybe_project(
+            "u",
+            _session(_WORKER_SID),
+            _agent(),
+            ReplyEndEvent.model_construct(reply_id="r1"),
+            projection,
+        )
+
+        self.assertEqual(
+            projection.store[(_LEADER_SID, SubagentHitlProjector.KIND)],
+            {},
+        )
+        self.assertEqual(
+            projection.published[-1][2]["tool_call_ids"],
+            ["call-a", "call-b"],
+        )
+
 
 class TestSubagentHitlProjectorNoOp(IsolatedAsyncioTestCase):
     """Cases where nothing should be projected."""
@@ -300,7 +405,7 @@ class TestSubagentHitlProjectorNoOp(IsolatedAsyncioTestCase):
             _agent(source=agent_source),
             RequireUserConfirmEvent.model_construct(
                 reply_id="r1",
-                tool_calls=[],
+                tool_calls=[_call()],
             ),
             projection,
         )
@@ -344,7 +449,7 @@ class TestSubagentHitlProjectorResolve(IsolatedAsyncioTestCase):
             _agent(),
             RequireUserConfirmEvent.model_construct(
                 reply_id="r1",
-                tool_calls=[],
+                tool_calls=[_call()],
             ),
             projection,
         )

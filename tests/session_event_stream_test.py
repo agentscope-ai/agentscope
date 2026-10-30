@@ -7,8 +7,13 @@ import json
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._bus_ops import publish_session_event
-from agentscope.app._router._session import stream_session_events
+from agentscope.app._router._session import (
+    _worker_still_asking,
+    stream_session_events,
+)
 from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.message import AssistantMsg, ToolCallBlock, ToolCallState
+from agentscope.state import AgentState
 
 
 class _Storage:
@@ -77,4 +82,55 @@ class SessionEventStreamTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [first, second, third],
             [{"sequence": 1}, {"sequence": 2}, {"sequence": 3}],
+        )
+
+    async def test_replay_validates_each_projected_tool_call(self) -> None:
+        """A sibling pending call must not keep an answered card alive."""
+        session = type("Session", (), {})()
+        session.state = AgentState(
+            context=[
+                AssistantMsg(
+                    name="worker",
+                    id="reply-1",
+                    content=[
+                        ToolCallBlock(
+                            id="answered",
+                            name="tool",
+                            input="{}",
+                            state=ToolCallState.FINISHED,
+                        ),
+                        ToolCallBlock(
+                            id="pending",
+                            name="tool",
+                            input="{}",
+                            state=ToolCallState.ASKING,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        class _WorkerStorage:
+            async def get_session(self, *_: object) -> object:
+                return session
+
+        self.assertFalse(
+            await _worker_still_asking(
+                _WorkerStorage(),  # type: ignore[arg-type]
+                "u-1",
+                "a-1",
+                "s-1",
+                "reply-1",
+                "answered",
+            ),
+        )
+        self.assertTrue(
+            await _worker_still_asking(
+                _WorkerStorage(),  # type: ignore[arg-type]
+                "u-1",
+                "a-1",
+                "s-1",
+                "reply-1",
+                "pending",
+            ),
         )

@@ -1355,6 +1355,12 @@ class ChatService:
                                         input_msg.model_dump(mode="json"),
                                     )
                                 )
+                                await self._project_event(
+                                    user_id,
+                                    session_record,
+                                    agent_record,
+                                    input_msg,
+                                )
 
                             # Emit a synthetic REPLY_START so SSE subscribers
                             # (frontend, channel gateway) can detect the
