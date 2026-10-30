@@ -2,14 +2,20 @@
 """Tests for schedule validation before persistence and registration."""
 from datetime import datetime, timedelta
 from unittest import IsolatedAsyncioTestCase, TestCase
+from zoneinfo import ZoneInfo
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from agentscope.app._manager import SchedulerManager
 from agentscope.app._manager._scheduler._tools._schedule_create import (
     ScheduleCreate,
 )
-from agentscope.app._router._schedule import create_schedule, update_schedule
+from agentscope.app._router._schedule import (
+    create_schedule,
+    schedule_router,
+    update_schedule,
+)
 from agentscope.app._router._schema._schedule import (
     CreateScheduleRequest,
     UpdateScheduleRequest,
@@ -18,6 +24,12 @@ from agentscope.app.storage import (
     ChatModelConfig,
     ScheduleData,
     ScheduleRecord,
+)
+from agentscope.app.deps import (
+    get_current_user_id,
+    get_resource_access_service,
+    get_scheduler_manager,
+    get_storage,
 )
 from agentscope.permission import PermissionMode
 
@@ -62,6 +74,10 @@ class _Storage:
         _ = user_id
         self.upserted.append(record)
         return record.id
+
+    async def list_schedules(self, user_id: str) -> list[ScheduleRecord]:
+        """Return records persisted through the route under test."""
+        return [r for r in self.upserted if r.user_id == user_id]
 
 
 class _Scheduler(SchedulerManager):
@@ -119,6 +135,129 @@ def _record() -> ScheduleRecord:
             permission_mode=PermissionMode.DONT_ASK,
         ),
     )
+
+
+class ScheduleHttpEndTimeTest(TestCase):
+    """Exercise request validation and response serialization over HTTP."""
+
+    def setUp(self) -> None:
+        """Keep real routes and schemas, replacing external services only."""
+        self.storage = _Storage()
+        self.scheduler = _Scheduler()
+        app = FastAPI()
+        app.include_router(schedule_router)
+        app.dependency_overrides.update(
+            {
+                get_current_user_id: lambda: "user-1",
+                get_storage: lambda: self.storage,
+                get_resource_access_service: _Access,
+                get_scheduler_manager: lambda: self.scheduler,
+            },
+        )
+        self.client = self.enterContext(TestClient(app))
+
+    def test_end_time_round_trips_through_create_and_list(self) -> None:
+        """An offset-bearing end time survives JSON input and list output."""
+        payload = {
+            **_request("59 23 * * *", "Asia/Shanghai").model_dump(mode="json"),
+            "ended_at": "2099-12-31T23:59:59.999+08:00",
+        }
+        created = self.client.post("/schedule/", json=payload)
+        self.assertEqual(created.status_code, 201, created.text)
+        record = self.storage.upserted[0]
+        # Reuse generated metadata, but derive business fields from input.
+        expected_record = {
+            "id": record.id,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+            "user_id": "user-1",
+            "agent_id": "agent-1",
+            "data": {
+                **{k: v for k, v in payload.items() if k != "agent_id"},
+                "started_at": record.data.started_at,
+                "ended_at": datetime.fromisoformat(payload["ended_at"]),
+                "permission_mode": PermissionMode(payload["permission_mode"]),
+                "source": "USER",
+                "source_session_id": "",
+            },
+        }
+        self.assertEqual(created.json(), {"schedule_id": record.id})
+        self.assertEqual(
+            [r.model_dump() for r in self.storage.upserted],
+            [expected_record],
+        )
+        self.assertEqual(self.scheduler.notified, [record.id])
+        listed = self.client.get("/schedule/")
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(
+            listed.json(),
+            {
+                "schedules": [
+                    ScheduleRecord.model_validate(expected_record).model_dump(
+                        mode="json",
+                    ),
+                ],
+                "total": 1,
+            },
+        )
+        trigger = SchedulerManager.validate_schedule(
+            ScheduleRecord.model_validate(listed.json()["schedules"][0]),
+        )
+        last_day = datetime(2099, 12, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
+        last_fire = trigger.get_next_fire_time(None, last_day)
+        self.assertEqual(last_fire, last_day.replace(hour=23, minute=59))
+        self.assertIsNone(
+            trigger.get_next_fire_time(
+                last_fire,
+                last_fire + timedelta(seconds=1),
+            ),
+        )
+
+    def test_invalid_end_time_returns_422_without_side_effects(self) -> None:
+        """Malformed, naive, and expired end times fail before writes."""
+        cases = (
+            (
+                "not-a-date",
+                [
+                    {
+                        "type": "datetime_from_date_parsing",
+                        "loc": ["body", "ended_at"],
+                        "msg": "Input should be a valid datetime or date, "
+                        "invalid character in year",
+                        "input": "not-a-date",
+                        "ctx": {"error": "invalid character in year"},
+                    },
+                ],
+            ),
+            (
+                "2099-12-31T23:59:59",
+                [
+                    {
+                        "type": "timezone_aware",
+                        "loc": ["body", "ended_at"],
+                        "msg": "Input should have timezone info",
+                        "input": "2099-12-31T23:59:59",
+                    },
+                ],
+            ),
+            (
+                "2000-01-01T00:00:00Z",
+                "ended_at must be later than started_at",
+            ),
+        )
+        for ended_at, expected_detail in cases:
+            with self.subTest(ended_at=ended_at):
+                response = self.client.post(
+                    "/schedule/",
+                    json={
+                        **_request("0 9 * * *").model_dump(mode="json"),
+                        "ended_at": ended_at,
+                    },
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(response.json(), {"detail": expected_detail})
+                self.assertListEqual(self.storage.upserted, [])
+                self.assertListEqual(self.scheduler.notified, [])
 
 
 class ScheduleWeekdayTest(TestCase):
@@ -229,6 +368,59 @@ class ScheduleValidationTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(storage.upserted), 1)
         self.assertEqual(storage.upserted[0].id, response.schedule_id)
         self.assertListEqual(scheduler.notified, [response.schedule_id])
+
+    async def test_create_without_end_time_remains_unbounded(self) -> None:
+        """Omitted and explicit null end times keep the existing behavior."""
+        cases: list[dict[str, None]] = [{}, {"ended_at": None}]
+        for extra in cases:
+            with self.subTest(extra=extra):
+                storage = _Storage()
+                scheduler = _Scheduler()
+                payload = {
+                    **_request("0 9 * * *").model_dump(
+                        exclude={"ended_at"},
+                    ),
+                    **extra,
+                }
+                request = CreateScheduleRequest.model_validate(
+                    payload,
+                )
+                self.assertEqual(
+                    "ended_at" in request.model_fields_set,
+                    "ended_at" in extra,
+                )
+                response = await create_schedule(
+                    request,
+                    user_id="user-1",
+                    storage=storage,
+                    access=_Access(),
+                    scheduler=scheduler,
+                )
+                record = storage.upserted[0]
+                self.assertEqual(
+                    [r.data.model_dump() for r in storage.upserted],
+                    [
+                        {
+                            **request.model_dump(exclude={"agent_id"}),
+                            "ended_at": None,
+                            "started_at": record.data.started_at,
+                            "source": "USER",
+                            "source_session_id": "",
+                        },
+                    ],
+                )
+                self.assertEqual(
+                    response.model_dump(),
+                    {"schedule_id": record.id},
+                )
+                self.assertEqual(scheduler.notified, [record.id])
+                trigger = SchedulerManager.validate_schedule(record)
+                self.assertIsNotNone(
+                    trigger.get_next_fire_time(
+                        None,
+                        datetime(2100, 1, 1, tzinfo=ZoneInfo("UTC")),
+                    ),
+                )
 
     async def test_create_empty_timezone_does_not_persist(self) -> None:
         """An empty timezone must not silently mean server-local."""
