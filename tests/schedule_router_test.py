@@ -259,6 +259,242 @@ class ScheduleHttpEndTimeTest(TestCase):
                 self.assertListEqual(self.storage.upserted, [])
                 self.assertListEqual(self.scheduler.notified, [])
 
+    def test_start_time_round_trip_and_frequency_boundaries(self) -> None:
+        """All frequencies retain their rules and inclusive start/end times."""
+        cases = (
+            ("daily", "26 20 * * *", "20:26", ("2026-11-01", "2026-11-02")),
+            ("midnight", "15 0 * * *", "00:15", ("2030-01-01", "2030-01-02")),
+            ("weekly", "26 20 * * 0", "20:26", ("2026-11-01", "2026-11-08")),
+            ("monthly", "26 20 1 * *", "20:26", ("2026-11-01", "2026-12-01")),
+            (
+                "month-end",
+                "15 0 31 * *",
+                "00:15",
+                ("2030-01-31", "2030-03-31"),
+            ),
+            ("once", "26 20 1 11 *", "20:26", ("2030-11-01",)),
+            ("once-leap-day", "26 20 29 2 *", "20:26", ("2032-02-29",)),
+        )
+        for frequency, cron, time, dates in cases:
+            expected_fires = [
+                datetime.fromisoformat(f"{day}T{time}:00+08:00")
+                for day in dates
+            ]
+            first = expected_fires[0]
+            utc_start = first.astimezone(ZoneInfo("UTC")).isoformat()
+            starts = (
+                first.isoformat(),
+                utc_start.replace("+00:00", "Z"),
+            )
+            for start in starts:
+                for bounded in (True, False):
+                    with self.subTest(
+                        frequency=frequency,
+                        start=start,
+                        bounded=bounded,
+                    ):
+                        self.storage.upserted.clear()
+                        self.scheduler.notified.clear()
+                        end = expected_fires[-1] if bounded else None
+                        if end is not None and end == first:
+                            end += timedelta(days=1)
+                        payload = {
+                            **_request(cron, "Asia/Shanghai").model_dump(
+                                mode="json",
+                            ),
+                            "started_at": start,
+                            "ended_at": end.isoformat() if end else None,
+                        }
+                        created = self.client.post("/schedule/", json=payload)
+                        self.assertEqual(
+                            created.status_code,
+                            201,
+                            created.text,
+                        )
+                        record = self.storage.upserted[0]
+                        expected_record = {
+                            "id": record.id,
+                            "created_at": record.created_at,
+                            "updated_at": record.updated_at,
+                            "user_id": "user-1",
+                            "agent_id": payload["agent_id"],
+                            "data": {
+                                **{
+                                    k: v
+                                    for k, v in payload.items()
+                                    if k != "agent_id"
+                                },
+                                "started_at": datetime.fromisoformat(start),
+                                "ended_at": end,
+                                "permission_mode": PermissionMode.DONT_ASK,
+                                "source": "USER",
+                                "source_session_id": "",
+                            },
+                        }
+                        self.assertEqual(
+                            [r.model_dump() for r in self.storage.upserted],
+                            [expected_record],
+                        )
+                        self.assertEqual(
+                            created.json(),
+                            {"schedule_id": record.id},
+                        )
+                        self.assertEqual(self.scheduler.notified, [record.id])
+                        listed = self.client.get("/schedule/")
+                        self.assertEqual(listed.status_code, 200, listed.text)
+                        expected = ScheduleRecord.model_validate(
+                            expected_record,
+                        )
+                        self.assertEqual(
+                            listed.json(),
+                            {
+                                "schedules": [
+                                    expected.model_dump(mode="json"),
+                                ],
+                                "total": 1,
+                            },
+                        )
+                        restored = ScheduleRecord.model_validate(
+                            listed.json()["schedules"][0],
+                        )
+                        trigger = SchedulerManager.validate_schedule(restored)
+                        self.assertEqual(
+                            [
+                                trigger.get_next_fire_time(None, reference)
+                                for reference in (
+                                    first - timedelta(days=2000),
+                                    first - timedelta(microseconds=1),
+                                    first,
+                                )
+                            ],
+                            [first] * 3,
+                        )
+                        actual_fires = []
+                        fire = first
+                        for _ in expected_fires:
+                            actual_fires.append(fire)
+                            fire = trigger.get_next_fire_time(
+                                fire,
+                                fire + timedelta(seconds=1),
+                            )
+                        self.assertEqual(actual_fires, expected_fires)
+                        if bounded:
+                            self.assertIsNone(fire)
+
+    def test_ambiguous_start_keeps_first_occurrence_for_every_frequency(
+        self,
+    ) -> None:
+        """A UTC start at the first DST fold stays eligible after storage."""
+        for cron in (
+            "30 1 * * *",
+            "30 1 * * 0",
+            "30 1 1 * *",
+            "30 1 1 11 *",
+        ):
+            with self.subTest(cron=cron):
+                self.storage.upserted.clear()
+                self.scheduler.notified.clear()
+                response = self.client.post(
+                    "/schedule/",
+                    json={
+                        **_request(cron, "America/New_York").model_dump(
+                            mode="json",
+                        ),
+                        "started_at": "2026-11-01T05:30:00Z",
+                    },
+                )
+                self.assertEqual(response.status_code, 201, response.text)
+                restored = ScheduleRecord.model_validate_json(
+                    self.storage.upserted[0].model_dump_json(),
+                )
+                trigger = SchedulerManager.validate_schedule(restored)
+                first = trigger.get_next_fire_time(
+                    None,
+                    datetime.fromisoformat("2026-10-30T00:00:00Z"),
+                )
+                self.assertIsNotNone(first)
+                self.assertEqual(
+                    (first.isoformat(), first.fold),
+                    ("2026-11-01T01:30:00-04:00", 0),
+                )
+
+    def test_omitted_and_null_start_use_creation_time(self) -> None:
+        """Both compatible request forms save an aware creation instant."""
+        cases: list[dict[str, None]] = [{}, {"started_at": None}]
+        for extra in cases:
+            with self.subTest(extra=extra):
+                self.storage.upserted.clear()
+                self.scheduler.notified.clear()
+                payload = {
+                    **_request("0 * * * *").model_dump(
+                        mode="json",
+                        exclude={"started_at"},
+                    ),
+                    **extra,
+                }
+                before = datetime.now().astimezone()
+                response = self.client.post("/schedule/", json=payload)
+                after = datetime.now().astimezone()
+                self.assertEqual(response.status_code, 201, response.text)
+                record = self.storage.upserted[0]
+                self.assertEqual(
+                    response.json(),
+                    {"schedule_id": record.id},
+                )
+                self.assertEqual(self.scheduler.notified, [record.id])
+                self.assertIsNotNone(record.data.started_at.utcoffset())
+                self.assertLessEqual(before, record.data.started_at)
+                self.assertLessEqual(record.data.started_at, after)
+
+    def test_invalid_start_time_has_no_write_side_effects(self) -> None:
+        """Malformed/naive starts and invalid windows fail before mutation."""
+        cases = (
+            ("not-a-date", None, "datetime_from_date_parsing"),
+            ("2026-11-01T20:26:00", None, "timezone_aware"),
+            ("2026-02-30T20:26:00Z", None, "datetime_from_date_parsing"),
+            ("2026-11-01T25:26:00Z", None, "datetime_from_date_parsing"),
+            (
+                "2026-11-01T20:26:00+08:00",
+                "2026-11-01T12:26:00Z",
+                None,
+            ),
+            (
+                "2026-11-01T20:26:00+08:00",
+                "2026-11-01T12:25:59Z",
+                None,
+            ),
+        )
+        for start, end, error_type in cases:
+            with self.subTest(start=start, end=end):
+                response = self.client.post(
+                    "/schedule/",
+                    json={
+                        **_request("26 20 * * *").model_dump(mode="json"),
+                        "started_at": start,
+                        "ended_at": end,
+                    },
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+                detail = response.json()["detail"]
+                if error_type:
+                    # Parser descriptions differ by the invalid component.
+                    self.assertEqual(
+                        [
+                            (item["type"], item["loc"], item["input"])
+                            for item in detail
+                        ],
+                        [(error_type, ["body", "started_at"], start)],
+                    )
+                else:
+                    self.assertEqual(
+                        response.json(),
+                        {"detail": "ended_at must be later than started_at"},
+                    )
+                self.assertEqual(
+                    (self.storage.upserted, self.scheduler.notified),
+                    ([], []),
+                )
+
 
 class ScheduleWeekdayTest(TestCase):
     """Standard cron weekdays are translated for APScheduler."""
