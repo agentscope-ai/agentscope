@@ -140,6 +140,14 @@ class TTSModelConfig(BaseModel):
     model: str
     """The TTS model name."""
 
+    voice_profile_id: str | None = None
+    """The owner-scoped voice profile used for a custom voice.
+
+    Profiles bind the voice to its owner, credential and synthesis model.
+    Direct voice IDs remain supported with owned credentials. Shared
+    credentials may only use default or known preset voices without a profile.
+    """
+
     parameters: dict
     """TTS parameters (voice, language, etc.)."""
 

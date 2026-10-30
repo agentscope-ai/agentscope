@@ -5,6 +5,7 @@ import base64
 import io
 import os
 from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
+from urllib.parse import urlsplit
 import wave
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 from .._tts_base import TTSModelBase
 from .._tts_model_card import TTSModelCard
 from .._tts_response import TTSResponse
+from ._endpoints import _dashscope_url
 from ._cosyvoice_utils import (
     _BITS_PER_SAMPLE,
     _CHANNELS,
@@ -28,7 +30,14 @@ if TYPE_CHECKING:
 
 
 class DashScopeCosyVoiceTTSModel(TTSModelBase):
-    """DashScope CosyVoice TTS model using the WebSocket SpeechSynthesizer."""
+    """DashScope CosyVoice TTS model using the WebSocket SpeechSynthesizer.
+
+    ``credential.websocket_url`` takes precedence. Non-default official
+    endpoints and gateways with an API suffix derive the WebSocket route
+    from ``base_url``. The default base URL and other gateway layouts keep
+    the SDK's environment/global WebSocket configuration. For gateways with
+    separate HTTP and WebSocket routes, set both credential URLs explicitly.
+    """
 
     class Parameters(BaseModel):
         """Frontend-exposed parameters for DashScope CosyVoice TTS models."""
@@ -176,11 +185,34 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             callback_cls = _make_cosyvoice_callback_class()
             callback_instance = callback_cls()
 
+        url = self.credential.websocket_url
+        if url is None:
+            base_url = self.credential.base_url.rstrip("/")
+            parsed = urlsplit(base_url)
+            default_url = DashScopeCredential.model_fields["base_url"].default
+            official = parsed.hostname in {
+                "dashscope.aliyuncs.com",
+                "dashscope-intl.aliyuncs.com",
+                "dashscope-us.aliyuncs.com",
+            } or (parsed.hostname or "").endswith(".maas.aliyuncs.com")
+            standard_path = parsed.path.rstrip("/").endswith(
+                ("/compatible-mode/v1", "/api/v1"),
+            )
+            if base_url != default_url and (official or standard_path):
+                url = _dashscope_url(
+                    base_url,
+                    "/api-ws/v1/inference",
+                    websocket=True,
+                )
+        # Omitting url preserves SDK environment/global overrides for legacy
+        # defaults and gateways whose WebSocket route cannot be inferred.
+        endpoint = {"url": url} if url is not None else {}
         synthesizer = SpeechSynthesizer(
             model=self.model,
             voice=self.parameters.voice,
             format=AudioFormat.PCM_24000HZ_MONO_16BIT,
             callback=callback_instance,
+            **endpoint,
         )
         return synthesizer, callback_instance
 

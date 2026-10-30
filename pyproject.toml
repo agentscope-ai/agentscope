@@ -22,7 +22,7 @@ dependencies = [
     "aioitertools",
     "anthropic",
     "certifi>=2026.10.19",
-    "dashscope",
+    "dashscope>=1.20.0",
     "docstring_parser",
     "filetype",
     "json5",

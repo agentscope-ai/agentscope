@@ -8,6 +8,81 @@ from agentscope.tool._builtin._bash_parser import BashCommandParser
 from agentscope.tool import Bash
 
 
+class BashPermissionSplitTest(unittest.TestCase):
+    """Verify lossless permission boundaries without executing a shell."""
+
+    def test_subshell_redirection_keeps_scope(self) -> None:
+        """Keep a redirected subshell intact as a single operation."""
+        command = "(cat public.txt && cat public.txt) > private.txt"
+        parser = BashCommandParser()
+        self.assertEqual(parser.split_into_subcommands(command), [command])
+        self.assertEqual(
+            parser.split_into_subcommands(
+                "git status && "
+                "(cat public.txt && cat public.txt) > private.txt",
+            ),
+            ["git status", command],
+        )
+
+    def test_split_preserves_shell_operations(self) -> None:
+        """Keep Unicode, redirects, assignments, and quoted operators."""
+        cases = [
+            ("", [""]),
+            ("   ", ["   "]),
+            (
+                "git add '中文.txt' && git commit -m update",
+                ["git add '中文.txt'", "git commit -m update"],
+            ),
+            (
+                "git add 'ééééé' && curl git -o output.txt",
+                ["git add 'ééééé'", "curl git -o output.txt"],
+            ),
+            (
+                "cat public.txt && cat public.txt > private.txt",
+                ["cat public.txt", "cat public.txt > private.txt"],
+            ),
+            (
+                "git status && > output.txt",
+                ["git status", "> output.txt"],
+            ),
+            (
+                "cat a | cat b > output.txt",
+                ["cat a", "cat b > output.txt"],
+            ),
+            (
+                "git status && X=hello",
+                ["git status", "X=hello"],
+            ),
+            (
+                "git commit -m 'a && b | c' && git status",
+                ["git commit -m 'a && b | c'", "git status"],
+            ),
+            ("git status # comment", ["git status"]),
+            ("git status &&", ["git status &&"]),
+            (
+                "cat <<EOF\nhello\nEOF\ngit status",
+                ["cat <<EOF\nhello\nEOF", "git status"],
+            ),
+        ]
+        parser = BashCommandParser()
+        self.assertEqual(
+            [parser.split_into_subcommands(command) for command, _ in cases],
+            [expected for _, expected in cases],
+        )
+
+    def test_all_command_separators(self) -> None:
+        """Recognize every list and pipeline separator."""
+        parser = BashCommandParser()
+        for separator in (" && ", " || ", "; ", " | ", " |& ", "\n", " & "):
+            command = separator.join(["git status", "curl example.com"])
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    parser.split_into_subcommands(command),
+                    ["git status", "curl example.com"],
+                )
+                self.assertEqual(parser.is_read_only_command(command), False)
+
+
 @unittest.skipIf(
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
