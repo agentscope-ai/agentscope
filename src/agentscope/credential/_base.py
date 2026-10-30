@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase, ModelCard
     from ..realtime import RealtimeModelBase, RealtimeModelCard
-    from ..tts import TTSModelBase
+    from ..tts import TTSModelBase, VoiceCloningClientBase
     from ..tts._tts_model_card import TTSModelCard
 
 
@@ -56,6 +56,13 @@ class CredentialBase(BaseModel):
                 The chat model classes.
         """
         return [cls.get_chat_model_class()]
+
+    @classmethod
+    def get_voice_cloning_client_class(
+        cls,
+    ) -> Type["VoiceCloningClientBase"] | None:
+        """Return the voice creation client, or None when unsupported."""
+        return None
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:

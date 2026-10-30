@@ -20,14 +20,20 @@ import io
 import wave
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+import dashscope
+import httpx
+from dashscope.audio.tts_v2 import AudioFormat
 
 from utils import AnyString, AnyValue
 
 from agentscope.app._service._tts_model import _resolve_tts_class
-from agentscope.credential import DashScopeCredential
+from agentscope.credential import CredentialFactory, DashScopeCredential
+from agentscope.app.storage._utils import _dump_with_secrets
 from agentscope.tts import (
     DashScopeCosyVoiceTTSModel,
+    DashScopeVoiceCloningClient,
     DashScopeTTSModel,
     DashScopeRealtimeTTSModel,
     TTSModelBase,
@@ -210,6 +216,175 @@ def _parse_wav_payload(wav_bytes: bytes) -> bytes:
         return wav.readframes(wav.getnframes())
 
 
+class TestQwenCloneEndpoints(IsolatedAsyncioTestCase):
+    """Verify Qwen enrollment and real SDK request routing together."""
+
+    async def test_implicit_endpoint_survives_serialization(self) -> None:
+        """Implicit defaults follow SDK settings across serialization."""
+        parameters_cls = DashScopeTTSModel.Parameters
+        for global_url in (
+            "https://dashscope-intl.aliyuncs.com/api/v1",
+            "https://gateway.example.com/tenant/custom-api",
+        ):
+            with (
+                patch.object(dashscope, "base_http_api_url", global_url),
+                patch(
+                    "agentscope.tts._dashscope._voice_cloning_client."
+                    "_post_voice_request",
+                    new_callable=AsyncMock,
+                    return_value={"output": {"voice": "cloned-voice"}},
+                ) as post,
+                patch(
+                    "dashscope.api_entities.api_request_factory.HttpRequest",
+                ) as request,
+            ):
+                for explicit in (False, True):
+                    options = {"api_key": "test"}
+                    if explicit:
+                        options[
+                            "base_url"
+                        ] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    credential = DashScopeCredential(**options)
+                    base_url = (
+                        "https://dashscope.aliyuncs.com/api/v1"
+                        if explicit
+                        else global_url
+                    )
+                    versions = (
+                        credential,
+                        CredentialFactory.from_dict(credential.model_dump()),
+                        CredentialFactory.from_dict(
+                            _dump_with_secrets(credential),
+                        ),
+                        DashScopeCredential.model_validate_json(
+                            credential.model_dump_json(),
+                        ),
+                    )
+                    for index, restored in enumerate(versions):
+                        for stream in (False, True):
+                            with self.subTest(
+                                explicit=explicit,
+                                index=index,
+                                stream=stream,
+                            ):
+                                self.assertEqual(
+                                    "base_url" in restored.model_fields_set,
+                                    explicit,
+                                )
+                                client = DashScopeVoiceCloningClient(restored)
+                                voice = await client.create_voice(
+                                    audio=b"sample",
+                                    parameters=client.Parameters(
+                                        target_model="qwen3-tts-flash",
+                                    ),
+                                )
+                                self.assertEqual(
+                                    post.call_args.args,
+                                    (
+                                        base_url
+                                        + "/services/audio/tts/customization",
+                                    ),
+                                )
+                                for selected_voice in ("Cherry", voice):
+                                    call = request.return_value.call
+                                    call.return_value = iter(())
+                                    model = DashScopeTTSModel(
+                                        credential=restored,
+                                        parameters=parameters_cls(
+                                            voice=selected_voice,
+                                        ),
+                                        stream=stream,
+                                    )
+                                    result = await model.synthesize("Hello")
+                                    if stream:
+                                        _ = [chunk async for chunk in result]
+                                    self.assertEqual(
+                                        request.call_args.kwargs["url"],
+                                        base_url + "/services/aigc/"
+                                        "multimodal-generation/generation",
+                                    )
+                                self.assertEqual(
+                                    dashscope.base_http_api_url,
+                                    global_url,
+                                )
+
+    async def test_clone_and_synthesis_use_credential_region(self) -> None:
+        """Interleaved credentials keep their routes in both output modes."""
+        origins = (
+            "https://dashscope-intl.aliyuncs.com",
+            "https://dashscope.aliyuncs.com",
+            "https://workspace.cn-beijing.maas.aliyuncs.com",
+            "http://localhost:8080/gateway",
+        )
+        global_url = "https://global.invalid/api/v1"
+        with (
+            patch.object(dashscope, "base_http_api_url", global_url),
+            patch(
+                "agentscope.tts._dashscope._voice_cloning_client."
+                "_post_voice_request",
+                new_callable=AsyncMock,
+                return_value={"output": {"voice": "cloned-voice"}},
+            ) as post,
+            patch(
+                "dashscope.api_entities.api_request_factory.HttpRequest",
+            ) as request,
+        ):
+            for stream in (False, True):
+                for suffix in ("/compatible-mode/v1/", "/api/v1", "/"):
+                    models = []
+                    for origin in origins:
+                        credential = DashScopeCredential(
+                            api_key="test",
+                            base_url=origin + suffix,
+                        )
+                        client = DashScopeVoiceCloningClient(credential)
+                        voice = await client.create_voice(
+                            audio=b"sample",
+                            parameters=client.Parameters(
+                                target_model="qwen3-tts-flash",
+                            ),
+                        )
+                        self.assertEqual(
+                            post.call_args.args,
+                            (
+                                origin
+                                + "/api/v1/services/audio/tts/customization",
+                            ),
+                        )
+                        models.append(
+                            DashScopeTTSModel(
+                                credential=credential,
+                                parameters=DashScopeTTSModel.Parameters(
+                                    voice=voice,
+                                ),
+                                stream=stream,
+                            ),
+                        )
+                    for index in (0, 1, 2, 3, 0):
+                        with self.subTest(
+                            stream=stream,
+                            suffix=suffix,
+                            index=index,
+                        ):
+                            request.return_value.call.return_value = iter(())
+                            result = await models[index].synthesize("Hello")
+                            if stream:
+                                _ = [chunk async for chunk in result]
+                            self.assertEqual(
+                                (
+                                    request.call_args.kwargs["url"],
+                                    request.call_args.kwargs["api_key"],
+                                    dashscope.base_http_api_url,
+                                ),
+                                (
+                                    origins[index] + "/api/v1/services/aigc/"
+                                    "multimodal-generation/generation",
+                                    "test",
+                                    global_url,
+                                ),
+                            )
+
+
 class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
     """The unittests for DashScope TTS model (non-realtime)."""
 
@@ -295,6 +470,9 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                             "api_key": "test",
                             "text": "Hello",
                             "voice": expected,
+                            "base_address": (
+                                "https://dashscope.aliyuncs.com/api/v1"
+                            ),
                             "stream": True,
                         },
                     )
@@ -331,6 +509,7 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                     language_type="English",
                     api_key="ignored",
                     stream=False,
+                    base_address="https://override.invalid/api/v1",
                 )
                 responses = (
                     [chunk async for chunk in result] if stream else [result]
@@ -343,6 +522,7 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
                         "text": "Hello",
                         "voice": "Serena",
                         "language_type": "English",
+                        "base_address": "https://override.invalid/api/v1",
                         "stream": True,
                     },
                 )
@@ -1658,3 +1838,257 @@ class TestDashScopeCosyVoiceRealtimeMode(
             self.mock_synthesizer.close.assert_called_once()
             self.assertTrue(model._connected)
             self.assertIsNot(model._callback, old_callback)
+
+
+class TestDashScopeVoiceEndpoints(IsolatedAsyncioTestCase):
+    """Exercise the public clone-to-synthesis flow without network calls."""
+
+    def setUp(self) -> None:
+        """Mock provider I/O while keeping real model and callback code."""
+        transport = patch("agentscope.tts._voice_utils.httpx.AsyncClient")
+        client = transport.start()
+        self.addCleanup(transport.stop)
+        self.post = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                json={"output": {"voice_id": "cloned-voice"}},
+            ),
+        )
+        client.return_value.__aenter__.return_value.post = self.post
+        synth = patch(
+            "dashscope.audio.tts_v2.SpeechSynthesizer",
+            side_effect=self._make_synthesizer,
+        )
+        self.synth_factory = synth.start()
+        self.addCleanup(synth.stop)
+        for name, value in (
+            ("api_key", "test"),
+            ("base_websocket_api_url", "wss://global.invalid/inference"),
+        ):
+            setting = patch.object(dashscope, name, value)
+            setting.start()
+            self.addCleanup(setting.stop)
+
+    @staticmethod
+    def _make_synthesizer(**kwargs: Any) -> Mock:
+        """Simulate audio completion for batch, streaming and realtime."""
+        synth = Mock()
+        callback = kwargs["callback"]
+        if callback is None:
+            synth.call.return_value = b"\x00\x00"
+        else:
+
+            def complete(**_kwargs: Any) -> None:
+                """Produce PCM and signal a completed synthesis request."""
+                callback.on_data(b"\x00\x00")
+                callback.on_complete()
+
+            synth.call.side_effect = complete
+            synth.streaming_complete.side_effect = complete
+        return synth
+
+    async def _assert_clone_to_synthesis(
+        self,
+        base_url: str,
+        clone_url: str,
+        synthesis_url: str | None,
+        *,
+        name: str = "cosyvoice-v3-plus",
+        stream: bool = False,
+        realtime: bool = False,
+    ) -> None:
+        """Clone a voice and verify the synthesis request uses its endpoint."""
+        self.post.reset_mock()
+        self.synth_factory.reset_mock()
+        credential = DashScopeCredential(api_key="test", base_url=base_url)
+        client = DashScopeVoiceCloningClient(credential)
+        voice = await client.create_voice(
+            audio=b"sample" if name.startswith("qwen") else None,
+            audio_url="https://example.com/sample.mp3"
+            if name.startswith("cosyvoice")
+            else None,
+            parameters=client.Parameters(target_model=name),
+        )
+        model = DashScopeCosyVoiceTTSModel(
+            credential=credential,
+            model=name,
+            parameters=DashScopeCosyVoiceTTSModel.Parameters(
+                voice=voice,
+                realtime=realtime,
+            ),
+            stream=stream,
+        )
+        async with model:
+            result = await model.synthesize("Hello")
+            chunks = [chunk async for chunk in result] if stream else [result]
+        self.assertTrue(chunks[-1].is_last)
+        self.assertIsNotNone(chunks[0].content)
+        callback = self.synth_factory.call_args.kwargs["callback"]
+        self.synth_factory.assert_called_once_with(
+            model=name,
+            voice="cloned-voice",
+            format=AudioFormat.PCM_24000HZ_MONO_16BIT,
+            callback=callback,
+            **({"url": synthesis_url} if synthesis_url else {}),
+        )
+        self.post.assert_awaited_once()
+        self.assertEqual(self.post.call_args.args, (clone_url,))
+        self.assertEqual(
+            dashscope.base_websocket_api_url,
+            "wss://global.invalid/inference",
+        )
+
+    async def test_clone_and_synthesis_share_credential_endpoint(self) -> None:
+        """Verify regional hosts and API suffixes without crossing modes."""
+        origins = (
+            (
+                "https://dashscope.aliyuncs.com",
+                "wss://dashscope.aliyuncs.com",
+            ),
+            (
+                "https://dashscope-intl.aliyuncs.com",
+                "wss://dashscope-intl.aliyuncs.com",
+            ),
+            (
+                "https://workspace.ap-southeast-1.maas.aliyuncs.com",
+                "wss://workspace.ap-southeast-1.maas.aliyuncs.com",
+            ),
+            (
+                "https://proxy.example.test:8443/gateway/dashscope",
+                "wss://proxy.example.test:8443/gateway/dashscope",
+            ),
+            (
+                "http://localhost:8080/dashscope",
+                "ws://localhost:8080/dashscope",
+            ),
+        )
+        for http_origin, ws_origin in origins:
+            for suffix in ("/", "/compatible-mode/v1/", "/api/v1/"):
+                with self.subTest(origin=http_origin, suffix=suffix):
+                    legacy_default = (
+                        http_origin == "https://dashscope.aliyuncs.com"
+                        and suffix == "/compatible-mode/v1/"
+                    ) or (
+                        http_origin.startswith(
+                            ("https://proxy.", "http://localhost"),
+                        )
+                        and suffix == "/"
+                    )
+                    await self._assert_clone_to_synthesis(
+                        http_origin + suffix,
+                        http_origin
+                        + "/api/v1/services/audio/tts/customization",
+                        None
+                        if legacy_default
+                        else ws_origin + "/api-ws/v1/inference",
+                    )
+
+    async def test_all_synthesis_modes_use_cloned_voice_endpoint(self) -> None:
+        """Both model families honor the endpoint in all synthesis modes."""
+        for name in ("cosyvoice-v3-plus", "qwen-audio-3.1-tts-flash"):
+            for stream, realtime in (
+                (False, False),
+                (True, False),
+                (False, True),
+                (True, True),
+            ):
+                with self.subTest(name=name, stream=stream, realtime=realtime):
+                    await self._assert_clone_to_synthesis(
+                        "https://dashscope-intl.aliyuncs.com"
+                        "/compatible-mode/v1",
+                        "https://dashscope-intl.aliyuncs.com/api/v1/services/"
+                        "audio/tts/customization",
+                        "wss://dashscope-intl.aliyuncs.com"
+                        "/api-ws/v1/inference",
+                        name=name,
+                        stream=stream,
+                        realtime=realtime,
+                    )
+
+    async def test_interleaved_reconnect_keeps_instance_endpoint(self) -> None:
+        """Connecting another credential cannot redirect a reconnect."""
+        models = [
+            DashScopeCosyVoiceTTSModel(
+                credential=DashScopeCredential(
+                    api_key="test",
+                    base_url=base_url,
+                ),
+                parameters=DashScopeCosyVoiceTTSModel.Parameters(
+                    realtime=True,
+                ),
+            )
+            for base_url in (
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                "https://dashscope.aliyuncs.com/api/v1",
+            )
+        ]
+        try:
+            await models[0].connect()
+            await models[1].connect()
+            await models[0]._reconnect()
+            self.assertEqual(
+                [
+                    call.kwargs.get("url")
+                    for call in self.synth_factory.call_args_list
+                ],
+                [
+                    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference",
+                    "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+                    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference",
+                ],
+            )
+            self.assertEqual(
+                dashscope.base_websocket_api_url,
+                "wss://global.invalid/inference",
+            )
+        finally:
+            for model in models:
+                await model.close()
+
+    async def test_query_parameters_are_preserved_on_both_endpoints(
+        self,
+    ) -> None:
+        """Proxy routing parameters survive API path and scheme conversion."""
+        await self._assert_clone_to_synthesis(
+            "https://proxy.example.test/tts/compatible-mode/v1/"
+            "?tenant=demo#ignored",
+            "https://proxy.example.test/tts/api/v1/services/audio/tts/"
+            "customization?tenant=demo",
+            "wss://proxy.example.test/tts/api-ws/v1/inference?tenant=demo",
+        )
+
+    async def test_explicit_gateway_websocket_overrides_inference(
+        self,
+    ) -> None:
+        """An arbitrary gateway route can explicitly choose its WS service."""
+        credential = DashScopeCredential(
+            api_key="test",
+            base_url="https://gateway.test/custom/http",
+            websocket_url="wss://speech.gateway.test/custom/socket?tenant=1",
+        )
+        model = DashScopeCosyVoiceTTSModel(credential, stream=False)
+        async with model:
+            await model.synthesize("Hello")
+        self.assertEqual(
+            self.synth_factory.call_args.kwargs["url"],
+            credential.websocket_url,
+        )
+
+    async def test_default_and_arbitrary_gateway_preserve_sdk_settings(
+        self,
+    ) -> None:
+        """Existing global WebSocket overrides remain effective by default."""
+        for base in (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://gateway.test/custom/http",
+        ):
+            with self.subTest(base=base):
+                credential = DashScopeCredential(api_key="test", base_url=base)
+                model = DashScopeCosyVoiceTTSModel(credential, stream=False)
+                async with model:
+                    await model.synthesize("Hello")
+                self.assertNotIn("url", self.synth_factory.call_args.kwargs)
+                self.assertEqual(
+                    dashscope.base_websocket_api_url,
+                    "wss://global.invalid/inference",
+                )

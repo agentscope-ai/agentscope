@@ -93,6 +93,88 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
         self.assertIsNone(result.content)
         mock_client.audio.speech.create.assert_not_called()
 
+    async def test_preset_and_custom_voice_payloads(self) -> None:
+        """Both output modes preserve named and custom voice API shapes."""
+        for stream in (False, True):
+            for voice in ("alloy", {"id": "voice_123"}):
+                with self.subTest(stream=stream, voice=voice):
+                    model = OpenAITTSModel(
+                        credential=OpenAICredential(api_key="test"),
+                        model="gpt-4o-mini-tts",
+                        stream=stream,
+                        parameters=OpenAITTSModel.Parameters(voice=voice),
+                    )
+                    client = _make_mock_client(b"AAAA", [b"AAAA"])
+                    model.client = client
+                    result = await model.synthesize("Hello")
+                    if stream:
+                        async for _ in result:
+                            pass
+                    create = (
+                        client.audio.speech.with_streaming_response.create
+                        if stream
+                        else client.audio.speech.create
+                    )
+                    self.assertEqual(
+                        create.call_args.kwargs,
+                        {
+                            "model": "gpt-4o-mini-tts",
+                            "voice": voice,
+                            "input": "Hello",
+                            "response_format": "mp3",
+                        },
+                    )
+
+    def test_custom_voice_model_cards(self) -> None:
+        """Only the supported synthesis model advertises custom voices."""
+        self.assertEqual(
+            {c.name: c.voice_cloning for c in OpenAITTSModel.list_models()},
+            {
+                "tts-1": False,
+                "tts-1-hd": False,
+                "gpt-4o-mini-tts": True,
+            },
+        )
+
+    def test_model_specific_preset_voices(self) -> None:
+        """Legacy models expose fewer presets than GPT-4o mini TTS."""
+        legacy_voices = [
+            "alloy",
+            "ash",
+            "coral",
+            "echo",
+            "fable",
+            "onyx",
+            "nova",
+            "sage",
+            "shimmer",
+        ]
+        self.assertEqual(
+            {
+                card.name: card.parameter_schema["properties"]["voice"]["enum"]
+                for card in OpenAITTSModel.list_models()
+            },
+            {
+                "tts-1": legacy_voices,
+                "tts-1-hd": legacy_voices,
+                "gpt-4o-mini-tts": [
+                    "alloy",
+                    "ash",
+                    "ballad",
+                    "coral",
+                    "echo",
+                    "fable",
+                    "onyx",
+                    "nova",
+                    "sage",
+                    "shimmer",
+                    "verse",
+                    "marin",
+                    "cedar",
+                ],
+            },
+        )
+
     async def test_empty_string_short_circuits(self) -> None:
         """``synthesize("")`` returns an empty response without touching
         the API."""

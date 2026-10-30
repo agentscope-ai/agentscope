@@ -1025,8 +1025,21 @@ class ChatService:
                         user_id,
                         tts_cfg,
                         self._access,
+                        self._storage,
                     )
-                    middlewares.append(TTSMiddleware(tts_model))
+                    if tts_model is not None:
+                        middlewares.append(
+                            TTSMiddleware(tts_model, continue_on_error=True),
+                        )
+                    else:
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            CustomEvent(
+                                name="tts_error",
+                                value={"stage": "configuration"},
+                            ).model_dump(mode="json"),
+                        )
 
                 # -------------------------------------------------------------
                 # 2c. Knowledge-base middleware — inject when the session has

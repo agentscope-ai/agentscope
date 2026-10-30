@@ -26,8 +26,11 @@ from agentscope.app.storage import (
     AgentRecord,
     RealtimeModelConfig,
     RedisStorage,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.credential import OpenAICredential
 from agentscope.permission import PermissionMode
 from agentscope.message import UserMsg
 from agentscope.state import Task
@@ -207,6 +210,67 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
                 "written_states": [None, None],
             },
         )
+
+    async def test_voice_profile_and_realtime_configs_coexist(self) -> None:
+        """Create and update keep both voice configs and validate ownership."""
+        credential_id = await self.storage.upsert_credential(
+            "alice",
+            OpenAICredential(api_key="test-key"),
+        )
+        profile_id = await self.storage.upsert_voice_profile(
+            "alice",
+            VoiceProfileRecord(
+                user_id="alice",
+                data=VoiceProfileData(
+                    name="Custom voice",
+                    engine="openai_tts",
+                    credential_id=credential_id,
+                    model="gpt-4o-mini-tts",
+                    voice="voice-custom",
+                ),
+            ),
+        )
+        configs = {
+            "tts_model_config": {
+                "type": "openai_credential",
+                "credential_id": credential_id,
+                "model": "gpt-4o-mini-tts",
+                "voice_profile_id": profile_id,
+                "parameters": {"voice": "voice-custom"},
+            },
+            "realtime_model_config": {
+                "type": "openai_realtime",
+                "credential_id": credential_id,
+                "model": "gpt-realtime",
+                "parameters": {},
+            },
+        }
+        for operation in ("create", "update"):
+            with self.subTest(operation=operation):
+                if operation == "create":
+                    response = self.client.post(
+                        "/sessions/",
+                        headers=HEADERS,
+                        json={"agent_id": self.agent_id, **configs},
+                    )
+                    self.assertEqual(response.status_code, 201)
+                    session_id = response.json()["session_id"]
+                else:
+                    response = self._patch(configs)
+                    self.assertEqual(response.status_code, 200)
+                    session_id = self.session_id
+                record = await self.storage.get_session(
+                    "alice",
+                    self.agent_id,
+                    session_id,
+                )
+                self.assertEqual(
+                    {
+                        key: getattr(record.config, key).model_dump()
+                        for key in configs
+                    },
+                    configs,
+                )
 
     def test_permission_mode_patch_writes_only_that_field(self) -> None:
         """``permission_mode`` is the one field that must carry state."""
