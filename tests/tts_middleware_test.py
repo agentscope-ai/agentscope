@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for TTSMiddleware."""
+import asyncio
 import base64
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from agentscope import set_id_factory
 from agentscope.event import (
+    CustomEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -434,3 +436,299 @@ class TestTTSMiddlewareRealtime(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+
+class TestTTSFailureIsolation(IsolatedAsyncioTestCase):
+    """TTS failures preserve text and never swallow upstream cancellation."""
+
+    def setUp(self) -> None:
+        self.tts = MagicMock(spec=TTSModelBase)
+        self.tts.realtime = False
+        self.tts.__aenter__ = AsyncMock(return_value=self.tts)
+        self.tts.__aexit__ = AsyncMock(return_value=None)
+        self.tts.synthesize = AsyncMock(return_value=None)
+        self.tts.push = AsyncMock(return_value=None)
+        self.events = [
+            event
+            for block in ("first", "second")
+            for event in (
+                TextBlockDeltaEvent(
+                    reply_id="reply-1",
+                    block_id=block,
+                    delta=block,
+                ),
+                TextBlockEndEvent(reply_id="reply-1", block_id=block),
+            )
+        ]
+
+    async def _text(self, **_kwargs: Any) -> AsyncGenerator:
+        for event in self.events:
+            yield event
+
+    async def _collect(self, continue_on_error: bool | None = True) -> list:
+        options = (
+            {}
+            if continue_on_error is None
+            else {"continue_on_error": continue_on_error}
+        )
+        return [
+            event
+            async for event in TTSMiddleware(self.tts, **options).on_reply(
+                _make_agent_stub(),
+                {},
+                self._text,
+            )
+        ]
+
+    async def test_init_push_synthesis_and_cleanup_failures_preserve_text(
+        self,
+    ) -> None:
+        """A provider failure disables only speech for the current reply."""
+        for operation in ("__aenter__", "push", "synthesize", "__aexit__"):
+            with self.subTest(operation=operation):
+                self.tts.realtime = operation == "push"
+                failing = getattr(self.tts, operation)
+                failing.side_effect = RuntimeError("provider unavailable")
+                stage, position = {
+                    "__aenter__": ("initialization", 0),
+                    "push": ("synthesis", 1),
+                    "synthesize": ("synthesis", 2),
+                    "__aexit__": ("cleanup", len(self.events)),
+                }[operation]
+                expected = list(self.events)
+                expected.insert(
+                    position,
+                    CustomEvent(
+                        name="tts_error",
+                        value={"reply_id": "reply-1", "stage": stage},
+                    ),
+                )
+                self.assertEqual(
+                    [_dump(event) for event in await self._collect()],
+                    [_dump(event) for event in expected],
+                )
+                failing.assert_awaited_once()
+                failing.side_effect = None
+                self.tts.reset_mock()
+
+    async def test_stream_failure_closes_audio_block_and_continues_text(
+        self,
+    ) -> None:
+        """Partially emitted audio is closed before the next text block."""
+
+        async def audio() -> AsyncGenerator:
+            yield _make_tts_response("AAAA")
+            raise RuntimeError("stream disconnected")
+
+        self.tts.synthesize.return_value = audio()
+        result = await self._collect()
+        self.assertEqual(
+            [
+                _dump(event)
+                for event in result
+                if isinstance(
+                    event,
+                    (TextBlockDeltaEvent, TextBlockEndEvent),
+                )
+            ],
+            [_dump(event) for event in self.events],
+        )
+        block_id = result[2].block_id
+        expected_audio = [
+            DataBlockStartEvent(
+                reply_id="reply-1",
+                block_id=block_id,
+                media_type="audio/wav",
+            ),
+            DataBlockDeltaEvent(
+                reply_id="reply-1",
+                block_id=block_id,
+                media_type="audio/wav",
+                data="AAAA",
+            ),
+            DataBlockEndEvent(reply_id="reply-1", block_id=block_id),
+        ]
+        self.assertEqual(
+            [_dump(event) for event in result],
+            [
+                _dump(event)
+                for event in self.events[:2]
+                + expected_audio
+                + [
+                    CustomEvent(
+                        name="tts_error",
+                        value={"reply_id": "reply-1", "stage": "synthesis"},
+                    ),
+                ]
+                + self.events[2:]
+            ],
+        )
+        self.tts.synthesize.assert_awaited_once_with("first")
+        self.tts.__aexit__.assert_awaited_once()
+
+    async def test_upstream_errors_and_cancellation_propagate(self) -> None:
+        """Text failures and cancellation bypass TTS exception handling."""
+        for error in (
+            RuntimeError("text model failed"),
+            asyncio.CancelledError(),
+        ):
+            with self.subTest(error=type(error)):
+
+                async def next_handler(
+                    failure: BaseException = error,
+                    **_kwargs: Any,
+                ) -> AsyncGenerator:
+                    yield self.events[0]
+                    raise failure
+
+                with self.assertRaises(type(error)):
+                    async for _ in TTSMiddleware(self.tts).on_reply(
+                        _make_agent_stub(),
+                        {},
+                        next_handler,
+                    ):
+                        pass
+                self.tts.__aexit__.assert_awaited_once()
+                self.tts.reset_mock()
+
+        self.tts.synthesize.side_effect = asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            await self._collect()
+        self.tts.__aexit__.assert_awaited_once()
+
+    async def test_sdk_default_propagates_provider_failures(self) -> None:
+        """Existing SDK callers retain exceptions unless they opt in."""
+        for operation in ("__aenter__", "push", "synthesize", "__aexit__"):
+            with self.subTest(operation=operation):
+                self.tts.realtime = operation == "push"
+                failing = getattr(self.tts, operation)
+                error = RuntimeError("provider failure")
+                failing.side_effect = error
+                try:
+                    with self.assertRaises(RuntimeError) as ctx:
+                        await self._collect(continue_on_error=None)
+                    self.assertIs(ctx.exception, error)
+                finally:
+                    failing.side_effect = None
+                    self.tts.reset_mock()
+
+    async def test_consumer_athrow_propagates_and_closes_audio(self) -> None:
+        """An exception injected at any audio yield is never a TTS failure."""
+        for continue_on_error in (False, True):
+            for target in (
+                DataBlockStartEvent,
+                DataBlockDeltaEvent,
+                DataBlockEndEvent,
+            ):
+                with self.subTest(policy=continue_on_error, target=target):
+                    closed = asyncio.Event()
+
+                    async def audio(
+                        cleanup: asyncio.Event = closed,
+                    ) -> AsyncGenerator:
+                        try:
+                            yield _make_tts_response("AAAA")
+                        finally:
+                            cleanup.set()
+
+                    self.tts.synthesize.return_value = audio()
+                    stream = TTSMiddleware(
+                        self.tts,
+                        continue_on_error=continue_on_error,
+                    ).on_reply(_make_agent_stub(), {}, self._text)
+                    try:
+                        async for event in stream:
+                            if isinstance(event, target):
+                                error = RuntimeError("consumer failure")
+                                with self.assertRaises(RuntimeError) as ctx:
+                                    await stream.athrow(error)
+                                self.assertIs(ctx.exception, error)
+                                break
+                        else:
+                            self.fail("Expected audio event was not emitted")
+                        self.assertTrue(closed.is_set())
+                        self.tts.__aexit__.assert_awaited_once()
+                    finally:
+                        await stream.aclose()
+                        self.tts.reset_mock()
+
+    async def test_notification_consumer_error_and_close_propagate(
+        self,
+    ) -> None:
+        """Failure notifications are safe to close or inject errors into."""
+        self.tts.__aenter__.side_effect = RuntimeError("initialization failed")
+        for close in (False, True):
+            with self.subTest(close=close):
+                stream = TTSMiddleware(
+                    self.tts,
+                    continue_on_error=True,
+                ).on_reply(_make_agent_stub(), {}, self._text)
+                event = await anext(stream)
+                self.assertIsInstance(event, CustomEvent)
+                if close:
+                    await stream.aclose()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "consumer"):
+                        await stream.athrow(RuntimeError("consumer"))
+
+    async def test_caller_except_does_not_hide_cleanup_failure(self) -> None:
+        """A handled caller exception is not a propagating generator error."""
+        for continue_on_error in (False, True):
+            with self.subTest(continue_on_error=continue_on_error):
+                cleanup_error = RuntimeError("cleanup failure")
+                self.tts.__aexit__.side_effect = cleanup_error
+                try:
+                    raise ValueError("already handled by caller")
+                except ValueError:
+                    if continue_on_error:
+                        events = await self._collect(continue_on_error=True)
+                        self.assertEqual(
+                            [_dump(event) for event in events],
+                            [_dump(event) for event in self.events]
+                            + [
+                                _dump(
+                                    CustomEvent(
+                                        name="tts_error",
+                                        value={
+                                            "reply_id": "reply-1",
+                                            "stage": "cleanup",
+                                        },
+                                    ),
+                                ),
+                            ],
+                        )
+                    else:
+                        with self.assertRaises(RuntimeError) as ctx:
+                            await self._collect(continue_on_error=None)
+                        self.assertIs(ctx.exception, cleanup_error)
+                self.assertEqual(
+                    self.tts.__aexit__.call_args.args[-3:],
+                    (None, None, None),
+                )
+                self.tts.reset_mock()
+
+    async def test_cleanup_keeps_actual_propagating_error(self) -> None:
+        """Cleanup failure cannot replace text errors or cancellation."""
+        self.tts.__aexit__.side_effect = RuntimeError("cleanup failure")
+        for error in (ValueError("text failure"), asyncio.CancelledError()):
+            with self.subTest(error=type(error)):
+
+                async def upstream(
+                    failure: BaseException = error,
+                    **_kwargs: Any,
+                ) -> AsyncGenerator:
+                    yield self.events[0]
+                    raise failure
+
+                with self.assertRaises(type(error)) as ctx:
+                    async for _ in TTSMiddleware(self.tts).on_reply(
+                        _make_agent_stub(),
+                        {},
+                        upstream,
+                    ):
+                        pass
+                self.assertIs(ctx.exception, error)
+                exit_args = self.tts.__aexit__.call_args.args[-3:]
+                self.assertEqual(exit_args[:2], (type(error), error))
+                self.assertIsNotNone(exit_args[2])
+                self.tts.reset_mock()

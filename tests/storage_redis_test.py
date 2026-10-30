@@ -2,6 +2,7 @@
 # pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
 
+from datetime import datetime as DateTime
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -11,6 +12,8 @@ from utils import AnyString
 
 from agentscope.app.storage import (
     RedisStorage,
+    VoiceProfileData,
+    VoiceProfileRecord,
     AgentRecord,
     SessionConfig,
     SessionRecord,
@@ -2080,3 +2083,28 @@ class TestSOP(IsolatedAsyncioTestCase):
                 "call_id": "c1",
             },
         )
+
+
+class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
+    """Voice profile writes refresh timestamps in Redis as in SQL."""
+
+    async def test_upsert_refreshes_updated_at(self) -> None:
+        """Insert and update refresh the stored record's modification time."""
+        storage = make_storage()
+        self.addAsyncCleanup(storage._client.aclose)
+        record = VoiceProfileRecord(
+            user_id="owner",
+            data=VoiceProfileData(name="Voice"),
+        )
+        created_at = record.created_at
+        for moment in (DateTime(2026, 1, 1), DateTime(2026, 1, 2)):
+            with self.subTest(moment=moment):
+                with patch(
+                    "agentscope.app.storage._redis_storage.datetime",
+                ) as clock:
+                    clock.now.return_value = moment
+                    await storage.upsert_voice_profile("owner", record)
+                self.assertEqual(record.updated_at, moment)
+                self.assertEqual(record.created_at, created_at)
+                stored = await storage.get_voice_profile("owner", record.id)
+                self.assertEqual(stored.model_dump(), record.model_dump())

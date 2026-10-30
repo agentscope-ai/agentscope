@@ -16,9 +16,11 @@ delete flow through ``TestClient``.  Verifies that:
 * delete tears down the vector-store and storage records together.
 """
 import asyncio
+import io
 import tempfile
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -39,6 +41,8 @@ from agentscope.app.storage import (
     EmbeddingModelConfig,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
+    KnowledgeDocumentData,
+    KnowledgeDocumentRecord,
     RedisStorage,
 )
 from agentscope.app.workspace_manager._base import WorkspaceManagerBase
@@ -499,3 +503,107 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["items"], [])
+
+    async def test_failed_kb_delete_preserves_source_file_for_retry(
+        self,
+    ) -> None:
+        """A vector-store failure must not destroy a document's source."""
+        payload = b"original document content"
+        document_id = "doc-1"
+        headers = {"X-User-ID": "user-1"}
+
+        async def _seed_document() -> KnowledgeDocumentRecord:
+            blob_uri = await self._app.state.blob_store.write_stream(
+                key=f"kb/{self._kb_id}/{document_id}",
+                stream=io.BytesIO(payload),
+            )
+            return await self._app.state.storage.upsert_knowledge_document(
+                "user-1",
+                KnowledgeDocumentRecord(
+                    id=document_id,
+                    user_id="user-1",
+                    knowledge_base_id=self._kb_id,
+                    status="ready",
+                    data=KnowledgeDocumentData(
+                        filename="original.txt",
+                        size=len(payload),
+                        content_type="text/plain",
+                        blob_uri=blob_uri,
+                    ),
+                ),
+            )
+
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+            document = client.portal.call(_seed_document)
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            expected_documents = response.json()
+            self.assertEqual(
+                [item["id"] for item in expected_documents["documents"]],
+                [document_id],
+            )
+
+            with patch.object(
+                self._vector_store,
+                "delete_collection",
+                side_effect=RuntimeError("vector store unavailable"),
+            ):
+                response = client.delete(
+                    f"/knowledge_bases/{self._kb_id}",
+                    headers=headers,
+                )
+            self.assertEqual(response.status_code, 500)
+
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected_documents)
+            self.assertEqual(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    document_id,
+                ),
+                document,
+            )
+
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/{document_id}",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content, payload)
+
+            response = client.delete(
+                f"/knowledge_bases/{self._kb_id}",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 204)
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_base,
+                    "user-1",
+                    self._kb_id,
+                ),
+            )
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    document_id,
+                ),
+            )
+            self.assertEqual(self._vector_store._collections, {})
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.blob_store.size,
+                    document.data.blob_uri,
+                ),
+            )

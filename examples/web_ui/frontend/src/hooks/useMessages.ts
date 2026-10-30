@@ -12,10 +12,12 @@ import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/me
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { toast } from 'sonner';
 
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import { useTranslation } from '@/i18n/useI18n';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -138,6 +140,7 @@ export function useMessages(
 		sendRealtimeUserConfirm?: (event: UserConfirmResultEvent) => Promise<void>;
 	},
 ) {
+	const { t } = useTranslation();
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	// The (agent, session) pair `msgs` actually belongs to. Loading is
 	// derived from it rather than set inside the fetch effect: an effect
@@ -152,6 +155,7 @@ export function useMessages(
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
+	const ttsConfigurationWarningsRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
@@ -186,7 +190,17 @@ export function useMessages(
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
-				if (custom.name === 'team_updated') {
+				if (custom.name === 'tts_error') {
+					const failure = custom.value as { stage?: string; reply_id?: string };
+					const sessionKey = JSON.stringify([agentId, sessionId]);
+					if (failure.stage === 'configuration') {
+						if (ttsConfigurationWarningsRef.current.has(sessionKey)) return;
+						ttsConfigurationWarningsRef.current.add(sessionKey);
+					}
+					toast.warning(t('chat.ttsFailed'), {
+						id: `tts-error-${sessionKey}-${failure.reply_id ?? custom.id}`,
+					});
+				} else if (custom.name === 'team_updated') {
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
@@ -294,7 +308,7 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[scheduleUpdate, audioManager, clearInterruptTimer, t, agentId, sessionId],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
