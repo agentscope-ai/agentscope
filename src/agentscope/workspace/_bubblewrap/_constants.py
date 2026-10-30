@@ -21,6 +21,12 @@ BWRAP_SMOKE_PROBE_ARGV = [
     "/proc",
     "--dev",
     "/dev",
+    # Require --clearenv, which every backend command uses, and restore
+    # PATH so the probe can resolve its command.
+    "--clearenv",
+    "--setenv",
+    "PATH",
+    "/usr/bin:/bin",
     "--",
     "true",
 ]
