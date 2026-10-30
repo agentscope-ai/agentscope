@@ -512,12 +512,12 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
         document_id = "doc-1"
         headers = {"X-User-ID": "user-1"}
 
-        async def _seed_document() -> str:
+        async def _seed_document() -> KnowledgeDocumentRecord:
             blob_uri = await self._app.state.blob_store.write_stream(
                 key=f"kb/{self._kb_id}/{document_id}",
                 stream=io.BytesIO(payload),
             )
-            await self._app.state.storage.upsert_knowledge_document(
+            return await self._app.state.storage.upsert_knowledge_document(
                 "user-1",
                 KnowledgeDocumentRecord(
                     id=document_id,
@@ -532,10 +532,20 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
                     ),
                 ),
             )
-            return blob_uri
 
         with TestClient(self._app, raise_server_exceptions=False) as client:
-            blob_uri = client.portal.call(_seed_document)
+            document = client.portal.call(_seed_document)
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            expected_documents = response.json()
+            self.assertEqual(
+                [item["id"] for item in expected_documents["documents"]],
+                [document_id],
+            )
+
             with patch.object(
                 self._vector_store,
                 "delete_collection",
@@ -552,9 +562,15 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
                 headers=headers,
             )
             self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected_documents)
             self.assertEqual(
-                [item["id"] for item in response.json()["documents"]],
-                [document_id],
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    document_id,
+                ),
+                document,
             )
 
             response = client.get(
@@ -570,5 +586,24 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(response.status_code, 204)
             self.assertIsNone(
-                client.portal.call(self._app.state.blob_store.size, blob_uri),
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_base,
+                    "user-1",
+                    self._kb_id,
+                ),
+            )
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    document_id,
+                ),
+            )
+            self.assertEqual(self._vector_store._collections, {})
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.blob_store.size,
+                    document.data.blob_uri,
+                ),
             )
