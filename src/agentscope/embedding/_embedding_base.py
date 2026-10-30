@@ -281,7 +281,10 @@ class EmbeddingModelBase(Generic[InputT]):
             return responses[0]
 
         all_embeddings: list = []
-        total_tokens = 0
+        # ``None`` once any batch cannot report a token count, so an unknown
+        # count stays unknown instead of collapsing into a partial sum (or
+        # a misleading zero).
+        total_tokens: int | None = 0
         total_time = 0.0
         sources: set[str] = set()
 
@@ -289,10 +292,14 @@ class EmbeddingModelBase(Generic[InputT]):
             all_embeddings.extend(resp.embeddings)
             if resp.source:
                 sources.add(resp.source)
-            if resp.usage:
-                total_time = max(total_time, resp.usage.time)
-                if resp.usage.tokens:
-                    total_tokens += resp.usage.tokens
+            if resp.usage is None or resp.usage.tokens is None:
+                total_tokens = None
+                if resp.usage is not None:
+                    total_time = max(total_time, resp.usage.time)
+                continue
+            total_time = max(total_time, resp.usage.time)
+            if total_tokens is not None:
+                total_tokens += resp.usage.tokens
 
         # Mark the merged response as cached only if every batch is cached.
         merged_source: Literal["cache", "api"] = (

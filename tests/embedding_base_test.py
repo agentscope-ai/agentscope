@@ -17,7 +17,7 @@ from agentscope.embedding import (
 def _resp(
     source: Literal["cache", "api"],
     value: float,
-    tokens: int = 0,
+    tokens: int | None = 0,
     time: float = 0.0,
 ) -> EmbeddingResponse:
     """Build a batch response with a distinct embedding and usage."""
@@ -26,6 +26,14 @@ def _resp(
         usage=EmbeddingUsage(tokens=tokens, time=time),
         source=source,
     )
+
+
+def _resp_without_usage(
+    source: Literal["cache", "api"],
+    value: float,
+) -> EmbeddingResponse:
+    """Build a batch response whose provider reported no usage at all."""
+    return EmbeddingResponse(embeddings=[[value]], usage=None, source=source)
 
 
 class EmbeddingModelBaseTest(TestCase):
@@ -119,3 +127,57 @@ class EmbeddingModelBaseTest(TestCase):
                 ),
             ),
         )
+
+    def test_merge_unknown_tokens_after_reported_batches(self) -> None:
+        """An unknown count in a later batch must not yield a partial sum."""
+        merged = EmbeddingModelBase._merge_responses(
+            [
+                _resp("api", 1.0, tokens=7, time=0.25),
+                _resp("api", 2.0, tokens=None, time=0.5),
+            ],
+        )
+
+        assert merged.usage is not None
+        self.assertIsNone(merged.usage.tokens)
+        self.assertEqual(merged.usage.time, 0.5)
+        self.assertEqual(merged.embeddings, [[1.0], [2.0]])
+
+    def test_merge_unknown_tokens_before_reported_batches(self) -> None:
+        """The merged count stays unknown whatever the batch order is."""
+        merged = EmbeddingModelBase._merge_responses(
+            [
+                _resp("api", 1.0, tokens=None, time=0.25),
+                _resp("api", 2.0, tokens=7, time=0.5),
+            ],
+        )
+
+        assert merged.usage is not None
+        self.assertIsNone(merged.usage.tokens)
+        self.assertEqual(merged.usage.time, 0.5)
+
+    def test_merge_missing_usage_stays_unknown(self) -> None:
+        """A batch without any usage object also makes the total unknown."""
+        merged = EmbeddingModelBase._merge_responses(
+            [
+                _resp_without_usage("api", 1.0),
+                _resp("api", 2.0, tokens=7, time=0.5),
+            ],
+        )
+
+        assert merged.usage is not None
+        self.assertIsNone(merged.usage.tokens)
+        self.assertEqual(merged.usage.time, 0.5)
+
+    def test_merge_reported_zero_tokens_sums_normally(self) -> None:
+        """Genuine zero counts are reported values, not unknown ones."""
+        merged = EmbeddingModelBase._merge_responses(
+            [
+                _resp("cache", 1.0, tokens=0),
+                _resp("api", 2.0, tokens=3, time=0.1),
+            ],
+        )
+
+        assert merged.usage is not None
+        self.assertEqual(merged.usage.tokens, 3)
+        self.assertEqual(merged.source, "api")
+
