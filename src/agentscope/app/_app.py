@@ -135,6 +135,7 @@ def create_app(
     channels: list[Type[ChannelBase]] | None = None,
     download_secret: str | None = None,
     realtime_ice_servers: list[dict[str, Any]] | None = None,
+    allowed_stdio_commands: list[str] | None = None,
     title: str = "AgentScope",
     version: str = __version__,
     **kwargs: Any,
@@ -249,6 +250,19 @@ def create_app(
             subclasses to register before the app starts.  Equivalent to
             calling :func:`~agentscope.credential.CredentialFactory.
             register_credential` for each class.
+        allowed_stdio_commands (`list[str] | None`, optional):
+            Allowlist of executables an API caller may register as a stdio
+            MCP through ``POST /workspace/mcp``. A stdio MCP config makes
+            the server spawn ``command`` as a local process, so on a
+            network-reachable deployment an unrestricted value is remote
+            code execution as the service's OS user. When set, any other
+            ``command`` is rejected with 403; entries are matched exactly
+            (no path or basename normalisation), so list ``"npx"`` and
+            ``"uvx"`` as you would type them. ``None`` (the default)
+            keeps the unrestricted behaviour, and ``[]`` forbids stdio
+            MCPs from this endpoint entirely. MCPs installed from a hub
+            card or seeded through ``default_mcps`` are operator-defined
+            and are not affected.
         extra_middlewares (`list[Middleware] | None`, optional):
             Additional ASGI middlewares to add to the application.
         extra_agent_middlewares (`AgentMiddlewareFactory | None`, optional):
@@ -353,6 +367,11 @@ def create_app(
     app.state.channel_type_registry = ChannelTypeRegistry(channels or [])
     app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
     app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
+    app.state.allowed_stdio_commands = (
+        None
+        if allowed_stdio_commands is None
+        else frozenset(allowed_stdio_commands)
+    )
     app.state.download_secret = download_secret or secrets.token_urlsafe(32)
     app.state.realtime_ice_servers = _load_realtime_ice_servers(
         realtime_ice_servers,
