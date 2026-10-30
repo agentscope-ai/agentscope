@@ -174,6 +174,14 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                                 )
                                 if formatted_sub:
                                     hint_images.append(formatted_sub)
+                                else:
+                                    # Keep hint media visible when Ollama
+                                    # cannot ingest it.
+                                    hint_text_parts.append(
+                                        f"[{sub.source.media_type} "
+                                        "attached, not supported "
+                                        "by this provider]",
+                                    )
                         if hint_text_parts or hint_images:
                             hint_msg: dict[str, Any] = {
                                 "role": "user",
@@ -187,6 +195,15 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     formatted_image = self._format_ollama_data_block(block)
                     if formatted_image:
                         images.append(formatted_image)
+                    else:
+                        # Keep the turn visible: a media block Ollama
+                        # cannot ingest must not vanish, or a media-only
+                        # message disappears entirely.
+                        content_parts.append(
+                            f"[{block.source.media_type} "
+                            "attached, not supported "
+                            "by this provider]",
+                        )
 
                 elif isinstance(block, ThinkingBlock):
                     # Ollama does not use reasoning content in the context
@@ -424,6 +441,14 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                     formatted_image = self._format_ollama_data_block(block)
                     if formatted_image:
                         images.append(formatted_image)
+                    else:
+                        # Keep the turn traceable in the rendered history
+                        # when Ollama cannot ingest the media.
+                        msg_text_parts.append(
+                            f"[{block.source.media_type} "
+                            "attached, not supported "
+                            "by this provider]",
+                        )
                 elif isinstance(block, (HintBlock, ThinkingBlock)):
                     pass  # Ollama does not use hint/thinking blocks
                 else:
