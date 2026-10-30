@@ -30,7 +30,8 @@ from agentscope.app._service._webrtc_audio_transport import (
     WebRTCAudioTransport,
 )
 from agentscope.app._service._webrtc_session import WebRTCSession
-from agentscope.app.message_bus import MessageBusKeys
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.app._bus_ops import enqueue_chat_input
 from agentscope.app.storage import CredentialRecord, RealtimeModelConfig
 from agentscope.event import (
     DataBlockDeltaEvent,
@@ -1698,3 +1699,56 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebRTCQueueWakeupTest(unittest.IsolatedAsyncioTestCase):
+    """Realtime lock release promptly makes ordinary queued input eligible."""
+
+    async def test_nudge_follows_session_lock_release(self) -> None:
+        """Closing voice queues a durable trigger without a recovery tick."""
+        async with InMemoryMessageBus() as bus:
+            await enqueue_chat_input(
+                bus,
+                "alice",
+                "session-1",
+                "agent-1",
+                UserMsg("u", "next"),
+            )
+            await bus.queue_drain(MessageBusKeys.wakeup_queue())
+            original_push = bus.queue_push
+
+            async def checked_push(key: str, payload: dict) -> str:
+                self.assertFalse(
+                    await bus.is_locked(
+                        MessageBusKeys.session_lock("session-1"),
+                    ),
+                )
+                return await original_push(key, payload)
+
+            session = _make_session(
+                agent_factory=AsyncMock(
+                    return_value=_FakeAgent(
+                        {"id": "voice", "role": "assistant"},
+                        [],
+                    ),
+                ),
+                storage=_FakeStorage(),
+                message_bus=bus,
+                on_closed=lambda _: None,
+            )
+            with patch.object(bus, "queue_push", checked_push):
+                await session._run()
+            triggers = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+            self.assertEqual(
+                [payload for _, payload in triggers],
+                [
+                    {
+                        "user_id": "alice",
+                        "session_id": "session-1",
+                        "agent_id": "agent-1",
+                        "kind": "queued_message",
+                        "input": None,
+                    },
+                ],
+            )
+            self.assertEqual(session.transport.errors, [])

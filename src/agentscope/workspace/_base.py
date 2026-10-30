@@ -222,6 +222,42 @@ _EXTRACT_ARCHIVE_SHIM = (
 DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 
 
+def _read_skill_frontmatter(raw: bytes, origin: str) -> tuple[str, str]:
+    """Parse and validate the YAML front matter of a ``SKILL.md``.
+
+    Args:
+        raw (`bytes`):
+            The raw bytes of the ``SKILL.md`` file.
+        origin (`str`):
+            The source path or install name used in the error message.
+
+    Returns:
+        `tuple[str, str]`:
+            The skill's ``name`` and ``description``.
+
+    Raises:
+        `ValueError`:
+            If the file has no usable front matter, or either field is
+            missing.
+    """
+    import frontmatter as fm
+
+    message = (
+        f"Invalid skill at {origin!r}: missing or malformed SKILL.md "
+        "(requires 'name' and 'description' fields)."
+    )
+    try:
+        doc = fm.loads(raw.decode("utf-8-sig"))
+    except Exception as e:  # pylint: disable=broad-except
+        raise ValueError(message) from e
+
+    name = doc.get("name")
+    description = doc.get("description")
+    if not name or not description:
+        raise ValueError(message)
+    return str(name), str(description)
+
+
 class WorkspaceBase:
     """Abstract base class for all workspace implementations.
 
@@ -1268,7 +1304,8 @@ class WorkspaceBase:
                 continue
             try:
                 raw = await backend.read_file(md_path)
-                doc = fm.loads(raw.decode("utf-8"))
+                # Strip an optional UTF-8 BOM before parsing front matter.
+                doc = fm.loads(raw.decode("utf-8-sig"))
                 name = doc.get("name")
                 desc = doc.get("description")
                 if not name or not desc:
@@ -1322,6 +1359,8 @@ class WorkspaceBase:
             raise ValueError(
                 f"Invalid skill at {skill_path!r}: SKILL.md not found",
             )
+        with open(skill_md, "rb") as f:
+            _read_skill_frontmatter(f.read(), skill_path)
 
         backend = self.get_backend()
         partition = await self._equip_partition(agent_id)
@@ -1442,6 +1481,10 @@ class WorkspaceBase:
                     )
 
                 root = await self._find_skill_root(staging)
+                raw = await backend.read_file(
+                    backend.join_path(root, "SKILL.md"),
+                )
+                _read_skill_frontmatter(raw, dir_name)
                 installed = await self._free_skill_dir(dir_name, partition)
                 move = await backend.exec_shell(
                     [

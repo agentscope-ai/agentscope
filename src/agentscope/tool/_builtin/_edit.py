@@ -344,9 +344,7 @@ Usage:
                 raw = await self._backend.read_file(file_path)
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(
-                    raw.decode("utf-8", errors="replace"),
-                )
+                content = _normalize_newlines(raw.decode("utf-8"))
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
