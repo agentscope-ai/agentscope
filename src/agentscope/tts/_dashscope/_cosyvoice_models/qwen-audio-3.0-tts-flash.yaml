@@ -3,6 +3,7 @@
 name: qwen-audio-3.0-tts-flash
 label: Qwen Audio 3.0 TTS Flash
 status: active
+voice_cloning: true
 
 input_types:
   - text/plain

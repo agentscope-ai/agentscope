@@ -16,6 +16,7 @@ from ._sop import sop_router
 from ._model import model_router
 from ._realtime import realtime_router
 from ._tts_model import tts_model_router
+from ._voice_profile import voice_profile_router
 from ._workspace import workspace_router
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "realtime_router",
     "embedding_model_router",
     "tts_model_router",
+    "voice_profile_router",
     "chat_router",
     "credential_router",
     "health_router",

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
     from ..realtime import RealtimeModelBase
-    from ..tts import TTSModelBase
+    from ..tts import TTSModelBase, VoiceCloningClientBase
 
 
 class OpenAICredential(CredentialBase):
@@ -67,6 +67,15 @@ class OpenAICredential(CredentialBase):
         from ..embedding import OpenAIEmbeddingModel
 
         return OpenAIEmbeddingModel
+
+    @classmethod
+    def get_voice_cloning_client_class(
+        cls,
+    ) -> Type["VoiceCloningClientBase"] | None:
+        """Return the voice creation client, or None when unsupported."""
+        from ..tts import OpenAIVoiceCloningClient
+
+        return OpenAIVoiceCloningClient
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:

@@ -5,7 +5,7 @@
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._service import ChatService
@@ -18,7 +18,10 @@ from agentscope.app.storage import (
     SessionRecord,
     TeamData,
     TeamRecord,
+    TTSModelConfig,
 )
+from agentscope.middleware import TTSMiddleware
+from agentscope.state import AgentState
 
 
 class _Storage:
@@ -82,6 +85,14 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
 
     async def test_worker_run_fetches_team_once(self) -> None:
         """One ``get_team`` read serves both consumers of the role."""
+        await self._assert_worker_run(tts_available=True)
+
+    async def test_missing_voice_profile_does_not_block_reply(self) -> None:
+        """A missing profile skips TTS while the worker still replies."""
+        await self._assert_worker_run(tts_available=False)
+
+    async def _assert_worker_run(self, tts_available: bool) -> None:
+        """Exercise assembly and reply with or without a usable TTS model."""
         user_id = "user-1"
         worker_agent = AgentRecord(
             id="agent-w",
@@ -110,6 +121,13 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 model="m",
                 parameters={},
             ),
+            tts_model_config=TTSModelConfig(
+                type="openai_credential",
+                credential_id="cred-tts",
+                model="gpt-4o-mini-tts",
+                voice_profile_id="profile-1",
+                parameters={"voice": "voice-custom"},
+            ),
         )
         worker_session = SessionRecord(
             id="session-w",
@@ -137,19 +155,29 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             team=team,
         )
         equipped: list[list] = []
+        replies: list[object] = []
 
         class _Agent:
             """Capture the middlewares; reply without doing anything."""
 
-            def __init__(self, *, middlewares: list, **_: object) -> None:
+            def __init__(
+                self,
+                *,
+                middlewares: list,
+                state: AgentState,
+                name: str,
+                **_: object,
+            ) -> None:
                 equipped.append(middlewares)
+                self.state = state
+                self.name = name
 
             async def reply_stream(
                 self,
                 inputs: object,
             ) -> AsyncGenerator[object, None]:
                 """Yield nothing."""
-                del inputs
+                replies.append(inputs)
                 if False:
                     yield object()
 
@@ -184,7 +212,17 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 new=_get_toolkit,
             ),
             patch("agentscope.app._service._chat.get_model", new=_get_model),
+            patch(
+                "agentscope.app._service._chat.get_tts_model",
+                autospec=True,
+            ) as get_tts_model,
+            patch(
+                "agentscope.app._service._chat.publish_session_event",
+                new_callable=AsyncMock,
+            ) as publish,
         ):
+            if not tts_available:
+                get_tts_model.return_value = None
             await service._run_impl(
                 user_id,
                 worker_session.id,
@@ -192,11 +230,48 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 None,
             )
 
+        failures = [
+            call.args[2]
+            for call in publish.await_args_list
+            if call.args[2].get("name") == "tts_error"
+        ]
+        self.assertEqual(
+            [
+                {"name": item["name"], "value": item["value"]}
+                for item in failures
+            ],
+            []
+            if tts_available
+            else [
+                {
+                    "name": "tts_error",
+                    "value": {"stage": "configuration"},
+                },
+            ],
+        )
+        for middlewares in equipped:
+            for middleware in middlewares:
+                if isinstance(middleware, TTSMiddleware):
+                    self.assertTrue(middleware.continue_on_error)
+
+        get_tts_model.assert_awaited_once_with(
+            user_id,
+            config.tts_model_config,
+            service._access,
+            storage,
+        )
         self.assertDictEqual(
             {
                 "get_team_calls": storage.get_team_calls,
                 "team_role": toolkit_kwargs["team_role"],
                 "channel_tools": toolkit_kwargs["channel_tools"],
+                "replies": replies,
+                "tts_models": [
+                    mw.tts
+                    for mws in equipped
+                    for mw in mws
+                    if isinstance(mw, TTSMiddleware)
+                ],
                 "leader_names": [
                     mw._leader_name
                     for mws in equipped
@@ -208,6 +283,10 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": 1,
                 "team_role": "worker",
                 "channel_tools": [],
+                "replies": [None],
+                "tts_models": (
+                    [get_tts_model.return_value] if tts_available else []
+                ),
                 "leader_names": ["Leader"],
             },
         )
