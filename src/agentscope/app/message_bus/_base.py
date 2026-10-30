@@ -116,9 +116,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 caller's responsibility.
             ttl_secs (`int | None`, optional):
                 If set, refresh the queue key's expiry to this many
-                seconds on every push (sliding TTL). When ``None``, the
-                key never expires and must be drained or deleted
-                explicitly.
+                seconds on every push (sliding TTL). ``None`` leaves an
+                existing expiry unchanged; a new key has no expiry.
 
         Returns:
             `str`:

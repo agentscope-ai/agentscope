@@ -87,6 +87,40 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
 
         self.assertEqual(await self.bus.queue_drain("k"), [])
 
+    async def test_push_refreshes_ttl_for_whole_queue(self) -> None:
+        """A later push keeps earlier entries until the refreshed deadline."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            await self.bus.queue_push("k", {"i": 2}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            entries = await self.bus.queue_drain("k")
+
+        self.assertEqual(
+            [payload for _, payload in entries],
+            [{"i": 1}, {"i": 2}],
+        )
+
+    async def test_zero_ttl_expires_existing_queue(self) -> None:
+        """An immediate key expiry also removes entries already queued."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2}, ttl_secs=0)
+
+        self.assertEqual(await self.bus.queue_drain("k"), [])
+
+    async def test_push_without_ttl_keeps_existing_key_expiry(self) -> None:
+        """Omitting TTL does not cancel a previously set key expiry."""
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await self.bus.queue_push("k", {"i": 1}, ttl_secs=10)
+        with patch.object(_bus.time, "monotonic", return_value=5):
+            first = await self.bus.queue_drain("k")
+            await self.bus.queue_push("k", {"i": 2})
+        with patch.object(_bus.time, "monotonic", return_value=11):
+            remaining = await self.bus.queue_drain("k")
+
+        self.assertEqual([payload for _, payload in first], [{"i": 1}])
+        self.assertEqual(remaining, [])
+
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
     """Mode C — replay log: append / read with cursor / trim."""

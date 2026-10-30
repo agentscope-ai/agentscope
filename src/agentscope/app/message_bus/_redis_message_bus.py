@@ -239,8 +239,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 field of a Redis Stream entry.
             ttl_secs (`int | None`, optional):
                 If set, refresh the key's expiry on every push
-                (sliding TTL). ``None`` means no TTL — the queue
-                persists until drained or deleted explicitly.
+                (sliding TTL). ``None`` leaves an existing expiry
+                unchanged; a new key has no expiry.
 
         Returns:
             `str`:
