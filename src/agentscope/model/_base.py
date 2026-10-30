@@ -579,7 +579,13 @@ class ChatModelBase:
                             )
                             await asyncio.sleep(self.retry_delay)
                             continue
-                        raise  # retries exhausted -> give up
+                        if not isinstance(e, fallback):
+                            raise
+                        # Retries exhausted, but the failure shape is one a
+                        # fallback strategy may avoid (e.g. a provider that
+                        # reports 4xx as retryable). Walk the ladder instead
+                        # of aborting it.
+                        break
                     if not isinstance(e, fallback):
                         raise
                     # Structured-output compatibility failure: try the next

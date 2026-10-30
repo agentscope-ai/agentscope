@@ -23,6 +23,7 @@ from agentscope.message import (
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
+    UserMsg,
 )
 from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
@@ -1442,3 +1443,73 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+# ---------------------------------------------------------------------------
+# Structured-output fallback exceptions and no_think gate
+# ---------------------------------------------------------------------------
+
+
+class GeminiStructuredFallbackTest(IsolatedAsyncioTestCase):
+    """4xx must walk the structured-output ladder instead of aborting it."""
+
+    async def asyncSetUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.model.retry_delay = 0
+        self.attempts: list[Any] = []
+
+    async def test_client_error_falls_through_the_ladder(self) -> None:
+        """A 4xx from the API is retried within its strategy, then the
+        ladder continues instead of aborting after the retries."""
+        from google.genai import errors
+
+        async def _raising_generate_content(**kwargs: Any) -> Any:
+            self.attempts.append(kwargs.get("config"))
+            raise errors.ClientError(400, {"error": {"message": "bad"}})
+
+        self.model.client = MagicMock()
+        self.model.client.aio.models.generate_content = (
+            _raising_generate_content
+        )
+
+        with self.assertRaises(errors.ClientError):
+            await self.model.generate_structured_output(
+                [UserMsg(name="user", content="hi")],
+                {"type": "object"},
+            )
+
+        # forced burns all retries, but the ladder must go on (auto,
+        # no_think, none) instead of aborting after them.
+        self.assertGreater(
+            len(self.attempts),
+            (self.model.max_retries + 1) * 2,
+        )
+
+    def test_fallback_exceptions_declare_client_error(self) -> None:
+        """4xx is fallback-eligible so the ladder can switch strategies."""
+        from google.genai import errors
+
+        self.assertEqual(
+            GeminiChatModel._get_structured_output_fallback_exceptions(),
+            (errors.ClientError,),
+        )
+
+    def test_disable_thinking_kwargs_gated_by_model(self) -> None:
+        """Flash models disable thinking; pro / Gemini 3 keep the server
+        default."""
+        self.assertEqual(
+            _make_model()._get_disable_thinking_kwargs(),
+            {
+                "thinking_config": {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                },
+            },
+        )
+        pro = GeminiChatModel(
+            credential=GeminiCredential(api_key="test"),
+            model="gemini-2.5-pro",
+            stream=False,
+            context_size=1_048_576,
+        )
+        self.assertEqual(pro._get_disable_thinking_kwargs(), {})
