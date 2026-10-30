@@ -268,7 +268,8 @@ class EmbeddingModelBase(Generic[InputT]):
         responses: list[EmbeddingResponse],
     ) -> EmbeddingResponse:
         """Merge multiple batch :class:`EmbeddingResponse` objects into
-        one, preserving input order.
+        one, preserving input order. The token total remains unknown if any
+        batch has missing usage or an unknown token count.
 
         Args:
             responses (`list[EmbeddingResponse]`):
@@ -281,7 +282,7 @@ class EmbeddingModelBase(Generic[InputT]):
             return responses[0]
 
         all_embeddings: list = []
-        total_tokens = 0
+        total_tokens: int | None = 0
         total_time = 0.0
         sources: set[str] = set()
 
@@ -291,8 +292,10 @@ class EmbeddingModelBase(Generic[InputT]):
                 sources.add(resp.source)
             if resp.usage:
                 total_time = max(total_time, resp.usage.time)
-                if resp.usage.tokens:
-                    total_tokens += resp.usage.tokens
+            if resp.usage is None or resp.usage.tokens is None:
+                total_tokens = None
+            elif total_tokens is not None:
+                total_tokens += resp.usage.tokens
 
         # Mark the merged response as cached only if every batch is cached.
         merged_source: Literal["cache", "api"] = (
