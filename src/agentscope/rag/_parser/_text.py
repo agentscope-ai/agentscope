@@ -28,6 +28,7 @@ class TextParser(ParserBase):
         "text/x-rst",
         "application/json",
         "application/xml",
+        "application/yaml",
         "application/x-yaml",
     ]
     """Standard IANA media types this parser handles."""
