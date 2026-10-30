@@ -119,6 +119,10 @@ class GoalPipeline:
     ) -> AsyncGenerator:
         """Run the goal pipeline.
 
+        An interrupted executor or verifier ends this call without spending
+        a retry or starting another participant. Its interruption events are
+        still streamed to the caller.
+
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
             UserInterruptEvent | ExternalExecutionResultEvent`):
@@ -209,6 +213,10 @@ class GoalPipeline:
                                 RequireExternalExecutionEvent,
                                 RequireUserConfirmEvent,
                             ),
+                        ) or (
+                            isinstance(_, Msg)
+                            and _.finished_reason
+                            == ReplyFinishedReason.INTERRUPTED
                         ):
                             break_loop = True
                         elif (
@@ -222,7 +230,7 @@ class GoalPipeline:
                             )
 
                     if break_loop:
-                        # Break the loop for hitl events
+                        # Drain a parked or interrupted reply, then stop.
                         break
 
                     if execution_report is None:
@@ -288,6 +296,10 @@ class GoalPipeline:
                             RequireExternalExecutionEvent,
                             RequireUserConfirmEvent,
                         ),
+                    ) or (
+                        isinstance(_, Msg)
+                        and _.finished_reason
+                        == ReplyFinishedReason.INTERRUPTED
                     ):
                         break_loop = True
                         yield _
@@ -295,7 +307,7 @@ class GoalPipeline:
                         yield _
 
                 if break_loop:
-                    # Escape the loop for hitl events
+                    # Drain a parked or interrupted reply, then stop.
                     break
                 if final_msg is None:
                     # Retry without changing the current instruction.
