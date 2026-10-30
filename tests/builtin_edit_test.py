@@ -252,8 +252,30 @@ class EditToolTest(IsolatedAsyncioTestCase):
             new_string="count = 2",
         )
 
-        self.assertEqual(chunk.state, "error")
-        self.assertIn("can't decode", chunk.content[0].text)
+        self.assertEqual(
+            chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Error reading file: 'utf-8' codec can't decode "
+                            "byte 0xe9 in position 11: invalid continuation "
+                            "byte"
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
         with open(self.temp_file.name, "rb") as f:
             self.assertEqual(f.read(), original)
 

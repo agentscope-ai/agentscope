@@ -572,7 +572,7 @@ Usage:
                 result += (
                     "\n\nNote: This file is not valid UTF-8. Invalid bytes "
                     "are shown as U+FFFD, and the file cannot be modified "
-                    "with the Edit or Write tools."
+                    "with the Edit tool."
                 )
 
             return ToolChunk(
