@@ -25,6 +25,41 @@ _STRUCTURED_OUTPUT_HINT_MESSAGE = (
     "tools.</system-reminder>"
 )
 
+# Marks the wrap-up hints this middleware injects. They live in the persisted
+# context, so a new reply -- which starts with a fresh budget and no forced
+# tool_choice -- has to be able to find and retire the previous reply's hints.
+_BUDGET_HINT_SOURCE = '{"label": "System", "sublabel": "Reply Budget Exhausted"}'
+
+
+def _retire_budget_hints(agent: "Agent") -> None:
+    """Remove wrap-up hints this middleware injected for an earlier reply.
+
+    Only hints carrying :data:`_BUDGET_HINT_SOURCE` are removed, so hints from
+    other middleware, and every message that still has real content, stay put.
+    A message left with no content at all was created solely to carry the hint
+    and is dropped with it.
+    """
+    context = agent.state.context
+    kept = []
+    for message in context:
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            remaining = [
+                block
+                for block in content
+                if not (
+                    isinstance(block, HintBlock)
+                    and block.source == _BUDGET_HINT_SOURCE
+                )
+            ]
+            if len(remaining) != len(content):
+                if not remaining:
+                    continue
+                message.content = remaining
+        kept.append(message)
+    if len(kept) != len(context):
+        context[:] = kept
+
 
 class ReplyBudgetControlMiddleware(MiddlewareBase):
     """Middleware that enforces a weighted token budget per reply.
@@ -132,6 +167,9 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
         async for event in next_handler(**input_kwargs):
             if isinstance(event, ReplyStartEvent):
+                # A new reply starts with a fresh budget, so the previous
+                # reply's wrap-up instruction must not leak into it.
+                _retire_budget_hints(agent)
                 # Start counting for this reply, dropping the previous one.
                 # Not cleaned on ReplyEndEvent: an outer middleware may
                 # swallow it and the same reply then keeps spending tokens
@@ -201,6 +239,7 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
                     if structured_output_pending
                     else self.hint_message
                 ),
+                source=_BUDGET_HINT_SOURCE,
             )
             if (
                 len(agent.state.context) > 0
