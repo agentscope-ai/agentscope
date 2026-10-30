@@ -28,7 +28,9 @@ _STRUCTURED_OUTPUT_HINT_MESSAGE = (
 # Marks the wrap-up hints this middleware injects. They live in the persisted
 # context, so a new reply -- which starts with a fresh budget and no forced
 # tool_choice -- has to be able to find and retire the previous reply's hints.
-_BUDGET_HINT_SOURCE = '{"label": "System", "sublabel": "Reply Budget Exhausted"}'
+_BUDGET_HINT_SOURCE = (
+    '{"label": "System", "sublabel": "Reply Budget Exhausted"}'
+)
 
 
 def _retire_budget_hints(agent: "Agent") -> None:

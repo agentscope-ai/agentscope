@@ -423,7 +423,9 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         model.set_responses(
             [
                 ChatResponse(
-                    content=[ToolCallBlock(id="tc_1", name="dummy", input="{}")],
+                    content=[
+                        ToolCallBlock(id="tc_1", name="dummy", input="{}")
+                    ],
                     is_last=True,
                     usage=ChatUsage(
                         input_tokens=200,
