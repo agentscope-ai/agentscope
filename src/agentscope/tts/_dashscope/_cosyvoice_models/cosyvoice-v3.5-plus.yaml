@@ -1,0 +1,14 @@
+name: cosyvoice-v3.5-plus
+label: CosyVoice-v3.5-Plus
+status: active
+voice_cloning: true
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+voices: []
+
+parameter_overrides: {}

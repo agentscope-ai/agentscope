@@ -53,6 +53,12 @@ from ._sop import (
 )
 from ._team import TeamRecord, TeamData, TeamMember
 from ._user import UserRecord
+from ._voice_profile import (
+    ENGINE_TO_CREDENTIAL_TYPE,
+    get_missing_voice_profile_binding_fields,
+    VoiceProfileData,
+    VoiceProfileRecord,
+)
 
 __all__ = [
     "AgentData",
@@ -104,4 +110,8 @@ __all__ = [
     "UserRecord",
     "AgentChatConfig",
     "InviteConfig",
+    "ENGINE_TO_CREDENTIAL_TYPE",
+    "get_missing_voice_profile_binding_fields",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]
