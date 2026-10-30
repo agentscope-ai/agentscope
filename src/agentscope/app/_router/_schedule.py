@@ -121,6 +121,7 @@ async def create_schedule(
             # Aware on purpose: the trigger reads a naive start time in
             # the schedule's own timezone, not the server's.
             started_at=datetime.now().astimezone(),
+            ended_at=body.ended_at,
         ),
     )
 
