@@ -387,8 +387,9 @@ class SOPService:
                 run.sessions[key] = session.id
 
             return await self._storage.upsert_sop_run(user_id, run)
-        except Exception:
-            # Unreachable without the run record, so roll them back.
+        except (Exception, asyncio.CancelledError):
+            # CancelledError also needs rollback: the sessions are
+            # unreachable without their run record.
             for key, session_id in run.sessions.items():
                 await self._storage.delete_session(
                     user_id,
