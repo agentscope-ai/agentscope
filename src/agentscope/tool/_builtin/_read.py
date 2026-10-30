@@ -544,17 +544,24 @@ Usage:
                 if cache is not None:
                     lines = cache.lines
 
+            lossy = False
             if lines is None:
                 raw = await self._backend.read_file(file_path)
-                content_str = raw.decode("utf-8", errors="replace")
+                try:
+                    content_str = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    content_str = raw.decode("utf-8", errors="replace")
+                    lossy = True
                 # Normalize CRLF/CR so cached lines end in "\n" regardless
                 # of the platform the file was written on (Windows text
                 # files use "\r\n").
                 content_str = _normalize_newlines(content_str)
                 lines = content_str.splitlines(keepends=True)
 
-                # Cache file if state is provided
-                if _agent_state is not None:
+                # Edit rebuilds the whole file from the cache and Write takes
+                # it as proof the file was seen, so a lossy decode must not
+                # populate it.
+                if _agent_state is not None and not lossy:
                     await _agent_state.tool_context.cache_file(
                         file_path=file_path,
                         lines=lines,
@@ -585,6 +592,12 @@ Usage:
 
             # Join all lines
             result = "\n".join(formatted_lines)
+            if lossy:
+                result += (
+                    "\n\nNote: This file is not valid UTF-8. Invalid bytes "
+                    "are shown as U+FFFD, and the file cannot be modified "
+                    "with the Edit tool."
+                )
 
             return ToolChunk(
                 content=[TextBlock(text=result)],
