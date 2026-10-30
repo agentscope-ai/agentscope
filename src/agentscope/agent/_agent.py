@@ -2218,6 +2218,10 @@ class Agent:
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
         flushed to the caller before re-raising ``CancelledError``.
 
+        If no ordinary worker exception was raised, an independently cancelled
+        worker interrupts the reply after its siblings finish and their queued
+        events have been delivered.
+
         Args:
             tool_calls (`list[ToolCallBlock]`):
                 The tool calls to be executed concurrently.
@@ -2234,8 +2238,10 @@ class Agent:
 
         Raises:
             `asyncio.CancelledError`:
-                Re-raised after cancelling workers and draining queued events
-                when the caller task is cancelled.
+                Raised after worker cleanup and draining queued events
+                when the caller task or an individual worker is cancelled.
+                Ordinary worker exceptions take precedence over independently
+                cancelled workers.
             `ExceptionGroup`:
                 Raised after all tool calls finish when one or more of them
                 raised an exception. Each individual exception is included in
@@ -2314,6 +2320,12 @@ class Agent:
                 "One or more tool calls raised an exception",
                 exceptions,
             )
+
+        # A child cancelled before toolkit entry emits no interrupted result.
+        # Propagate it so the reply closes the call instead of re-executing it.
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
 
     async def _into_queue(
         self,
