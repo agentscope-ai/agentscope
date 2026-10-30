@@ -1,6 +1,34 @@
 import { CronDate } from 'cron-parser';
 import { format } from 'date-fns';
 
+/** Convert picker date/time in the task's zone, rejecting gaps and choosing the first fold. */
+export function getScheduleStartAt(date: Date, time: string, timezone: string): string {
+	if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+		throw new Error('Invalid start time. Please enter a time in HH:mm format.');
+	}
+	const local = `${format(date, 'yyyy-MM-dd')}T${time}:00.000`;
+	const parsed = new CronDate(local, timezone);
+	const wallTime = Date.parse(`${local}Z`);
+	// Sample both sides of a transition, including non-hour offset changes.
+	const day = 24 * 60 * 60 * 1000;
+	const offsets = new Set(
+		[-day, 0, day].map((delta) =>
+			new CronDate(parsed.getTime() + delta, timezone).getUTCOffset(),
+		),
+	);
+	const candidates = [...offsets]
+		.map((offset) => new CronDate(wallTime - offset * 60 * 1000, timezone))
+		.filter(
+			(candidate) => candidate.getTime() + candidate.getUTCOffset() * 60 * 1000 === wallTime,
+		);
+	if (!candidates.length) {
+		throw new Error(
+			'The selected start time does not exist in the task time zone. Please choose another time.',
+		);
+	}
+	return new Date(Math.min(...candidates.map((candidate) => candidate.getTime()))).toISOString();
+}
+
 /** Convert a picker date to the inclusive end of that day in the task's timezone. */
 export function getScheduleEndAt(date: Date | undefined, timezone: string): string | undefined {
 	if (!date) return undefined;
