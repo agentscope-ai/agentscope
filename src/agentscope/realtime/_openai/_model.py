@@ -342,8 +342,8 @@ class OpenAIRealtimeModel(RealtimeModelBase):
                 usage = response.get("usage") or {}
                 event: me.ModelEvent = me.ResponseDoneEvent(
                     item_id=self._item_id,
-                    input_tokens=usage.get("input_tokens") or 0,
-                    output_tokens=usage.get("output_tokens") or 0,
+                    input_tokens=usage.get("input_tokens"),
+                    output_tokens=usage.get("output_tokens"),
                 )
                 # ``cancelled`` and ``incomplete`` still delivered a reply;
                 # only ``failed`` is an error.

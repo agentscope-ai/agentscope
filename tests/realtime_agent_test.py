@@ -7,15 +7,17 @@ from itertools import count
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from utils import AnyString, MockModel
 
 from agentscope.agent import (
     Agent,
     InjectionConfig,
     RealtimeAgent,
+    RealtimeContextConfig,
     TurnAggregator,
 )
+from agentscope.agent._realtime._context_usage import UsageProvenance
 from agentscope.credential import DashScopeCredential
 from agentscope.event import (
     DataBlockDeltaEvent,
@@ -24,8 +26,8 @@ from agentscope.event import (
     TextBlockDeltaEvent,
     TextBlockEndEvent,
 )
-from agentscope.message import AssistantMsg, Msg, Usage, UserMsg
-from agentscope.model import ChatResponse
+from agentscope.message import AssistantMsg, Msg, SystemMsg, Usage, UserMsg
+from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.realtime import (
     AudioFrame,
     ControlFrame,
@@ -479,8 +481,28 @@ class RealtimeCheckpointSnapshotTest(IsolatedAsyncioTestCase):
         )
 
 
+# pylint: disable-next=too-many-public-methods
 class RealtimeAgentTest(IsolatedAsyncioTestCase):
     """Behaviour of the turn-taking state machine."""
+
+    async def test_user_transcription_stales_context_usage(self) -> None:
+        """A local transcript append makes an older usage count stale."""
+        agent = RealtimeAgent("Friday", "be brief", ScriptedModel([]))
+        agent._ctx_usage.observe_provider_report(500, 20)
+
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u1", text="hello"),
+        )
+        self.assertTrue(agent._ctx_usage.is_stale)
+        self.assertEqual(agent._ctx_usage.local_appends_since_observation, 1)
+
+        agent._ctx_usage.observe_provider_report(600, 20)
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u2", text="again"),
+        )
+        self.assertEqual(len(agent.state.context), 1)
+        self.assertTrue(agent._ctx_usage.is_stale)
+        self.assertEqual(agent._ctx_usage.local_appends_since_observation, 1)
 
     async def _collect(
         self,
@@ -862,6 +884,44 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_reconnect_fallback_injects_summary_before_turns(
+        self,
+    ) -> None:
+        """A provider without replay gets the compressed summary at the
+        top of the reconnect instructions, followed by the verbatim
+        post-checkpoint turns."""
+        state = AgentState(
+            summary="The user greets Friday in Chinese.",
+            context=[
+                UserMsg(name="user", content="讲个故事"),
+                AssistantMsg(
+                    name="Friday",
+                    content="从前有座山",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                ),
+            ],
+        )
+        model = ScriptedModel(
+            [
+                [me.SessionEndedEvent(reason="idle")],
+                [],
+            ],
+        )
+        agent = RealtimeAgent("Friday", "be brief", model, state=state)
+
+        async with agent:
+            await asyncio.sleep(0.1)
+            await self._collect(agent, FakeTransport(frames=2))
+
+        self.assertEqual(model.sessions, 2)
+        self.assertEqual(
+            model.instructions,
+            "be brief\n\n## Conversation so far\n"
+            "summary: The user greets Friday in Chinese.\n"
+            "user: 讲个故事\n"
+            "Friday: 从前有座山",
+        )
+
     async def test_structured_history_is_replayed_on_reconnect(self) -> None:
         """A replay-capable provider gets roles, summary, and no fallback."""
         state = AgentState(
@@ -1062,6 +1122,39 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "fallback": f"recent: {recent_text}",
                 "contains_old_message": False,
                 "length": len("recent: ") + len(recent_text),
+            },
+        )
+
+    def test_history_fallback_keeps_summary_beyond_budget(self) -> None:
+        """The compression summary survives the char budget no matter
+        what — only verbatim turns are dropped, oldest first."""
+        oldest = UserMsg(name="u0", content="旧" * 20_000)
+        newer = UserMsg(name="u1", content="中" * 20_000)
+        fallback = RealtimeAgent._format_history_fallback(
+            [
+                SystemMsg(name="summary", content="the distilled past"),
+                oldest,
+                newer,
+                UserMsg(name="recent", content="newest"),
+            ],
+        )
+
+        self.assertDictEqual(
+            {
+                "summary_kept": "summary: the distilled past" in fallback,
+                "summary_first": fallback.startswith(
+                    "summary: the distilled past",
+                ),
+                "oldest_dropped": oldest.get_text_content() not in fallback,
+                "newer_kept": newer.get_text_content() in fallback,
+                "newest_kept": fallback.endswith("recent: newest"),
+            },
+            {
+                "summary_kept": True,
+                "summary_first": True,
+                "oldest_dropped": True,
+                "newer_kept": True,
+                "newest_kept": True,
             },
         )
 
@@ -2295,7 +2388,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             input='{"q": "x"}',
                         ),
                     ),
-                    me.ResponseDoneEvent(item_id="r1"),
+                    me.ResponseDoneEvent(
+                        item_id="r1", input_tokens=0, output_tokens=0
+                    ),
                     "WAIT",
                     me.ResponseCreatedEvent(item_id="r2"),
                     me.TranscriptDeltaEvent(
@@ -2399,7 +2494,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             input='{"q": "x"}',
                         ),
                     ),
-                    me.ResponseDoneEvent(item_id="r1"),
+                    me.ResponseDoneEvent(
+                        item_id="r1", input_tokens=0, output_tokens=0
+                    ),
                     "WAIT",
                     me.ResponseCreatedEvent(item_id="r2"),
                     me.TranscriptDeltaEvent(
@@ -2411,7 +2508,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         pcm=PCM_100MS,
                         sample_rate=24000,
                     ),
-                    me.ResponseDoneEvent(item_id="r2"),
+                    me.ResponseDoneEvent(
+                        item_id="r2", input_tokens=0, output_tokens=0
+                    ),
                     me.SpeechStartedEvent(item_id="u2"),
                 ],
             ],
@@ -2496,7 +2595,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                             input='{"q": "x"}',
                         ),
                     ),
-                    me.ResponseDoneEvent(item_id="r1"),
+                    me.ResponseDoneEvent(
+                        item_id="r1", input_tokens=0, output_tokens=0
+                    ),
                 ],
             ],
         )
@@ -2629,3 +2730,459 @@ class RealtimeAgentDisconnectTest(IsolatedAsyncioTestCase):
                 "close",
             ],
         )
+
+
+class FakeOffloader:
+    """Records offload calls; hands back fake workspace paths."""
+
+    def __init__(self) -> None:
+        self.contexts: list[list[Msg]] = []
+        self.tool_results: list[ToolResultBlock] = []
+
+    async def offload_context(
+        self,
+        session_id: str,
+        msgs: list[Msg],
+    ) -> str:
+        """Record and 'store' the compressed context."""
+        self.contexts.append([m.model_copy(deep=True) for m in msgs])
+        return (
+            f"workspace://sessions/{session_id}/"
+            f"context-{len(self.contexts)}.json"
+        )
+
+    async def offload_tool_result(
+        self,
+        session_id: str,
+        tool_result: ToolResultBlock,
+    ) -> str:
+        """Record and 'store' the truncated tool result."""
+        self.tool_results.append(tool_result.model_copy(deep=True))
+        return (
+            f"workspace://sessions/{session_id}/"
+            f"tool-{len(self.tool_results)}.json"
+        )
+
+
+def _compression_summary_response() -> StructuredResponse:
+    """A structured summary matching the default template's fields."""
+    return StructuredResponse(
+        content={
+            "task_overview": "voice chat",
+            "current_state": "talking",
+            "important_discoveries": "none",
+            "next_steps": "keep going",
+            "context_to_preserve": "greeting",
+        },
+    )
+
+
+class RealtimeAgentCompressionTest(IsolatedAsyncioTestCase):
+    """Context compression: triggering, committing, drift rejection."""
+
+    def _agent(
+        self,
+        context_length: int = 100,
+        tool_result_limit: int = 50_000,
+        workspace: FakeOffloader | None = None,
+    ) -> RealtimeAgent:
+        """An agent whose compression model returns a canned summary."""
+        compression_model = MockModel()
+        compression_model.set_structured_response(
+            _compression_summary_response(),
+        )
+        return RealtimeAgent(
+            "Friday",
+            "be brief",
+            ScriptedModel([[]]),
+            context_config=RealtimeContextConfig(
+                context_length=context_length,
+                tool_result_limit=tool_result_limit,
+                compression_model=compression_model,
+            ),
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _turns(turn_count: int) -> list[Msg]:
+        """An alternating user/assistant transcript."""
+        return [
+            UserMsg(name="user", content=f"turn {i}")
+            if i % 2 == 0
+            else AssistantMsg(name="Friday", content=f"reply {i}")
+            for i in range(turn_count)
+        ]
+
+    async def _run_compression_pass(self, agent: RealtimeAgent) -> None:
+        """Start the pass and drive its task to completion."""
+        await agent._compression_pass()
+        while agent._compress_in_flight:
+            await asyncio.sleep(0)
+
+    async def test_compression_skips_below_trigger(self) -> None:
+        """Below trigger_ratio the compression pass does not start."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(6))
+        agent._ctx_usage.observe_provider_report(79, 10)
+
+        await self._run_compression_pass(agent)
+
+        self.assertDictEqual(
+            {
+                "started": agent._compress_in_flight,
+                "pending": agent._pending_checkpoint,
+                "summary": agent.state.summary,
+                "context": len(agent.state.context),
+            },
+            {
+                "started": False,
+                "pending": None,
+                "summary": "",
+                "context": 6,
+            },
+        )
+
+    async def test_compression_skips_without_estimate(self) -> None:
+        """No provider usage report, no compression — even with a full
+        transcript, because the occupancy is unknown."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(6))
+
+        await self._run_compression_pass(agent)
+
+        self.assertFalse(agent._compress_in_flight)
+        self.assertListEqual(
+            [m.get_text_content() for m in agent.state.context],
+            [f"turn {i}" if i % 2 == 0 else f"reply {i}" for i in range(6)],
+        )
+
+    async def test_missing_provider_usage_uses_transcript_estimate(
+        self,
+    ) -> None:
+        """Providers that omit usage still produce an estimate that can
+        trigger compression."""
+        agent = self._agent(context_length=10)
+        agent.state.context.extend(self._turns(6))
+        agent._start_reply("r1")
+
+        await agent._on_model_event(me.ResponseDoneEvent(item_id="r1"))
+
+        self.assertEqual(
+            agent._ctx_usage.provenance,
+            UsageProvenance.ESTIMATED,
+        )
+        self.assertGreater(agent._ctx_usage.estimate_tokens or 0, 8)
+
+        await self._run_compression_pass(agent)
+
+        self.assertTrue(agent.state.summary)
+        self.assertEqual(agent.state.context, [])
+
+    async def test_compression_commits_summary_at_boundary(self) -> None:
+        """At a quiet boundary with a stable prefix, the transcript is
+        replaced by the summary and the covered messages are offloaded."""
+        workspace = FakeOffloader()
+        agent = self._agent(context_length=100, workspace=workspace)
+        agent.state.context.extend(self._turns(6))
+        agent._ctx_usage.observe_provider_report(200, 10)
+
+        await self._run_compression_pass(agent)
+
+        self.assertDictEqual(
+            {
+                "summary": agent.state.summary,
+                "context_left": len(agent.state.context),
+                "offloaded_turns": len(workspace.contexts[0]),
+                "offload_path_cited": (
+                    "workspace://sessions/" in (agent.state.summary or "")
+                ),
+            },
+            {
+                "summary": AnyString(),
+                "context_left": 0,
+                "offloaded_turns": 6,
+                "offload_path_cited": True,
+            },
+        )
+        self.assertIn("# Task Overview\nvoice chat", agent.state.summary)
+
+    async def test_compression_rejects_modified_prefix(self) -> None:
+        """A snapshot whose prefix was edited after snapshotting cannot
+        be committed — the summary would describe text nobody sent."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "stale summary",
+        }
+        # The user talked over the summarized span, as in a barge-in.
+        agent.state.context[0].content = [TextBlock(text="tampered")]
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual(len(agent.state.context), 4)
+        self.assertIsNone(agent._pending_checkpoint)
+        agent._ctx_usage.observe_provider_report(200, 0)
+        await self._run_compression_pass(agent)
+        self.assertIn("# Task Overview\nvoice chat", agent.state.summary)
+
+    async def test_compression_rejects_shrunk_prefix(self) -> None:
+        """A prefix that lost a message cannot be committed against ids
+        that expect it."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "stale summary",
+        }
+        agent.state.context.pop()
+        agent.state.context.append(UserMsg(name="user", content="new"))
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertIsNone(agent._pending_checkpoint)
+
+    async def test_compression_defers_while_tools_pending(self) -> None:
+        """The commit waits until no tool results are outstanding, so a
+        late result cannot land after its context was summarized away."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "pending summary",
+        }
+        agent._pending_tools["c1"] = ToolCallBlock(
+            id="c1",
+            name="stream_tool",
+            input="{}",
+        )
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual(len(agent.state.context), 4)
+
+    async def test_compression_waits_for_older_pending_transcription(
+        self,
+    ) -> None:
+        """A newer settled turn must not hide an older pending transcript."""
+        agent = self._agent()
+        agent.model = ScriptedModel([[]], input_audio_transcription=True)
+        agent.state.context.extend(self._turns(4))
+        agent._start_user_turn("u1")
+        agent._end_user_turn()
+        agent._start_user_turn("u2")
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u2", text="newer turn"),
+        )
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "settled prefix",
+        }
+        agent._ctx_usage.observe_provider_report(200, 0)
+
+        await agent._compression_pass()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertIsNotNone(agent._pending_checkpoint)
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u1", text="older late turn"),
+        )
+        agent._maybe_apply_checkpoint()
+        self.assertEqual(agent.state.summary, "")
+        self.assertIsNone(agent._pending_checkpoint)
+        self.assertIn(
+            "older late turn",
+            " ".join(
+                message.get_text_content() for message in agent.state.context
+            ),
+        )
+
+    async def test_compression_commits_after_untranscribed_turn_closes(
+        self,
+    ) -> None:
+        """A closed turn without transcription must not block compression."""
+        agent = self._agent()
+        agent.state.context.extend(self._turns(4))
+        agent._start_user_turn("u1")
+        agent._end_user_turn()
+        agent._ctx_usage.observe_provider_report(200, 0)
+
+        await self._run_compression_pass(agent)
+
+        self.assertTrue(agent.state.summary)
+        self.assertEqual(agent.state.context, [])
+
+    async def test_compression_commit_succeeds_when_quiet(self) -> None:
+        """The same checkpoint commits once nothing is in flight and the
+        prefix is byte-identical."""
+        agent = self._agent(context_length=100)
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "committed summary",
+        }
+
+        agent._maybe_apply_checkpoint()
+
+        self.assertEqual(agent.state.summary, "committed summary")
+        self.assertListEqual(agent.state.context, [])
+        self.assertIsNone(agent._pending_checkpoint)
+
+    async def test_oversized_tool_result_is_truncated_and_offloaded(
+        self,
+    ) -> None:
+        """A tool result over ``tool_result_limit`` enters the context
+        truncated, citing the workspace path that holds the full text."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        block = ToolResultBlock(id="c1", name="t", output="x" * 500)
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertDictEqual(
+            {
+                "starts_with_budget": result.output.startswith("x" * 40),
+                "over_budget_dropped": ("x" * 41) not in result.output,
+                "truncated_marker": "<<<TRUNCATED>>>" in result.output,
+                "offload_path_cited": (
+                    "workspace://sessions/" in result.output
+                ),
+                "offloaded_intact": [r.output for r in workspace.tool_results],
+            },
+            {
+                "starts_with_budget": True,
+                "over_budget_dropped": True,
+                "truncated_marker": True,
+                "offload_path_cited": True,
+                "offloaded_intact": ["x" * 500],
+            },
+        )
+
+    async def test_small_tool_result_passes_through(self) -> None:
+        """A tool result within the limit is untouched and not offloaded."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        block = ToolResultBlock(id="c1", name="t", output="short")
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertEqual(result.output, "short")
+        self.assertListEqual(workspace.tool_results, [])
+
+    async def test_oversized_tool_result_without_workspace(self) -> None:
+        """Without a workspace the excess is dropped; the reminder notes
+        the omission but cites no path."""
+        agent = self._agent(tool_result_limit=10, workspace=None)
+        block = ToolResultBlock(id="c1", name="t", output="y" * 500)
+
+        result = await agent._truncate_tool_result(block)
+
+        self.assertTrue(result.output.startswith("y" * 40))
+        self.assertIn("<<<TRUNCATED>>>", result.output)
+        self.assertNotIn("workspace://", result.output)
+
+    async def test_default_schema_matches_summary_template(self) -> None:
+        """A configured model gets the fields the default template needs."""
+        agent = self._agent()
+        model = agent.context_config.compression_model
+        model.generate_structured_output = AsyncMock(
+            return_value=_compression_summary_response(),
+        )
+        agent.state.context.extend(self._turns(4))
+        agent._ctx_usage.observe_provider_report(200, 0)
+        await self._run_compression_pass(agent)
+        schema = model.generate_structured_output.call_args.kwargs[
+            "structured_model"
+        ]
+        self.assertIn("task_overview", schema["properties"])
+        self.assertIn("context_to_preserve", schema["required"])
+
+    async def test_deferred_checkpoint_commits_on_next_boundary(self) -> None:
+        """A summary finished during a reply is applied once it settles."""
+        agent = self._agent()
+        agent.state.context.extend(self._turns(4))
+        agent._pending_checkpoint = {
+            "ids": [m.id for m in agent.state.context],
+            "digest": agent._prefix_digest(agent.state.context),
+            "summary": "ready checkpoint",
+        }
+        agent._start_reply("next")
+        agent._maybe_apply_checkpoint()
+        self.assertEqual(agent.state.summary, "")
+        agent._finish_reply(ReplyFinishedReason.COMPLETED)
+        await asyncio.gather(*list(agent._tasks))
+        self.assertEqual(agent.state.summary, "ready checkpoint")
+
+    async def test_compression_preserves_tool_content_and_snapshot(
+        self,
+    ) -> None:
+        """The summarizer sees tools and an immutable view of the prefix."""
+        agent = self._agent()
+        agent.state.summary = "previous checkpoint"
+        agent.state.context.extend(self._turns(4))
+        agent.state.context[-1].content.append(
+            ToolResultBlock(id="c1", name="lookup", output="important fact"),
+        )
+        original = agent.state.context[0].get_text_content()
+        entered, resume = asyncio.Event(), asyncio.Event()
+        observed = []
+
+        async def summarize(
+            messages: list[Msg], **kwargs: Any
+        ) -> StructuredResponse:
+            entered.set()
+            await resume.wait()
+            observed.extend(messages)
+            return _compression_summary_response()
+
+        agent.context_config.compression_model.generate_structured_output = (
+            summarize
+        )
+        agent._ctx_usage.observe_provider_report(200, 0)
+        await agent._compression_pass()
+        await entered.wait()
+        agent.state.context[0].content = [TextBlock(text="changed")]
+        resume.set()
+        await asyncio.gather(*list(agent._tasks))
+
+        texts = [m.get_text_content() for m in observed]
+        self.assertIn(original, texts)
+        self.assertIn("previous checkpoint", texts)
+        results = [
+            b.output
+            for m in observed
+            for b in m.content
+            if isinstance(b, ToolResultBlock)
+        ]
+        self.assertEqual(results, ["important fact"])
+        self.assertEqual(agent.state.summary, "previous checkpoint")
+        self.assertIsNone(agent._pending_checkpoint)
+
+    async def test_tool_budget_counts_utf8_bytes(self) -> None:
+        """Chinese output obeys the same estimate as context accounting."""
+        agent = self._agent(tool_result_limit=10)
+        result = await agent._truncate_tool_result(
+            ToolResultBlock(id="c1", name="t", output="中" * 30),
+        )
+        self.assertIn("<<<TRUNCATED>>>", result.output)
+        prefix = result.output.split("\n<<<TRUNCATED>>>")[0]
+        self.assertLessEqual(len(prefix.encode("utf-8")), 40)
+        self.assertNotIn("\ufffd", prefix)
+
+    async def test_tool_result_at_budget_is_unchanged(self) -> None:
+        """The documented limit is inclusive."""
+        workspace = FakeOffloader()
+        agent = self._agent(tool_result_limit=10, workspace=workspace)
+        result = await agent._truncate_tool_result(
+            ToolResultBlock(id="c1", name="t", output="x" * 40),
+        )
+        self.assertEqual(result.output, "x" * 40)
+        self.assertEqual(workspace.tool_results, [])
