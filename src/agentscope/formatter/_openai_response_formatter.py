@@ -17,6 +17,8 @@ from ..message import (
     ToolResultBlock,
     HintBlock,
     ThinkingBlock,
+    URLSource,
+    Base64Source,
 )
 
 
@@ -36,6 +38,21 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             "Audio is not supported by the Responses API."
         ),
     )
+
+    @staticmethod
+    def _unsupported_media_placeholder(
+        source: URLSource | Base64Source,
+        part_type: str = "input_text",
+    ) -> dict[str, Any]:
+        """Build a text placeholder standing in for a media block the
+        Responses API cannot ingest, so the enclosing message is not
+        dropped when the media block was its only content."""
+        main_type = source.media_type.split("/", 1)[0]
+        if isinstance(source, URLSource):
+            text = f"[{main_type} file returned, URL: {source.url}]"
+        else:
+            text = f"[{main_type} file returned, type: {source.media_type}]"
+        return {"type": part_type, "text": text}
 
     def _format_response_data_block(
         self,
@@ -212,8 +229,17 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_response_data_block(block)
-                    if formatted is not None:
-                        content_parts.append(formatted)
+                    if formatted is None:
+                        text_type = (
+                            "output_text"
+                            if msg.role == "assistant"
+                            else "input_text"
+                        )
+                        formatted = self._unsupported_media_placeholder(
+                            block.source,
+                            text_type,
+                        )
+                    content_parts.append(formatted)
 
                 elif isinstance(block, HintBlock):
                     if function_calls:
@@ -264,8 +290,13 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                         sub,
                                     )
                                 )
-                                if formatted_sub is not None:
-                                    hint_parts.append(formatted_sub)
+                                if formatted_sub is None:
+                                    formatted_sub = (
+                                        self._unsupported_media_placeholder(
+                                            sub.source,
+                                        )
+                                    )
+                                hint_parts.append(formatted_sub)
                         if hint_parts:
                             items.append(
                                 {"role": "user", "content": hint_parts},
@@ -514,8 +545,11 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
                     formatted = self._format_response_data_block(block)
-                    if formatted is not None:
-                        media_blocks.append(formatted)
+                    if formatted is None:
+                        formatted = self._unsupported_media_placeholder(
+                            block.source,
+                        )
+                    media_blocks.append(formatted)
 
         if not accumulated_text and not media_blocks:
             return []
