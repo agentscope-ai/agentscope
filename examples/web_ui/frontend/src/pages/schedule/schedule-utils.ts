@@ -10,14 +10,15 @@ export function getScheduleStartAt(date: Date, time: string, timezone: string): 
 	const parsed = new CronDate(local, timezone);
 	const wallTime = Date.parse(`${local}Z`);
 	// Sample both sides of a transition, including non-hour offset changes.
+	// Date objects prevent CronDate from treating timestamp zero as missing.
 	const day = 24 * 60 * 60 * 1000;
 	const offsets = new Set(
 		[-day, 0, day].map((delta) =>
-			new CronDate(parsed.getTime() + delta, timezone).getUTCOffset(),
+			new CronDate(new Date(parsed.getTime() + delta), timezone).getUTCOffset(),
 		),
 	);
 	const candidates = [...offsets]
-		.map((offset) => new CronDate(wallTime - offset * 60 * 1000, timezone))
+		.map((offset) => new CronDate(new Date(wallTime - offset * 60 * 1000), timezone))
 		.filter(
 			(candidate) => candidate.getTime() + candidate.getUTCOffset() * 60 * 1000 === wallTime,
 		);
