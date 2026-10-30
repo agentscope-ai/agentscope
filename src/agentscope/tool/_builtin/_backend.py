@@ -39,6 +39,7 @@ import os
 import posixpath
 import shlex
 import shutil
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
@@ -853,17 +854,20 @@ class LocalBackend(BackendBase):
     async def write_file(self, path: str, data: bytes) -> None:
         """Write *data* to a local file, creating parent dirs.
 
+        The destination is published atomically: a failed or cancelled
+        write leaves the previous file (or no file) in place.
+
         Args:
             path (`str`):
                 Destination path on the local filesystem.
             data (`bytes`):
                 The raw bytes to write.
         """
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        async with aiofiles.open(path, mode="wb") as f:
-            await f.write(data)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield data
+
+        await self._write_atomic(path, chunks())
 
     async def write_stream(
         self,
@@ -872,18 +876,99 @@ class LocalBackend(BackendBase):
     ) -> None:
         """Write a byte stream to a local file, chunk by chunk.
 
+        The destination is published atomically: a failed or cancelled
+        write leaves the previous file (or no file) in place.
+
         Args:
             path (`str`):
                 Destination path on the local filesystem.
             stream (`AsyncIterator[bytes]`):
                 The chunks to write, in order.
         """
-        parent = os.path.dirname(path)
+        await self._write_atomic(path, stream)
+
+    async def _write_atomic(
+        self,
+        path: str,
+        chunks: AsyncIterator[bytes],
+    ) -> None:
+        """Publish *chunks* at *path* without exposing a partial file.
+
+        The payload goes to a temporary file next to the destination and
+        is moved into place only once the stream is exhausted, so neither
+        a raising source nor a cancelled write can truncate the bytes
+        already there.
+
+        Args:
+            path (`str`):
+                Destination path on the local filesystem.
+            chunks (`AsyncIterator[bytes]`):
+                The chunks to write, in order.
+        """
+        # Follow a symlinked destination rather than replacing the link.
+        target = os.path.realpath(path) if os.path.islink(path) else path
+        parent = os.path.dirname(target)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        async with aiofiles.open(path, mode="wb") as f:
-            async for chunk in stream:
-                await f.write(chunk)
+
+        # Reuse the destination's mode so publishing does not change the
+        # permissions of an existing file. On Windows only the read-only
+        # bit is meaningful, publishing onto such a file fails anyway, and
+        # a read-only temporary file could not be cleaned up afterwards.
+        mode = None
+        if os.name != "nt":
+            try:
+                mode = os.stat(target).st_mode & 0o777
+            except OSError:
+                pass
+
+        tmp_path = os.path.join(
+            parent or ".",
+            f".{os.path.basename(target)}.{uuid.uuid4().hex}.tmp",
+        )
+        created = False
+        try:
+            # "x" keeps the process umask, unlike ``tempfile.mkstemp``
+            # which always creates the file with mode 0o600.
+            async with aiofiles.open(tmp_path, mode="xb") as f:
+                created = True
+                async for chunk in chunks:
+                    await f.write(chunk)
+            if mode is not None:
+                os.chmod(tmp_path, mode)
+            await self._publish(tmp_path, target)
+        except BaseException:
+            if created:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            raise
+
+    @staticmethod
+    async def _publish(tmp_path: str, target: str) -> None:
+        """Move *tmp_path* onto *target*, replacing any existing file.
+
+        Windows refuses to replace a file another handle has open
+        (``PermissionError``), and a concurrent reader — or a scanner that
+        just observed the new file — usually releases it within
+        milliseconds. Retry briefly; POSIX unlinks the old inode and never
+        takes this path.
+
+        Args:
+            tmp_path (`str`):
+                The fully written temporary file.
+            target (`str`):
+                The destination path.
+        """
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, target)
+                return
+            except PermissionError:
+                if os.name != "nt" or attempt == 4:
+                    raise
+                await asyncio.sleep(0.01 * (attempt + 1))
 
     async def read_stream(
         self,

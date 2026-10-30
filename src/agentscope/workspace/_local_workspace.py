@@ -10,6 +10,7 @@ import shutil
 import sys
 from typing import AsyncIterator, Literal, TypedDict
 
+import aiofiles
 import frontmatter
 
 from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
@@ -315,18 +316,30 @@ class LocalWorkspace(WorkspaceBase):
         skills_dir: str,
         data: _SkillsFile,
     ) -> None:
-        """Persist the .index file.
+        """Persist the .index file in place.
+
+        The index is written in place instead of through the backend's
+        atomic writer. Publishing a temporary file with ``os.replace``
+        updates the partition directory's mtime, which is the very signal
+        stored in ``skills_dir_mtime``: every save would invalidate its
+        own fingerprint and ``list_skills`` would reconcile and rewrite
+        the index on every call. The index is derived data, so an
+        interrupted write is recoverable — ``_load_skills_file`` falls
+        back to an empty index and the next call rebuilds it from disk.
 
         Args:
             skills_dir (`str`): The partition directory path.
             data (`_SkillsFile`): The index to write.
         """
         path = os.path.join(skills_dir, ".index")
+        payload = json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False,
+        ).encode("utf-8")
         try:
-            await self._backend.write_file(
-                path,
-                json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"),
-            )
+            async with aiofiles.open(path, mode="wb") as f:
+                await f.write(payload)
         except Exception as e:
             logger.warning("Failed to save .skills to %s: %s", path, str(e))
 
