@@ -3919,6 +3919,8 @@ class Agent:
                 yield ToolResultTextDeltaEvent(
                     reply_id=self.state.reply_id,
                     tool_call_id=tool_call_id,
+                    # Keep the block id so replay groups one text block.
+                    block_id=block.id,
                     delta=block.text,
                 )
 

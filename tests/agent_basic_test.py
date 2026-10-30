@@ -1371,6 +1371,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_1,
+                "block_id": AnyString(),
                 "delta": "Sequential result: test1",
             },
             {
@@ -1386,6 +1387,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_2,
+                "block_id": AnyString(),
                 "delta": "Sequential result: test2",
             },
             {
@@ -1625,6 +1627,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_1,
+                "block_id": AnyString(),
                 "delta": "Concurrent result: test1",
             },
             {
@@ -1640,6 +1643,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_2,
+                "block_id": AnyString(),
                 "delta": "Concurrent result: test2",
             },
             {
@@ -1901,6 +1905,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_1,
+                "block_id": AnyString(),
                 "delta": "Sequential result: seq1",
             },
             {
@@ -1921,6 +1926,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_2,
+                "block_id": AnyString(),
                 "delta": "Concurrent result: conc1",
             },
             {
@@ -1936,6 +1942,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": tool_call_id_3,
+                "block_id": AnyString(),
                 "delta": "Concurrent result: conc2",
             },
             {
@@ -2170,6 +2177,43 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             [
                 ("ToolResultDataDeltaEvent", "b64-block"),
                 ("ToolResultDataDeltaEvent", "url-block"),
+            ],
+        )
+
+    async def test_event_block_id_matches_text_block_id(self) -> None:
+        """Streamed TextBlocks keep their id on the emitted event."""
+        agent = Agent(
+            name="test",
+            system_prompt="",
+            model=MockModel(),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        chunks = [
+            TextBlock(id="text-block", text="hello"),
+            DataBlock(
+                id="b64-block",
+                source=Base64Source(
+                    data=base64.b64encode(b"img").decode("ascii"),
+                    media_type="image/png",
+                ),
+            ),
+            TextBlock(id="text-block", text=" world"),
+        ]
+        # pylint: disable=protected-access
+        events = [
+            event
+            async for event in agent._convert_tool_chunk_to_event(
+                "tc-1",
+                chunks,
+            )
+        ]
+        self.assertListEqual(
+            [(type(e).__name__, e.block_id) for e in events],
+            [
+                ("ToolResultTextDeltaEvent", "text-block"),
+                ("ToolResultDataDeltaEvent", "b64-block"),
+                ("ToolResultTextDeltaEvent", "text-block"),
             ],
         )
 
