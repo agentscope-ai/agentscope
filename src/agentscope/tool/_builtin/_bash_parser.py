@@ -172,25 +172,20 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command
-        if any(op in cmd for op in ["&&", "||", ";", "|"]):
-            # Split into subcommands and check each one
-            try:
-                tree = self.parser.parse(bytes(cmd, "utf8"))
-                root = tree.root_node
-                subcommands = self.split_compound_command(root, cmd)
-
-                # All subcommands must be read-only
-                for subcmd in subcommands:
-                    if not self._is_single_command_read_only(subcmd.strip()):
-                        return False
-                return True
-            except Exception:
-                # If parsing fails, be conservative
+        # Use the same boundaries as rule matching, including newlines and
+        # background operators, so the read-only fast path cannot skip them.
+        try:
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+            if tree.root_node.has_error:
                 return False
-
-        # Single command - check directly
-        return self._is_single_command_read_only(cmd)
+            subcommands = self.split_compound_command(tree.root_node, cmd)
+            return all(
+                self._is_single_command_read_only(subcmd.strip())
+                for subcmd in subcommands
+            )
+        except Exception:
+            # If parsing fails, be conservative.
+            return False
 
     def _is_single_command_read_only(self, cmd: str) -> bool:
         """Check if a single (non-compound) command is read-only.
@@ -510,9 +505,14 @@ class BashCommandParser:
         if not command or not command.strip():
             return []
 
-        # Parse command to AST
-        tree = self.parser.parse(bytes(command, "utf8"))
+        # Do not suggest broad allow rules from an incomplete parse.
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+        except Exception:
+            return []
         root = tree.root_node
+        if root.has_error:
+            return []
 
         # Split compound commands
         subcommands = self.split_compound_command(root, command)
@@ -551,8 +551,12 @@ class BashCommandParser:
         """
         if not command or not command.strip():
             return [command]
-        tree = self.parser.parse(bytes(command, "utf8"))
-        return self.split_compound_command(tree.root_node, command)
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+            return self.split_compound_command(tree.root_node, command)
+        except Exception:
+            # Keep the original input for the tool's safety check.
+            return [command]
 
     def split_compound_command(self, root: Node, command: str) -> List[str]:
         """Split compound commands using tree-sitter for precise parsing.
@@ -569,23 +573,32 @@ class BashCommandParser:
             `List[str]`:
                 List of individual subcommands
         """
+        if root.has_error:
+            return [command]
+        source = command.encode("utf8")
         subcommands = []
 
         def extract_commands(node: Node) -> None:
-            """Recursively extract commands from AST."""
-            if node.type == "command":
-                # Extract command text
-                cmd_text = command[node.start_byte : node.end_byte]
-                subcommands.append(cmd_text)
-            elif node.type in ["list", "pipeline", "command_list"]:
-                # Recursively process compound structures
-                for child in node.children:
-                    if child.type not in ["&&", "||", ";", "|", "|&"]:
-                        extract_commands(child)
-            else:
-                # Continue traversing
-                for child in node.children:
+            """Split lists and pipelines without discarding shell syntax."""
+            if node.type in ["program", "list", "pipeline", "command_list"]:
+                for child in node.named_children:
                     extract_commands(child)
+                return
+            if node.type == "comment":
+                return
+            if node.type == "redirected_statement":
+                body = node.child_by_field_name("body")
+                if body is not None and body.type in ["list", "pipeline"]:
+                    extract_commands(body)
+                    # Trailing redirections on a list or pipeline belong
+                    # to its last command, not to the entire structure.
+                    subcommands[-1] += source[
+                        body.end_byte : node.end_byte
+                    ].decode("utf8")
+                    return
+            subcommands.append(
+                source[node.start_byte : node.end_byte].decode("utf8"),
+            )
 
         extract_commands(root)
         return subcommands if subcommands else [command]
@@ -958,6 +971,8 @@ class BashCommandParser:
 
         try:
             tree = self.parser.parse(bytes(command, "utf8"))
+            if tree.root_node.has_error:
+                return "Command parsing failed, cannot verify safety"
             return self._walk_for_dangerous_nodes(tree.root_node)
         except Exception:
             # If parsing fails, be conservative and require review
