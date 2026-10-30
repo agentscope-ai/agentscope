@@ -268,6 +268,19 @@ class ChatService:
             SubagentHitlProjector(storage),
             *(extra_projectors or []),
         ]
+        # Queue nudges are detached from completed registry tasks so they
+        # run only after the local run slot is released. Keep strong
+        # references until completion; asyncio's loop retains only weak
+        # references to un-awaited tasks.
+        self._queue_nudge_tasks: set[asyncio.Task] = set()
+
+    async def resolve_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> AgentRecord:
+        """Resolve an owned or shared agent for execution and queue checks."""
+        return await self._access.resolve_agent(user_id, agent_id)
 
     async def run(
         self,
@@ -281,6 +294,8 @@ class ChatService:
         | UserInterruptEvent
         | None = None,
         sop_dispatch: str | None = None,
+        queue_item_id: str | None = None,
+        input_persisted: bool = False,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -323,6 +338,10 @@ class ChatService:
             sop_dispatch (`str | None`, optional):
                 ``"<run id>:<step index>"`` when a SOP run dispatched
                 this turn, which gives it a submit tool.
+            queue_item_id (`str | None`, optional):
+                Queue identity for terminal failure reporting.
+            input_persisted (`bool`, optional):
+                Internal queue caller already saved this initial input.
         """
         try:
             await self._run_impl(
@@ -331,6 +350,7 @@ class ChatService:
                 agent_id,
                 input_msg,
                 sop_dispatch,
+                input_persisted=input_persisted,
             )
         except Exception as e:
             logger.exception(
@@ -341,6 +361,88 @@ class ChatService:
                 agent_id,
                 str(e),
             )
+            if queue_item_id is not None and isinstance(
+                input_msg,
+                (Msg, list),
+            ):
+                messages = (
+                    input_msg
+                    if isinstance(input_msg, list)
+                    else [
+                        input_msg,
+                    ]
+                )
+                try:
+                    event = CustomEvent(
+                        name="chat_input_failed",
+                        value={
+                            "queue_item_id": queue_item_id,
+                            "message_ids": [msg.id for msg in messages],
+                            "message": (
+                                "The queued message could not be processed. "
+                                "Check the server log for details."
+                            ),
+                        },
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        event.model_dump(mode="json"),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to publish queued-input failure for "
+                        "session %s.",
+                        session_id,
+                    )
+
+    def schedule_queue_nudge(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Schedule and strongly retain a one-shot pending-queue nudge.
+
+        Args:
+            user_id (`str`):
+                User that owns the session queue.
+            session_id (`str`):
+                Session whose pending/in-flight state should be checked.
+            agent_id (`str`):
+                Agent that owns the session queue.
+        """
+
+        async def _nudge_if_pending() -> None:
+            try:
+                pending = await self._message_bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                    max_count=1,
+                )
+                claimed = await self._message_bus.registry_exists(
+                    MessageBusKeys.chat_input_inflight_registry(),
+                    session_id,
+                )
+                if pending or claimed:
+                    await enqueue_run_trigger(
+                        self._message_bus,
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        kind=MessageBusKeys.WAKEUP_KIND_QUEUED_MESSAGE,
+                    )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to signal queued chat inputs for session %s.",
+                    session_id,
+                )
+
+        task = asyncio.create_task(
+            _nudge_if_pending(),
+            name=f"chat-queue-nudge:{session_id}",
+        )
+        self._queue_nudge_tasks.add(task)
+        task.add_done_callback(self._queue_nudge_tasks.discard)
 
     async def _auto_name_session(
         self,
@@ -796,6 +898,7 @@ class ChatService:
         | UserInterruptEvent
         | None,
         sop_dispatch: str | None = None,
+        input_persisted: bool = False,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -835,7 +938,7 @@ class ChatService:
                 # the agent is not visible to the caller.
                 # -------------------------------------------------------------
                 try:
-                    agent_record = await self._access.resolve_agent(
+                    agent_record = await self.resolve_agent(
                         user_id,
                         agent_id,
                     )
@@ -1264,7 +1367,9 @@ class ChatService:
                         ):
                             # Case A: new reply (user message(s), or
                             # retrigger with empty input)
-                            if isinstance(input_msg, (Msg, list)):
+                            if isinstance(input_msg, (Msg, list)) and not (
+                                input_persisted
+                            ):
                                 input_msgs = (
                                     [input_msg]
                                     if isinstance(input_msg, Msg)
@@ -1277,6 +1382,8 @@ class ChatService:
                                         msg,
                                     )
 
+                            # Only the initial queued input was pre-saved.
+                            input_persisted = False
                             async for event in agent.reply_stream(
                                 inputs=input_msg,
                             ):
