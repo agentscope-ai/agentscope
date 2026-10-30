@@ -51,9 +51,8 @@ class IndexTaskConsumer:
             deduplication.
         max_batch (`int`, defaults to ``32``):
             Maximum entries drained per signal. Keeps a single
-            signal from monopolising the loop when the queue is
-            backed up; remaining entries are picked up on the next
-            signal or the next sweeper-driven eager drain.
+            signal from monopolising the loop when the queue is backed
+            up. Startup drains every pre-existing batch.
     """
 
     def __init__(
@@ -75,10 +74,9 @@ class IndexTaskConsumer:
         """Start the consumer loop and wait until its subscription
         is live.
 
-        After the subscription is established, an initial drain runs
-        synchronously so tasks queued while every worker was down
-        get picked up immediately on startup, without waiting for
-        a fresh signal.
+        After the subscription is established, drain the complete
+        backlog so tasks queued while every worker was down get picked
+        up without waiting for a fresh signal.
         """
         ready = asyncio.Event()
         self._task = asyncio.create_task(
@@ -86,7 +84,10 @@ class IndexTaskConsumer:
             name="index-task-consumer",
         )
         await ready.wait()
-        await self._drain_and_dispatch()
+        while True:
+            count = await self._drain_and_dispatch()
+            if count == 0 or count < self._max_batch:
+                break
         return self
 
     async def __aexit__(
@@ -148,8 +149,8 @@ class IndexTaskConsumer:
             # cannot stall on a transient bus failure.
             ready.set()
 
-    async def _drain_and_dispatch(self) -> None:
-        """Read up to a batch of task entries and dispatch each one."""
+    async def _drain_and_dispatch(self) -> int:
+        """Dispatch one batch and return the number of entries drained."""
         try:
             entries = await self._bus.queue_drain(
                 MessageBusKeys.index_tasks_queue(),
@@ -157,7 +158,7 @@ class IndexTaskConsumer:
             )
         except Exception:  # pylint: disable=broad-except
             logger.exception("IndexTaskConsumer: drain failed.")
-            return
+            return 0
 
         for _entry_id, payload in entries:
             try:
@@ -176,6 +177,7 @@ class IndexTaskConsumer:
                 knowledge_base_id=knowledge_base_id,
                 document_id=document_id,
             )
+        return len(entries)
 
     def _spawn(
         self,
