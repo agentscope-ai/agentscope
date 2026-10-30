@@ -7,9 +7,11 @@ other formatter, the ``format()`` method returns a list of
 ``chat_pb2.Message`` proto objects rather than plain dicts, because the
 ``xai_sdk`` chat API accepts proto messages directly.
 """
+import asyncio
 import base64
 from fnmatch import fnmatch
 from typing import Any, List
+from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 from pydantic import Field
@@ -75,7 +77,7 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url2pathname(url_str.removeprefix("file://"))
+                    local_path = url2pathname(urlsplit(url_str).path)
                     with open(local_path, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode(
                             "utf-8",
@@ -171,7 +173,8 @@ class XAIChatFormatter(FormatterBase):
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
-                            hint_args = _xai_user_args_from_blocks(
+                            hint_args = await asyncio.to_thread(
+                                _xai_user_args_from_blocks,
                                 block.hint,
                                 image,
                                 self.supported_input_media_types,
@@ -182,7 +185,8 @@ class XAIChatFormatter(FormatterBase):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
                         content_args.extend(
-                            _xai_user_args_from_blocks(
+                            await asyncio.to_thread(
+                                _xai_user_args_from_blocks,
                                 [block],
                                 image,
                                 self.supported_input_media_types,
@@ -311,7 +315,8 @@ class XAIChatFormatter(FormatterBase):
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
-                            hint_args = _xai_user_args_from_blocks(
+                            hint_args = await asyncio.to_thread(
+                                _xai_user_args_from_blocks,
                                 block.hint,
                                 image,
                                 self.supported_input_media_types,
