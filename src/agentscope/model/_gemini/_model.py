@@ -257,6 +257,33 @@ class GeminiChatModel(ChatModelBase):
         # rare 4xx like auth/bad-request a few times.
         return (errors.APIError,)
 
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        from google.genai import errors
+
+        # 4xx (unsupported fields, schema violations, budget rejections) may
+        # be avoided by a different structured-output strategy, so the
+        # ladder should fall through instead of aborting. 5xx stay retryable
+        # via ``_get_retryable_exceptions``.
+        return (errors.ClientError,)
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        # 2.5 Flash / Flash-Lite accept ``thinking_budget: 0`` to disable
+        # thinking, but the pro models reject it with 400 and Gemini 3
+        # deprecates ``thinking_budget`` altogether — those keep the server
+        # default instead of sending a request the API refuses.
+        model = self.model.lower()
+        if "pro" in model or model.startswith("gemini-3"):
+            return {}
+        return {
+            "thinking_config": {
+                "include_thoughts": False,
+                "thinking_budget": 0,
+            },
+        }
+
     async def _call_api(
         self,
         model_name: str,

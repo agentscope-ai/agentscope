@@ -1443,3 +1443,29 @@ class StreamDelegatedCloseTest(IsolatedAsyncioTestCase):
         finally:
             model.release_cleanup.set()
             await gen.aclose()
+
+
+class StructuredOutputRetryableFallbackTest(IsolatedAsyncioTestCase):
+    """A retryable exception that is also fallback-eligible must not abort
+    the strategy ladder when retries are exhausted."""
+
+    async def test_retryable_exhausted_still_walks_the_ladder(self) -> None:
+        model = StructuredOutputStrategyMockModel(reject_forced=True)
+        model.retry_delay = 0
+        # Make the fallback-eligible error retryable as well, like the
+        # Gemini adapter's wide ``APIError`` retryable set does.
+        model._get_retryable_exceptions = lambda: (_BadRequestError,)
+
+        await model.generate_structured_output(
+            [UserMsg(name="user", content="hi")],
+            {"type": "object"},
+        )
+
+        modes = [mode for mode, _ in model.structured_calls]
+        # The forced strategy burns all retries, then the ladder must
+        # continue with the next strategy instead of raising.
+        self.assertEqual(
+            modes,
+            ["generate_structured_output"] * (model.max_retries + 1)
+            + ["auto"],
+        )
