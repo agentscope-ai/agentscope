@@ -264,24 +264,35 @@ class ScheduleWeekdayTest(TestCase):
     """Standard cron weekdays are translated for APScheduler."""
 
     def test_standard_weekdays(self) -> None:
-        """Numeric weekdays and names select the same calendar dates."""
+        """Numeric weekdays and names select complete two-week sequences."""
         record = _record()
-        start = datetime(2026, 1, 1, tzinfo=ZoneInfo("UTC"))
+        tz = ZoneInfo("UTC")
+        record.data.ended_at = datetime(2026, 1, 14, 23, 59, tzinfo=tz)
         expected_days = {
-            "1": 5,
-            "0": 4,
-            "7": 4,
-            "1-5": 1,
-            "0-7/3": 3,
-            "mon-fri": 1,
+            "1": [5, 12],
+            "0": [4, 11],
+            "7": [4, 11],
+            "1-5": [1, 2, 5, 6, 7, 8, 9, 12, 13, 14],
+            "0-7/3": [3, 4, 7, 10, 11, 14],
+            "mon-fri": [1, 2, 5, 6, 7, 8, 9, 12, 13, 14],
         }
-        for expression, day in expected_days.items():
+        for expression, days in expected_days.items():
             with self.subTest(expression=expression):
                 record.data.cron_expression = f"0 9 * * {expression}"
                 trigger = SchedulerManager.validate_schedule(record)
+                start = datetime(2026, 1, 1, tzinfo=tz)
+                previous = None
+                dates = []
+                for _ in range(15):
+                    fire = trigger.get_next_fire_time(previous, start)
+                    if fire is None:
+                        break
+                    dates.append(fire)
+                    previous = fire
+                    start = fire + timedelta(microseconds=1)
                 self.assertEqual(
-                    trigger.get_next_fire_time(None, start),
-                    datetime(2026, 1, day, 9, tzinfo=ZoneInfo("UTC")),
+                    dates,
+                    [datetime(2026, 1, day, 9, tzinfo=tz) for day in days],
                 )
 
         record.data.cron_expression = "0 9 * * 8"
@@ -352,6 +363,7 @@ class ScheduleCalendarTest(TestCase):
             ("0 9 * * 1", [5, 12, 19, 26]),
             ("0 9 1 * *", [1]),
             ("0 9 */2 * 1", [5, 19]),
+            ("0 9 1-3 * */2", [1, 3]),
         ):
             with self.subTest(expression=expression):
                 record = _record()

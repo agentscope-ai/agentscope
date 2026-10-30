@@ -1,15 +1,3 @@
-# Unreleased
-
-## Fixes
-
-- Match standard cron's OR semantics when both day-of-month and day-of-week
-  are restricted. For example, `0 9 1 * 1` runs on each month's first day
-  and each Monday, not only on Mondays that are the first of a month.
-  Coincident dates fire once; timezones and start/end bounds apply to both
-  alternatives. Wildcard day fields retain their existing behavior.
-  Stored expressions are unchanged. Existing schedules adopt the corrected
-  behavior when their timers are registered again, including on restart.
-
 # CHANGELOG of v1.0.0
 
 > ➡️ change; ✅ new feature; ❌ deprecate
