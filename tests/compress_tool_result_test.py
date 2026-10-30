@@ -7,6 +7,7 @@ from utils import MockModel, AnyString
 
 from agentscope.agent import Agent, ContextConfig
 from agentscope.message import (
+    AssistantMsg,
     ToolResultBlock,
     TextBlock,
     DataBlock,
@@ -87,6 +88,38 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(reserved, tool_result)
         self.assertIsNone(offload)
+
+    async def test_mixed_language_prefix_stays_within_limit(self) -> None:
+        """Test that mixed token density does not exceed the limit."""
+        tool_result = ToolResultBlock(
+            id="mixed-language",
+            name="test_tool",
+            output=[TextBlock(text="汉" * 400 + "a" * 1200)],
+        )
+
+        async def count_tokens(messages: list, tools: list | None = None) -> int:
+            content = messages[0].content
+            return sum(
+                len(block.text.encode("utf-8")) // 4
+                for block in content
+                if hasattr(block, "text")
+            )
+
+        self.mock_model.count_tokens = count_tokens
+        reserved, offload = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+
+        self.assertIsNotNone(offload)
+        self.assertLessEqual(
+            await self.mock_model.count_tokens(
+                [
+                    AssistantMsg("TestAgent", content=reserved.output),
+                ],
+                None,
+            ),
+            self.agent.context_config.tool_result_limit,
+        )
 
     async def test_boundary_last_block_text(self) -> None:
         """Test when boundary is the last block and it is a TextBlock."""

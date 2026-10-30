@@ -3136,32 +3136,32 @@ class Agent:
                 [AssistantMsg(self.name, content=reserved_blocks)],
                 None,
             )
-            cur_tokens_plus = await self.model.count_tokens(
-                [
-                    AssistantMsg(
-                        self.name,
-                        content=reserved_blocks + [boundary_block],
+            # Find the longest prefix that fits the same token counter used
+            # above. A proportional estimate can overshoot for mixed-language
+            # text because token density changes within one block.
+            low, high = 0, len(truncated_text)
+            while low < high:
+                candidate_length = (low + high + 1) // 2
+                candidate_blocks = reserved_blocks + [
+                    TextBlock(
+                        text=truncated_text[:candidate_length],
+                        id=boundary_block.id,
                     ),
-                ],
-                None,
-            )
-            # Truncate the text by proportion of tokens
-            token_delta = cur_tokens_plus - cur_tokens
-            remaining_token_budget = (
-                self.context_config.tool_result_limit - cur_tokens
-            )
-            if token_delta <= 0:
-                reserved_tokens = (
-                    len(truncated_text) if remaining_token_budget > 0 else 0
+                ]
+                candidate_tokens = await self.model.count_tokens(
+                    [
+                        AssistantMsg(
+                            self.name,
+                            content=candidate_blocks,
+                        ),
+                    ],
+                    None,
                 )
-            else:
-                reserved_tokens = int(
-                    remaining_token_budget / token_delta * len(truncated_text),
-                )
-            reserved_tokens = max(
-                0,
-                min(len(truncated_text), reserved_tokens),
-            )
+                if candidate_tokens <= self.context_config.tool_result_limit:
+                    low = candidate_length
+                else:
+                    high = candidate_length - 1
+            reserved_tokens = low
 
             reserved_text = truncated_text[:reserved_tokens]
             offload_text = truncated_text[reserved_tokens:]
