@@ -1247,9 +1247,7 @@ class WorkspaceBase:
                 continue
             try:
                 raw = await backend.read_file(md_path)
-                # ``utf-8-sig`` also accepts a byte order mark. Windows
-                # editors commonly write one, and it would otherwise hide
-                # the opening front matter delimiter.
+                # Strip an optional UTF-8 BOM before parsing front matter.
                 doc = fm.loads(raw.decode("utf-8-sig"))
                 name = doc.get("name")
                 desc = doc.get("description")

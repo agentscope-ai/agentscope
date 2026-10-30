@@ -358,9 +358,7 @@ class LocalWorkspace(WorkspaceBase):
 
             # Read and parse SKILL.md
             raw = await self._backend.read_file(skill_md_path)
-            # ``utf-8-sig`` also accepts a byte order mark. Windows
-            # editors commonly write one, and it would otherwise hide
-            # the opening front matter delimiter.
+            # Strip an optional UTF-8 BOM before parsing front matter.
             content_str = raw.decode("utf-8-sig")
 
             # Parse frontmatter
@@ -655,9 +653,7 @@ class LocalWorkspace(WorkspaceBase):
                 updated_at = 0.0
 
             raw = await self._backend.read_file(skill_md_path)
-            # ``utf-8-sig`` also accepts a byte order mark. Windows
-            # editors commonly write one, and it would otherwise hide
-            # the opening front matter delimiter.
+            # Strip an optional UTF-8 BOM before parsing front matter.
             content_str = raw.decode("utf-8-sig")
             content = frontmatter.loads(content_str)
 

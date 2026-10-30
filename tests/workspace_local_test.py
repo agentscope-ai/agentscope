@@ -1068,14 +1068,7 @@ This skill is added through a tilde path.
         self.assertListEqual(skills, [])
 
     async def test_add_skill_with_utf8_bom(self) -> None:
-        """A BOM-prefixed SKILL.md installs and lists like any other.
-
-        Windows editors such as PowerShell's ``Out-File`` write UTF-8
-        with a leading byte order mark. It used to hide the opening
-        front matter delimiter, so ``add_skill`` rejected the directory
-        as missing ``name``/``description``, and ``list_skills`` then
-        skipped it silently.
-        """
+        """Test installing and listing a skill with a UTF-8 BOM."""
         skill_dir = self._create_test_skill(
             "bom_skill",
             "Installed despite the BOM",
@@ -1090,20 +1083,30 @@ This skill is added through a tilde path.
         await workspace.initialize()
         await workspace.add_skill(skill_dir)
 
-        skills = {skill.name: skill for skill in await workspace.list_skills()}
-        self.assertEqual(set(skills), {"bom_skill"})
-        self.assertEqual(
-            skills["bom_skill"].description,
-            "Installed despite the BOM",
+        installed_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "bom_skill",
+        )
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Installed despite the BOM",
+                    "dir": installed_dir,
+                    "markdown": "# bom_skill\n\nInstalled despite the BOM",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(installed_dir, "SKILL.md"),
+                    ),
+                },
+            ],
         )
 
     async def test_list_skills_reconciles_utf8_bom_skill(self) -> None:
-        """A BOM skill dropped into a partition is indexed on the next list.
-
-        A SKILL.md copied into ``skills/`` by hand -- or by any tool the
-        workspace does not drive -- must be picked up by the reconcile
-        pass just like a plain UTF-8 one.
-        """
+        """Test indexing a manually added skill with a UTF-8 BOM."""
         workspace = LocalWorkspace(workdir=self.temp_dir.name)
         await workspace.initialize()
 
@@ -1123,17 +1126,24 @@ This skill is added through a tilde path.
             )
 
         skills = await workspace.list_skills()
-        self.assertEqual([skill.name for skill in skills], ["dropped_skill"])
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "dropped_skill",
+                    "description": "Dropped with a BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(skill_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
 
 
 class _UnindexedWorkspace(WorkspaceBase):  # pylint: disable=abstract-method
-    """A concrete workspace using the default, unindexed skills API.
-
-    ``LocalWorkspace`` overrides ``list_skills`` with an index-backed
-    variant, and the remote backends' suites need a sandbox; this minimal
-    subclass keeps :meth:`WorkspaceBase.list_skills` itself reachable.
-    Only the lifecycle and partitioning hooks it needs are implemented.
-    """
+    """Use a local backend to test the base skill listing implementation."""
 
     def __init__(self, workdir: str) -> None:
         """Bind a local backend over ``workdir``."""
@@ -1174,7 +1184,18 @@ class TestWorkspaceBaseListSkills(IsolatedAsyncioTestCase):
 
             skills = await workspace.list_skills()
 
-        self.assertEqual([skill.name for skill in skills], ["bom_skill"])
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Listed despite the BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": 0.0,
+                },
+            ],
+        )
 
 
 class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
