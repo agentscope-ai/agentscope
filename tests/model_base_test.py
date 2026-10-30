@@ -24,7 +24,11 @@ from agentscope.model import (
     FinishedReason,
     StructuredResponse,
 )
-from agentscope.exception import StructuredOutputError
+from agentscope.exception import (
+    ContentBlockedError,
+    ContentBlockedPhase,
+    StructuredOutputError,
+)
 from agentscope.tool import ToolChoice
 
 
@@ -1287,6 +1291,83 @@ class StructuredOutputStrategyTest(IsolatedAsyncioTestCase):
                 expected,
                 [("generate_structured_output", {})],
             ),
+        )
+
+    async def test_content_block_is_normalized_before_fallback(self) -> None:
+        """A blocked request does not traverse output strategies."""
+
+        class _NormalizingStructuredModel(
+            StructuredOutputStrategyMockModel,
+        ):
+            """Normalize the simulated provider bad request."""
+
+            def _normalize_exception(self, error: Exception) -> Exception:
+                """Translate the provider error into a content block."""
+                return ContentBlockedError(
+                    "blocked",
+                    phase=ContentBlockedPhase.INPUT,
+                    provider="test",
+                    original_code="content_filter",
+                )
+
+        original = _BadRequestError("input blocked")
+        model = _NormalizingStructuredModel(responses=[original])
+
+        with self.assertRaises(ContentBlockedError) as raised:
+            await model.generate_structured_output(
+                self.messages,
+                self.schema,
+            )
+
+        self.assertIs(raised.exception.__cause__, original)
+        self.assertEqual(
+            model.structured_calls,
+            [("generate_structured_output", {})],
+        )
+
+    async def test_normalized_retryable_error_is_retried(self) -> None:
+        """Structured output classifies the normalized exception."""
+
+        class _RetryableError(Exception):
+            """A normalized transient provider error."""
+
+        class _NormalizingStructuredModel(
+            StructuredOutputStrategyMockModel,
+        ):
+            """Normalize a provider failure into a retryable error."""
+
+            @classmethod
+            def _get_retryable_exceptions(
+                cls,
+            ) -> tuple[type[Exception], ...]:
+                """Declare the normalized transient error retryable."""
+                return (_RetryableError,)
+
+            def _normalize_exception(self, error: Exception) -> Exception:
+                """Translate the provider error into a transient error."""
+                return _RetryableError(str(error))
+
+        model = _NormalizingStructuredModel(
+            responses=[
+                _BadRequestError("temporary provider failure"),
+                StructuredResponse(content={}),
+            ],
+        )
+        model.max_retries = 1
+        model.retry_delay = 0
+
+        result = await model.generate_structured_output(
+            self.messages,
+            self.schema,
+        )
+
+        self.assertDictEqual(result.content, {})
+        self.assertEqual(
+            model.structured_calls,
+            [
+                ("generate_structured_output", {}),
+                ("generate_structured_output", {}),
+            ],
         )
 
     async def test_final_error_is_chained_from_first_error(self) -> None:
