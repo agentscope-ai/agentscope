@@ -50,7 +50,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
     Each ``mc:AlternateContent`` containing a text box uses the first branch
     with readable Word text, retaining the fallback when its choices cannot
-    supply any text. Other paragraph content keeps its original behavior.
+    supply any text. Paragraph boundaries within each text box are retained.
+    Other paragraph content keeps its original behavior.
 
     Args:
         para (`DocxParagraph`):
@@ -63,6 +64,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     from docx.oxml.ns import qn
 
     text_tag = qn("w:t")
+    paragraph_tag = qn("w:p")
     text_box_tag = qn("w:txbxContent")
     root = para._element
 
@@ -85,16 +87,22 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
                 yield from iter_text(child)
 
     own_parts: list[str] = []
-    text_boxes: dict[Any, list[str]] = {}
+    text_boxes: dict[Any, dict[Any, list[str]]] = {}
     for text in iter_text(root):
         if not text.text:
             continue
         parts = own_parts
+        paragraph = root
         for ancestor in text.iterancestors():
             if ancestor is root:
                 break
+            if ancestor.tag == paragraph_tag:
+                paragraph = ancestor
             if ancestor.tag == text_box_tag:
-                parts = text_boxes.setdefault(ancestor, [])
+                parts = text_boxes.setdefault(ancestor, {}).setdefault(
+                    paragraph,
+                    [],
+                )
                 break
         parts.append(text.text)
 
@@ -102,7 +110,13 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     if not own_text and not text_boxes:
         # python-docx also reads characters such as w:noBreakHyphen.
         own_text = para.text
-    blocks = [own_text, *("".join(parts) for parts in text_boxes.values())]
+    blocks = [
+        own_text,
+        *(
+            "\n".join("".join(parts) for parts in paragraphs.values())
+            for paragraphs in text_boxes.values()
+        ),
+    ]
     return "\n".join(block.strip() for block in blocks if block.strip())
 
 
