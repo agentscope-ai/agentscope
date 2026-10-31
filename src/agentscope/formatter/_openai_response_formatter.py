@@ -3,7 +3,7 @@
 from abc import ABC
 from copy import deepcopy
 from fnmatch import fnmatch
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import Field
 
@@ -28,12 +28,26 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     :class:`OpenAIResponseMultiAgentFormatter` (multi-agent).
     """
 
+    _AUDIO_MEDIA_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"audio/wav", "audio/mpeg", "audio/mp3"},
+    )
+    """The audio media types the Responses API accepts. It knows only the
+    WAV and MP3 wire formats, so the two MPEG aliases share one format."""
+
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "application/pdf"],
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/wav",
+            "audio/mpeg",
+            "audio/mp3",
+            "application/pdf",
+        ],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "application/pdf"]``. '
-            "Audio is not supported by the Responses API."
+            'Defaults to ``["text/plain", "image/*", "audio/wav", '
+            '"audio/mpeg", "audio/mp3", "application/pdf"]``. Audio must '
+            "be WAV or MP3, the only formats the Responses API accepts."
         ),
     )
 
@@ -48,9 +62,8 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
 
         * ``image_url`` → ``input_image``
         * ``file`` → ``input_file``
-        * ``input_audio`` → skipped (the Responses API does not support
-          audio input yet; use Chat Completions API instead). See
-          https://developers.openai.com/api/docs/guides/audio
+        * ``input_audio`` → ``input_audio`` (the Responses API uses the same
+          shape as Chat Completions, and like it accepts only WAV and MP3)
 
         Args:
             block (`DataBlock`):
@@ -61,19 +74,23 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 A dictionary in the Responses API format, or ``None`` when the
                 block type is unsupported.
         """
-        # Intercept audio blocks before the generic formatter rejects them
-        # with a less helpful "Unsupported media type" warning. The Responses
-        # API does not support audio input yet; use Chat Completions API with
-        # an audio-capable model instead.
-        # https://developers.openai.com/api/docs/guides/audio
         media_type = getattr(block.source, "media_type", "") or ""
         if media_type.split("/", 1)[0] == "audio":
-            logger.warning(
-                "Audio input is not supported by the OpenAI Responses API. "
-                "Use OpenAIChatModel with an audio-capable model instead. "
-                "This audio block will be skipped.",
-            )
-            return None
+            # The Responses API carries audio as ``input_audio``, the same
+            # shape Chat Completions uses. It only accepts WAV and MP3, so
+            # anything else is skipped here instead of failing the request.
+            if media_type not in self._AUDIO_MEDIA_TYPES or not any(
+                fnmatch(media_type, pattern)
+                for pattern in self.supported_input_media_types
+            ):
+                logger.warning(
+                    "Unsupported audio media type %s for the OpenAI Responses "
+                    "API, which accepts WAV and MP3 audio. This audio block "
+                    "will be skipped.",
+                    media_type,
+                )
+                return None
+            return self._format_audio_source(block.source)
 
         base_result = self._format_openai_data_block(block)
         if base_result is None:
@@ -99,7 +116,9 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         Text-only results remain strings. Once a supported image or file is
         present, every block is serialized into the ordered content array.
         Unsupported media remains visible through the formatter's textual
-        fallback at its original position.
+        fallback at its original position — a ``function_call_output`` only
+        carries text, images and files, so audio returned by a tool is left
+        to that fallback.
 
         Args:
             output (`str | list[TextBlock | DataBlock]`):

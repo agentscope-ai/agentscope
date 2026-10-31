@@ -1042,3 +1042,129 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_audio_input_as_b64_wav(self) -> None:
+        """A WAV audio block reaches the Responses API as ``input_audio``."""
+        fmt = OpenAIResponseFormatter()
+        b64 = "ZmFrZSBhdWRpbyBkYXRh"
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Transcribe this."),
+                    DataBlock(
+                        source=Base64Source(data=b64, media_type="audio/wav"),
+                        name="clip.wav",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Transcribe this."},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": b64, "format": "wav"},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_audio_input_as_b64_mp3(self) -> None:
+        """An MPEG audio block is reported to the API as ``mp3``."""
+        fmt = OpenAIResponseFormatter()
+        b64 = "ZmFrZSBtcDMgZGF0YQ=="
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=Base64Source(
+                                data=b64,
+                                media_type="audio/mpeg",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": b64, "format": "mp3"},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_unsupported_audio_format_is_skipped(self) -> None:
+        """Audio the Responses API cannot carry is dropped, not sent as-is."""
+        fmt = OpenAIResponseFormatter()
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="Still here."),
+                        DataBlock(
+                            source=Base64Source(
+                                data="ZmxhYw==",
+                                media_type="audio/flac",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Still here."}],
+                },
+            ],
+            res,
+        )
+
+    async def test_multi_agent_audio_input(self) -> None:
+        """The multi-agent formatter keeps audio in the history item."""
+        fmt = OpenAIResponseMultiAgentFormatter()
+        b64 = "ZmFrZSBhdWRpbyBkYXRh"
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="Bob",
+                    content=[
+                        TextBlock(text="Listen to this."),
+                        DataBlock(
+                            source=Base64Source(
+                                data=b64,
+                                media_type="audio/wav",
+                            ),
+                            name="clip.wav",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual(1, len(res))
+        self.assertIn(
+            {
+                "type": "input_audio",
+                "input_audio": {"data": b64, "format": "wav"},
+            },
+            res[0]["content"],
+        )
