@@ -1,5 +1,15 @@
 # React + TypeScript + Vite
 
+## Knowledge base switch regression
+
+From `examples/web_ui`, run `pnpm install --frozen-lockfile` and `pnpm dev:frontend`.
+Open `/tests/knowledge-base-switch.html` on the URL printed by Vite. All checks should say
+`PASS`. Reload the page to rerun them.
+
+This check renders the real knowledge page and providers in the browser, with controlled
+API responses and no backend. It covers pending/failed switches, deletion-confirmation
+reset, empty lists, late responses, and same-knowledge-base polling/refetch behavior.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

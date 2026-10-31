@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Knowledge base switch regression</title>
+	</head>
+	<body>
+		<h1>Knowledge base switch regression</h1>
+		<pre id="results">RUNNING</pre>
+		<div id="app"></div>
+		<script type="module">
+			import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+			import { act, createElement as h } from 'react';
+			import { createRoot } from 'react-dom/client';
+			import { MemoryRouter, Route, Routes } from 'react-router-dom';
+
+			import { credentialApi, knowledgeBaseApi } from '/src/api/index.ts';
+			import { SidebarProvider } from '/src/components/ui/sidebar.tsx';
+			import { UploadProvider } from '/src/context/UploadContext.tsx';
+			import i18n from '/src/i18n/index.ts';
+			import { KnowledgePage } from '/src/pages/knowledge/index.tsx';
+
+			// Real page, hooks, providers, and DOM; only API responses are controlled.
+			globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+			await i18n.changeLanguage('en');
+			const results = document.querySelector('#results');
+			const app = document.querySelector('#app');
+			const root = createRoot(app);
+			const checks = [];
+			const requests = new Map();
+			let statusRequest;
+
+			function deferred() {
+				let resolve, reject;
+				const promise = new Promise((yes, no) => {
+					resolve = yes;
+					reject = no;
+				});
+				return { promise, resolve, reject };
+			}
+
+			const timestamp = '2026-10-23T00:00:00Z';
+			const bases = ['A', 'B', 'C'].map((id) => ({
+				id,
+				name: `Knowledge ${id}`,
+				description: '',
+				embedding_model_config: {
+					type: 'openai',
+					credential_id: 'test',
+					model: 'test',
+					dimensions: 3,
+					parameters: {},
+				},
+				created_at: timestamp,
+				updated_at: timestamp,
+				editable: true,
+				document_count: id === 'A' ? 1 : 0,
+				chunk_count: 0,
+				credential_name: 'Test credential',
+				status_counts: {
+					pending: 0,
+					parsing: 0,
+					chunking: 0,
+					indexing: 0,
+					ready: 0,
+					error: 0,
+				},
+			}));
+			function doc(id, status = 'ready', chunkCount = 0) {
+				return {
+					id,
+					filename: `${id}.txt`,
+					size: 12,
+					content_type: 'text/plain',
+					status,
+					error: null,
+					chunk_count: chunkCount,
+					created_at: timestamp,
+					updated_at: timestamp,
+				};
+			}
+			Object.assign(knowledgeBaseApi, {
+				listAll: async () => bases,
+				listAllDocuments: (id) => {
+					const request = deferred();
+					requests.set(id, request);
+					return request.promise;
+				},
+				supportedContentTypes: async () => ({
+					media_types: ['text/plain'],
+					extensions: ['.txt'],
+				}),
+				listChunkers: async () => ({ chunkers: [] }),
+				listEmbeddingModels: async () => ({
+					providers: [],
+					policy: { kind: 'any', dimension: null },
+				}),
+				getDocumentStatus: () => {
+					statusRequest = deferred();
+					return statusRequest.promise;
+				},
+			});
+			credentialApi.list = async () => ({ credentials: [] });
+
+			const text = () => app.querySelector('main')?.textContent ?? '';
+			function check(name, passed) {
+				checks.push(`${passed ? 'PASS' : 'FAIL'} ${name}`);
+				results.textContent = checks.join('\n');
+			}
+			async function select(id) {
+				const button = [...app.querySelectorAll('button')].find(
+					(item) => item.textContent.trim() === `Knowledge ${id}`,
+				);
+				if (!button) throw new Error(`Missing knowledge base ${id}`);
+				await act(async () => button.click());
+			}
+			async function resolve(id, documents) {
+				const request = requests.get(id);
+				if (!request) throw new Error(`Missing document request for ${id}`);
+				requests.delete(id);
+				await act(async () => request.resolve(documents));
+			}
+
+			try {
+				await act(async () => {
+					root.render(
+						h(
+							QueryClientProvider,
+							{ client: new QueryClient() },
+							h(
+								MemoryRouter,
+								{ initialEntries: ['/knowledge/A'] },
+								h(
+									SidebarProvider,
+									null,
+									h(
+										UploadProvider,
+										null,
+										h(
+											Routes,
+											null,
+											h(Route, {
+												path: '/knowledge/:kbId',
+												element: h(KnowledgePage),
+											}),
+										),
+									),
+								),
+							),
+						),
+					);
+				});
+				await resolve('A', [doc('a-document')]);
+				check('control: A documents load', text().includes('a-document.txt'));
+				await act(async () => {
+					app.querySelector(
+						`main button[aria-label="${i18n.t('knowledge.document.actions.remove')}"]`,
+					).click();
+				});
+				check(
+					'control: A deletion confirmation opens',
+					document
+						.querySelector('[role="dialog"]')
+						?.textContent.includes('a-document.txt'),
+				);
+
+				await select('B');
+				check(
+					'switching KB closes the previous deletion confirmation',
+					!document.querySelector('[role="dialog"]'),
+				);
+				check('pending B never displays A documents', !text().includes('a-document.txt'));
+				await act(async () => requests.get('B').reject(new Error('Simulated HTTP 500')));
+				check('failed B never retains A documents', !text().includes('a-document.txt'));
+
+				await select('C');
+				await resolve('C', []);
+				check('successful empty C has no old document rows', !text().includes('.txt'));
+
+				await select('A');
+				await select('B');
+				await resolve('B', [doc('b-document', 'indexing')]);
+				await resolve('A', [doc('late-a-document')]);
+				check(
+					'late A response cannot overwrite B',
+					text().includes('b-document.txt') && !text().includes('late-a-document.txt'),
+				);
+
+				await act(async () =>
+					statusRequest.resolve({ items: [doc('b-document', 'ready', 7)] }),
+				);
+				check('same-KB refetch keeps its current rows', text().includes('b-document.txt'));
+				await resolve('B', [doc('b-document', 'ready', 7)]);
+				check('polling refreshes final chunk count', text().includes('7 chunks'));
+			} catch (error) {
+				check(`setup/runtime error: ${error.message}`, false);
+			} finally {
+				await act(async () => root.unmount());
+				results.dataset.status = checks.some((line) => line.startsWith('FAIL'))
+					? 'failed'
+					: 'passed';
+			}
+		</script>
+	</body>
+</html>
