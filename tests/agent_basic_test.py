@@ -18,9 +18,12 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
+from agentscope.event import ReplyStartEvent
 from agentscope.message import (
+    AssistantMsg,
     Base64Source,
     DataBlock,
+    Msg,
     URLSource,
     TextBlock,
     ThinkingBlock,
@@ -104,7 +107,9 @@ class MockConcurrentTool(ToolBase):
         )
 
 
-class AgentBasicTest(IsolatedAsyncioTestCase):
+class AgentBasicTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The basic test of the agent class."""
 
     async def asyncSetUp(self) -> None:
@@ -1224,6 +1229,112 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "finished_reason": ReplyFinishedReason.COMPLETED,
                 "content": [],
             },
+        )
+
+    async def test_reply_stream_rebuild_matches_context_non_streaming(
+        self,
+    ) -> None:
+        """The event-rebuilt message matches the saved context.
+
+        A non-streaming response arrives as one chunk carrying the whole
+        content. The converter used to glue all text blocks into one
+        stream and move tool calls after the text, so the message rebuilt
+        from ``reply_stream`` events diverged from what the agent records
+        in ``state.context`` and returns from ``reply()``.
+        """
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        TextBlock(text="Hello"),
+                        TextBlock(text="world"),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        rebuilt = None
+        async for evt in self.agent.reply_stream(
+            UserMsg(name="user", content="hi"),
+        ):
+            if isinstance(evt, ReplyStartEvent):
+                rebuilt = AssistantMsg(
+                    id=evt.reply_id,
+                    name=self.agent.name,
+                    content=[],
+                )
+            elif rebuilt is not None and not isinstance(evt, Msg):
+                rebuilt.append_event(evt)
+
+        context_msg = self.agent.state.context[-1]
+        self.assertEqual(
+            [b.text for b in rebuilt.content if isinstance(b, TextBlock)],
+            ["Hello", "world"],
+        )
+        self.assertEqual(
+            [b.text for b in context_msg.content if isinstance(b, TextBlock)],
+            ["Hello", "world"],
+        )
+
+    async def test_reply_stream_keeps_text_tool_call_text_order(
+        self,
+    ) -> None:
+        """A whole text-tool_call-text response converts in its own order."""
+        from agentscope.event import (
+            TextBlockDeltaEvent,
+            TextBlockEndEvent,
+            TextBlockStartEvent,
+            ToolCallDeltaEvent,
+            ToolCallStartEvent,
+        )
+
+        chunk = ChatResponse(
+            content=[
+                TextBlock(text="Let me check. "),
+                ToolCallBlock(
+                    id="call_1",
+                    name="weather",
+                    input='{"city": "Tokyo"}',
+                ),
+                TextBlock(text=" Done."),
+            ],
+            is_last=True,
+        )
+        block_ids = {"thinking": None, "text": None, "tools": [], "data": []}
+
+        events = [
+            evt
+            async for evt in (
+                # pylint: disable=protected-access
+                self.agent._convert_chat_response_to_event(
+                    block_ids,
+                    chunk,
+                    single_response=True,
+                )
+            )
+        ]
+
+        self.assertEqual(
+            [type(evt) for evt in events],
+            [
+                TextBlockStartEvent,
+                TextBlockDeltaEvent,
+                TextBlockEndEvent,
+                ToolCallStartEvent,
+                ToolCallDeltaEvent,
+                TextBlockStartEvent,
+                TextBlockDeltaEvent,
+                TextBlockEndEvent,
+            ],
+        )
+        self.assertEqual(
+            [
+                evt.delta
+                for evt in events
+                if isinstance(evt, TextBlockDeltaEvent)
+            ],
+            ["Let me check. ", " Done."],
         )
 
     async def test_streaming_sequential_tool_calls(self) -> None:
