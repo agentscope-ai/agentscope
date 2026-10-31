@@ -35,13 +35,24 @@ class FileEmbeddingCache(EmbeddingCacheBase):
                 The maximum number of files to keep in the cache directory. If
                 exceeded, the oldest files will be removed. `None` leaves the
                 file count unlimited; `0` retains no embedding files after a
-                write.
+                write. Negative values are not allowed.
             max_cache_size (`int | None`, defaults to `None`):
                 The maximum size of the cache directory in MB. If exceeded,
                 the oldest files will be removed until the size is within the
                 limit. A vector set that exceeds the limit on its own is not
-                cached, so that storing it cannot empty the cache.
+                cached, so that storing it cannot empty the cache. `None`
+                leaves the size unlimited; `0` skips caching new entries.
+                Negative values are not allowed.
+
+        Raises:
+            ValueError:
+                If `max_file_number` or `max_cache_size` is negative.
         """
+        if max_file_number is not None and max_file_number < 0:
+            raise ValueError("max_file_number must be non-negative or None.")
+        if max_cache_size is not None and max_cache_size < 0:
+            raise ValueError("max_cache_size must be non-negative or None.")
+
         self._cache_dir = os.path.abspath(cache_dir)
         self.max_file_number = max_file_number
         self.max_cache_size = max_cache_size
