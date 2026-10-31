@@ -12,6 +12,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+from ollama import ResponseError
 from utils import AnyString
 
 from agentscope.agent import Agent
@@ -608,3 +609,60 @@ class TestOllamaRepeatedToolCall(IsolatedAsyncioTestCase):
             [_.id for _ in results],
             [_.id for _ in calls],
         )
+
+
+# ---------------------------------------------------------------------------
+# Structured-output fallback exceptions
+# ---------------------------------------------------------------------------
+
+
+class _RecordingOllamaModel(OllamaChatModel):
+    """Record the kwargs of every ``_call_api`` attempt, then fail."""
+
+    def __init__(self) -> None:
+        super().__init__(model="qwen3:8b", stream=False, context_size=40_960)
+        self.recorded_kwargs: list[dict] = []
+
+    async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+        self.recorded_kwargs.append(kwargs)
+        raise ResponseError("model does not support tools", status_code=400)
+
+
+class OllamaStructuredFallbackExceptionsTest(IsolatedAsyncioTestCase):
+    """Server-side rejections must walk the structured-output ladder
+    instead of aborting it."""
+
+    def test_fallback_exceptions_declare_response_error(self) -> None:
+        """Every server-side rejection is fallback-eligible."""
+        self.assertEqual(
+            _make_model()._get_structured_output_fallback_exceptions(),
+            (ResponseError,),
+        )
+
+    async def test_response_error_walks_the_ladder(self) -> None:
+        """A ResponseError moves to the next strategy instead of raising
+        after the first attempt."""
+        from pydantic import BaseModel
+
+        class _Schema(BaseModel):
+            answer: str
+
+        model = _RecordingOllamaModel()
+        with self.assertRaises(ResponseError):
+            await model.generate_structured_output(
+                [UserMsg(name="user", content="hi")],
+                _Schema,
+            )
+
+        strategies = [
+            (
+                kwargs.get("tool_choice").mode
+                if kwargs.get("tool_choice") is not None
+                else None
+            )
+            for kwargs in model.recorded_kwargs
+        ]
+        # forced fails once, then the ladder must go on (auto / no_think /
+        # none) instead of dying after the first attempt.
+        self.assertGreater(len(strategies), 1)
+        self.assertIn(None, strategies)

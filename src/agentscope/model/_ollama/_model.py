@@ -131,6 +131,19 @@ class OllamaChatModel(ChatModelBase):
             httpx.RemoteProtocolError,
         )
 
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        from ollama import ResponseError
+
+        # ResponseError wraps every server-side rejection (including 4xx
+        # like "model not found" or a tools/structured-output refusal) into
+        # a single type, so the structured-output ladder must fall through
+        # on it instead of aborting. Transport-level failures stay
+        # retryable via the httpx set above.
+        return (ResponseError,)
+
     async def _call_api(
         self,
         model_name: str,
