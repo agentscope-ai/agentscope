@@ -156,14 +156,19 @@ def glob_match(pattern: str, base_dir: str) -> list[str]:
         base_dir: Absolute path of the directory to search from.
 
     Returns:
-        A list of absolute file paths that match *pattern*.  The
+        A list of absolute file paths that match *pattern*.  Each
+        path appears once: overlapping ``**`` segments can visit the
+        same file repeatedly, and the first discovery is kept.  The
         list is unsorted; callers should sort as needed (e.g. by
         modification time).
     """
     results: list[str] = []
     parts = [p for p in re.split(r"[\\/]+", pattern) if p and p != "."]
     _match_parts(parts, 0, base_dir, results)
-    return results
+    # Do not only collapse adjacent ``**`` segments.  Non-adjacent
+    # overlap such as ``**/subdir/**`` can reach one path twice too.
+    # First-discovery order is preserved for the later mtime sort.
+    return list(dict.fromkeys(results))
 
 
 # ── entry point ───────────────────────────────────────────────────
