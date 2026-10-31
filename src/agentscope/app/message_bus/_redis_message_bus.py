@@ -777,7 +777,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
           ``_LOCK_RETRY_DELAY_SECS`` until acquired.
         - A heartbeat task renews the TTL every ``ttl_secs / 2``
           seconds while the body runs, so a long-running holder
-          does not lose the lease.
+          does not lose the lease. A transient Redis error only
+          costs that tick: the heartbeat retries after a short
+          backoff instead of silently dying, and stops as soon as
+          a renewal finds the lease already re-acquired by another
+          worker.
         - Renewal and release compare the ownership token atomically.
         - Acquisition cancellation resolves an outstanding SET and releases
           its token within the configured cleanup deadline. If Redis remains
@@ -812,13 +816,40 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(max(1.0, ttl_secs / 2))
-                await self._client.eval(
-                    _LOCK_RENEW_LUA,
-                    1,
-                    key,
-                    token,
-                    ttl_secs,
-                )
+                # A transient Redis error must not kill the heartbeat:
+                # a silently dead renewal loop would let the lease
+                # lapse mid-run and a second worker into the same
+                # critical section. Retry after the same short backoff
+                # the acquisition loop uses — waiting a full tick
+                # would land exactly on the lease expiry.
+                while True:
+                    try:
+                        renewed = await self._client.eval(
+                            _LOCK_RENEW_LUA,
+                            1,
+                            key,
+                            token,
+                            ttl_secs,
+                        )
+                        break
+                    except Exception:  # pylint: disable=broad-except
+                        logger.warning(
+                            "Lock heartbeat renewal failed for %s; "
+                            "retrying in %s seconds.",
+                            key,
+                            self._LOCK_RETRY_DELAY_SECS,
+                            exc_info=True,
+                        )
+                        await asyncio.sleep(self._LOCK_RETRY_DELAY_SECS)
+                if not renewed:
+                    # The lease lapsed and another worker re-acquired
+                    # the key; renewing would extend their lease.
+                    logger.warning(
+                        "Lock lease for %s was lost to another holder; "
+                        "stopping the heartbeat.",
+                        key,
+                    )
+                    return
 
         hb_task = asyncio.create_task(
             _heartbeat(),
