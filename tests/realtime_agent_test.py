@@ -1622,6 +1622,82 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    def test_merge_user_keeps_non_text_blocks(self) -> None:
+        """Merging a split turn must not drop the turn's DataBlocks.
+
+        Endpointing may settle a user turn while the user is still
+        attaching a file, so the turn can carry non-text blocks. The old
+        merge replaced the whole content list with a single TextBlock,
+        destroying them.
+        """
+        # pylint: disable=protected-access
+        from agentscope.message import Base64Source, DataBlock
+
+        agent = RealtimeAgent("friday", "be brief", ScriptedModel([[]]))
+
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u1", text="帮我订张机票"),
+        )
+        agent.state.context.append(
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="这是行程参考图"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="cG5nLWJ5dGVz",
+                            media_type="image/png",
+                        ),
+                        name="trip.png",
+                    ),
+                ],
+            ),
+        )
+
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u2", text="去上海的"),
+        )
+
+        merged = agent.state.context[-1].content
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(merged[0].text, "这是行程参考图")
+        self.assertEqual(merged[1].name, "trip.png")
+        self.assertEqual(merged[2].text, "去上海的")
+
+    def test_merge_user_appends_text_block_after_data_only_turn(
+        self,
+    ) -> None:
+        """A merge target without a trailing text block gains a new one."""
+        # pylint: disable=protected-access
+        from agentscope.message import Base64Source, DataBlock
+
+        agent = RealtimeAgent("friday", "be brief", ScriptedModel([[]]))
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u1", text="你好"),
+        )
+        agent.state.context.append(
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="cG5nLWJ5dGVz",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        agent._on_transcription(
+            me.InputTranscriptionEvent(item_id="u2", text="去上海的"),
+        )
+
+        merged = agent.state.context[-1].content
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0].type, "data")
+        self.assertEqual(merged[-1].text, "去上海的")
+
     async def test_user_reply_ends_after_transcription_result(self) -> None:
         """Success and failure both close their delayed user replies."""
         model = ScriptedModel(

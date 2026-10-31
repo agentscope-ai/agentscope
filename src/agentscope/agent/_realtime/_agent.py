@@ -921,8 +921,15 @@ class RealtimeAgent:
                 context.pop()
         if not context or context[-1].role != "user":
             return False
-        previous = context[-1].get_text_content()
-        context[-1].content = [TextBlock(text=f"{previous}{text}")]
+        # Append to the last text block and leave every non-text block
+        # (e.g. a DataBlock attached between the two halves) untouched,
+        # the way Msg.append_event merges text deltas.
+        blocks = context[-1].content
+        if not blocks or blocks[-1].type != "text":
+            blocks.append(TextBlock(text=text))
+        else:
+            blocks[-1].text += text
+        context[-1].content = blocks
         return True
 
     def _start_reply(self, item_id: str) -> _Reply | None:
