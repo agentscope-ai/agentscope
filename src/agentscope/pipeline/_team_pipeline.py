@@ -114,11 +114,11 @@ class TeamPipeline:
     and a task. When the leader calls it, the pipeline runs that member in
     its own context and feeds its final reply back as the tool result, so
     the leader only ever sees the summary, never the member's intermediate
-    steps. Members assigned in the same round run concurrently, except that
-    assignments to the same member run one after another in call order, a
-    later one waiting until the earlier one finishes, even across a HITL
-    pause. Members do not talk to each other; a member's result always
-    returns to the leader.
+    steps. Members assigned in the same round run concurrently, bounded by
+    ``max_concurrency`` when it is set, except that assignments to the same
+    member run one after another in call order, a later one waiting until
+    the earlier one finishes, even across a HITL pause. Members do not talk
+    to each other; a member's result always returns to the leader.
 
     HITL works per participant: a member that needs user confirmation parks
     like any agent, its request is streamed out unchanged, and the result
@@ -132,6 +132,7 @@ class TeamPipeline:
         leader: Agent,
         members: list[TeamMember],
         reset_members: bool = True,
+        max_concurrency: int | None = None,
     ) -> None:
         """Initialize the team pipeline.
 
@@ -145,6 +146,11 @@ class TeamPipeline:
                 reply ends. Within one reply the leader can follow up with
                 a member; across replies each member starts afresh.
                 Defaults to `True`.
+            max_concurrency (`int | None`, optional):
+                The maximum number of members that run at the same time,
+                e.g. to stay within the model API's rate limit. `None`
+                means no limit. Must be at least `1` when set.
+                Defaults to `None`.
         """
         names = [_.agent.name for _ in members]
         if len(set(names)) != len(names) or leader.name in names:
@@ -152,9 +158,20 @@ class TeamPipeline:
                 "Member names must be unique and differ from the leader's, "
                 f"got {names!r} with leader {leader.name!r}.",
             )
+        if max_concurrency is not None and max_concurrency < 1:
+            raise ValueError(
+                "max_concurrency must be at least 1, got "
+                f"{max_concurrency!r}.",
+            )
         self.leader = leader
         self.members = {_.agent.name: _ for _ in members}
         self.reset_members = reset_members
+        self.max_concurrency = max_concurrency
+        self._semaphore = (
+            asyncio.Semaphore(max_concurrency)
+            if max_concurrency is not None
+            else None
+        )
         self._assign_tool = _TeamAssign(members)
         self._tool_registered = False
 
@@ -338,8 +355,21 @@ class TeamPipeline:
 
         async def run_all() -> None:
             """Run every group and mark the end of the stream."""
+
+            async def run_bounded(
+                group: tuple[str, list[ToolCallBlock]],
+            ) -> None:
+                """Run one group, holding a concurrency slot for its whole
+                duration so at most ``max_concurrency`` members run at
+                once; a member that parks or finishes releases its slot."""
+                if self._semaphore is None:
+                    await run_group(*group)
+                else:
+                    async with self._semaphore:
+                        await run_group(*group)
+
             tasks = [
-                asyncio.create_task(run_group(*group))
+                asyncio.create_task(run_bounded(group))
                 for group in groups.items()
             ]
             try:
