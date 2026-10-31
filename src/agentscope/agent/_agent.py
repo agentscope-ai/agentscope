@@ -970,12 +970,25 @@ class Agent:
 
     async def _close_unfinished_tool_calls(
         self,
+        message: str = (
+            "<system-reminder>The tool call has been interrupted by "
+            "the user.</system-reminder>"
+        ),
+        state: ToolResultState = ToolResultState.INTERRUPTED,
     ) -> AsyncGenerator[
         ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
         None,
     ]:
-        """Close the unfinished tool calls on interruption, so the next
-        input will be handled normally."""
+        """Close the unfinished tool calls on an early reply stop (a user
+        interruption or a rejected tool call), so the next input will be
+        handled normally.
+
+        Args:
+            message (`str`): The tool result text written for the closed
+                tool calls.
+            state (`ToolResultState`): The tool result state written for
+                the closed tool calls.
+        """
         if not self.state.context:
             return
 
@@ -991,11 +1004,6 @@ class Agent:
                 awaiting_tool_calls[block.id] = index
             elif isinstance(block, ToolResultBlock):
                 awaiting_tool_calls.pop(block.id, None)
-
-        interruption_message = (
-            "<system-reminder>The tool call has been interrupted by "
-            "the user.</system-reminder>"
-        )
 
         for index in awaiting_tool_calls.values():
             call_block = last_msg.content[index]
@@ -1017,21 +1025,145 @@ class Agent:
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
-                delta=interruption_message,
+                delta=message,
             )
             yield ToolResultEndEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
-                state=ToolResultState.INTERRUPTED,
+                state=state,
             )
             last_msg.content.append(
                 ToolResultBlock(
                     id=last_msg.content[index].id,
                     name=last_msg.content[index].name,
-                    output=interruption_message,
-                    state=ToolResultState.INTERRUPTED,
+                    output=message,
+                    state=state,
                 ),
             )
+
+    def _build_reject_stop(
+        self,
+        rejected_tool_ids: list[str],
+    ) -> tuple[ReplyEndEvent, str]:
+        """Build the reply-end event and the fallback message for a reply
+        stopped by ``stop_on_reject``.
+
+        Args:
+            rejected_tool_ids (`list[str]`): The ids of the denied tool
+                calls of the acting phase.
+
+        Returns:
+            `tuple[ReplyEndEvent, str]`: The ``TOOL_REJECTED`` reply-end
+                event and the fallback message naming the denied tools.
+        """
+        end_event = ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self.state.reply_id,
+            finished_reason=ReplyFinishedReason.TOOL_REJECTED,
+        )
+
+        rejected_tools: list[str] = []
+        for block in self.state.context[-1].get_content_blocks("tool_call"):
+            if block.id in rejected_tool_ids and block.name not in (
+                rejected_tools
+            ):
+                rejected_tools.append(block.name)
+
+        message = (
+            "The tool call(s) "
+            f"{', '.join(rejected_tools)} "
+            "were denied, so the reply stops here (`stop_on_reject=True`)."
+        )
+        return end_event, message
+
+    async def _acting_round(
+        self,
+        tool_calls: list[ToolCallBlock],
+        reject_stop: list[tuple[ReplyEndEvent, str]],
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Execute the tool calls of one acting phase batch by batch.
+
+        Parks on the first batch that requires outside interaction, stops
+        on an interruption, and — when ``stop_on_reject`` is enabled —
+        stops on a denied tool call, in which case the reply-end event and
+        fallback message for the stop are appended to ``reject_stop``.
+
+        Args:
+            tool_calls (`list[ToolCallBlock]`): The tool calls to execute.
+            reject_stop (`list[tuple[ReplyEndEvent, str]]`): Output holder
+                that receives the reply-end event and the fallback message
+                when a denied tool call stops the reply.
+
+        Yields:
+            `AgentEvent`: The events generated during the acting phase.
+        """
+        rejected_tool_ids: list[str] = []
+        for batch in await self._batch_tool_calls(tool_calls):
+            if batch.type == "sequential":
+                evt_generator = self._execute_sequential_tool_calls(
+                    batch.tool_calls,
+                )
+
+            elif batch.type == "concurrent":
+                evt_generator = self._execute_concurrent_tool_calls(
+                    batch.tool_calls,
+                )
+
+            else:
+                raise ValueError(
+                    f"Invalid batch type: {batch.type}",
+                )
+
+            break_execution_for_hitl = False
+            break_execution_for_interruption = False
+            break_execution_for_reject = False
+            async for evt in evt_generator:
+                yield evt
+                if isinstance(
+                    evt,
+                    (
+                        RequireUserConfirmEvent,
+                        RequireExternalExecutionEvent,
+                    ),
+                ):
+                    break_execution_for_hitl = True
+
+                elif (
+                    isinstance(evt, ToolResultEndEvent)
+                    and evt.state == ToolResultState.INTERRUPTED
+                ):
+                    # Handle the interruption event
+                    break_execution_for_interruption = True
+
+                elif (
+                    isinstance(evt, ToolResultEndEvent)
+                    and evt.state == ToolResultState.DENIED
+                    and self.react_config.stop_on_reject
+                ):
+                    # ``stop_on_reject`` is enabled: a denied tool call
+                    # ends the reply instead of feeding the denial back
+                    # for another reasoning round
+                    break_execution_for_reject = True
+                    if evt.tool_call_id not in rejected_tool_ids:
+                        rejected_tool_ids.append(evt.tool_call_id)
+
+            if break_execution_for_interruption:
+                # Handled by the CancelledError branch of the caller
+                raise asyncio.CancelledError()
+
+            if break_execution_for_hitl:
+                break
+
+            if break_execution_for_reject:
+                # Skip the remaining batches: the reply stops once the
+                # current batch is drained
+                break
+
+        if rejected_tool_ids:
+            # A denied tool call stopped the acting phase: hand the stop
+            # decision back to the caller, which ends the reply and waits
+            # for the next user input instead of reasoning on the denial
+            reject_stop.append(self._build_reject_stop(rejected_tool_ids))
 
     async def _reply_impl(  # pylint: disable=too-many-branches
         self,
@@ -1046,6 +1178,7 @@ class Agent:
         """Core reply logic."""
 
         end_event: ReplyEndEvent | None = None
+        reject_stop_message: str | None = None
         try:
             # Dispatch the unified inputs by type into the legacy local
             # variables
@@ -1214,53 +1347,21 @@ class Agent:
 
                     case Acting(tool_calls=tool_calls):
                         made_progress = True
-                        for batch in await self._batch_tool_calls(tool_calls):
-                            if batch.type == "sequential":
-                                evt_generator = (
-                                    self._execute_sequential_tool_calls(
-                                        batch.tool_calls,
-                                    )
-                                )
+                        reject_stop: list[tuple[ReplyEndEvent, str]] = []
+                        async for evt in self._acting_round(
+                            tool_calls,
+                            reject_stop,
+                        ):
+                            yield evt
 
-                            elif batch.type == "concurrent":
-                                evt_generator = (
-                                    self._execute_concurrent_tool_calls(
-                                        batch.tool_calls,
-                                    )
-                                )
-
-                            else:
-                                raise ValueError(
-                                    f"Invalid batch type: {batch.type}",
-                                )
-
-                            break_execution_for_hitl = False
-                            break_execution_for_interruption = False
-                            async for evt in evt_generator:
-                                yield evt
-                                if isinstance(
-                                    evt,
-                                    (
-                                        RequireUserConfirmEvent,
-                                        RequireExternalExecutionEvent,
-                                    ),
-                                ):
-                                    break_execution_for_hitl = True
-
-                                elif (
-                                    isinstance(evt, ToolResultEndEvent)
-                                    and evt.state
-                                    == ToolResultState.INTERRUPTED
-                                ):
-                                    # Handle the interruption event
-                                    break_execution_for_interruption = True
-
-                            if break_execution_for_interruption:
-                                # Handled by the CancelledError branch below
-                                raise asyncio.CancelledError()
-
-                            if break_execution_for_hitl:
-                                break
+                        if reject_stop:
+                            # A denied tool call stopped the acting phase, so
+                            # end the reply and wait for the next user input
+                            # instead of reasoning on the denial. The context
+                            # cleanup and the fallback message are handled in
+                            # the ``finally`` branch below.
+                            end_event, reject_stop_message = reject_stop[0]
+                            break
 
                 # One reasoning-acting round is over once every tool call it
                 # produced has a result. Reasoning that generated tool calls,
@@ -1287,10 +1388,26 @@ class Agent:
                     end_event.finished_reason
                     == ReplyFinishedReason.INTERRUPTED
                 )
-                if interrupted_end:
-                    # Handle the context when interruption
-                    async for _ in self._close_unfinished_tool_calls():
-                        yield _
+                rejected_end = (
+                    end_event.finished_reason
+                    == ReplyFinishedReason.TOOL_REJECTED
+                )
+                if interrupted_end or rejected_end:
+                    # Handle the context when the reply stops early: close
+                    # the tool calls that never got a result
+                    if rejected_end:
+                        async for _ in self._close_unfinished_tool_calls(
+                            message=(
+                                "<system-reminder>The tool call is skipped "
+                                "because a rejected tool call stopped the "
+                                "reply.</system-reminder>"
+                            ),
+                            state=ToolResultState.DENIED,
+                        ):
+                            yield _
+                    else:
+                        async for _ in self._close_unfinished_tool_calls():
+                            yield _
 
                 yield end_event
 
@@ -1302,6 +1419,17 @@ class Agent:
                         content=self.react_config.interruption_message,
                         usage=self._get_reply_usage(),
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
+                    )
+
+                elif rejected_end:
+                    # The fallback msg goes last: Msg terminates the stream
+                    assert reject_stop_message is not None
+                    yield AssistantMsg(
+                        id=self.state.reply_id,
+                        name=self.name,
+                        content=reject_stop_message,
+                        usage=self._get_reply_usage(),
+                        finished_reason=ReplyFinishedReason.TOOL_REJECTED,
                     )
 
     def _get_repeated_tool_error(self) -> tuple[str, int] | None:
