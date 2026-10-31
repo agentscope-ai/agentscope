@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import shlex
+import time
 from typing import TYPE_CHECKING, Literal
 
 from ..._logging import logger
@@ -20,6 +21,7 @@ from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
     BOOTSTRAP_COMMAND_TIMEOUT,
+    DEFAULT_RENEW_INTERVAL_RATIO,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
     GATEWAY_HOME,
@@ -60,6 +62,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         protocol: Literal["http", "https"] = "http",
         request_timeout_seconds: float | None = DEFAULT_REQUEST_TIMEOUT,
         timeout_seconds: int = DEFAULT_TIMEOUT,
+        renew_interval_seconds: float | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
         sandbox_metadata: dict[str, str] | None = None,
@@ -93,7 +96,16 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 SDK HTTP request timeout. ``None`` leaves the SDK
                 default in effect.
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
-                Sandbox keep-alive and create/connect/resume timeout.
+                Sandbox expiration lease and create/connect/resume
+                timeout. Cache reuse and in-turn tool round-trips
+                renew this lease; there is no background renewal.
+                Set it higher when one command, or the gap between
+                tool calls, can exceed the lease.
+            renew_interval_seconds (`float | None`, optional):
+                Minimum time between lease renewal attempts. ``None``
+                uses half of ``timeout_seconds``. Must be shorter than
+                the lease so a later tool call still renews before
+                expiry. ``0`` renews on every round-trip.
             gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
                 TCP port the in-sandbox gateway listens on.
             env (`dict[str, str] | None`, optional):
@@ -131,6 +143,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self.protocol = protocol
         self.request_timeout_seconds = request_timeout_seconds
         self.timeout_seconds = timeout_seconds
+        self.renew_interval_seconds = self._resolve_renew_interval(
+            timeout_seconds,
+            renew_interval_seconds,
+        )
         self.gateway_port = gateway_port
         self.env = dict(env or {})
         self.sandbox_metadata = dict(sandbox_metadata or {})
@@ -142,6 +158,13 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
         self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
+        # Last time a renewal was attempted or a fresh lease was
+        # granted. ``None`` means the next use must try.
+        self._last_renew_attempt_at: float | None = None
+        # Set only when renewal proves the sandbox is gone. Transient
+        # failures leave this false so a later attempt can succeed.
+        self._lease_lost = False
+        self._renew_lock = asyncio.Lock()
 
     @property
     def sandbox_id(self) -> str | None:
@@ -163,11 +186,25 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         existing = await self._find_existing_sandbox()
         if existing is not None:
             self._sandbox = await self._attach_existing_sandbox(existing)
+            # connect/resume timeouts only bound readiness checks.
+            # Reusing an existing sandbox also needs a fresh lease.
+            if not await self.prepare_for_reuse():
+                await self._teardown_backend()
+                raise RuntimeError(
+                    "OpenSandbox sandbox disappeared during "
+                    f"initialization (workspace_id={self.workspace_id!r})",
+                )
         else:
             self._sandbox = await self._create_sandbox()
+            # create() already applied timeout_seconds as the lease.
+            self._note_lease_granted()
         await self._wait_until_running()
 
-        self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)
+        self._backend = OpenSandboxBackend(
+            self._sandbox,
+            SANDBOX_WORKDIR,
+            prepare_for_reuse=self.prepare_for_reuse,
+        )
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
@@ -189,6 +226,121 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                     exc,
                 )
             self._sandbox = None
+
+    @staticmethod
+    def _resolve_renew_interval(
+        timeout_seconds: int,
+        renew_interval_seconds: float | None,
+    ) -> float:
+        """Return the minimum gap between renewal attempts.
+
+        Args:
+            timeout_seconds (`int`):
+                Configured sandbox lease.
+            renew_interval_seconds (`float | None`):
+                Explicit gap, or ``None`` to use half the lease.
+
+        Returns:
+            `float`:
+                Seconds between attempts. Never negative.
+        """
+        if renew_interval_seconds is None:
+            interval = timeout_seconds * DEFAULT_RENEW_INTERVAL_RATIO
+        else:
+            interval = renew_interval_seconds
+        return max(0.0, float(interval))
+
+    def _note_lease_granted(self) -> None:
+        """Record that the sandbox already holds a fresh lease.
+
+        ``Sandbox.create`` applies ``timeout_seconds`` itself, so the
+        next tool call should not renew until the interval elapses.
+        """
+        self._last_renew_attempt_at = time.monotonic()
+        self._lease_lost = False
+
+    def _renewal_not_found(self, exc: BaseException) -> bool:
+        """Return whether ``exc`` means the sandbox is gone.
+
+        OpenSandbox reports a missing sandbox as HTTP 404 on
+        ``SandboxApiException.status_code``. A status carried on the
+        response object is accepted too, so a transport wrapper is not
+        mistaken for a healthy sandbox.
+        """
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if status_code is None:
+            return False
+        try:
+            return int(status_code) == 404
+        except (TypeError, ValueError):
+            return False
+
+    async def _renew_once(self) -> bool:
+        """Try to renew the lease without tying availability to it.
+
+        Returns:
+            `bool`:
+                ``False`` only when the local sandbox handle is missing
+                or renewal reports HTTP 404. Other failures are logged
+                and return ``True`` so the existing connection stays in
+                use. This is not a health guarantee.
+        """
+        if self._sandbox is None:
+            return False
+        try:
+            await self._sandbox.renew(
+                timedelta(seconds=self.timeout_seconds),
+            )
+        except Exception as exc:
+            if self._renewal_not_found(exc):
+                return False
+            logger.warning(
+                "OpenSandboxWorkspace: lease renewal failed for "
+                "workspace_id=%r; keeping the existing connection: %s",
+                self.workspace_id,
+                exc,
+            )
+            return True
+        return True
+
+    async def prepare_for_reuse(self) -> bool:
+        """Renew the lease when this workspace is used again.
+
+        At most one renewal attempt runs per
+        ``renew_interval_seconds``, including when many tool
+        round-trips overlap. A transient failure does not mark the
+        sandbox lost and does not stop a later attempt. ``False``
+        means the sandbox is conclusively gone.
+
+        Cancellation does not consume the interval budget.
+
+        Returns:
+            `bool`:
+                ``False`` when the sandbox handle is missing or
+                renewal returned 404. ``True`` when the lease was
+                renewed, a recent attempt is still inside the
+                interval, or a transient failure left the connection
+                in place.
+        """
+        if self._lease_lost:
+            return False
+        async with self._renew_lock:
+            if self._lease_lost:
+                return False
+            now = time.monotonic()
+            last = self._last_renew_attempt_at
+            if last is not None and now - last < self.renew_interval_seconds:
+                return True
+            # A cancellation here skips the stamp below, so the next
+            # use still attempts a renewal.
+            renewed = await self._renew_once()
+            self._last_renew_attempt_at = time.monotonic()
+            if not renewed:
+                self._lease_lost = True
+            return renewed
 
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace.

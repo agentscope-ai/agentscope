@@ -547,6 +547,27 @@ class WorkspaceBase:
         state must override this.
         """
 
+    async def prepare_for_reuse(self) -> bool:
+        """Prepare a cached workspace before it is used again.
+
+        Lease-less backends (local, Docker, and the other sandboxes
+        without an expiration lease) have nothing to renew and return
+        ``True``. A backend with a lease overrides this to renew on
+        demand.
+
+        Managers call this when reusing a cached workspace. The same
+        hook is what a backend piggybacks onto tool round-trips, so
+        chat, scheduled tasks, and channels share one renewal path
+        and do not each take a configuration flag.
+
+        Returns:
+            `bool`:
+                ``False`` only when the workspace is conclusively
+                unusable. Transient failures must return ``True`` so
+                a healthy workspace is not evicted.
+        """
+        return True
+
     def get_backend(self) -> BackendBase:
         """Return the workspace's active filesystem/execution backend.
 

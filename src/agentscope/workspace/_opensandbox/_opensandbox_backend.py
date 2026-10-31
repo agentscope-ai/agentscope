@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import posixpath
 import shlex
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,16 @@ from ...tool import BackendBase, ExecResult
 
 if TYPE_CHECKING:
     from opensandbox.sandbox import Sandbox
+
+
+class SandboxLeaseLost(RuntimeError):
+    """Renewal proved the OpenSandbox sandbox is gone.
+
+    ``status_code`` mirrors the control-plane 404 so callers can tell a
+    reclaimed sandbox from a command that merely failed.
+    """
+
+    status_code = 404
 
 
 class _WriteEntry:
@@ -46,7 +57,13 @@ class OpenSandboxBackend(BackendBase):
             sandbox.
     """
 
-    def __init__(self, sandbox: "Sandbox", workdir: str) -> None:
+    def __init__(
+        self,
+        sandbox: "Sandbox",
+        workdir: str,
+        *,
+        prepare_for_reuse: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
         """Initialize the OpenSandbox backend.
 
         Args:
@@ -56,9 +73,30 @@ class OpenSandboxBackend(BackendBase):
             workdir (`str`):
                 Default working directory for ``exec_shell`` calls inside
                 the sandbox.
+            prepare_for_reuse (`Callable | None`, optional):
+                Lease hook invoked before each sandbox round-trip.
+                ``None`` skips renewal. The workspace passes
+                :meth:`OpenSandboxWorkspace.prepare_for_reuse`.
         """
         self._sandbox = sandbox
         self._workdir = workdir
+        self._prepare_for_reuse = prepare_for_reuse
+
+    async def _ensure_lease(self) -> None:
+        """Renew before a tool round-trip when a hook is attached.
+
+        A conclusive loss is raised so the call does not run against a
+        reclaimed sandbox. Transient renewal failures stay inside the
+        hook and do not surface here.
+        """
+        if self._prepare_for_reuse is None:
+            return
+        if await self._prepare_for_reuse():
+            return
+        raise SandboxLeaseLost(
+            "OpenSandbox sandbox is gone "
+            "(lease renewal returned not found)",
+        )
 
     # ---- exec ---------------------------------------------------------
 
@@ -92,7 +130,12 @@ class OpenSandboxBackend(BackendBase):
                 command exit is returned as a normal result; transport
                 errors, and an exit code the provider leaves unset, yield
                 an ``exit_code`` of ``-1``.
+
+        Raises:
+            `SandboxLeaseLost`:
+                If the attached lease hook reports the sandbox is gone.
         """
+        await self._ensure_lease()
         command_line = " ".join(shlex.quote(arg) for arg in command)
         opts = self._make_run_opts(cwd=cwd or self._workdir, timeout=timeout)
         try:
@@ -127,7 +170,10 @@ class OpenSandboxBackend(BackendBase):
         Raises:
             `FileNotFoundError`:
                 If the path does not exist inside the sandbox.
+            `SandboxLeaseLost`:
+                If the attached lease hook reports the sandbox is gone.
         """
+        await self._ensure_lease()
         try:
             data = await self._sandbox.files.read_bytes(path)
         except FileNotFoundError:
@@ -154,7 +200,12 @@ class OpenSandboxBackend(BackendBase):
                 Destination path inside the sandbox.
             data (`bytes`):
                 The raw bytes to write.
+
+        Raises:
+            `SandboxLeaseLost`:
+                If the attached lease hook reports the sandbox is gone.
         """
+        await self._ensure_lease()
         parent = posixpath.dirname(path)
         if parent:
             await self.exec_shell(["mkdir", "-p", parent])
