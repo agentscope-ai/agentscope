@@ -18,11 +18,11 @@ boundary, but swaps the provider runtime for the Daytona SDK:
 * **Persistence.** Sandbox filesystem state is the persistence layer.
   ``.mcp``, ``skills/``, ``sessions/`` and ``data/`` are managed by
   :class:`WorkspaceBase` under the SDK-reported workdir.
-* **Bootstrap.** First-time provisioning installs ripgrep, uv, the
-  gateway virtualenv, AgentScope itself, the gateway script and the
-  glob helper. Bootstrap is detected by probing the gateway script path
-  inside the sandbox and is safe to rerun when a previous attempt was
-  interrupted.
+* **Bootstrap.** Ripgrep and the glob helper are installed for
+  builtin Grep/Glob even when no MCP is configured. uv, the gateway
+  virtualenv, and the gateway process start only when an MCP server
+  is configured or first added. Gateway bootstrap is detected by
+  probing the gateway script path and is safe to rerun.
 * **MCP gateway.** Identical to Docker/E2B after the shared-base
   migration: a FastAPI process runs inside the sandbox. Host-side calls
   drive the gateway through :class:`GatewayClient`, which runs an
@@ -426,14 +426,32 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         )
         self._uv_bin = posixpath.join(self._user_home, ".local", "bin", "uv")
 
+    def _system_bootstrap_commands(self) -> list[str]:
+        """Install ripgrep and refresh CAs before any later uv download.
+
+        Daytona snapshots may run as non-root users, so use sudo and
+        avoid assuming the SDK-selected OS user is root. ``curl`` and
+        ``ca-certificates`` share this apt transaction;
+        ``update-ca-certificates`` applies the current trust bundle
+        without installing the MCP gateway.
+        """
+        return [
+            "sudo apt-get update -qq "
+            "&& sudo apt-get install -y --no-install-recommends "
+            "curl ca-certificates ripgrep "
+            "&& sudo update-ca-certificates "
+            "&& sudo rm -rf /var/lib/apt/lists/*",
+        ]
+
     def _bootstrap_commands(self) -> list[str]:
-        """Provisioning commands for a fresh Daytona sandbox.
+        """Provisioning commands for the Daytona MCP gateway venv.
 
         The shared sandbox base runs these only when the gateway script
-        is missing, then uploads the glob helper and gateway script.
-        Every step is idempotent so an interrupted bootstrap re-runs
-        cleanly. Path anchors come from the Daytona SDK, so the sequence
-        does not assume a fixed OS user or home directory.
+        is missing and an MCP server needs the gateway. Every step is
+        idempotent so an interrupted bootstrap re-runs cleanly. Path
+        anchors come from the Daytona SDK, so the sequence does not
+        assume a fixed OS user or home directory. Ripgrep and the Glob
+        helper are installed by :meth:`_system_bootstrap_commands`.
 
         ``--no-deps`` on agentscope is mandatory for the same reason as
         E2B: the gateway only imports :class:`agentscope.mcp.MCPClient`,
@@ -454,26 +472,20 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         uv_install_dir = f"{self._user_home}/.local/bin"
 
         return [
-            # 1. Refresh system CAs and install curl and ripgrep. Daytona
-            #    snapshots may run as non-root users, so use sudo here
-            #    and avoid assuming the SDK-selected OS user is root.
-            "sudo apt-get update -qq "
-            "&& sudo apt-get install -y --no-install-recommends "
-            "curl ca-certificates ripgrep "
-            "&& sudo update-ca-certificates "
-            "&& sudo rm -rf /var/lib/apt/lists/*",
-            # 2. Astral uv — same shell installer as Docker/E2B. The
-            #    SDK-reported user home is the install root so we do not
-            #    assume /home/daytona or any fixed OS user.
+            # Astral uv — same shell installer as Docker/E2B. The
+            # SDK-reported user home is the install root so we do not
+            # assume /home/daytona or any fixed OS user. The version
+            # pin matches the CA-trust upgrade used by the other
+            # sandboxes.
             f"curl -LsSf https://astral.sh/uv/{UV_VERSION}/install.sh "
             f"| env UV_INSTALL_DIR={shlex.quote(uv_install_dir)} "
             f"INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 3. Gateway venv + base requirements.
+            # Gateway venv + base requirements.
             f"{shlex.quote(self._uv_bin)} venv "
             f"{shlex.quote(self._gateway_venv)}",
             f"{shlex.quote(self._uv_bin)} pip install --python "
             f"{shlex.quote(self._gateway_python)} {pip_args}",
-            # 4. agentscope itself.
+            # agentscope itself.
             f"{shlex.quote(self._uv_bin)} pip install --python "
             f"{shlex.quote(self._gateway_python)} --no-deps 'agentscope'",
         ]
