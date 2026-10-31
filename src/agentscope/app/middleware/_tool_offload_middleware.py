@@ -97,6 +97,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         self._user_id = user_id
         self._agent_id = agent_id
         self._timeout_secs = timeout_secs
+        # The event loop only holds weak references to running tasks, so
+        # delivery tasks must be anchored here until they finish, or they
+        # can be garbage-collected before the completion is delivered.
+        self._delivery_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Middleware hooks
@@ -240,9 +244,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             """Wait for the offloaded tool to finish, then push its
             result to the session inbox + enqueue a wakeup.
 
-            On cancellation (e.g. ``ToolStop``) or unhandled exception
-            no result is delivered — the agent is left without a
-            completion notification in those edge cases.
+            On cancellation (e.g. ``ToolStop``) no result is delivered.
+            A delivery failure is logged instead of being silently
+            swallowed by the fire-and-forget task.
             """
             try:
                 await drain_task
@@ -264,6 +268,22 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 )
                 return
 
+            try:
+                await _push_completion_to_inbox()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "Failed to deliver the completion of background tool "
+                    "'%s': session_id=%s",
+                    tool_name,
+                    session_id,
+                    exc_info=True,
+                )
+
+        async def _push_completion_to_inbox() -> None:
+            """Build the completion HintBlock and push it to the session
+            inbox."""
             remaining_items: list = []
             while not queue.empty():
                 try:
@@ -353,7 +373,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 payload=hint.model_dump(mode="json"),
             )
 
-        asyncio.create_task(_deliver_when_done())
+        deliver_task = asyncio.create_task(_deliver_when_done())
+        self._delivery_tasks.add(deliver_task)
+        deliver_task.add_done_callback(self._delivery_tasks.discard)
         task_id = await self._bg_manager.register_task(
             asyncio_task=drain_task,
             session_id=session_id,
