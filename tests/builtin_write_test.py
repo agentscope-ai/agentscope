@@ -183,6 +183,25 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         with open(file_path, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "original")
 
+    async def test_write_failure_returns_error_chunk(self) -> None:
+        """A failed write is reported as an error chunk, not raised.
+
+        A regular file can never act as a parent directory, so the backend
+        write fails identically for every user and platform (root included).
+        """
+        blocker = os.path.join(self.temp_dir, "blocker.txt")
+        with open(blocker, "w", encoding="utf-8") as f:
+            f.write("not a directory\n")
+
+        chunk = await self.write_tool(
+            file_path=os.path.join(blocker, "report.csv"),
+            content="a,b\n",
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertTrue(chunk.is_last)
+        self.assertIn("Error writing file:", chunk.content[0].text)
+
     async def test_match_rule_glob_pattern(self) -> None:
         """Test match_rule with glob patterns."""
         # Test exact match
