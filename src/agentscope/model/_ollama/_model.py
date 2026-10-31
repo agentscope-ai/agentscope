@@ -193,6 +193,10 @@ class OllamaChatModel(ChatModelBase):
 
         return await self._parse_completion_response(start_datetime, response)
 
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Ollama uses a top-level ``think`` option."""
+        return {"think": False}
+
     def _format_tools(
         self,
         tools: list[dict] | None,

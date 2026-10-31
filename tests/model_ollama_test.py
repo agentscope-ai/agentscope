@@ -15,6 +15,7 @@ import httpx
 from utils import AnyString
 
 from agentscope.agent import Agent
+from agentscope.exception import StructuredOutputError
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
 from agentscope.model import OllamaChatModel
 from agentscope.tool import FunctionTool, ToolChoice, ToolChunk, Toolkit
@@ -607,4 +608,68 @@ class TestOllamaRepeatedToolCall(IsolatedAsyncioTestCase):
         self.assertCountEqual(
             [_.id for _ in results],
             [_.id for _ in calls],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Structured-output no_think fallback
+# ---------------------------------------------------------------------------
+
+
+class _RecordingOllamaModel(OllamaChatModel):
+    """Record the kwargs of every ``_call_api`` attempt, then fail."""
+
+    def __init__(self) -> None:
+        super().__init__(model="qwen3:8b", stream=False, context_size=40_960)
+        self.recorded_kwargs: list[dict] = []
+
+    async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+        self.recorded_kwargs.append(kwargs)
+        raise StructuredOutputError(
+            "simulated parse failure to exercise the fallback ladder",
+        )
+
+
+class OllamaNoThinkFallbackTest(IsolatedAsyncioTestCase):
+    """The structured-output fallback ladder must include a no_think
+    attempt for Ollama."""
+
+    def test_disable_thinking_kwargs_is_think_false(self) -> None:
+        """The provider-specific thinking toggle is a top-level option."""
+        self.assertEqual(
+            _make_model()._get_disable_thinking_kwargs(),
+            {"think": False},
+        )
+
+    async def test_fallback_ladder_attempts_no_think(self) -> None:
+        """The forced/auto strategies are followed by a no_think attempt
+        carrying ``think=False``."""
+        from pydantic import BaseModel
+
+        class _Schema(BaseModel):
+            answer: str
+
+        model = _RecordingOllamaModel()
+        with self.assertRaises(Exception):  # pylint: disable=broad-exception-caught
+            await model.generate_structured_output(
+                [UserMsg(name="user", content="hi")],
+                _Schema,
+            )
+
+        strategies = [
+            (
+                kwargs.get("tool_choice").mode
+                if kwargs.get("tool_choice") is not None
+                else None
+            )
+            for kwargs in model.recorded_kwargs
+        ]
+        self.assertIn("generate_structured_output", strategies)
+        self.assertTrue(
+            any(
+                kwargs.get("think") is False
+                for kwargs in model.recorded_kwargs
+            ),
+            f"no_think strategy never sent think=False; "
+            f"strategies={strategies}",
         )
