@@ -547,6 +547,79 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["thinking"]["budget_tokens"], 8192)
         self.assertGreater(kwargs["max_tokens"], 8192)
 
+    async def test_per_call_max_tokens_bounds_auto_budget(self) -> None:
+        """The auto budget must respect a per-call max_tokens override."""
+        self.model.parameters.thinking_enable = True
+
+        await self.model([], max_tokens=4096)
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 4096)
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 2048},
+        )
+
+    async def test_auto_budget_floors_at_provider_minimum(self) -> None:
+        """Half of a small cap can fall below 1024, so clamp it up."""
+        self.model.parameters.thinking_enable = True
+
+        await self.model([], max_tokens=1500)
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 1500)
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 1024},
+        )
+
+    async def test_explicit_budget_floors_at_provider_minimum(self) -> None:
+        """A thinking_budget below 1024 is clamped, never emitted."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 512
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["thinking"]["budget_tokens"], 1024)
+        self.assertGreater(kwargs["max_tokens"], 1024)
+
+    async def test_unsatisfiable_cap_fails_fast(self) -> None:
+        """No valid budget exists while max_tokens <= 1024."""
+        self.model.parameters.thinking_enable = True
+
+        with self.assertRaises(ValueError) as ctx:
+            await self.model([], max_tokens=1000)
+
+        self.assertIn("1024", str(ctx.exception))
+        self.assertIn("max_tokens", str(ctx.exception))
+        self.mock_create.assert_not_called()
+
+    async def test_caller_can_disable_thinking_per_call(self) -> None:
+        """An explicit thinking kwarg is the per-call escape hatch."""
+        self.model.parameters.thinking_enable = True
+
+        await self.model(
+            [],
+            max_tokens=1000,
+            thinking={"type": "disabled"},
+        )
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 1000)
+        self.assertEqual(kwargs["thinking"], {"type": "disabled"})
+
+    async def test_per_call_max_tokens_expands_for_fixed_budget(self) -> None:
+        """A fixed budget forces even a per-call max_tokens above it."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 4096
+
+        await self.model([], max_tokens=1000)
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["thinking"]["budget_tokens"], 4096)
+        self.assertGreater(kwargs["max_tokens"], 4096)
+
     def test_resolved_mode_drives_tool_choice_downgrade(self) -> None:
         """Only budget mode forbids forced tool use, so only it downgrades.
 

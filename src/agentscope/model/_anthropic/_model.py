@@ -195,16 +195,43 @@ class AnthropicChatModel(ChatModelBase):
         self,
         max_tokens: int,
     ) -> tuple[dict[str, Any] | None, int]:
-        """Build the provider-specific thinking configuration."""
+        """Build the provider-specific thinking configuration.
+
+        For the budget-based mode the emitted ``budget_tokens`` is
+        always one the API accepts: at least 1024 (Anthropic's floor)
+        and strictly below ``max_tokens``. An explicit
+        ``thinking_budget`` is honored by auto-expanding ``max_tokens``
+        above it, while the auto budget (half of ``max_tokens``) never
+        expands the cap — it raises ``ValueError`` instead when the
+        cap leaves no valid budget (``max_tokens <= 1024``).
+        """
         mode = self._thinking_mode()
         if mode is None:
             return None, max_tokens
 
         thinking: dict[str, Any] = {"type": mode}
         if mode == "enabled":
-            # Anthropic requires max_tokens > budget_tokens strictly.
+            # Anthropic requires budget_tokens >= 1024 and strictly
+            # less than max_tokens — it rejects the request otherwise.
             budget = self.parameters.thinking_budget or (max_tokens // 2)
+            # Never send a budget below the provider floor.
+            budget = max(budget, 1024)
             if budget >= max_tokens:
+                if self.parameters.thinking_budget is None:
+                    # The auto budget cannot fit under this cap, so
+                    # budget-based thinking is unsatisfiable for this
+                    # call — fail fast instead of sending a request
+                    # the API would reject.
+                    raise ValueError(
+                        f"Budget-based thinking is enabled for "
+                        f"'{self.model}', but this call's max_tokens "
+                        f"({max_tokens}) leaves no valid thinking "
+                        f"budget: Anthropic requires "
+                        f"thinking.budget_tokens >= 1024 and strictly "
+                        f"less than max_tokens. Raise max_tokens above "
+                        f"1024, or disable thinking for this call "
+                        f"(e.g. pass thinking={{'type': 'disabled'}}).",
+                    )
                 # Auto-expand max_tokens to satisfy the inequality.
                 max_tokens = budget + 1024
             thinking["budget_tokens"] = budget
@@ -265,11 +292,11 @@ class AnthropicChatModel(ChatModelBase):
 
         if "thinking" not in kwargs:
             thinking, expanded_max_tokens = self._build_thinking_config(
-                max_tokens,
+                kwargs["max_tokens"],
             )
             if thinking is not None:
                 kwargs["thinking"] = thinking
-            if expanded_max_tokens != max_tokens:
+            if expanded_max_tokens != kwargs["max_tokens"]:
                 kwargs["max_tokens"] = expanded_max_tokens
 
         # Effort travels inside ``output_config``, not as a top-level field.
