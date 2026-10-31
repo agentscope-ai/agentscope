@@ -11,6 +11,7 @@ from agentscope.message import TextBlock
 from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
+    PermissionMode,
     PermissionRule,
 )
 from agentscope.tool import Bash, ToolChunk
@@ -598,6 +599,75 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
                     "Dangerous removal operation" in decision.message
                     or "dangerous pattern" in decision.message,
                 )
+
+    async def test_variable_spelled_paths_blocked(self) -> None:
+        """A critical path named through a shell variable is judged as
+        the path it resolves to, not as the literal text."""
+
+        test_cases = [
+            "rm -r $HOME",
+            'rm -r "$HOME"',
+            "rm -r $HOME/..",
+            "rm -rf $HOME",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+                self.assertTrue(decision.bypass_immune)
+                self.assertTrue(
+                    "Dangerous removal operation" in decision.message
+                    or "dangerous pattern" in decision.message,
+                )
+
+        # ``${...}`` never reaches the removal check: the injection check
+        # refuses it first, which is the same outcome.
+        decision = await self.bash_tool.check_permissions(
+            {"command": "rm -r ${HOME}"},
+            self.context,
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertTrue(decision.bypass_immune)
+
+    async def test_variable_spelled_dangerous_files_blocked(self) -> None:
+        """A sensitive file reached through a variable is still
+        sensitive."""
+
+        test_cases = [
+            "rm $HOME/.env",
+            'rm "$HOME/.env"',
+            "rm $HOME/.ssh/config",
+            "cp payload $HOME/.env",
+            "echo leaked > $HOME/.env",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+                self.assertTrue(decision.bypass_immune)
+                self.assertIn("sensitive paths", decision.message)
+
+    async def test_variable_spelled_path_not_auto_allowed(self) -> None:
+        """``ACCEPT_EDITS`` must not read ``$HOME`` as a relative path
+        that happens to sit inside the working directory."""
+
+        for mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
+            with self.subTest(mode=mode):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": "rm -rf $HOME"},
+                    PermissionContext(mode=mode),
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+                self.assertTrue(decision.bypass_immune)
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
