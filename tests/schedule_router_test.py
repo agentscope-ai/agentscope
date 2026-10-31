@@ -264,26 +264,131 @@ class ScheduleWeekdayTest(TestCase):
     """Standard cron weekdays are translated for APScheduler."""
 
     def test_standard_weekdays(self) -> None:
-        """Numeric weekdays count from Sunday; names pass through."""
+        """Numeric weekdays and names select complete two-week sequences."""
         record = _record()
-        actual = {}
-        for expression in ("1", "0", "7", "1-5", "0-7/3", "mon-fri"):
-            record.data.cron_expression = f"0 9 * * {expression}"
-            trigger = SchedulerManager.validate_schedule(record)
-            actual[expression] = str(trigger.fields[4])
-        self.assertDictEqual(
-            actual,
-            {
-                "1": "mon",
-                "0": "sun",
-                "7": "sun",
-                "1-5": "mon,tue,wed,thu,fri",
-                "0-7/3": "sun,wed,sat",
-                "mon-fri": "mon-fri",
-            },
-        )
+        tz = ZoneInfo("UTC")
+        record.data.ended_at = datetime(2026, 1, 14, 23, 59, tzinfo=tz)
+        expected_days = {
+            "1": [5, 12],
+            "0": [4, 11],
+            "7": [4, 11],
+            "1-5": [1, 2, 5, 6, 7, 8, 9, 12, 13, 14],
+            "0-7/3": [3, 4, 7, 10, 11, 14],
+            "mon-fri": [1, 2, 5, 6, 7, 8, 9, 12, 13, 14],
+        }
+        for expression, days in expected_days.items():
+            with self.subTest(expression=expression):
+                record.data.cron_expression = f"0 9 * * {expression}"
+                trigger = SchedulerManager.validate_schedule(record)
+                start = datetime(2026, 1, 1, tzinfo=tz)
+                previous = None
+                dates = []
+                for _ in range(15):
+                    fire = trigger.get_next_fire_time(previous, start)
+                    if fire is None:
+                        break
+                    dates.append(fire)
+                    previous = fire
+                    start = fire + timedelta(microseconds=1)
+                self.assertEqual(
+                    dates,
+                    [datetime(2026, 1, day, 9, tzinfo=tz) for day in days],
+                )
 
         record.data.cron_expression = "0 9 * * 8"
+        with self.assertRaises(ValueError):
+            SchedulerManager.validate_schedule(record)
+
+
+class ScheduleCalendarTest(TestCase):
+    """Standard cron combines restricted day fields with OR, not AND."""
+
+    @staticmethod
+    def _fires(record: ScheduleRecord, start: datetime, count: int) -> list:
+        """Enumerate actual trigger dates, including overlap and end bounds."""
+        trigger = SchedulerManager.validate_schedule(record)
+        previous = None
+        dates = []
+        for _ in range(count):
+            fire = trigger.get_next_fire_time(previous, start)
+            if fire is None:
+                break
+            dates.append(fire)
+            previous = fire
+            start = fire + timedelta(microseconds=1)
+        return dates
+
+    def test_month_day_and_weekday_are_alternatives(self) -> None:
+        """A monthly-plus-weekly task must not skip months of executions."""
+        record = _record()
+        record.data.cron_expression = "0 9 1 * 1"
+        tz = ZoneInfo("UTC")
+        dates = self._fires(record, datetime(2026, 10, 1, tzinfo=tz), 7)
+        self.assertEqual(
+            dates,
+            [
+                datetime(2026, month, day, 9, tzinfo=tz)
+                for month, day in (
+                    (10, 1),
+                    (10, 5),
+                    (10, 12),
+                    (10, 19),
+                    (10, 26),
+                    (11, 1),
+                    (11, 2),
+                )
+            ],
+        )
+
+    def test_overlapping_days_fire_once_within_activation_window(self) -> None:
+        """Honor timezone and bounds without duplicate runs."""
+        record = _record()
+        record.data.cron_expression = "0 9 1 * mon"
+        record.data.timezone = "Asia/Shanghai"
+        tz = ZoneInfo(record.data.timezone)
+        record.data.started_at = datetime(2026, 6, 1, 9, tzinfo=tz)
+        record.data.ended_at = datetime(2026, 6, 8, 9, tzinfo=tz)
+        self.assertEqual(
+            self._fires(record, datetime(2026, 5, 1, tzinfo=tz), 4),
+            [
+                datetime(2026, 6, 1, 9, tzinfo=tz),
+                datetime(2026, 6, 8, 9, tzinfo=tz),
+            ],
+        )
+
+    def test_wildcard_day_fields_keep_intersection_semantics(self) -> None:
+        """A wildcard, including a stepped one, does not add an OR branch."""
+        tz = ZoneInfo("UTC")
+        for expression, days in (
+            ("0 9 * * 1", [5, 12, 19, 26]),
+            ("0 9 1 * *", [1]),
+            ("0 9 */2 * 1", [5, 19]),
+            ("0 9 1-3 * */2", [1, 3]),
+        ):
+            with self.subTest(expression=expression):
+                record = _record()
+                record.data.cron_expression = expression
+                record.data.ended_at = datetime(2026, 10, 31, 23, tzinfo=tz)
+                self.assertEqual(
+                    self._fires(record, datetime(2026, 10, 1, tzinfo=tz), 6),
+                    [datetime(2026, 10, day, 9, tzinfo=tz) for day in days],
+                )
+
+    def test_weekday_branch_survives_an_impossible_month_day(self) -> None:
+        """February has no 31st, but the Mondays must still run."""
+        record = _record()
+        record.data.cron_expression = "0 9 31 2 1"
+        tz = ZoneInfo("UTC")
+        record.data.ended_at = datetime(2026, 2, 28, 23, tzinfo=tz)
+        self.assertEqual(
+            self._fires(record, datetime(2026, 2, 1, tzinfo=tz), 5),
+            [datetime(2026, 2, day, 9, tzinfo=tz) for day in (2, 9, 16, 23)],
+        )
+
+    def test_invalid_weekday_is_not_hidden_by_month_day_branch(self) -> None:
+        """A valid first branch must not admit an invalid schedule."""
+        record = _record()
+        record.data.cron_expression = "0 9 1 * notaday"
         with self.assertRaises(ValueError):
             SchedulerManager.validate_schedule(record)
 
