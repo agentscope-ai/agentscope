@@ -8,10 +8,12 @@ Gemini uses google.genai client with async iterator streaming.
 import base64
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Annotated, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from pydantic import BaseModel, Field
 
 from utils import AnyString
 
@@ -1355,6 +1357,39 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     },
                 },
             },
+        )
+
+    def test_flatten_resolves_discriminator_mapping_refs(self) -> None:
+        """Discriminator mappings stay self-contained after flattening."""
+
+        class Ring(BaseModel):
+            """One branch of the discriminated union."""
+
+            kind: Literal["ring"]
+            radius: float
+
+        class Disc(BaseModel):
+            """The other branch of the discriminated union."""
+
+            kind: Literal["disc"]
+            diameter: float
+
+        class ShapeTool(BaseModel):
+            """Tool schema containing a discriminated union."""
+
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        flattened = _flatten_json_schema(ShapeTool.model_json_schema())
+
+        self.assertNotIn("$defs", flattened)
+        mapping = flattened["properties"]["shape"]["discriminator"]["mapping"]
+        self.assertEqual(
+            mapping["ring"]["properties"]["kind"]["const"],
+            "ring",
+        )
+        self.assertEqual(
+            mapping["disc"]["properties"]["kind"]["const"],
+            "disc",
         )
 
     def test_flatten_keeps_property_names(self) -> None:
