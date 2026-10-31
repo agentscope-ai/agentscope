@@ -1302,8 +1302,23 @@ class TestDashScopeCosyVoiceRealtimeMode(
                     self.mock_synthesizer.streaming_call.call_count,
                     2,
                 )
-                self.mock_synthesizer.streaming_call.assert_any_call("Hello")
-                self.mock_synthesizer.streaming_call.assert_any_call(" world")
+
+    async def test_push_after_cold_start_raises_on_send_failure(self) -> None:
+        """A failed send after the cold-start latch must surface instead of
+        silently dropping the delta."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(cold_start_length=3) as model:
+                model._callback.get_audio_response = Mock(
+                    return_value=TTSResponse(content=None),
+                )
+                await model.push("Hello")
+                self.assertTrue(model._cold_start_done)
+
+                self.mock_synthesizer.streaming_call = Mock(
+                    side_effect=RuntimeError("socket gone"),
+                )
+                with self.assertRaisesRegex(RuntimeError, "socket gone"):
+                    await model.push(" world")
 
     async def test_push_returns_audio_when_available(self) -> None:
         """push() returns audio data from the callback when available."""

@@ -286,9 +286,15 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         try:
             self._synthesizer.streaming_call(text_to_send)
         except Exception:
-            # Send failed: keep the cold-start buffer and flag intact so
-            # the next push retries it, mirroring the realtime model.
-            return TTSResponse(content=None)
+            if not self._cold_start_done:
+                # Cold-start flush failed: keep the buffer and flag intact
+                # so the next push retries the whole buffered text.
+                return TTSResponse(content=None)
+            # The latch is set, so this delta cannot be buffered for a
+            # retry — swallowing it would silently drop the text from the
+            # synthesized speech. Surface the failure instead, consistent
+            # with the ``not self._connected`` guard above.
+            raise
 
         if not self._cold_start_done:
             # The cold-start flush succeeded; only now clear the buffer
