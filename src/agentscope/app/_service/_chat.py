@@ -167,6 +167,7 @@ class ChatService:
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
         channel_clients: "ChannelClients | None" = None,
+        tool_offload_timeout_secs: float | None = 10.0,
     ) -> None:
         """Initialize chat service.
 
@@ -242,6 +243,9 @@ class ChatService:
         self._access = resource_access_service
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
+        # ``None`` keeps slow tools inside the same reply instead of offloading
+        # them after the default 10 s cut-off (see #3330).
+        self._tool_offload_timeout_secs = tool_offload_timeout_secs
         # Probed once (the service is built once per lifespan) so legacy
         # three-argument factories keep working without the per-turn cost.
         self._middlewares_take_workspace = False
@@ -1090,13 +1094,17 @@ class ChatService:
                         message_bus=self._message_bus,
                         session_id=session_id,
                     ),
-                    ToolOffloadMiddleware(
-                        bg_manager=self._background_task_manager,
-                        message_bus=self._message_bus,
-                        user_id=user_id,
-                        agent_id=agent_id,
-                    ),
                 ]
+                if self._tool_offload_timeout_secs is not None:
+                    middlewares.append(
+                        ToolOffloadMiddleware(
+                            bg_manager=self._background_task_manager,
+                            message_bus=self._message_bus,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            timeout_secs=self._tool_offload_timeout_secs,
+                        ),
+                    )
                 # Equip the member middleware for loop control
                 if isinstance(team_ctx, _WorkerContext):
                     middlewares.append(

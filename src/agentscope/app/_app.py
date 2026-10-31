@@ -129,6 +129,7 @@ def create_app(
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
     extra_agent_tools: AgentToolFactory | None = None,
+    tool_offload_timeout_secs: float | None = 10.0,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
     resource_access_policy: ResourceAccessPolicyBase | None = None,
@@ -341,6 +342,7 @@ def create_app(
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
+    app.state.tool_offload_timeout_secs = tool_offload_timeout_secs
     app.state.custom_agent_cls = custom_agent_cls
     app.state.resource_access_policy = (
         resource_access_policy or DenyAllResourceAccessPolicy()
