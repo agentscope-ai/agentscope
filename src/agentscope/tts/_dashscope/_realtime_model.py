@@ -47,6 +47,12 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
             self.finish_event = threading.Event()
             self._pcm_bytes: bytearray = bytearray()
             self._consumed: int = 0
+            self._error: dict[str, str] | None = None
+
+        @property
+        def error(self) -> dict[str, str] | None:
+            """The provider error that ended the current utterance."""
+            return self._error
 
         def on_event(self, response: dict[str, Any]) -> None:
             """Handle incoming WebSocket events from the TTS service."""
@@ -56,6 +62,7 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
                 if event_type == "session.created":
                     self._pcm_bytes = bytearray()
                     self._consumed = 0
+                    self._error = None
                     self.finish_event.clear()
                     self.chunk_event.clear()
 
@@ -70,6 +77,16 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
                             self.chunk_event.set()
 
                 elif event_type == "session.finished":
+                    self.chunk_event.set()
+                    self.finish_event.set()
+
+                elif event_type == "error":
+                    detail = response.get("error")
+                    detail = detail if isinstance(detail, dict) else {}
+                    self._error = {
+                        "code": str(detail.get("code", "")),
+                        "message": str(detail.get("message", response)),
+                    }
                     self.chunk_event.set()
                     self.finish_event.set()
 
@@ -414,6 +431,16 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                 await asyncio.to_thread(
                     self._callback.finish_event.wait,
                 )
+
+                error = self._callback.error
+                if error is not None:
+                    # The provider refused the utterance; whatever audio
+                    # arrived is not a completed synthesis.
+                    self._reset_state()
+                    raise RuntimeError(
+                        f"DashScope realtime TTS error "
+                        f"({error['code']}): {error['message']}",
+                    )
 
                 if full_text and not self._callback.has_audio_data():
                     if attempt < self.max_retries - 1:
