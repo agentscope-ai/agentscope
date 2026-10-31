@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import asyncio
+import hashlib
 import inspect
 import json
 import re
@@ -34,6 +35,12 @@ from ..message import (
     ToolResultState,
     URLSource,
 )
+
+# LLM providers cap the length of a function/tool name (OpenAI and Anthropic
+# both allow at most 64 characters). MCP tool names are composed here, so a
+# longer server or tool name would otherwise produce a request the provider
+# rejects as a whole.
+_MAX_TOOL_NAME_LENGTH = 64
 
 
 class FunctionTool(ToolBase):
@@ -260,6 +267,26 @@ class MCPTool(ToolBase):
                 tool.name,
                 self.name,
             )
+
+        if len(self.name) > _MAX_TOOL_NAME_LENGTH:
+            # Same reason as the character sanitization above: a name the
+            # provider rejects fails the whole request, so the tools of that
+            # server would all become unreachable. Keep the readable prefix
+            # and end with a digest of the full name, so two long names that
+            # share a prefix stay distinguishable.
+            digest = hashlib.sha256(
+                self.name.encode("utf-8"),
+            ).hexdigest()[:8]
+            kept = _MAX_TOOL_NAME_LENGTH - len(digest) - 1
+            logger.debug(
+                "MCP tool name shortened to the %d-character provider "
+                "limit: '%s' -> '%s_%s'.",
+                _MAX_TOOL_NAME_LENGTH,
+                self.name,
+                self.name[:kept],
+                digest,
+            )
+            self.name = f"{self.name[:kept]}_{digest}"
 
         self.description = tool.description or ""
 
