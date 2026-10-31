@@ -316,6 +316,36 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await asyncio.wait_for(released.wait(), timeout=2.0)
 
 
+class _FlakyEvalClient:
+    """Redis client proxy whose ``eval`` fails a configurable number
+    of initial calls with a transient error before delegating.
+
+    Args:
+        inner (`fakeredis.aioredis.FakeRedis`):
+            The real client every other attribute and call delegates to.
+        fail_times (int):
+            How many initial ``eval`` calls raise :class:`TimeoutError`
+            before the delegation starts.
+    """
+
+    def __init__(self, inner: Any, fail_times: int) -> None:
+        self._inner = inner
+        self._fail_times = fail_times
+        self.eval_calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate every non-overridden attribute to the inner client."""
+        return getattr(self._inner, name)
+
+    async def eval(self, *args: Any, **kwargs: Any) -> Any:
+        """Count the call, then fail or delegate to the inner client."""
+        self.eval_calls += 1
+        if self._fail_times > 0:
+            self._fail_times -= 1
+            raise TimeoutError("transient redis outage")
+        return await self._inner.eval(*args, **kwargs)
+
+
 class TestLockPrimitive(IsolatedAsyncioTestCase):
     """Mode E — distributed mutex semantics."""
 
@@ -513,6 +543,41 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             await asyncio.sleep(1.05)
             self.assertGreater(await self.fr.ttl("ownership"), 10)
         self.assertEqual(await self.fr.get("ownership"), "replacement")
+
+    async def test_heartbeat_survives_transient_renewal_error(self) -> None:
+        """One failed renewal must not kill the heartbeat: the short
+        backoff retry re-arms the TTL and the lease outlives its
+        original expiry."""
+        flaky = _FlakyEvalClient(self.fr, fail_times=1)
+        self.bus._client = flaky
+
+        async with self.bus.acquire_lock("k", ttl_secs=2):
+            # The heartbeat ticks at 1s; its first renewal fails and
+            # the backoff retry ~0.1s later re-arms the 2s TTL. At
+            # 2.2s the original TTL would already have lapsed the
+            # lease had the heartbeat died on the failed tick.
+            await asyncio.sleep(2.2)
+            self.assertTrue(await self.bus.is_locked("k"))
+            self.assertGreaterEqual(flaky.eval_calls, 3)
+
+        self.assertFalse(await self.bus.is_locked("k"))
+
+    async def test_heartbeat_stops_after_lease_is_lost(self) -> None:
+        """Once a renewal finds the key re-acquired by another holder
+        the heartbeat stops instead of retrying forever, and the
+        successor's lease is neither extended nor deleted."""
+        flaky = _FlakyEvalClient(self.fr, fail_times=0)
+        self.bus._client = flaky
+
+        async with self.bus.acquire_lock("k", ttl_secs=2):
+            await self.fr.set("k", "successor", ex=20)
+            await asyncio.sleep(1.05)
+            calls_after_loss = flaky.eval_calls
+            self.assertGreaterEqual(calls_after_loss, 1)
+            await asyncio.sleep(1.0)
+            self.assertEqual(flaky.eval_calls, calls_after_loss)
+            self.assertEqual(await self.fr.get("k"), "successor")
+            self.assertGreater(await self.fr.ttl("k"), 15)
 
 
 class TestSessionRunAutoTrimsLog(IsolatedAsyncioTestCase):
