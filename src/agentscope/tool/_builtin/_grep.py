@@ -285,8 +285,14 @@ class Grep(ToolBase):
         ``backend.exec_shell`` (which runs the program directly, without
         a shell), so the same code path works for local, Docker, and E2B
         backends and needs no platform-specific argument quoting.
+
+        ``--no-config`` keeps the search isolated from the caller's own
+        ripgrep defaults (``RIPGREP_CONFIG_PATH`` and the per-user config
+        file). A config that sets e.g. ``--fixed-strings`` would otherwise
+        turn this tool's regular-expression search into a literal one and
+        silently change the results the agent sees.
         """
-        command = ["rg", *args, "--", search_path]
+        command = ["rg", "--no-config", *args, "--", search_path]
 
         result = await self._backend.exec_shell(
             command,
