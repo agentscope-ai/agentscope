@@ -121,6 +121,23 @@ def _agent(name: str, tools: list[ToolBase] | None = None) -> Agent:
     )
 
 
+class _FailsOnceModel(MockModel):
+    """Raise one transport-like failure without contacting a provider."""
+
+    def __init__(self) -> None:
+        """Script a single successful response after the first failure."""
+        super().__init__()
+        self.failed = False
+        self.set_responses([_text("recovered member response")])
+
+    async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+        """Fail on the first call, then behave like ``MockModel``."""
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("simulated transient member model failure")
+        return await super()._call_api(*args, **kwargs)
+
+
 class TeamPipelineTest(IsolatedAsyncioTestCase):
     """The team pipeline test case."""
 
@@ -267,6 +284,34 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
             ],
         )
         self.assertListEqual(self.researcher.state.context, [])
+
+    async def test_member_model_failure_clears_parked_assignment(self) -> None:
+        """A member's model failure must not leave the leader parked on its
+        TeamAssign call, so the next ordinary turn still runs."""
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+                _text("A is 42."),
+                _text("next turn"),
+            ],
+        )
+        self.researcher.model = _FailsOnceModel()
+
+        with self.assertRaises(RuntimeError):
+            await self._run(self.query)
+
+        # The leader must not stay parked on the assignment it delegated.
+        self.assertFalse(
+            self.leader.state.has_awaiting_tool_calls(self.leader.name),
+        )
+
+        # The next ordinary turn must complete instead of failing with
+        # "Agent is waiting for ... external execution results ...".
+        events = await self._run(UserMsg(name="user", content="try again"))
+        self.assertIn(("REPLY_END", "leader"), events)
 
     async def test_member_hitl_round_trip(self) -> None:
         """A researcher parked on confirmation ends the stream with the
