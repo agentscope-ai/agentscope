@@ -1,3 +1,12 @@
+# Unreleased
+
+## Fixes
+
+- Stop SOP and goal-pipeline orchestration when an executor or verifier
+  reports interruption after consuming task cancellation. Do not retry,
+  charge a refusal, or start the next participant. Interrupted SOP attempts
+  return to `pending` and can be started again by an explicit request.
+
 # CHANGELOG of v1.0.0
 
 > ➡️ change; ✅ new feature; ❌ deprecate

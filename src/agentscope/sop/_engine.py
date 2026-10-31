@@ -2,9 +2,9 @@
 """Running a SOP.
 
 The engine walks the steps in order, hands resumption events to
-whichever one parked, and spends the attempt budget. It decides from
-each step's :class:`~._state.SOPStepRunState` alone, never from how the
-step reached it.
+whichever one parked, and spends the attempt budget. Step state decides
+advancement; an interrupted final reply stops the current dispatch even
+when the agent consumed the task cancellation rather than raising it.
 """
 from itertools import zip_longest
 from typing import AsyncGenerator
@@ -19,6 +19,7 @@ from ..event import (
     UserInterruptEvent,
 )
 from ..message import Msg, TextBlock, UserMsg
+from ..types import ReplyFinishedReason
 
 
 class SOPEngine:
@@ -129,6 +130,12 @@ class SOPEngine:
                     inputs if resuming else record.given,
                     record,
                 ):
+                    if (
+                        isinstance(event, Msg)
+                        and event.finished_reason
+                        == ReplyFinishedReason.INTERRUPTED
+                    ):
+                        interrupting = True
                     yield event
                 yield CustomEvent(
                     name="SOP_STEP_ENDED",
@@ -140,7 +147,8 @@ class SOPEngine:
                 inputs, resuming = None, False
 
                 if interrupting:
-                    # The parked reply was closed; nothing is retried.
+                    # An explicit interrupt or an in-flight cancellation ends
+                    # this dispatch without starting another attempt.
                     return
                 if record.phase in (SOPPhase.AWAITING, SOPPhase.FAILED):
                     # Parked for an answer, or given up by the step itself;
