@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=abstract-method,protected-access
+# pylint: disable=abstract-method,protected-access,too-many-public-methods
 """Unit tests for middleware system."""
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -231,6 +231,87 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                     },
                 ],
             },
+        )
+        self.assertListEqual(
+            [
+                block.text
+                for block in agent.state.context[-1].content
+                if isinstance(block, TextBlock)
+            ],
+            ["second answer"],
+        )
+
+    async def test_on_reply_middleware_swallow_reply_end_with_previous_reply(
+        self,
+    ) -> None:
+        """Test swallowing a final reply keeps the previous reply unchanged."""
+
+        class SwallowOnceMiddleware(MiddlewareBase):
+            """Middleware swallowing the first ReplyEndEvent."""
+
+            def __init__(self) -> None:
+                self.swallowed = False
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[[], AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Swallow the first ReplyEndEvent, deliver the rest."""
+                async for item in next_handler():
+                    if isinstance(item, ReplyEndEvent) and not self.swallowed:
+                        self.swallowed = True
+                        continue
+                    yield item
+
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="first answer")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="second answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[SwallowOnceMiddleware()],
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        previous_msg = Msg(
+            id="previous-reply",
+            role="assistant",
+            name="test_agent",
+            content=[TextBlock(text="previous answer")],
+        )
+        agent.state.context.append(previous_msg)
+
+        async for _ in agent.reply_stream(None, yield_final_msg=True):
+            pass
+
+        self.assertIs(agent.state.context[0], previous_msg)
+        self.assertListEqual(
+            [
+                block.text
+                for block in previous_msg.content
+                if isinstance(block, TextBlock)
+            ],
+            ["previous answer"],
+        )
+        self.assertListEqual(
+            [
+                block.text
+                for block in agent.state.context[-1].content
+                if isinstance(block, TextBlock)
+            ],
+            ["second answer"],
         )
 
     async def test_on_reasoning_middleware_pre_yield(self) -> None:
