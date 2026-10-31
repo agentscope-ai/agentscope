@@ -894,6 +894,33 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             for fm in cls._FIELD_RE.finditer(m.group("body"))
         }
 
+    @staticmethod
+    def _frontmatter_snippet(raw: bytes, max_frontmatter_bytes: int) -> str:
+        """Return the leading bytes to inspect for frontmatter.
+
+        Args:
+            raw (`bytes`):
+                The full file content.
+            max_frontmatter_bytes (`int`):
+                The byte cap for the parsing prefix.
+
+        Returns:
+            `str`:
+                The decoded prefix to parse. When the frontmatter block is
+                longer than the cap, the window extends to the closing
+                fence (bounded by the file length) so its fields survive —
+                the fence sits near the top of the file by definition, so
+                the extension is bounded. Files without a closing fence
+                keep the capped prefix.
+        """
+        snippet_end = min(len(raw), max_frontmatter_bytes)
+        closing = raw.find(b"\n---", 1)
+        if closing != -1:
+            newline = raw.find(b"\n", closing + 1)
+            fence_end = len(raw) if newline == -1 else newline + 1
+            snippet_end = max(snippet_end, min(len(raw), fence_end))
+        return raw[:snippet_end].decode("utf-8", errors="replace")
+
     async def _list_md_files(self) -> list[_MemoryFileHeader]:
         """Scan the memory directory for individual memory files.
 
@@ -937,9 +964,9 @@ class AgenticMemoryMiddleware(MiddlewareBase):
                 max_frontmatter_bytes = _estimate_bytes(
                     self._parameters.retrieval_max_tokens_per_frontmatter,
                 )
-                snippet = raw[:max_frontmatter_bytes].decode(
-                    "utf-8",
-                    errors="replace",
+                snippet = self._frontmatter_snippet(
+                    raw,
+                    max_frontmatter_bytes,
                 )
                 fields = self._parse_frontmatter_fields(snippet)
                 mtime = await self._backend.stat_mtime(full_path)

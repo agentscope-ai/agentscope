@@ -916,3 +916,39 @@ class FrontmatterParseTest(TestCase):
             parse(ending_on_fence + "\n\nThey drink tea daily.\n"),
             fields,
         )
+
+    def test_overlong_frontmatter_extends_read_to_closing_fence(self) -> None:
+        """Recover fields when the frontmatter outgrows the byte cap and
+        the closing fence sits beyond it."""
+        description = "Cumulative notes about the billing migration. " * 40
+        raw = (
+            "---\n"
+            f"description: {description}\n"
+            "type: procedure\n"
+            "---\n"
+            "\n# Body\n\nirrelevant"
+        ).encode()
+        cap = 256 * 4  # default retrieval_max_tokens_per_frontmatter
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, cap)
+        self.assertIn("\n---", snippet)
+        # pylint: disable-next=protected-access
+        fields = AgenticMemoryMiddleware._parse_frontmatter_fields(snippet)
+        self.assertEqual(
+            fields,
+            {"description": description.strip(), "type": "procedure"},
+        )
+
+    def test_unclosed_frontmatter_keeps_capped_prefix(self) -> None:
+        """A file without a closing fence keeps today's capped prefix."""
+        raw = b"---\ndescription: " + b"x" * 2000
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, 1024)
+        self.assertEqual(snippet, raw[:1024].decode("utf-8", errors="replace"))
+
+    def test_short_frontmatter_unchanged(self) -> None:
+        """A frontmatter inside the cap is passed through verbatim."""
+        raw = b"---\nname: tea.md\ntype: user\n---\n\n# Body\n"
+        # pylint: disable-next=protected-access
+        snippet = AgenticMemoryMiddleware._frontmatter_snippet(raw, 1024)
+        self.assertEqual(snippet, raw.decode())
