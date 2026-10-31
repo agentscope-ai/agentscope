@@ -497,15 +497,12 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             messages: list,
             tools: list | None = None,
         ) -> int:
-            """Mock token counting function based on content length."""
+            """Mock token counting function based on text and data blocks."""
             content = messages[0].content
             if isinstance(content, list):
-                if len(content) == 3:
-                    return 150
-                elif len(content) == 2:
-                    return 80
-                elif len(content) == 1:
-                    return 40
+                text = sum(len(b.text) for b in content if hasattr(b, "text"))
+                data = sum(75 for b in content if b.type == "data")
+                return text + data
             return 50
 
         self.mock_model.count_tokens = mock_count_tokens
@@ -653,6 +650,52 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                 "finished_at": "2026-09-21T10:00:05",
             },
         )
+
+    async def test_mixed_script_prefix_stays_within_counted_limit(
+        self,
+    ) -> None:
+        """A dense prefix is shortened until the counter itself fits."""
+        payload = "汉" * 400 + "a" * 1200
+        tool_result = ToolResultBlock(
+            id="test_mixed",
+            name="test_tool",
+            output=[TextBlock(text=payload)],
+        )
+
+        def counted_blocks(blocks: list) -> int:
+            text = "".join(
+                block.text for block in blocks if hasattr(block, "text")
+            )
+            return len(text.encode("utf-8")) // 4
+
+        async def mock_count_tokens(
+            messages: list,
+            tools: list | None = None,
+        ) -> int:
+            """UTF-8 bytes over four, like the default counter."""
+            content = messages[0].content
+            return counted_blocks(content) if isinstance(content, list) else 0
+
+        self.mock_model.count_tokens = mock_count_tokens
+        (
+            reserved,
+            offload,
+        ) = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+        assert reserved is not None and isinstance(reserved.output, list)
+        assert offload is not None and isinstance(offload.output, list)
+
+        reserved_text = "".join(
+            block.text for block in reserved.output if block.type == "text"
+        )
+        offload_text = "".join(
+            block.text for block in offload.output if block.type == "text"
+        )
+
+        self.assertTrue(reserved_text)
+        self.assertLessEqual(counted_blocks(reserved.output), 100)
+        self.assertEqual(reserved_text + offload_text, payload)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

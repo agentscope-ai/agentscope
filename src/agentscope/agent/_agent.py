@@ -3163,8 +3163,13 @@ class Agent:
                 min(len(truncated_text), reserved_tokens),
             )
 
-            reserved_text = truncated_text[:reserved_tokens]
-            offload_text = truncated_text[reserved_tokens:]
+            reserved_text = await self._fit_text_prefix_to_token_limit(
+                reserved_blocks=reserved_blocks,
+                text=truncated_text,
+                upper_bound=reserved_tokens,
+                text_block_id=boundary_block.id,
+            )
+            offload_text = truncated_text[len(reserved_text) :]
 
             if reserved_text:
                 if (
@@ -3221,6 +3226,58 @@ class Agent:
         )
 
         return reserved_tool_result, offload_tool_result
+
+    async def _fit_text_prefix_to_token_limit(
+        self,
+        *,
+        reserved_blocks: list,
+        text: str,
+        upper_bound: int,
+        text_block_id: str,
+    ) -> str:
+        """Return the longest prefix of ``text`` that stays within the limit.
+
+        The proportional estimate uses the block's average token density,
+        which breaks when the prefix has a different script mix: a Chinese
+        prefix of an ASCII-first block is denser and used to exceed the
+        limit. Recount the candidate with the same counter and binary-search
+        the prefix length, only when the proportional estimate overshoots.
+        """
+        limit = self.context_config.tool_result_limit
+
+        def candidate(length: int) -> list:
+            prefix = text[:length]
+            if reserved_blocks and reserved_blocks[-1].type == "text":
+                merged = reserved_blocks[-1].model_copy(deep=True)
+                merged.text += prefix
+                return [*reserved_blocks[:-1], merged]
+            return [
+                *reserved_blocks,
+                TextBlock(text=prefix, id=text_block_id),
+            ]
+
+        async def fits(length: int) -> bool:
+            return (
+                await self.model.count_tokens(
+                    [AssistantMsg(self.name, content=candidate(length))],
+                    None,
+                )
+                <= limit
+            )
+
+        if await fits(upper_bound):
+            return text[:upper_bound]
+
+        low, high = 0, upper_bound
+        best = 0
+        while low <= high:
+            middle = (low + high) // 2
+            if await fits(middle):
+                best = middle
+                low = middle + 1
+            else:
+                high = middle - 1
+        return text[:best]
 
     # ======================================================================
     # Agent internal utility methods
