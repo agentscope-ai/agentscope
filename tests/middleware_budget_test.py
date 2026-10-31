@@ -408,6 +408,63 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             {agent.state.reply_id: 28},
         )
 
+    async def test_new_reply_does_not_inherit_the_previous_budget_hint(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to one reply; the next reply starts clean.
+
+        Reply 1 spends its whole 300-token budget on the first step, so the
+        second step runs under the hint. Reply 2 starts with a fresh counter
+        and must not see that wrap-up instruction again.
+        """
+        toolkit = Toolkit(tools=[DummyTool()])
+
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(id="tc_1", name="dummy", input="{}"),
+                    ],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=200,
+                        output_tokens=100,
+                        time=0.0,
+                    ),
+                ),
+                _response("wrapped up", input_tokens=5, output_tokens=5),
+                _response("fresh reply", input_tokens=5, output_tokens=5),
+            ],
+        )
+
+        middleware = ReplyBudgetControlMiddleware(token_budget=300)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=model,
+            toolkit=toolkit,
+            middlewares=[middleware],
+        )
+
+        await agent.reply(UserMsg("user", "first"))
+        self.assertTrue(
+            any(
+                _has_hint_block(message, middleware.hint_message)
+                for message in agent.state.context
+            ),
+            "the exhausted reply should have injected the wrap-up hint",
+        )
+
+        await agent.reply(UserMsg("user", "second"))
+        self.assertFalse(
+            any(
+                _has_hint_block(message, middleware.hint_message)
+                for message in agent.state.context
+            ),
+            "a fresh reply must not carry the previous reply's budget hint",
+        )
+
     async def test_swallowed_reply_end_keeps_counting(self) -> None:
         """A redo round forced by swallowing the ReplyEndEvent spends the
         budget of the same reply."""
