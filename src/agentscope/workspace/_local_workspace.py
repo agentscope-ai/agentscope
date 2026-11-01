@@ -223,7 +223,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 
@@ -356,7 +358,8 @@ class LocalWorkspace(WorkspaceBase):
 
             # Read and parse SKILL.md
             raw = await self._backend.read_file(skill_md_path)
-            content_str = raw.decode("utf-8")
+            # Strip an optional UTF-8 BOM before parsing front matter.
+            content_str = raw.decode("utf-8-sig")
 
             # Parse frontmatter
             content = frontmatter.loads(content_str)
@@ -650,7 +653,8 @@ class LocalWorkspace(WorkspaceBase):
                 updated_at = 0.0
 
             raw = await self._backend.read_file(skill_md_path)
-            content_str = raw.decode("utf-8")
+            # Strip an optional UTF-8 BOM before parsing front matter.
+            content_str = raw.decode("utf-8-sig")
             content = frontmatter.loads(content_str)
 
             description = content.get("description")
@@ -683,7 +687,7 @@ class LocalWorkspace(WorkspaceBase):
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Add an MCP client for one agent/session and persist it.
 
         Args:
@@ -693,6 +697,10 @@ class LocalWorkspace(WorkspaceBase):
                 The owning agent. ``None`` means the legacy ``""``.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The input client, which is stored and used directly.
 
         Raises:
             `ValueError`:
@@ -720,6 +728,7 @@ class LocalWorkspace(WorkspaceBase):
             # persisted copy is self-contained.
             self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
+            return mcp_client
 
     async def remove_mcp(
         self,
@@ -829,7 +838,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 

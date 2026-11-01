@@ -29,7 +29,7 @@ from agentscope.app._service import IndexTaskConsumer
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the consumer.
 
     Implements the primitives the consumer actually uses
@@ -70,6 +70,25 @@ class _FakeBus(MessageBus):
         entries = self.queues.get(key, [])[:max_count]
         self.queues[key] = self.queues.get(key, [])[max_count:]
         return entries
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return list(self.queues.get(key, [])[:max_count])
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        entries = []
+        for payload in payloads:
+            self._next += 1
+            entries.append((str(self._next), payload))
+        self.queues[key] = entries
+        return [entry_id for entry_id, _payload in entries]
 
     async def queue_delete(self, key: str) -> None:
         self.queues.pop(key, None)

@@ -209,7 +209,8 @@ changelog generation.
 - `style:` Changes that do not affect the meaning of the code (whitespace, formatting, etc.)
 - `refactor:` A code change that neither fixes a bug nor adds a feature
 - `perf:` A code change that improves performance
-- `ci:` Adding missing tests or correcting existing tests
+- `test:` Adding missing tests or correcting existing tests
+- `ci:` Changes to CI configuration files and scripts
 - `chore:` Changes to the build process or auxiliary tools and libraries
 
 **Examples:**
@@ -218,7 +219,7 @@ feat(models): add support for Claude-3 model
 fix(agent): resolve memory leak in ReActAgent
 docs(readme): update installation instructions
 refactor(formatter): simplify message formatting logic
-ci(models): add unit tests for OpenAI integration
+test(models): add unit tests for OpenAI integration
 ```
 
 **Pull request title format.** PR titles follow the same Conventional
@@ -376,11 +377,12 @@ classes plus documentation:
    your backend.
    _Reference: `agentscope/workspace/_local_workspace.py` (`LocalWorkspace`)_
 
-2. **Workspace manager class** — alongside
-   `agentscope/app/_manager/_workspace_manager.py`, subclassing
+2. **Workspace manager class** — under
+   `agentscope/app/workspace_manager/`, subclassing
    `WorkspaceManagerBase`. Wires your workspace into the application
    lifecycle.
-   _Reference: `LocalWorkspaceManager` in the same file._
+   _Reference: `LocalWorkspaceManager` in
+   `agentscope/app/workspace_manager/_local_workspace_manager.py`._
 
 3. **Documentation** — open a companion PR in
    [agentscope-ai/docs](https://github.com/agentscope-ai/docs) describing

@@ -944,7 +944,8 @@ class RAGMiddleware(MiddlewareBase):
         block is removed from the context right after the reasoning
         step it participated in — keyed on the block's id so other
         middlewares can append their own blocks to the same carrier
-        message without interfering.
+        message without interfering.  Cleanup also runs if the stream
+        is closed while yielding the hint event.
 
         Args:
             agent (`Agent`):
@@ -962,44 +963,49 @@ class RAGMiddleware(MiddlewareBase):
         """
         hint: HintBlock | None = None
 
-        if (
-            self._parameters.mode == "static"
-            and agent.state.cur_iter == 0
-            and self._cached_inputs
-        ):
-            try:
-                results = await _search_across(
-                    self._knowledge_bases,
-                    self._cached_inputs,
-                    top_k=self._parameters.top_k,
-                    score_threshold=self._parameters.score_threshold,
-                    rerank_model=self._rerank_model,
-                    rerank_candidate_k=self._parameters.rerank_candidate_k,
-                    rerank_prompt=self._parameters.rerank_prompt,
-                )
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "Knowledge-base search failed; proceeding without "
-                    "matched context.",
-                )
-                results = []
-
-            blocks = _format_results(results)
-            if blocks:
-                hint = HintBlock(
-                    hint=_wrap_hint(self._parameters.hint_template, blocks),
-                    source=_HINT_SOURCE,
-                )
-                agent.state.append_context(agent.name, [hint])
-                if self._parameters.emit_hint_event:
-                    yield HintBlockEvent(
-                        reply_id=agent.state.reply_id,
-                        block_id=hint.id,
-                        source=hint.source,
-                        hint=hint.hint,
-                    )
-
         try:
+            if (
+                self._parameters.mode == "static"
+                and agent.state.cur_iter == 0
+                and self._cached_inputs
+            ):
+                try:
+                    results = await _search_across(
+                        self._knowledge_bases,
+                        self._cached_inputs,
+                        top_k=self._parameters.top_k,
+                        score_threshold=self._parameters.score_threshold,
+                        rerank_model=self._rerank_model,
+                        rerank_candidate_k=(
+                            self._parameters.rerank_candidate_k
+                        ),
+                        rerank_prompt=self._parameters.rerank_prompt,
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Knowledge-base search failed; proceeding without "
+                        "matched context.",
+                    )
+                    results = []
+
+                blocks = _format_results(results)
+                if blocks:
+                    hint = HintBlock(
+                        hint=_wrap_hint(
+                            self._parameters.hint_template,
+                            blocks,
+                        ),
+                        source=_HINT_SOURCE,
+                    )
+                    agent.state.append_context(agent.name, [hint])
+                    if self._parameters.emit_hint_event:
+                        yield HintBlockEvent(
+                            reply_id=agent.state.reply_id,
+                            block_id=hint.id,
+                            source=hint.source,
+                            hint=hint.hint,
+                        )
+
             async for evt in next_handler(**input_kwargs):
                 yield evt
         finally:

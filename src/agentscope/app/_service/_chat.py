@@ -37,18 +37,21 @@ from ..storage import (
     SessionNaming,
     SessionRecord,
     ChannelOrigin,
+    SOPOrigin,
 )
 from ..storage._utils import _resolve_team_leader
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
+    SOPStepSubmitMiddleware,
     StateChangeMiddleware,
     ToolOffloadMiddleware,
     TeamMemberLoopMiddleware,
 )
 from ...middleware import TTSMiddleware, RAGMiddleware
 from ...rag import KnowledgeBase
+from ...sop import SOPPhase
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
@@ -60,6 +63,7 @@ from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
 from ._session_projection import SessionProjection
+from ._sop import SOPService
 from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
@@ -77,11 +81,16 @@ from ...event import (
 )
 from ._errors import _classify_error, _classify_setup_error
 from ..._utils._common import _generate_id
-from ...message import AssistantMsg, HintBlock, Msg, ToolCallState, UserMsg
+from ...message import AssistantMsg, HintBlock, Msg, UserMsg
 from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
     from ..channel import ChannelClients
+
+
+_CHECKPOINT_LOCK_TTL_SECS = (
+    MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
+)
 
 
 @dataclass(frozen=True)
@@ -249,6 +258,9 @@ class ChatService:
                 pass
         self._extra_agent_tools = extra_agent_tools
         self._channel_clients = channel_clients
+        self.sop_service: SOPService | None = None
+        """Carries a procedure on after a turn resumes one of its steps.
+        Set by the lifespan, since a SOP service is built on this one."""
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
         self._projection = SessionProjection(message_bus)
@@ -256,6 +268,19 @@ class ChatService:
             SubagentHitlProjector(storage),
             *(extra_projectors or []),
         ]
+        # Queue nudges are detached from completed registry tasks so they
+        # run only after the local run slot is released. Keep strong
+        # references until completion; asyncio's loop retains only weak
+        # references to un-awaited tasks.
+        self._queue_nudge_tasks: set[asyncio.Task] = set()
+
+    async def resolve_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> AgentRecord:
+        """Resolve an owned or shared agent for execution and queue checks."""
+        return await self._access.resolve_agent(user_id, agent_id)
 
     async def run(
         self,
@@ -268,6 +293,9 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        sop_dispatch: str | None = None,
+        queue_item_id: str | None = None,
+        input_persisted: bool = False,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -307,9 +335,23 @@ class ChatService:
                 - ``UserInterruptEvent``: abort a parked reply — the
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
+            sop_dispatch (`str | None`, optional):
+                ``"<run id>:<step index>"`` when a SOP run dispatched
+                this turn, which gives it a submit tool.
+            queue_item_id (`str | None`, optional):
+                Queue identity for terminal failure reporting.
+            input_persisted (`bool`, optional):
+                Internal queue caller already saved this initial input.
         """
         try:
-            await self._run_impl(user_id, session_id, agent_id, input_msg)
+            await self._run_impl(
+                user_id,
+                session_id,
+                agent_id,
+                input_msg,
+                sop_dispatch,
+                input_persisted=input_persisted,
+            )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "
@@ -319,6 +361,88 @@ class ChatService:
                 agent_id,
                 str(e),
             )
+            if queue_item_id is not None and isinstance(
+                input_msg,
+                (Msg, list),
+            ):
+                messages = (
+                    input_msg
+                    if isinstance(input_msg, list)
+                    else [
+                        input_msg,
+                    ]
+                )
+                try:
+                    event = CustomEvent(
+                        name="chat_input_failed",
+                        value={
+                            "queue_item_id": queue_item_id,
+                            "message_ids": [msg.id for msg in messages],
+                            "message": (
+                                "The queued message could not be processed. "
+                                "Check the server log for details."
+                            ),
+                        },
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        event.model_dump(mode="json"),
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Failed to publish queued-input failure for "
+                        "session %s.",
+                        session_id,
+                    )
+
+    def schedule_queue_nudge(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Schedule and strongly retain a one-shot pending-queue nudge.
+
+        Args:
+            user_id (`str`):
+                User that owns the session queue.
+            session_id (`str`):
+                Session whose pending/in-flight state should be checked.
+            agent_id (`str`):
+                Agent that owns the session queue.
+        """
+
+        async def _nudge_if_pending() -> None:
+            try:
+                pending = await self._message_bus.queue_read(
+                    MessageBusKeys.chat_inputs(session_id),
+                    max_count=1,
+                )
+                claimed = await self._message_bus.registry_exists(
+                    MessageBusKeys.chat_input_inflight_registry(),
+                    session_id,
+                )
+                if pending or claimed:
+                    await enqueue_run_trigger(
+                        self._message_bus,
+                        user_id=user_id,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        kind=MessageBusKeys.WAKEUP_KIND_QUEUED_MESSAGE,
+                    )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to signal queued chat inputs for session %s.",
+                    session_id,
+                )
+
+        task = asyncio.create_task(
+            _nudge_if_pending(),
+            name=f"chat-queue-nudge:{session_id}",
+        )
+        self._queue_nudge_tasks.add(task)
+        task.add_done_callback(self._queue_nudge_tasks.discard)
 
     async def _auto_name_session(
         self,
@@ -419,7 +543,7 @@ class ChatService:
         session_id: str,
         reply_msg: Msg,
         error: Exception,
-    ) -> None:
+    ) -> str | None:
         """Close a reply that died mid-stream, and say why.
 
         The stream never emitted its terminating ``ReplyEndEvent``, so
@@ -446,7 +570,7 @@ class ChatService:
                 "completed.",
                 session_id,
             )
-            return
+            return None
 
         end_event = ReplyEndEvent(
             session_id=session_id,
@@ -455,7 +579,7 @@ class ChatService:
             error=_classify_error(error),
         )
         reply_msg.append_event(end_event)
-        await publish_session_event(
+        entry_id = await publish_session_event(
             self._message_bus,
             session_id,
             end_event.model_dump(mode="json"),
@@ -465,6 +589,7 @@ class ChatService:
             session_id,
             end_event.error.type if end_event.error else "error",
         )
+        return entry_id
 
     async def _notify_leader_of_failure(
         self,
@@ -616,18 +741,28 @@ class ChatService:
                 name=agent_id,
                 content=[],
             )
+            checkpoint_cursor = ""
             for event in (start_event, end_event):
                 reply_msg.append_event(event)
-                await publish_session_event(
+                checkpoint_cursor = await publish_session_event(
                     self._message_bus,
                     session_id,
                     event.model_dump(mode="json"),
                 )
-            await self._storage.upsert_message(
-                user_id,
-                session_id,
-                reply_msg,
-            )
+            async with self._message_bus.acquire_lock(
+                MessageBusKeys.session_event_checkpoint_lock(session_id),
+                ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+            ):
+                await self._storage.upsert_message(
+                    user_id,
+                    session_id,
+                    reply_msg,
+                )
+                await self._message_bus.registry_set(
+                    MessageBusKeys.session_event_checkpoint(session_id),
+                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    checkpoint_cursor,
+                )
         except Exception:
             logger.exception(
                 "Failed to report a failure for session %r; the original "
@@ -734,18 +869,10 @@ class ChatService:
             `bool`:
                 ``True`` when the run should be skipped.
         """
-        if input_msg is not None or not agent.state.context:
+        if input_msg is not None:
             return False
 
-        last_msg = agent.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != agent.name:
-            return False
-
-        awaiting = [
-            tc
-            for tc in last_msg.get_content_blocks("tool_call")
-            if tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
-        ]
+        awaiting = agent.state.get_awaiting_tool_calls(agent.name)
         if not awaiting:
             return False
 
@@ -770,6 +897,8 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        sop_dispatch: str | None = None,
+        input_persisted: bool = False,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -779,6 +908,10 @@ class ChatService:
         session record must be loaded only after this run owns the lock,
         otherwise a waiter can assemble an agent from a snapshot that the
         preceding holder replaces before releasing the lock."""
+
+        # The run to carry on after the lock, if this turn resumed a step.
+        resumed_sop_run_id: str | None = None
+        interrupted = False
 
         async with self._message_bus.acquire_lock(
             MessageBusKeys.session_lock(session_id),
@@ -805,7 +938,7 @@ class ChatService:
                 # the agent is not visible to the caller.
                 # -------------------------------------------------------------
                 try:
-                    agent_record = await self._access.resolve_agent(
+                    agent_record = await self.resolve_agent(
                         user_id,
                         agent_id,
                     )
@@ -828,6 +961,21 @@ class ChatService:
                         ),
                     )
                 worker_name = agent_record.data.name
+                if (
+                    isinstance(session_record.origin, SOPOrigin)
+                    and sop_dispatch is None
+                    and isinstance(
+                        input_msg,
+                        (UserConfirmResultEvent, ExternalExecutionResultEvent),
+                    )
+                ):
+                    # Only an answer to the step's parked call resumes it.
+                    sop_dispatch = await self._parked_dispatch(
+                        user_id,
+                        session_id,
+                    )
+                    if sop_dispatch is not None:
+                        resumed_sop_run_id = session_record.origin.sop_run_id
 
                 # -------------------------------------------------------------
                 # 1b. Resolve the team identity ONCE, before anything that
@@ -957,6 +1105,11 @@ class ChatService:
                         ),
                     )
 
+                # Only a turn the run asked for must end in a submission;
+                # a person chatting in the same session must not.
+                if sop_dispatch is not None:
+                    middlewares.append(SOPStepSubmitMiddleware())
+
                 if self._extra_agent_middlewares is not None:
                     factory_args: tuple = (user_id, agent_id, session_id)
                     if self._middlewares_take_workspace:
@@ -975,8 +1128,21 @@ class ChatService:
                         user_id,
                         tts_cfg,
                         self._access,
+                        self._storage,
                     )
-                    middlewares.append(TTSMiddleware(tts_model))
+                    if tts_model is not None:
+                        middlewares.append(
+                            TTSMiddleware(tts_model, continue_on_error=True),
+                        )
+                    else:
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            CustomEvent(
+                                name="tts_error",
+                                value={"stage": "configuration"},
+                            ).model_dump(mode="json"),
+                        )
 
                 # -------------------------------------------------------------
                 # 2c. Knowledge-base middleware — inject when the session has
@@ -1054,6 +1220,7 @@ class ChatService:
                     sub_agent_templates=self._sub_agent_templates,
                     team_role=team_ctx.role if team_ctx else None,
                     channel_tools=channel_tools,
+                    sop_dispatch=sop_dispatch,
                 )
 
                 # -------------------------------------------------------------
@@ -1124,14 +1291,15 @@ class ChatService:
 
                 agent_state = session_record.state
                 agent_state.session_id = session_id
+                chat_config = agent_record.data.chat_config
                 agent = self._agent_cls(
                     name=agent_record.data.name,
                     system_prompt=system_prompt,
                     model=model,
                     toolkit=toolkit,
                     model_config=ModelConfig(fallback_model=fallback_model),
-                    context_config=agent_record.data.context_config,
-                    react_config=agent_record.data.react_config,
+                    context_config=chat_config.context_config,
+                    react_config=chat_config.react_config,
                     state=agent_state,
                     middlewares=middlewares,
                     offloader=workspace,
@@ -1157,7 +1325,6 @@ class ChatService:
             # ----------------------------------------------------------------
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
-            events_key = MessageBusKeys.session_events(session_id)
             # Channel-bound run: start streaming the reply back to the
             # platform chat. Delivery is plain REST, so this node does it
             # rather than handing the run to whichever one holds the
@@ -1176,6 +1343,7 @@ class ChatService:
                 )
             reply_msg: Msg | None = None
             reply_msgs: list[Msg] = []
+            checkpoint_cursor: str | None = None
             released = False
 
             # Text of the user turn that opened this run, captured
@@ -1187,7 +1355,7 @@ class ChatService:
             elif isinstance(input_msg, list):
                 trigger_msgs = input_msg
             trigger_text = "\n".join(
-                msg.get_text_content() or "" for msg in trigger_msgs
+                msg.get_text_content() for msg in trigger_msgs
             ).strip()
             await register_inbox_consumer(self._message_bus, session_id)
             try:
@@ -1200,7 +1368,9 @@ class ChatService:
                         ):
                             # Case A: new reply (user message(s), or
                             # retrigger with empty input)
-                            if isinstance(input_msg, (Msg, list)):
+                            if isinstance(input_msg, (Msg, list)) and not (
+                                input_persisted
+                            ):
                                 input_msgs = (
                                     [input_msg]
                                     if isinstance(input_msg, Msg)
@@ -1213,6 +1383,8 @@ class ChatService:
                                         msg,
                                     )
 
+                            # Only the initial queued input was pre-saved.
+                            input_persisted = False
                             async for event in agent.reply_stream(
                                 inputs=input_msg,
                             ):
@@ -1228,10 +1400,12 @@ class ChatService:
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        event.model_dump(mode="json"),
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            event.model_dump(mode="json"),
+                                        )
                                     )
                                     await self._project_event(
                                         user_id,
@@ -1282,10 +1456,12 @@ class ChatService:
                                     ExternalExecutionResultEvent,
                                 ),
                             ):
-                                await publish_session_event(
-                                    self._message_bus,
-                                    session_id,
-                                    input_msg.model_dump(mode="json"),
+                                checkpoint_cursor = (
+                                    await publish_session_event(
+                                        self._message_bus,
+                                        session_id,
+                                        input_msg.model_dump(mode="json"),
+                                    )
                                 )
 
                             # Emit a synthetic REPLY_START so SSE subscribers
@@ -1303,7 +1479,7 @@ class ChatService:
                                 reply_id=agent.state.reply_id,
                                 name=agent_record.data.name,
                             )
-                            await publish_session_event(
+                            checkpoint_cursor = await publish_session_event(
                                 self._message_bus,
                                 session_id,
                                 continuation_start.model_dump(mode="json"),
@@ -1318,10 +1494,12 @@ class ChatService:
                                 if reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
-                                    await publish_session_event(
-                                        self._message_bus,
-                                        session_id,
-                                        event.model_dump(mode="json"),
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            event.model_dump(mode="json"),
+                                        )
                                     )
                                     await self._project_event(
                                         user_id,
@@ -1353,11 +1531,13 @@ class ChatService:
                                 worker_name,
                             )
                         else:
-                            await self._close_failed_reply(
+                            failure_cursor = await self._close_failed_reply(
                                 session_id,
                                 reply_msg,
                                 e,
                             )
+                            if failure_cursor is not None:
+                                checkpoint_cursor = failure_cursor
 
                         # A failed turn stops the run; whatever is still
                         # queued is handed to a fresh one by the
@@ -1379,6 +1559,11 @@ class ChatService:
                         session_id,
                     ):
                         released = True
+                        break
+
+                    # A parked agent can't take a ``None`` turn; the queued
+                    # payloads are drained once it resumes.
+                    if agent.state.has_awaiting_tool_calls(agent.name):
                         break
                     input_msg = None
 
@@ -1404,6 +1589,11 @@ class ChatService:
                 ):
                     reply_msgs.append(reply_msg)
 
+                interrupted = any(
+                    msg.finished_reason is ReplyFinishedReason.INTERRUPTED
+                    for msg in reply_msgs
+                )
+
                 # All persistence in a single coroutine, shielded from
                 # outer cancellation.  Must complete BEFORE the session
                 # lock is released — otherwise another worker could
@@ -1411,19 +1601,36 @@ class ChatService:
                 # before this write lands.
                 async def _persist() -> None:
                     try:
-                        for msg in reply_msgs:
-                            await self._storage.upsert_message(
-                                user_id,
+                        async with self._message_bus.acquire_lock(
+                            MessageBusKeys.session_event_checkpoint_lock(
                                 session_id,
-                                msg,
+                            ),
+                            ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
+                        ):
+                            for msg in reply_msgs:
+                                await self._storage.upsert_message(
+                                    user_id,
+                                    session_id,
+                                    msg,
+                                )
+                            await self._storage.update_session_state(
+                                user_id=user_id,
+                                agent_id=agent_id,
+                                session_id=session_id,
+                                state=agent.state,
                             )
-                        await self._storage.update_session_state(
-                            user_id=user_id,
-                            agent_id=agent_id,
-                            session_id=session_id,
-                            state=agent.state,
-                        )
-                        await self._message_bus.log_trim(events_key)
+                            if checkpoint_cursor is not None:
+                                await self._message_bus.registry_set(
+                                    MessageBusKeys.session_event_checkpoint(
+                                        session_id,
+                                    ),
+                                    MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                                    checkpoint_cursor,
+                                )
+                                await self._message_bus.log_trim(
+                                    MessageBusKeys.session_events(session_id),
+                                    before_id=checkpoint_cursor,
+                                )
                     finally:
                         # A worker whose turn died never reached
                         # ``TeamSay``. Sent from inside the shielded
@@ -1471,6 +1678,59 @@ class ChatService:
                     model,
                     trigger_text,
                 )
+
+        # Detached, since the rest of the run can be many turns; an
+        # interrupted turn leaves the run where it is.
+        if (
+            resumed_sop_run_id is not None
+            and not interrupted
+            and self.sop_service is not None
+        ):
+            self.sop_service.advance_later(user_id, resumed_sop_run_id)
+
+    async def _parked_dispatch(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> str | None:
+        """The claim of a step parked on this session, if still valid.
+
+        Valid only while the step is parked on this session's half.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The session whose claim to read.
+
+        Returns:
+            `str | None`:
+                ``"<run id>:<step index>"``, or ``None``.
+        """
+        claim = await self._message_bus.registry_get(
+            MessageBusKeys.sop_dispatch(session_id),
+            MessageBusKeys.SOP_DISPATCH_FIELD,
+        )
+        if claim is None:
+            return None
+        sop_run_id, _, step_index = claim.rpartition(":")
+        run = await self._storage.get_sop_run(user_id, sop_run_id)
+        index = int(step_index)
+        if (
+            run is None
+            or index >= len(run.state.steps)
+            or run.state.steps[index].phase is not SOPPhase.AWAITING
+        ):
+            return None
+        step = run.definition.steps[index]
+        ref = (
+            step.executor
+            if run.state.steps[index].submission is None
+            else getattr(step.verifier, "agent", None)
+        )
+        if ref is None or run.sessions.get(ref.session_key) != session_id:
+            return None
+        return claim
 
     async def _project_event(
         self,

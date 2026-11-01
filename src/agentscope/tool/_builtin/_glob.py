@@ -300,10 +300,8 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         command = [
             python,
             self._glob_helper_path,
-            "--pattern",
-            pattern,
-            "--base-dir",
-            base_dir,
+            f"--pattern={pattern}",
+            f"--base-dir={base_dir}",
         ]
         result = await self._backend.exec_shell(command, timeout=30.0)
 

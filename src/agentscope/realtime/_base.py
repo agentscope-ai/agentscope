@@ -2,32 +2,19 @@
 """The realtime model base class."""
 import inspect
 from abc import ABC, abstractmethod
-from enum import StrEnum
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Sequence
 
 from pydantic import BaseModel
 
 from ._events import ModelEvent
 from ._model_card import RealtimeModelCard
 from ..credential import CredentialBase
-from ..message import ToolResultBlock
+from ..message import Msg, ToolResultBlock
 
 
 class ModelDisconnectedError(ConnectionError):
     """The provider closed the session; the next user audio reconnects."""
-
-
-class TruncationSupport(StrEnum):
-    """How the provider lets an interrupted turn be corrected. A protocol
-    property, constant across the models of one API."""
-
-    NONE = "none"
-    SERVER = "server"
-    """The provider corrects itself; ``truncate`` is a no-op."""
-
-    EXPLICIT = "explicit"
-    """The provider accepts an explicit truncate frame."""
 
 
 class RealtimeModelBase(ABC):
@@ -50,11 +37,11 @@ class RealtimeModelBase(ABC):
     """Identifies the adapter; stamped onto every card it lists so a stored
     config can be mapped back to this class."""
 
-    truncation: TruncationSupport = TruncationSupport.NONE
-    """Whether and how an interrupted turn can be corrected."""
-
     supports_text_input: bool = False
     """Whether a text turn can be injected mid-session."""
+
+    supports_history_replay: bool = False
+    """Whether completed messages can seed a newly opened session."""
 
     def __init__(
         self,
@@ -83,8 +70,21 @@ class RealtimeModelBase(ABC):
         """
         self.model = model
         self.credential = credential
-        self.parameters = parameters or self.Parameters()
         self.card = model_card or self._find_card(model)
+        card_defaults = {
+            name: override["default"]
+            for name, override in self.card.parameter_overrides.items()
+            if "default" in override
+        }
+        if parameters is None:
+            self.parameters = self.Parameters(**card_defaults)
+        else:
+            defaults = {
+                name: value
+                for name, value in card_defaults.items()
+                if name not in parameters.model_fields_set
+            }
+            self.parameters = parameters.model_copy(update=defaults)
 
     @classmethod
     def _find_card(cls, model: str) -> RealtimeModelCard:
@@ -138,6 +138,11 @@ class RealtimeModelBase(ABC):
         """The PCM rate of the audio in :class:`AudioDelta`, in Hz."""
         return self.card.output_sample_rate
 
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether a settled user transcript is expected after speech."""
+        return False
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -190,6 +195,26 @@ class RealtimeModelBase(ABC):
                 ``False``.
         """
 
+    async def replay_history(self, messages: Sequence[Msg]) -> None:
+        """Seed a newly opened session without requesting a response.
+
+        Providers that implement this method must preserve message roles and
+        must not trigger model inference. The caller invokes it after
+        :meth:`connect` and before forwarding new user input.
+
+        Args:
+            messages (`Sequence[Msg]`):
+                Completed conversation messages in chronological order.
+
+        Raises:
+            `NotImplementedError`: If the adapter does not support structured
+                history replay.
+        """
+        if messages:
+            raise NotImplementedError(
+                f"{type(self).__name__} cannot replay conversation history.",
+            )
+
     @abstractmethod
     async def push_tool_result(self, block: ToolResultBlock) -> None:
         """Feed the result of a tool the caller executed."""
@@ -210,22 +235,3 @@ class RealtimeModelBase(ABC):
     @abstractmethod
     async def cancel_response(self) -> None:
         """Stop the active reply without closing the session."""
-
-    @abstractmethod
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """Rewrite an assistant turn to what the user actually heard. A
-        no-op unless :attr:`truncation` is ``EXPLICIT``.
-
-        Args:
-            item_id (`str`):
-                The interrupted assistant item.
-            played_ms (`int`):
-                Milliseconds of its audio that reached the speaker.
-            played_text (`str`):
-                The corresponding prefix of its spoken text.
-        """

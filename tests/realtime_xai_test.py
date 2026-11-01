@@ -12,7 +12,6 @@ from agentscope.credential import XAICredential
 from agentscope.message import TextBlock, ToolResultBlock
 from agentscope.realtime import (
     ModelDisconnectedError,
-    TruncationSupport,
     XAIRealtimeModel,
 )
 from agentscope.realtime import _events as me
@@ -78,11 +77,11 @@ class XAICardsTest(unittest.TestCase):
             XAIRealtimeModel("no-such-model", CRED)
 
     def test_adapter_facts(self) -> None:
-        """Grok takes text turns but documents no truncate frame."""
+        """Grok accepts text turns."""
         model = XAIRealtimeModel("grok-voice-latest", CRED)
         self.assertListEqual(
-            [model.type, model.truncation, model.supports_text_input],
-            ["xai_realtime", TruncationSupport.NONE, True],
+            [model.type, model.supports_text_input],
+            ["xai_realtime", True],
         )
 
 
@@ -185,6 +184,10 @@ class XAIParseTest(unittest.TestCase):
                 "transcript": "Hello, how are you?",
             },
             {
+                "type": "conversation.item.input_audio_transcription.failed",
+                "item_id": "msg_004",
+            },
+            {
                 "type": "response.output_audio_transcript.delta",
                 "item_id": "msg_008",
                 "delta": "Hello! I'm doing",
@@ -216,6 +219,7 @@ class XAIParseTest(unittest.TestCase):
                     item_id="msg_003",
                     text="Hello, how are you?",
                 ),
+                me.InputTranscriptionFailedEvent(item_id="msg_004"),
                 me.TranscriptDeltaEvent(
                     item_id="resp_001",
                     delta="Hello! I'm doing",
@@ -372,13 +376,12 @@ class XAIClientFramesTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_barge_in_cancels_without_truncating(self) -> None:
-        """A barge-in cancels the response; there is no truncate frame."""
+    async def test_barge_in_cancels_the_response(self) -> None:
+        """A barge-in cancels the response."""
         self.model._parse(
             {"type": "response.created", "response": {"id": "resp_001"}},
         )
         await self.model.cancel_response()
-        await self.model.truncate("resp_001", 1500, "Hello! I'm")
         self.assertListEqual(self.sent, [{"type": "response.cancel"}])
 
 

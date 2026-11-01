@@ -2,6 +2,8 @@ type: realtime_model
 name: gpt-realtime-2.1-mini
 label: GPT Realtime 2.1 Mini
 status: active
+# Release date: https://developers.openai.com/api/docs/changelog
+release_date: 2026-07-06
 
 input_types:
   - audio/pcm

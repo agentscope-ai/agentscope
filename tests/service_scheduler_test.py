@@ -24,6 +24,7 @@ import tempfile
 from contextlib import AsyncExitStack
 from datetime import datetime
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -42,6 +43,7 @@ from agentscope.app.storage import (
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
+from agentscope.message import ToolResultState
 
 
 def _make_storage(
@@ -436,6 +438,59 @@ class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
                 if self.job_ids(owner):
                     break
             self.assertListEqual(self.job_ids(owner), [record.id])
+
+
+class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
+    """Agent-facing deletes notify the node that owns the timers."""
+
+    async def asyncSetUp(self) -> None:
+        """Create a writer that does not own the timers."""
+        await super().asyncSetUp()
+        self.writer = SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=FakeWorkspaceManager(),
+            enabled=False,
+        )
+        self.delete_tool = next(
+            tool
+            for tool in await self.writer.list_tools(
+                user_id="u",
+                agent_id="a",
+                chat_model_config=_make_record().data.chat_model_config,
+            )
+            if tool.name == "ScheduleDelete"
+        )
+
+    async def test_non_owner_delete_removes_owner_job(self) -> None:
+        """Subscription removes the owner's job before the periodic pass."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        async with self.writer, self.manager:
+            self.assertListEqual(self.job_ids(self.writer), [])
+            self.assertListEqual(self.job_ids(), [record.id])
+
+            result = await self.delete_tool(schedule_id=record.id)
+
+            self.assertEqual(result.state, ToolResultState.SUCCESS)
+            self.assertIsNone(await self.storage.get_schedule("u", record.id))
+            for _ in range(50):
+                if not self.job_ids():
+                    break
+                await asyncio.sleep(0.02)
+            self.assertListEqual(self.job_ids(), [])
+
+    async def test_missing_delete_does_not_notify(self) -> None:
+        """A missing record returns an error without a lifecycle event."""
+        with patch.object(
+            self.bus,
+            "publish",
+            wraps=self.bus.publish,
+        ) as publish:
+            result = await self.delete_tool(schedule_id="missing")
+
+        self.assertEqual(result.state, ToolResultState.ERROR)
+        publish.assert_not_awaited()
 
 
 class TestSchedulerFlag(TestCase):

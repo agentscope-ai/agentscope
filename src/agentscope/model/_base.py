@@ -160,6 +160,7 @@ class ChatModelBase:
         yaml_files = list(yaml_dir.glob("*.yaml"))
 
         # Load each YAML file and create ModelCard
+        model_class_type = getattr(cls, "type", "")
         model_cards = []
         for yaml_file in yaml_files:
             try:
@@ -167,6 +168,7 @@ class ChatModelBase:
                     yaml_path=str(yaml_file),
                     parameter_class=cls.Parameters,
                 )
+                card.model_class = model_class_type
                 model_cards.append(card)
             except Exception as e:
                 # Log error but continue with other files
@@ -283,6 +285,14 @@ class ChatModelBase:
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
+            finally:
+                # Closing this wrapper does not close the delegated iterator.
+                # Wait for provider cleanup before ``aclose`` returns.
+                aclose = getattr(res, "aclose", None)
+                if aclose is not None:
+                    maybe_awaitable = aclose()
+                    if inspect.isawaitable(maybe_awaitable):
+                        await maybe_awaitable
 
             if yield_acc_res:
                 yield acc_res.build()

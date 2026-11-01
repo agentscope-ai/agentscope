@@ -4,12 +4,21 @@ from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.event import (
     ConfirmResult,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import Msg, ToolCallBlock, UserMsg
+from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 from agentscope.pipeline import GoalPipeline
 from agentscope.types import ReplyFinishedReason
 
@@ -227,6 +236,72 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         # A malfunction is not charged to the executor.
         self.assertEqual(len(executor.received), 1)
 
+    async def test_retry_keeps_a_multimodal_goal(self) -> None:
+        """The retry reminder carries a multimodal goal as blocks."""
+        query = UserMsg(
+            name="user",
+            content=[
+                TextBlock(text="Check this chart"),
+                DataBlock(
+                    source=Base64Source(
+                        data="aGVsbG8=",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+        )
+        executor = StubAgent("executor", [[_report()]])
+        verifier = StubAgent(
+            "verifier",
+            [[_no_output("verifier")], [_verdict("pass")]],
+        )
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, query)
+
+        self.assertListEqual(
+            [block.model_dump() for block in verifier.received[1].content],
+            [
+                {
+                    "type": "text",
+                    "text": "<system-reminder>You have failed to generate "
+                    "valid verification result. You should call the "
+                    "'GenerateStructuredOutput' tool with a valid structured "
+                    "output that matches the schema. Recall the verification "
+                    "requirements as follows:\n<goal>",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "text",
+                    "text": "Check this chart",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": AnyString(),
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG8=",
+                        "media_type": "image/png",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "text",
+                    "text": "</goal></system-reminder>",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
+
     async def test_reprompts_an_executor_that_skips_the_tool(self) -> None:
         """The same for the executor: a missing report is asked for again
         rather than read through as if it were there."""
@@ -245,6 +320,105 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
             executor.received[1].get_text_content(),
         )
         self.assertEqual(len(verifier.received), 1)
+
+    async def test_gives_up_on_an_executor_that_never_reports(self) -> None:
+        """Stop after the initial attempt and the allowed retries."""
+        for max_retries in (0, 2):
+            with self.subTest(max_retries=max_retries):
+                missing = _no_output("executor")
+                executor = StubAgent("executor", [[missing]])
+                verifier = StubAgent("verifier", [[_verdict("pass")]])
+                pipe = GoalPipeline(
+                    executor,
+                    verifier,
+                    max_retries=max_retries,
+                )
+                yielded = []
+
+                with self.assertRaises(RuntimeError) as raised:
+                    async for chunk in pipe.reply_stream(
+                        UserMsg("user", "Build a crawler"),
+                    ):
+                        yielded.append(chunk)
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "The executor failed to generate a valid execution "
+                    f"report after {max_retries} retries.",
+                )
+                self.assertEqual(yielded, [missing] * (max_retries + 1))
+                self.assertEqual(len(executor.received), max_retries + 1)
+                self.assertEqual(verifier.received, [])
+
+    async def test_gives_up_on_a_verifier_that_never_verdicts(self) -> None:
+        """Bound retries with a missing verdict or an empty stream."""
+        for batch in ([], [_no_output("verifier")]):
+            with self.subTest(empty_stream=not batch):
+                report = _report("Completed; see main.py")
+                executor = StubAgent("executor", [[report]])
+                verifier = StubAgent("verifier", [batch])
+                pipe = GoalPipeline(executor, verifier, max_retries=2)
+                yielded = []
+
+                with self.assertRaises(RuntimeError) as raised:
+                    async for chunk in pipe.reply_stream(
+                        UserMsg("user", "Build a crawler"),
+                    ):
+                        yielded.append(chunk)
+
+                self.assertEqual(
+                    str(raised.exception),
+                    "The verifier failed to generate a valid verification "
+                    "result after 2 retries.",
+                )
+                self.assertEqual(yielded, [report])
+                self.assertEqual(
+                    (len(executor.received), len(verifier.received)),
+                    (1, 3),
+                )
+
+    async def test_a_fresh_run_restarts_the_retry_budget(self) -> None:
+        """Each participant can retry again after a previous run failed."""
+        for participant in ("executor", "verifier"):
+            with self.subTest(participant=participant):
+                report = _report("Completed; see main.py")
+                verdict = _verdict("pass")
+                executor = StubAgent("executor", [[report]])
+                verifier = StubAgent("verifier", [[verdict]])
+                missing = _no_output(participant)
+                if participant == "executor":
+                    executor.script = [[missing]] * 3 + [[report]]
+                    expected_yielded = [missing, report]
+                    expected_calls = (4, 1)
+                    output_name = "execution report"
+                else:
+                    verifier.script = [[missing]] * 3 + [[verdict]]
+                    expected_yielded = [report]
+                    expected_calls = (2, 4)
+                    output_name = "verification result"
+                pipe = GoalPipeline(executor, verifier, max_retries=1)
+
+                with self.assertRaises(RuntimeError) as raised:
+                    await self._run(
+                        pipe,
+                        UserMsg("user", "Build a crawler"),
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    f"The {participant} failed to generate a valid "
+                    f"{output_name} after 1 retries.",
+                )
+
+                # The new run must retry once before succeeding.
+                yielded = await self._run(
+                    pipe,
+                    UserMsg("user", "Build another crawler"),
+                )
+                self.assertEqual(yielded, expected_yielded)
+                self.assertEqual(
+                    (len(executor.received), len(verifier.received)),
+                    expected_calls,
+                )
 
     async def test_a_parked_executor_is_not_verified(self) -> None:
         """The work is unfinished while the executor waits on a human, so

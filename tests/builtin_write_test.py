@@ -10,6 +10,7 @@ from agentscope.tool import Write
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 from agentscope.state import AgentState
@@ -245,3 +246,58 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent."""
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {
+                    "file_path": f"/tmp/probe/{parent}/out.csv",
+                    "content": "x",
+                }
+                engine = PermissionEngine(PermissionContext())
+                first = await engine.check_permission(
+                    self.write_tool,
+                    tool_input,
+                )
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Write",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                engine.add_rule(first.suggested_rules[0])
+                approved = await engine.check_permission(
+                    self.write_tool,
+                    tool_input,
+                )
+                unrelated = await engine.check_permission(
+                    self.write_tool,
+                    {
+                        **tool_input,
+                        "file_path": f"/tmp/probe/{sibling}/out.csv",
+                    },
+                )
+                self.assertEqual(
+                    [
+                        first.behavior,
+                        approved.behavior,
+                        unrelated.behavior,
+                    ],
+                    [
+                        PermissionBehavior.ASK,
+                        PermissionBehavior.ALLOW,
+                        PermissionBehavior.ASK,
+                    ],
+                )

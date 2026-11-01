@@ -79,13 +79,31 @@ class TeamOrigin(BaseModel):
     type: Literal["team"] = "team"
 
 
+class SOPOrigin(BaseModel):
+    """A session a SOP run opened to hold one of its conversations."""
+
+    type: Literal["sop"] = "sop"
+
+    sop_run_id: str
+    """The run that opened it."""
+
+    session_key: str
+    """Which of the run's conversations this is."""
+
+
 # How a session came to exist. Fixed when the session is created and
 # never rewritten, which is what separates it from
 # ``SessionRecord.team_id``: team membership is granted by a tool call
 # inside an existing session and can be revoked, so it is a field of its
 # own rather than a member of this union.
 SessionOrigin = Annotated[
-    Union[UserOrigin, ScheduleOrigin, ChannelOrigin, TeamOrigin],
+    Union[
+        UserOrigin,
+        ScheduleOrigin,
+        ChannelOrigin,
+        TeamOrigin,
+        SOPOrigin,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -101,6 +119,10 @@ class ChatModelConfig(BaseModel):
 
     model: str
     """The model name."""
+
+    model_class: str = ""
+    """The model implementation class type (e.g. ``openai_chat``,
+    ``openai_response``). Empty string means use default resolution."""
 
     parameters: dict
     """The model parameters."""
@@ -118,8 +140,32 @@ class TTSModelConfig(BaseModel):
     model: str
     """The TTS model name."""
 
+    voice_profile_id: str | None = None
+    """The owner-scoped voice profile used for a custom voice.
+
+    Profiles bind the voice to its owner, credential and synthesis model.
+    Direct voice IDs remain supported with owned credentials. Shared
+    credentials may only use default or known preset voices without a profile.
+    """
+
     parameters: dict
     """TTS parameters (voice, language, etc.)."""
+
+
+class RealtimeModelConfig(BaseModel):
+    """The realtime voice model configuration class."""
+
+    type: str
+    """The realtime adapter type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The realtime model name."""
+
+    parameters: dict
+    """Realtime model parameters (voice, turn detection, etc.)."""
 
 
 class EmbeddingModelConfig(BaseModel):
@@ -268,6 +314,9 @@ class SessionConfig(BaseModel):
 
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
+
+    realtime_model_config: RealtimeModelConfig | None = None
+    """The realtime voice model config. None disables voice mode."""
 
     knowledge_config: SessionKnowledgeConfig | None = None
     """Knowledge bases attached to this session and the corresponding

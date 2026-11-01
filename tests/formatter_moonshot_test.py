@@ -4,6 +4,8 @@ MoonshotMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch, MagicMock
 
@@ -359,6 +361,13 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_empty_thinking_only_yields_no_message(self) -> None:
+        """An empty ThinkingBlock alone must not be sent."""
+        res = await MoonshotChatFormatter().format(
+            [AssistantMsg("a", [ThinkingBlock(thinking="")])],
+        )
+        self.assertListEqual(res, [])
+
     async def test_chat_formatter_assistant_always_has_reasoning_content(
         self,
     ) -> None:
@@ -417,6 +426,92 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{expected_b64}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = MoonshotChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_base64_video(self) -> None:
+        """Base64-encoded video is emitted as a video URL block."""
+        fmt = MoonshotChatFormatter(
+            input_types=["text/plain", "video/mp4"],
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="What happens in this video?"),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZSB2aWRlbw==",
+                            media_type="video/mp4",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What happens in this video?",
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": (
+                                    "data:video/mp4;base64," "ZmFrZSB2aWRlbw=="
+                                ),
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
         )
 
     async def test_chat_formatter_url_image_in_tool_result(

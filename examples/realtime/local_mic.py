@@ -33,7 +33,13 @@ async def main() -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise SystemExit("Set DASHSCOPE_API_KEY first.")
-    credential = DashScopeCredential(api_key=api_key)
+    credential = DashScopeCredential(
+        api_key=api_key,
+        base_url=os.environ.get(
+            "DASHSCOPE_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+    )
 
     # Resolve the model class from its card rather than hard-coding it:
     # a credential can serve several realtime APIs, and each card carries
@@ -48,7 +54,7 @@ async def main() -> None:
 
     agent = RealtimeAgent(
         name="Friday",
-        system_prompt="你是一个中文语音助手，回答尽量简短。",
+        system_prompt="You are a concise voice assistant.",
         model=model,
         toolkit=Toolkit(tools=[Bash(), Edit(), Write(), Read()]),
     )

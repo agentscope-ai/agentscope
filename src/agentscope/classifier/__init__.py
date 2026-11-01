@@ -14,10 +14,12 @@ from ._response import (
     ChoiceAnswer,
     ClassifierAnswer,
     ClassifierResponse,
+    RefusalAnswer,
     ScoreAnswer,
 )
 from ._usage import ClassifierUsage
 from ._jev import JevClassifierModel
+from ._openai import OpenAIClassifierModel
 
 __all__ = [
     "BinaryAnswer",
@@ -31,6 +33,8 @@ __all__ = [
     "ClassifierResponse",
     "ClassifierUsage",
     "JevClassifierModel",
+    "OpenAIClassifierModel",
+    "RefusalAnswer",
     "ScoreAnswer",
     "ScoreQuestion",
 ]

@@ -48,6 +48,7 @@ imports the bus; bus code never imports storage.
 import asyncio
 from enum import StrEnum
 
+from .._chat_input_store import cleanup_session
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ..workspace_manager import WorkspaceManagerBase
@@ -266,22 +267,22 @@ class SessionService:
         unconditionally. Every process's
         :class:`~agentscope.app._manager.CancelDispatcher` reacts to the
         broadcast by cancelling whatever it locally holds for the
-        session — the chat-run asyncio task **and** any background
-        tasks owned by that session. The publisher does not need to
-        know which worker holds which piece.
+        session — the chat or realtime run **and** any background tasks
+        owned by that session. The publisher does not need to know
+        which worker holds which piece.
 
         After publishing, polls
         :meth:`MessageBus.session_is_running` until the distributed
-        chat-run lock clears. Only the chat run holds a distributed
-        lock; BG tasks do not, so this poll only waits for the chat
-        run. Returns immediately when no chat run was active.
+        session-run lock clears. Chat and realtime runs use that lock;
+        BG tasks do not, so this poll waits only for the active agent
+        run. Returns immediately when no run was active.
 
         Idempotent: calling on an idle session just sends a no-op
         broadcast and observes a clear lock.
 
         Args:
             session_id (`str`):
-                The session whose chat run + BG tasks should be
+                The session whose agent run and BG tasks should be
                 cancelled.
             timeout (`float`, defaults to ``10.0``):
                 Maximum seconds to wait for the chat-run lock to
@@ -291,7 +292,7 @@ class SessionService:
 
         Returns:
             `bool`:
-                ``True`` if the chat-run lock was confirmed released
+                ``True`` if the session-run lock was confirmed released
                 within ``timeout`` seconds (or was never held).
                 ``False`` if the lock was still held when the timeout
                 expired.
@@ -658,11 +659,22 @@ class SessionService:
         await self._bus.queue_delete(
             MessageBusKeys.inbox(session_id),
         )
+        await self._bus.queue_delete(
+            MessageBusKeys.chat_inputs(session_id),
+        )
+        await self._bus.registry_del(
+            MessageBusKeys.chat_input_inflight_registry(),
+            session_id,
+        )
+        await cleanup_session(self._bus, session_id)
         await self._bus.registry_drop(
             MessageBusKeys.inbox_consumer(session_id),
         )
         await self._bus.registry_drop(
             MessageBusKeys.bg_tasks(session_id),
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.session_event_checkpoint(session_id),
         )
 
     async def _purge_subagent_hitl(

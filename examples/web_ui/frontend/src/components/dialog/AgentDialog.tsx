@@ -67,9 +67,11 @@ export function AgentDialog({ onCreated, children }: Props) {
 				{
 					name,
 					system_prompt: values.identity.system_prompt as string | undefined,
-					context_config: values.context_config as unknown as ContextConfig,
-					react_config: values.react_config as unknown as ReActConfig,
-					invite_config: values.invite_config as unknown as InviteConfig,
+					chat_config: {
+						context_config: values.context_config as unknown as ContextConfig,
+						react_config: values.react_config as unknown as ReActConfig,
+						invite_config: values.invite_config as unknown as InviteConfig,
+					},
 				},
 				{ silent: true },
 			);

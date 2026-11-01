@@ -210,12 +210,15 @@ class VolcengineChatModel(ChatModelBase):
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
-            kwargs.setdefault("extra_body", {})
-            kwargs["extra_body"].setdefault("thinking", {})
-            kwargs["extra_body"]["thinking"].setdefault(
-                "type",
-                thinking_type,
-            )
+            # Build a new dict so the caller's extra_body is never mutated
+            extra_body = kwargs.get("extra_body") or {}
+            kwargs["extra_body"] = {
+                **extra_body,
+                "thinking": {
+                    "type": thinking_type,
+                    **extra_body.get("thinking", {}),
+                },
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -277,11 +280,11 @@ class VolcengineChatModel(ChatModelBase):
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=(
-                            getattr(details, "cached_tokens", 0)
+                            getattr(details, "cached_tokens", 0) or 0
                             if details
                             else 0
                         ),
@@ -384,11 +387,11 @@ class VolcengineChatModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=(
-                    getattr(details, "cached_tokens", 0) if details else 0
+                    getattr(details, "cached_tokens", 0) or 0 if details else 0
                 ),
             )
 

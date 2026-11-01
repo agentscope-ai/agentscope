@@ -223,7 +223,7 @@ to complete the task independently.
                 enabled=enabled,
                 cron_expression=cron_expression,
                 timezone=timezone,
-                started_at=started_at or datetime.now(),
+                started_at=started_at or datetime.now().astimezone(),
                 ended_at=ended_at,
                 stateful=stateful,
                 permission_mode=perm_mode,
