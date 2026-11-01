@@ -1438,6 +1438,138 @@ class TestChatInputClaimReliability(IsolatedAsyncioTestCase):
 class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
     """Tests covering the ``__aenter__`` / ``__aexit__`` ACM behaviour."""
 
+    async def test_startup_rejects_listener_ending_after_ready(self) -> None:
+        """Readiness alone is insufficient if the listener already exited."""
+
+        async def subscribe(
+            _key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            if on_ready is not None:
+                on_ready()
+            return
+            yield {}  # pylint: disable=unreachable
+
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        with patch.object(bus, "subscribe", subscribe), patch.object(
+            bus,
+            "publish",
+            wraps=bus.publish,
+        ) as publish:
+            with self.assertRaisesRegex(RuntimeError, "subscription"):
+                # pylint: disable=unnecessary-dunder-call
+                await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+            publish.assert_not_awaited()
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
+    async def test_initial_publish_failure_cleans_up_started_tasks(
+        self,
+    ) -> None:
+        """Failed entry must cancel both tasks without using the failed bus."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        error = ConnectionError("initial publish failed")
+        started: list[asyncio.Task] = []
+
+        async def publish(_key: str, _payload: dict) -> None:
+            started.extend([dispatcher._task, dispatcher._fallback_task])
+            raise error
+
+        with patch.object(bus, "publish", publish), patch.object(
+            bus,
+            "acquire_lock",
+        ) as acquire_lock:
+            with self.assertRaises(ConnectionError) as raised:
+                # pylint: disable=unnecessary-dunder-call
+                await dispatcher.__aenter__()
+            acquire_lock.assert_not_called()
+        self.assertIs(raised.exception, error)
+        self.assertEqual(len(started), 2)
+        self.assertTrue(all(task.done() for task in started))
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
+    async def test_cancelling_initial_publish_cleans_up_started_tasks(
+        self,
+    ) -> None:
+        """Cancellation after readiness also cleans up the started tasks."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        publishing = asyncio.Event()
+
+        async def publish(_key: str, _payload: dict) -> None:
+            publishing.set()
+            await asyncio.Event().wait()
+
+        with patch.object(bus, "publish", publish):
+            # pylint: disable=unnecessary-dunder-call
+            startup = asyncio.create_task(dispatcher.__aenter__())
+            await asyncio.wait_for(publishing.wait(), timeout=1)
+            started = [dispatcher._task, dispatcher._fallback_task]
+            startup.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await startup
+        self.assertTrue(all(task.done() for task in started))
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
+    async def test_startup_rechecks_listener_after_initial_publish(
+        self,
+    ) -> None:
+        """The listener may end while the initial publish is in flight."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        end_subscription = asyncio.Event()
+
+        async def subscribe(
+            _key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            if on_ready is not None:
+                on_ready()
+            await end_subscription.wait()
+            return
+            yield {}  # pylint: disable=unreachable
+
+        async def publish(_key: str, _payload: dict) -> None:
+            end_subscription.set()
+            await dispatcher._task
+
+        with patch.object(bus, "subscribe", subscribe), patch.object(
+            bus,
+            "publish",
+            publish,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "subscription"):
+                # pylint: disable=unnecessary-dunder-call
+                await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
     async def test_recovery_sweep_has_one_cluster_leader(self) -> None:
         """Two processes sharing a bus do not both run the O(N) sweep."""
 

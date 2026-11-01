@@ -142,12 +142,31 @@ class WakeupDispatcher:
             name="wakeup-dispatcher",
         )
         await ready.wait()
-        self._fallback_task = asyncio.create_task(
-            self._fallback_loop(),
-            name="wakeup-dispatcher:fallback",
-        )
-        await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
-        self._chat_queue.schedule_recovery()
+        try:
+            if self._task.done():
+                raise RuntimeError("Wakeup subscription ended during startup")
+            self._fallback_task = asyncio.create_task(
+                self._fallback_loop(),
+                name="wakeup-dispatcher:fallback",
+            )
+            await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
+            if self._task.done():
+                raise RuntimeError("Wakeup subscription ended during startup")
+            self._chat_queue.schedule_recovery()
+        except BaseException:
+            # Failed entry does not invoke __aexit__. No recovery sweep has
+            # started yet, so unwind local tasks without calling the bus.
+            tasks = [
+                task
+                for task in (self._task, self._fallback_task)
+                if task is not None
+            ]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._task = None
+            self._fallback_task = None
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:
