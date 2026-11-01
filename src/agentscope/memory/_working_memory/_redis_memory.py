@@ -38,6 +38,13 @@ class RedisMemory(MemoryBase):
     List with the key pattern:
     ``user_id:{user_id}:session:{session_id}:mark:{mark}``
 
+    Compressed summaries are stored in Redis with the session's namespace and
+    sliding TTL. Reads with ``prepend_summary=True`` reload the summary, so
+    rebuilt instances and other clients see the backend's current value.
+    The synchronous ``load_state_dict`` can stage a legacy summary for the
+    next summary-bearing read. It initializes a missing Redis summary without
+    replacing an existing value, which may be newer than the snapshot.
+
     """
 
     SESSION_KEY = "user_id:{user_id}:session:{session_id}:messages"
@@ -61,6 +68,9 @@ class RedisMemory(MemoryBase):
     """Redis key pattern (without prefix) for storing all mark names as a set.
     This is used to avoid scanning all keys to find marks.
     """
+
+    SUMMARY_KEY = "user_id:{user_id}:session:{session_id}:summary"
+    """Redis key pattern for the session's compressed summary."""
 
     def __init__(
         self,
@@ -122,6 +132,7 @@ class RedisMemory(MemoryBase):
         self.user_id = user_id
         self.key_prefix = key_prefix or ""
         self.key_ttl = key_ttl
+        self._pending_summary_restore: str | None = None
 
         self._client = redis.Redis(
             host=host,
@@ -194,6 +205,65 @@ class RedisMemory(MemoryBase):
             user_id=self.user_id,
             session_id=self.session_id,
         )
+
+    def _get_summary_key(self) -> str:
+        """Return the summary key in the current user/session namespace."""
+        return self.key_prefix + self.SUMMARY_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
+
+    async def update_compressed_summary(self, summary: str) -> None:
+        """Persist the summary before acknowledging the local state update.
+
+        Args:
+            summary (`str`):
+                The replacement summary, or an empty string to remove it.
+        """
+        pipe = self._client.pipeline()
+        key = self._get_summary_key()
+        if summary:
+            await pipe.set(key, summary)
+            if self.key_ttl is not None:
+                # The session scan cannot see a newly queued summary key yet.
+                # EXPIRE also preserves zero/negative TTL behavior.
+                await pipe.expire(key, self.key_ttl)
+        else:
+            await pipe.delete(key)
+        await self._refresh_session_ttl(pipe=pipe)
+        await pipe.execute()
+        self._compressed_summary = summary
+        self._pending_summary_restore = None
+
+    def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
+        """Restore state and stage a legacy summary if Redis has none.
+
+        Args:
+            state_dict (`dict`):
+                State previously exported by ``state_dict``.
+            strict (`bool`, defaults to True):
+                Whether missing registered state should raise an error.
+        """
+        super().load_state_dict(state_dict, strict=strict)
+        if "_compressed_summary" in state_dict:
+            self._pending_summary_restore = self._compressed_summary
+
+    async def _load_compressed_summary(self) -> None:
+        """Import missing legacy data, then read the current Redis summary."""
+        if self._pending_summary_restore is not None:
+            if self._pending_summary_restore:
+                pipe = self._client.pipeline()
+                key = self._get_summary_key()
+                # SET NX protects summaries written by other instances while
+                # this explicit legacy-state restoration is in progress.
+                await pipe.set(key, self._pending_summary_restore, nx=True)
+                if self.key_ttl is not None:
+                    await pipe.expire(key, self.key_ttl)
+                await self._refresh_session_ttl(pipe=pipe)
+                await pipe.execute()
+            self._pending_summary_restore = None
+        summary = await self._client.get(self._get_summary_key())
+        self._compressed_summary = self._decode_if_bytes(summary) or ""
 
     def _get_mark_key(self, mark: str) -> str:
         """Get the Redis key for a specific mark.
@@ -453,7 +523,10 @@ class RedisMemory(MemoryBase):
                     msg_dict = json.loads(msg_data)
                     messages.append(Msg.from_dict(msg_dict))
 
-        # Refresh TTLs
+        if prepend_summary:
+            await self._load_compressed_summary()
+
+        # Refresh TTLs, including the summary when present.
         await self._refresh_session_ttl()
 
         if prepend_summary and self._compressed_summary:
@@ -651,7 +724,7 @@ class RedisMemory(MemoryBase):
         return total_removed
 
     async def clear(self) -> None:
-        """Clear all messages belong to this session from the storage."""
+        """Clear this session's messages, marks and compressed summary."""
         msg_ids = await self._client.lrange(self._get_session_key(), 0, -1)
         msg_ids = self._decode_list(msg_ids)
 
@@ -674,7 +747,11 @@ class RedisMemory(MemoryBase):
         # Delete the marks index
         await pipe.delete(self._get_marks_index_key())
 
+        await pipe.delete(self._get_summary_key())
+
         await pipe.execute()
+        self._compressed_summary = ""
+        self._pending_summary_restore = None
 
     async def size(self) -> int:
         """Get the number of messages in the storage.
