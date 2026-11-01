@@ -135,13 +135,38 @@ class WakeupDispatcher:
 
         Returns:
             `Self`: This dispatcher instance.
+
+        Raises:
+            `Exception`:
+                The subscription's error if it fails before it is live,
+                or `RuntimeError` if it ends cleanly before then. The
+                loop task is cancelled first, as on a cancelled startup.
         """
         ready = asyncio.Event()
-        self._task = asyncio.create_task(
+        loop_task = asyncio.create_task(
             self._loop(ready),
             name="wakeup-dispatcher",
         )
-        await ready.wait()
+        self._task = loop_task
+        ready_waiter = asyncio.create_task(ready.wait())
+        try:
+            await asyncio.wait(
+                {loop_task, ready_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not ready.is_set():
+                await loop_task
+                raise RuntimeError(
+                    "WakeupDispatcher subscription ended before it was "
+                    "ready.",
+                )
+        except BaseException:
+            loop_task.cancel()
+            await asyncio.gather(loop_task, return_exceptions=True)
+            self._task = None
+            raise
+        finally:
+            ready_waiter.cancel()
         self._fallback_task = asyncio.create_task(
             self._fallback_loop(),
             name="wakeup-dispatcher:fallback",
@@ -194,6 +219,8 @@ class WakeupDispatcher:
             ):
                 await self._drain_and_dispatch()
         except Exception:  # pylint: disable=broad-except
+            if not ready.is_set():
+                raise
             logger.exception(
                 "WakeupDispatcher loop crashed; subscription ended.",
             )
