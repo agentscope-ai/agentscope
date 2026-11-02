@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """Tests for queued-message steering state and reasoning boundaries."""
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
+
+import fakeredis.aioredis
 
 from agentscope.app import _bus_ops
 from agentscope.app._bus_ops import (
@@ -17,8 +21,14 @@ from agentscope.app._bus_ops import (
     register_active_chat_reply,
     steer_chat_input,
 )
-from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 from agentscope.app.middleware import SteeringMiddleware
+from agentscope.app.middleware import _steering_middleware as _steering_adapter
 from agentscope.event import HintBlockEvent
 from agentscope.message import (
     AssistantMsg,
@@ -105,7 +115,7 @@ def _expected_hint_event(item_id: str, message: Msg) -> dict:
     )
 
 
-async def _custom_events(bus: InMemoryMessageBus) -> list[dict]:
+async def _custom_events(bus: MessageBus) -> list[dict]:
     """Read complete custom events without generated identity fields."""
     entries = await bus.log_read(MessageBusKeys.session_events("session"))
     events: list[dict] = []
@@ -116,6 +126,194 @@ async def _custom_events(bus: InMemoryMessageBus) -> list[dict]:
         stable.pop("id")
         events.append(stable)
     return events
+
+
+@asynccontextmanager
+async def _cancellation_bus(backend: str) -> AsyncGenerator[MessageBus, None]:
+    """Exercise the same cancellation boundaries with both bus backends."""
+    if backend == "memory":
+        async with InMemoryMessageBus() as bus:
+            yield bus
+    else:
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        try:
+            redis_bus = RedisMessageBus()
+            with patch.object(redis_bus, "_client", redis):
+                yield redis_bus
+        finally:
+            await redis.aclose()
+
+
+class TestSteeringCancellation(IsolatedAsyncioTestCase):
+    """Cancellation must not undo context after the queue commit."""
+
+    async def test_cancellation_waits_for_acknowledgement_outcome(
+        self,
+    ) -> None:
+        """Persist only after commit resolution, even on repeated Stop."""
+        for backend in ("memory", "redis"):
+            for boundary in (
+                "before_commit",
+                "before_commit_failure",
+                "commit_response",
+                "payload_cleanup",
+                "queue_notification",
+                "injection_notification",
+            ):
+                for cancellations in (1, 3):
+                    with self.subTest(
+                        backend=backend,
+                        boundary=boundary,
+                        cancellations=cancellations,
+                    ):
+                        async with _cancellation_bus(backend) as bus:
+                            await self._check_cancellation(
+                                bus,
+                                boundary,
+                                cancellations,
+                            )
+
+    async def _check_cancellation(
+        self,
+        bus: MessageBus,
+        boundary: str,
+        cancellations: int,
+    ) -> None:
+        """Cancel at a controlled await, then release its actual outcome."""
+        agent = _make_agent()
+        initial = agent.state.context[0]
+        messages = [
+            UserMsg("user", text) for text in ("first", "guide", "last")
+        ]
+        items = [
+            await enqueue_chat_input(bus, "user", "session", "agent", msg)
+            for msg in messages
+        ]
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        ack_cancelled = asyncio.Event()
+        finished = asyncio.Event()
+        persisted: list = []
+        restored: list = []
+        model_calls: list = []
+
+        async def model_call(**_kwargs: object) -> AsyncGenerator:
+            model_calls.append("called")
+            yield AssistantMsg(id="reply", name="agent", content="unused")
+
+        async def run() -> None:
+            try:
+                await _collect(
+                    SteeringMiddleware(bus).on_reasoning(
+                        agent,
+                        {},
+                        model_call,
+                    ),
+                )
+            finally:
+                persisted.extend(_message_structures(agent.state.context))
+                restored.extend(
+                    await finish_active_chat_reply(bus, "session", "reply"),
+                )
+                finished.set()
+
+        target: Any
+        if boundary in (
+            "before_commit",
+            "before_commit_failure",
+            "commit_response",
+        ):
+            target, operation = bus, "queue_replace"
+        elif boundary == "payload_cleanup":
+            target, operation = _bus_ops, "discard_input"
+        elif boundary == "queue_notification":
+            target, operation = _bus_ops, "_notify_chat_queue_changed"
+        else:
+            target, operation = _steering_adapter, "publish_session_event"
+
+        original = getattr(target, operation)
+        async with bus.acquire_lock(MessageBusKeys.session_lock("session")):
+            await register_active_chat_reply(bus, "session", "reply")
+            await steer_chat_input(
+                bus,
+                "user",
+                "session",
+                "agent",
+                items[1]["id"],
+                "reply",
+            )
+            with patch.object(target, operation) as mocked:
+
+                async def blocked(*args: Any, **kwargs: Any) -> Any:
+                    if entered.is_set():
+                        return await original(*args, **kwargs)
+                    result = None
+                    if boundary == "commit_response":
+                        result = await original(*args, **kwargs)
+                    entered.set()
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        ack_cancelled.set()
+                        raise
+                    if boundary == "before_commit_failure":
+                        raise RuntimeError("commit rejected")
+                    if boundary == "commit_response":
+                        return result
+                    return await original(*args, **kwargs)
+
+                mocked.side_effect = blocked
+                task = asyncio.create_task(run())
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=2)
+                    for _ in range(cancellations):
+                        task.cancel("stop")
+                        await asyncio.sleep(0)
+                    self.assertFalse(ack_cancelled.is_set())
+                    self.assertFalse(finished.is_set())
+                finally:
+                    release.set()
+                    with self.assertRaises(asyncio.CancelledError) as raised:
+                        await asyncio.wait_for(task, timeout=2)
+                    self.assertEqual(raised.exception.args, ("stop",))
+
+        rejected = boundary == "before_commit_failure"
+        expected_context = [initial]
+        if not rejected:
+            expected_context.append(
+                _expected_hint_message(items[1]["id"], messages[1]),
+            )
+        self.assertEqual(persisted, _message_structures(expected_context))
+        self.assertEqual(_message_structures(agent.state.context), persisted)
+        self.assertEqual(model_calls, [])
+        self.assertEqual(restored, [items[1]["id"]] if rejected else [])
+        self.assertEqual(
+            await list_chat_inputs(bus, "session"),
+            items if rejected else [items[0], items[2]],
+        )
+        remaining = items if rejected else [items[0], items[2]]
+        self.assertEqual(
+            await bus.registry_getall(
+                MessageBusKeys.chat_input_payloads("session"),
+            ),
+            {item["id"]: json.dumps(item["input"]) for item in remaining},
+        )
+        self.assertEqual(
+            await _custom_events(bus),
+            []
+            if rejected
+            else [
+                {
+                    "metadata": {},
+                    "type": "CUSTOM",
+                    "name": "chat_input_injected",
+                    "value": {
+                        "queue_item_id": items[1]["id"],
+                        "message_ids": [messages[1].id],
+                    },
+                },
+            ],
+        )
 
 
 class TestSteeringQueueState(IsolatedAsyncioTestCase):

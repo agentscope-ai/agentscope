@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Inject steering inputs at normal Agent reasoning boundaries."""
+import asyncio
 from contextlib import aclosing
 from typing import Any, AsyncGenerator, Callable, TYPE_CHECKING
 
@@ -136,11 +137,32 @@ class SteeringMiddleware(MiddlewareBase):
             return []
 
         rollback = self._append_hints(agent, hints)
+        acknowledgement = asyncio.create_task(
+            self._source.acknowledge(session_id, reply_id, prepared),
+        )
+        cancellation: asyncio.CancelledError | None = None
+        # Cancellation is not evidence that acknowledgement failed: the
+        # source may already have removed the inputs. Resolve its outcome
+        # before either rolling back or allowing reply persistence to run.
+        while not acknowledgement.done():
+            try:
+                await asyncio.shield(acknowledgement)
+            except asyncio.CancelledError as exc:
+                if cancellation is None:
+                    cancellation = exc
+            except Exception:
+                break
         try:
-            await self._source.acknowledge(session_id, reply_id, prepared)
-        except BaseException:
+            acknowledgement.result()
+        except BaseException as exc:
             rollback()
+            if cancellation is not None:
+                raise cancellation from exc
             raise
+        # Keep committed hints. Replaying the cancellation inside the rollback
+        # handler would lose them after the source had consumed their inputs.
+        if cancellation is not None:
+            raise cancellation
 
         return [
             HintBlockEvent(

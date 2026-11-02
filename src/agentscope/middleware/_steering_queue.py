@@ -27,6 +27,11 @@ class SteeringSource(ABC):
 
     Reads must be non-destructive. Acknowledgement removes only the supplied
     inputs and must raise before committing if it cannot accept the change.
+    The middleware waits for acknowledgement in a shielded task, including
+    when its caller is repeatedly cancelled. Sources must finish committing
+    before returning and must not report post-commit cleanup or notification
+    failures as acknowledgement failures. Cancellation is propagated only
+    after the middleware has resolved whether to retain or roll back hints.
     Lifecycle hooks are optional for externally managed sources.
     """
 
