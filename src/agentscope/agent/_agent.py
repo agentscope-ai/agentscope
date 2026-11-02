@@ -1120,6 +1120,13 @@ class Agent:
             if is_awaiting:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
+                # The event may complete a round that parked on a HITL
+                # interaction (external result, or the last remaining
+                # confirmation denied), so it counts here like the loop's
+                # end-of-pass check. Partial resumptions keep unfinished
+                # tool calls, so a round is never counted twice.
+                if not self.state.get_unfinished_tool_calls(self.name):
+                    self.state.cur_iter += 1
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
