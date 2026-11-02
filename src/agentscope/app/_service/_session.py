@@ -668,6 +668,10 @@ class SessionService:
             MessageBusKeys.chat_inputs(session_id),
         )
         await self._bus.registry_del(
+            MessageBusKeys.chat_active_reply_registry(),
+            session_id,
+        )
+        await self._bus.registry_del(
             MessageBusKeys.chat_input_inflight_registry(),
             session_id,
         )

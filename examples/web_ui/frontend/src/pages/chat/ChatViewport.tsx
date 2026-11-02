@@ -264,12 +264,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		msgs,
 		loading: messagesLoading,
 		phase,
+		activeReplyId,
 		queuedCount,
 		queuedItems,
 		queueReorderDisabled,
 		send,
 		updateQueued,
 		deleteQueued,
+		steerQueued,
 		moveQueued,
 		reorderQueued,
 		onUserConfirm,
@@ -924,6 +926,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
+									activeReplyId={activeReplyId}
 									queuedCount={queuedCount}
 									queuedItems={queuedItems}
 									queueReorderDisabled={queueReorderDisabled}
@@ -933,6 +936,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									onInterrupt={interrupt}
 									onUpdateQueued={updateQueued}
 									onDeleteQueued={deleteQueued}
+									onSteerQueued={steerQueued}
 									onMoveQueued={moveQueued}
 									onReorderQueued={reorderQueued}
 									voiceState={realtimeVoice.state}
