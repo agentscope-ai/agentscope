@@ -34,8 +34,14 @@ from .._base import (
 if TYPE_CHECKING:
     import discord
 
+    from ....tool import ToolBase
+    from ....workspace import WorkspaceBase
+
 # Discord's hard limit is 2000 characters per message.
 _MAX_LEN = 2000
+# The upload cap for bots on an unboosted server; Discord rejects larger
+# attachments server-side, so guard the size before sending.
+_MAX_FILE_BYTES = 8 * 1024 * 1024
 # Give up (and park in 'failed') after this many connects that never came up.
 _MAX_CONNECT_ATTEMPTS = 2
 
@@ -429,6 +435,176 @@ class DiscordChannel(ChannelBase):
         """
         channel = await self._channel(chat_id)
         return getattr(channel, "name", "") or "" if channel else ""
+
+    # -- Agent-callable tools --
+
+    async def list_tools(
+        self,
+        workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
+    ) -> list["ToolBase"]:
+        """Expose the Discord discovery/send tools to the agent.
+
+        Args:
+            workspace (`WorkspaceBase`):
+                The calling session's workspace; the send-file tool reads
+                its payload from its backend by absolute path.
+            channel_user_id (`str | None`, optional): The platform user
+                the session acts as, passed through to the inherited tools.
+
+        Returns:
+            `list[ToolBase]`: The Discord agent tools.
+        """
+        from ._tools import (
+            ListChatMembers,
+            ListChats,
+            SendFile,
+            SendMessage,
+        )
+
+        backend = workspace.get_backend()
+        return [
+            ListChats(self, backend),
+            ListChatMembers(self, backend),
+            SendMessage(self, backend),
+            SendFile(self, backend),
+        ] + await super().list_tools(workspace, channel_user_id)
+
+    # -- Agent-tool operations (act on chats/users other than the current) --
+
+    async def list_chat_members(
+        self,
+        chat_id: str,
+        limit: int = 100,
+    ) -> list[dict]:
+        """List a chat's members as ``{user_id, name}`` dicts.
+
+        A DM chat yields its other participant; a server channel yields
+        the members who can view it (permission overwrites honoured).
+        The scan goes through REST, so the bot application must have the
+        Server Members privileged intent enabled — ``discord.Forbidden``
+        propagates to the caller otherwise.
+
+        Args:
+            chat_id (`str`): The channel id from a ``ListChats`` result.
+            limit (`int`): Maximum server members to scan; a DM chat
+                ignores it.
+
+        Returns:
+            `list[dict]`: One ``{user_id, name}`` per member.
+        """
+        channel = await self._channel(chat_id)
+        if channel is None:
+            return []
+        # Duck-typed (a DM has ``recipient``, a server channel ``guild``):
+        # fetch_* objects from a REST-only client carry both, and this
+        # stays testable without gateway-populated state.
+        recipient = getattr(channel, "recipient", None)
+        if recipient is not None:
+            return [
+                {
+                    "user_id": str(recipient.id),
+                    "name": recipient.display_name,
+                },
+            ]
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return []
+        members: list[dict] = []
+        async for member in guild.fetch_members(limit=limit):
+            if channel.permissions_for(member).view_channel:
+                members.append(
+                    {
+                        "user_id": str(member.id),
+                        "name": member.display_name,
+                    },
+                )
+        return members
+
+    async def send_message_to(
+        self,
+        target_id: str,
+        target_type: str,
+        text: str,
+    ) -> None:
+        """Send text to a channel/user other than the current chat.
+
+        Args:
+            target_id (`str`): Target id from a discovery tool.
+            target_type (`str`): ``"channel"`` or ``"user"``.
+            text (`str`): The message text; split at Discord's per-message
+                character cap before sending.
+
+        Raises:
+            Whatever ``discord.py`` raises for a malformed, missing, or
+            unreachable target — the tool layer reports it.
+        """
+        target = await self._messageable(target_id, target_type)
+        for part in self._split_long_message(text):
+            if part:
+                await target.send(part)
+
+    async def send_file_to(
+        self,
+        target_id: str,
+        target_type: str,
+        data: bytes,
+        file_name: str,
+    ) -> None:
+        """Send a file attachment to a channel/user other than the
+        current chat.
+
+        Args:
+            target_id (`str`): Target id from a discovery tool.
+            target_type (`str`): ``"channel"`` or ``"user"``.
+            data (`bytes`): The file bytes.
+            file_name (`str`): The file's display name.
+
+        Raises:
+            `ValueError`: The payload exceeds the bot upload cap.
+            Whatever ``discord.py`` raises otherwise — the tool layer
+            reports it.
+        """
+        import discord
+
+        if len(data) > _MAX_FILE_BYTES:
+            raise ValueError(
+                f"file is {len(data)} bytes; this bot may upload at most "
+                f"{_MAX_FILE_BYTES} bytes",
+            )
+        target = await self._messageable(target_id, target_type)
+        await target.send(
+            file=discord.File(io.BytesIO(data), filename=file_name),
+        )
+
+    async def _messageable(
+        self,
+        target_id: str,
+        target_type: str,
+    ) -> "discord.abc.Messageable":
+        """Resolve a discovery target to something ``send``-able.
+
+        Args:
+            target_id (`str`): Target id from a discovery tool.
+            target_type (`str`): ``"channel"`` or ``"user"``.
+
+        Returns:
+            `discord.abc.Messageable`: The channel or user to send to.
+
+        Raises:
+            `LookupError`: The id is malformed, or nothing exists at it.
+        """
+        if target_type == "user":
+            try:
+                uid = int(target_id)
+            except (TypeError, ValueError) as e:
+                raise LookupError(f"invalid user id {target_id!r}") from e
+            client = await self._ensure_client()
+            return client.get_user(uid) or await client.fetch_user(uid)
+        channel = await self._channel(target_id)
+        if channel is None:
+            raise LookupError(f"no Discord channel at id {target_id!r}")
+        return channel
 
     # -- Helpers --
 
