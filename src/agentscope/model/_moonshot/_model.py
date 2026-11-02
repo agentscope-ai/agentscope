@@ -32,8 +32,9 @@ class MoonshotChatModel(ChatModelBase):
     sampling parameters (``temperature``, ``top_p``, ``n``,
     ``presence_penalty``, ``frequency_penalty``) and ``thinking`` are
     omitted, including values supplied through ``extra_body``. Call-level
-    reasoning and token budgets override :class:`Parameters`; an explicit
-    ``max_completion_tokens`` takes precedence over call-level ``max_tokens``.
+    reasoning and token budgets override :class:`Parameters`. Token budgets
+    in ``extra_body`` override top-level budgets; within each level,
+    ``max_completion_tokens`` takes precedence over ``max_tokens``.
     """
 
     class Parameters(BaseModel):
@@ -260,6 +261,12 @@ class MoonshotChatModel(ChatModelBase):
                     for key, value in kwargs["extra_body"].items()
                     if key not in omitted
                 }
+                extra_body = kwargs["extra_body"]
+                if "max_tokens" in extra_body:
+                    extra_body.setdefault(
+                        "max_completion_tokens",
+                        extra_body.pop("max_tokens"),
+                    )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

@@ -6,10 +6,13 @@ Tests cover both non-streaming and streaming modes.
 """
 from copy import deepcopy
 from dataclasses import asdict
+import json
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, call
+
+import httpx
 
 from utils import AnyString
 
@@ -815,6 +818,131 @@ class MoonshotK3Test(IsolatedAsyncioTestCase):
                     )
                     self.assertDictEqual(kwargs, original)
             await model.client.close()
+
+    async def test_extra_body_budget_http_request(self) -> None:
+        """Normalize budgets before the SDK merges the final HTTP body."""
+        cases: list[
+            tuple[int | None, dict[str, int], dict[str, int], dict[str, int]]
+        ] = [
+            (None, {}, {}, {}),
+            (None, {}, {"max_tokens": 2048}, {"max_completion_tokens": 2048}),
+            (1024, {}, {}, {"max_completion_tokens": 1024}),
+            (1024, {}, {"max_tokens": 2048}, {"max_completion_tokens": 2048}),
+            (
+                1024,
+                {},
+                {"max_completion_tokens": 2048},
+                {"max_completion_tokens": 2048},
+            ),
+            (
+                1024,
+                {"max_tokens": 4096},
+                {"max_tokens": 2048},
+                {"max_completion_tokens": 2048},
+            ),
+            (
+                1024,
+                {"max_completion_tokens": 4096},
+                {"max_tokens": 2048},
+                {"max_completion_tokens": 2048},
+            ),
+            (
+                1024,
+                {"max_tokens": 4096, "max_completion_tokens": 8192},
+                {"max_tokens": 2048, "max_completion_tokens": 3072},
+                {"max_completion_tokens": 3072},
+            ),
+        ]
+        bodies: list[dict] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            bodies.append(body)
+            if body["stream"]:
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    text="data: [DONE]\n\n",
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "id": "kimi-1",
+                    "created": 0,
+                    "model": body["model"],
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "OK"},
+                        },
+                    ],
+                },
+            )
+
+        for name in _K3_MODELS:
+            for stream in (False, True):
+                model = MoonshotChatModel(
+                    credential=MoonshotCredential(api_key="test"),
+                    model=name,
+                    stream=stream,
+                    client_kwargs={
+                        "http_client": httpx.AsyncClient(
+                            transport=httpx.MockTransport(handle),
+                        ),
+                    },
+                )
+                self.addAsyncCleanup(model.client.close)
+                for budget, kwargs, extra_budget, expected in cases:
+                    with self.subTest(
+                        model=name,
+                        stream=stream,
+                        budget=budget,
+                        kwargs=kwargs,
+                        extra_budget=extra_budget,
+                    ):
+                        model.parameters = MoonshotChatModel.Parameters(
+                            max_tokens=budget,
+                        )
+                        extra_body = {
+                            **extra_budget,
+                            "prompt_cache_options": {"ttl": "1h"},
+                            "temperature": 0.2,
+                            "thinking": {"type": "disabled"},
+                        }
+                        original = deepcopy(extra_body)
+                        bodies.clear()
+                        response = await model(
+                            [],
+                            extra_body=extra_body,
+                            **kwargs,
+                        )
+                        if stream:
+                            async for _ in response:
+                                pass
+                        self.assertEqual(
+                            bodies,
+                            [
+                                {
+                                    "model": name,
+                                    "messages": [],
+                                    "stream": stream,
+                                    "prompt_cache_options": {"ttl": "1h"},
+                                    **expected,
+                                    **(
+                                        {
+                                            "stream_options": {
+                                                "include_usage": True,
+                                            },
+                                        }
+                                        if stream
+                                        else {}
+                                    ),
+                                },
+                            ],
+                        )
+                        self.assertEqual(extra_body, original)
 
     async def test_legacy_request_parameters(self) -> None:
         """Existing models keep their sampling and thinking behavior."""
