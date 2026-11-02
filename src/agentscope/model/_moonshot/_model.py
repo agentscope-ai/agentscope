@@ -22,9 +22,20 @@ else:
     ChatCompletion = Any
     AsyncStream = Any
 
+_K3_MODELS = {"kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"}
+
 
 class MoonshotChatModel(ChatModelBase):
-    """The Moonshot AI chat model."""
+    """The Moonshot AI chat model.
+
+    For the Kimi K3 series, thinking is always enabled. Fixed
+    sampling parameters (``temperature``, ``top_p``, ``n``,
+    ``presence_penalty``, ``frequency_penalty``) and ``thinking`` are
+    omitted, including values supplied through ``extra_body``. Call-level
+    reasoning and token budgets override :class:`Parameters`. Token budgets
+    in ``extra_body`` override top-level budgets; within each level,
+    ``max_completion_tokens`` takes precedence over ``max_tokens``.
+    """
 
     class Parameters(BaseModel):
         """The parameters for the Moonshot AI chat model."""
@@ -32,7 +43,10 @@ class MoonshotChatModel(ChatModelBase):
         max_tokens: int | None = Field(
             default=None,
             title="Max Tokens",
-            description="The maximum number of tokens for the LLM output.",
+            description=(
+                "The maximum number of tokens for the LLM output. "
+                "Sent as max_completion_tokens for Kimi K3 and K3.1 Pro."
+            ),
             gt=0,
         )
 
@@ -44,7 +58,8 @@ class MoonshotChatModel(ChatModelBase):
                 "thinking is always enabled. For kimi-k2.6, thinking is "
                 "enabled by default but can be disabled. When None, no "
                 "``thinking`` option is sent and the model's default "
-                "behavior applies."
+                "behavior applies. "
+                "Ignored for the Kimi K3 series, which always thinks."
             ),
         )
 
@@ -52,7 +67,7 @@ class MoonshotChatModel(ChatModelBase):
             default=None,
             title="Reasoning Effort",
             description=(
-                "The reasoning effort level for kimi-k3. "
+                "The reasoning effort level for Kimi K3 and K3.1 Pro. "
                 "Supports 'low', 'high', and 'max' "
                 "(default 'max')."
             ),
@@ -95,7 +110,8 @@ class MoonshotChatModel(ChatModelBase):
             credential (`MoonshotCredential`):
                 The Moonshot AI credential used to authenticate API calls.
             model (`str`):
-                The model name, e.g. ``moonshot-v1-8k``, ``kimi-k2.6``.
+                The model name, e.g. ``moonshot-v1-8k``, ``kimi-k3.1-pro``,
+                or ``kimi-k3.1-pro-highspeed``.
             parameters (`MoonshotChatModel.Parameters | None`, defaults to \
             `None`):
                 The API parameters. When ``None``, the default parameters
@@ -191,13 +207,10 @@ class MoonshotChatModel(ChatModelBase):
             "stream": self.stream,
         }
 
-        is_k3 = model_name == "kimi-k3"
+        is_k3 = model_name in _K3_MODELS
 
         if self.parameters.max_tokens is not None:
-            if is_k3:
-                kwargs["max_completion_tokens"] = self.parameters.max_tokens
-            else:
-                kwargs["max_tokens"] = self.parameters.max_tokens
+            kwargs["max_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature
@@ -205,12 +218,12 @@ class MoonshotChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
+        if is_k3 and self.parameters.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.parameters.reasoning_effort
+
         kwargs.update(generate_kwargs)
 
-        if is_k3:
-            if self.parameters.reasoning_effort is not None:
-                kwargs["reasoning_effort"] = self.parameters.reasoning_effort
-        elif self.parameters.thinking_enable is not None:
+        if not is_k3 and self.parameters.thinking_enable is not None:
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
@@ -223,6 +236,37 @@ class MoonshotChatModel(ChatModelBase):
                     **extra_body.get("thinking", {}),
                 },
             }
+
+        if is_k3:
+            if "max_tokens" in kwargs:
+                kwargs.setdefault(
+                    "max_completion_tokens",
+                    kwargs.pop("max_tokens"),
+                )
+            # The API fixes these settings. Copy extra_body before filtering
+            # so SDK-level overrides cannot reintroduce them or mutate input.
+            omitted = {
+                "temperature",
+                "top_p",
+                "n",
+                "presence_penalty",
+                "frequency_penalty",
+                "thinking",
+            }
+            for key in omitted:
+                kwargs.pop(key, None)
+            if isinstance(kwargs.get("extra_body"), dict):
+                kwargs["extra_body"] = {
+                    key: value
+                    for key, value in kwargs["extra_body"].items()
+                    if key not in omitted
+                }
+                extra_body = kwargs["extra_body"]
+                if "max_tokens" in extra_body:
+                    extra_body.setdefault(
+                        "max_completion_tokens",
+                        extra_body.pop("max_tokens"),
+                    )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -428,8 +472,9 @@ class MoonshotChatModel(ChatModelBase):
 
         When ``tool_choice.tools`` is specified the schemas list is filtered
         to only those tools. When ``tool_choice.mode`` is a specific tool name
-        (str) the model is forced to call exactly that tool without needing to
-        filter the list, preserving prompt-cache efficiency.
+        (str), K3 models receive only that tool with ``required`` because
+        named tool choice is incompatible with always-on thinking. Other
+        models receive a named tool choice without filtering the list.
 
         Args:
             tools (`list[dict] | None`, optional):
@@ -453,12 +498,18 @@ class MoonshotChatModel(ChatModelBase):
         mode = tool_choice.mode
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            if self.model in _K3_MODELS and tools:
+                return [
+                    tool for tool in tools if tool["function"]["name"] == mode
+                ], "required"
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
 
     def _get_disable_thinking_kwargs(self) -> dict:
-        """Moonshot uses ``thinking.type=disabled`` in extra_body."""
+        """Skip the disable-thinking fallback for the K3 series."""
+        if self.model in _K3_MODELS:
+            return {}
         return {
             "extra_body": {"thinking": {"type": "disabled"}},
         }
