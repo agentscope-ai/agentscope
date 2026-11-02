@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, patch
 
+from websockets.asyncio.server import ServerConnection, serve
+
 from agentscope.asr import DashScopeASRModel, DashScopeRealtimeASRModel
 from agentscope.credential import DashScopeCredential
 
@@ -307,6 +309,49 @@ class _FakeDashScopeWebSocket:
 class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
     """Verify the native streaming protocol and failure mapping."""
 
+    async def test_connect_sends_headers_with_real_client(self) -> None:
+        """Exercise the installed client API against a local WebSocket."""
+        received = {}
+
+        async def handle_connection(websocket: ServerConnection) -> None:
+            """Accept the recognition task and record handshake headers."""
+            request = websocket.request
+            event = json.loads(await websocket.recv())
+            received.update(
+                {
+                    "path": request.path,
+                    "authorization": request.headers["Authorization"],
+                    "inspection": request.headers[
+                        "X-DashScope-DataInspection"
+                    ],
+                    "action": event["header"]["action"],
+                },
+            )
+            await websocket.send(
+                json.dumps({"header": {"event": "task-started"}}),
+            )
+            await websocket.wait_closed()
+
+        async with serve(handle_connection, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            model = DashScopeRealtimeASRModel(
+                credential=DashScopeCredential(
+                    api_key="test-key",
+                    base_url=f"http://127.0.0.1:{port}",
+                ),
+            )
+            async with asyncio.timeout(5):
+                async with model:
+                    self.assertEqual(
+                        received,
+                        {
+                            "path": "/api-ws/v1/inference",
+                            "authorization": "Bearer test-key",
+                            "inspection": "disable",
+                            "action": "run-task",
+                        },
+                    )
+
     async def test_streams_pcm_and_returns_partial_and_final_text(
         self,
     ) -> None:
@@ -321,7 +366,7 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "websockets.connect",
+            "websockets.asyncio.client.connect",
             new=AsyncMock(return_value=socket),
         ) as connect:
             async with model:
@@ -373,7 +418,7 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "websockets.connect",
+            "websockets.asyncio.client.connect",
             new=AsyncMock(return_value=socket),
         ):
             with self.assertRaisesRegex(
@@ -392,7 +437,7 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "websockets.connect",
+            "websockets.asyncio.client.connect",
             new=AsyncMock(return_value=socket),
         ):
             await model.connect()

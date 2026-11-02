@@ -120,7 +120,7 @@ class DashScopeRealtimeASRModel(ASRModelBase):
                 If DashScope rejects the task or does not start it before the
                 timeout.
         """
-        import websockets
+        from websockets.asyncio.client import connect
 
         await self.close()
         self._started.clear()
@@ -130,7 +130,7 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         self._task_id = uuid4().hex
         self._committed_sentences = []
         self._current_sentence = ""
-        self._websocket = await websockets.connect(
+        self._websocket = await connect(
             self._url,
             additional_headers={
                 "Authorization": f"Bearer {self._api_key}",
