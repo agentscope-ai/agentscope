@@ -32,6 +32,8 @@ class SteeringSource(ABC):
     before returning and must not report post-commit cleanup or notification
     failures as acknowledgement failures. Cancellation is propagated only
     after the middleware has resolved whether to retain or roll back hints.
+    Committed hint events are yielded before cancellation is propagated so
+    event consumers can persist the same inputs as the agent context.
     Lifecycle hooks are optional for externally managed sources.
     """
 

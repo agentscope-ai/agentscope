@@ -1106,6 +1106,10 @@ class Agent:
             #  - if incoming event and agent is waiting for an event
             #  - if event is None and agent is not waiting for an event
             # ===================================================================
+            if event is not None:
+                # Receive cancellation redirected by the service before a
+                # continuation can apply a decision or execute a tool.
+                await asyncio.sleep(0)
             is_awaiting = await self._check_incoming_event(event)
 
             # ===================================================================
@@ -1131,6 +1135,10 @@ class Agent:
                     reply_id=self.state.reply_id,
                     name=self.name,
                 )
+                # A consumer may re-arm cancellation while registering or
+                # publishing REPLY_START. Receive it inside this cleanup scope
+                # even when subsequent model/tool awaits complete inline.
+                await asyncio.sleep(0)
 
             # Update the structured output tool for new requirements or
             #  from the previous reply

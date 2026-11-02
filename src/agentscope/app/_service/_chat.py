@@ -1396,21 +1396,6 @@ class ChatService:
                                 # interrupted), so an interrupt in the
                                 # awaits below can't lose this event.
                                 if isinstance(event, ReplyStartEvent):
-                                    if (
-                                        active_reply_id is not None
-                                        and active_reply_id != event.reply_id
-                                    ):
-                                        await finish_active_chat_reply(
-                                            self._message_bus,
-                                            session_id,
-                                            active_reply_id,
-                                        )
-                                    active_reply_id = event.reply_id
-                                    await register_active_chat_reply(
-                                        self._message_bus,
-                                        session_id,
-                                        event.reply_id,
-                                    )
                                     reply_msg = AssistantMsg(
                                         id=event.reply_id,
                                         name=event.name,
@@ -1419,6 +1404,23 @@ class ChatService:
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
+                                    if isinstance(event, ReplyStartEvent):
+                                        if (
+                                            active_reply_id is not None
+                                            and active_reply_id
+                                            != event.reply_id
+                                        ):
+                                            await finish_active_chat_reply(
+                                                self._message_bus,
+                                                session_id,
+                                                active_reply_id,
+                                            )
+                                        active_reply_id = event.reply_id
+                                        await register_active_chat_reply(
+                                            self._message_bus,
+                                            session_id,
+                                            event.reply_id,
+                                        )
                                     checkpoint_cursor = (
                                         await publish_session_event(
                                             self._message_bus,
@@ -1448,21 +1450,6 @@ class ChatService:
                             # Case B: continuation (UserConfirmResult
                             #  / ExternalExecResult)
                             continuation_reply_id = agent.state.reply_id
-                            if (
-                                active_reply_id is not None
-                                and active_reply_id != continuation_reply_id
-                            ):
-                                await finish_active_chat_reply(
-                                    self._message_bus,
-                                    session_id,
-                                    active_reply_id,
-                                )
-                            active_reply_id = continuation_reply_id
-                            await register_active_chat_reply(
-                                self._message_bus,
-                                session_id,
-                                continuation_reply_id,
-                            )
                             reply_msg = await self._storage.get_message(
                                 user_id,
                                 session_id,
@@ -1481,44 +1468,69 @@ class ChatService:
                             elif input_msg:
                                 reply_msg.append_event(input_msg)
 
-                            # Broadcast the applied decision so
-                            # observers that didn't make it (other tabs,
-                            # the channel card) close it.
-                            if isinstance(
-                                input_msg,
-                                (
-                                    UserConfirmResultEvent,
-                                    ExternalExecutionResultEvent,
-                                ),
-                            ):
+                            try:
+                                if (
+                                    active_reply_id is not None
+                                    and active_reply_id
+                                    != continuation_reply_id
+                                ):
+                                    await finish_active_chat_reply(
+                                        self._message_bus,
+                                        session_id,
+                                        active_reply_id,
+                                    )
+                                active_reply_id = continuation_reply_id
+                                await register_active_chat_reply(
+                                    self._message_bus,
+                                    session_id,
+                                    continuation_reply_id,
+                                )
+                                # Broadcast the applied decision so
+                                # observers that didn't make it (other tabs,
+                                # the channel card) close it.
+                                if isinstance(
+                                    input_msg,
+                                    (
+                                        UserConfirmResultEvent,
+                                        ExternalExecutionResultEvent,
+                                    ),
+                                ):
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            input_msg.model_dump(mode="json"),
+                                        )
+                                    )
+
+                                # Emit a synthetic REPLY_START so SSE clients
+                                # can detect the continuation.
+                                #
+                                # IMPORTANT: The frontend SSE handler must
+                                # NOT clear its accumulated message buffer
+                                # upon receiving REPLY_START with the current
+                                # reply_id. This signals a continuation (e.g.
+                                # after an approval flow), not a fresh reply.
+                                continuation_start = ReplyStartEvent(
+                                    session_id=session_id,
+                                    reply_id=continuation_reply_id,
+                                    name=agent_record.data.name,
+                                )
                                 checkpoint_cursor = (
                                     await publish_session_event(
                                         self._message_bus,
                                         session_id,
-                                        input_msg.model_dump(mode="json"),
+                                        continuation_start.model_dump(
+                                            mode="json",
+                                        ),
                                     )
                                 )
-
-                            # Emit a synthetic REPLY_START so SSE subscribers
-                            # (frontend, channel gateway) can detect the
-                            # continuation without requiring special handling.
-                            #
-                            # IMPORTANT: The frontend SSE handler must
-                            # NOT clear its accumulated message buffer
-                            # upon receiving a
-                            # REPLY_START with the same reply_id as the current
-                            # message. This event signals a continuation (e.g.
-                            # after an approval flow), not a fresh reply.
-                            continuation_start = ReplyStartEvent(
-                                session_id=session_id,
-                                reply_id=continuation_reply_id,
-                                name=agent_record.data.name,
-                            )
-                            checkpoint_cursor = await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                continuation_start.model_dump(mode="json"),
-                            )
+                            except asyncio.CancelledError:
+                                # Resume the Agent so it closes pending tools
+                                # and emits the interrupted terminal event.
+                                current = asyncio.current_task()
+                                if current is not None:
+                                    current.cancel()
 
                             async for event in agent.reply_stream(
                                 inputs=input_msg,

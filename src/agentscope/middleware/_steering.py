@@ -87,8 +87,7 @@ class SteeringMiddleware(MiddlewareBase):
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator[Any, None]:
         """Run one model call, yielding continuation control to the Agent."""
-        events = await self._consume(agent)
-        for event in events:
+        async for event in self._consume(agent):
             yield event
 
         terminal_messages: list[Msg] = []
@@ -104,16 +103,20 @@ class SteeringMiddleware(MiddlewareBase):
             terminal_messages
             and agent.state.cur_iter < agent.react_config.max_iters
         ):
-            events = await self._consume(agent)
-            for event in events:
+            consumed = False
+            async for event in self._consume(agent):
+                consumed = True
                 yield event
-            if events:
+            if consumed:
                 return
 
         for message in terminal_messages:
             yield message
 
-    async def _consume(self, agent: "Agent") -> list[HintBlockEvent]:
+    async def _consume(
+        self,
+        agent: "Agent",
+    ) -> AsyncGenerator[HintBlockEvent, None]:
         """Validate inputs and acknowledge only a successful context append."""
         session_id = agent.state.session_id
         reply_id = agent.state.reply_id
@@ -134,7 +137,7 @@ class SteeringMiddleware(MiddlewareBase):
                 prepared.append(item)
                 hints.extend(item_hints)
         if not prepared:
-            return []
+            return
 
         rollback = self._append_hints(agent, hints)
         acknowledgement = asyncio.create_task(
@@ -159,20 +162,24 @@ class SteeringMiddleware(MiddlewareBase):
             if cancellation is not None:
                 raise cancellation from exc
             raise
-        # Keep committed hints. Replaying the cancellation inside the rollback
-        # handler would lose them after the source had consumed their inputs.
-        if cancellation is not None:
-            raise cancellation
-
-        return [
-            HintBlockEvent(
+        # Project every committed hint before propagating cancellation. The
+        # service persists replies built from events, not the agent context.
+        for hint in hints:
+            yield HintBlockEvent(
                 reply_id=reply_id,
                 block_id=hint.id,
                 source=hint.source,
                 hint=hint.hint,
             )
-            for hint in hints
-        ]
+        # Receive any further cancellation redirected by the event consumer
+        # before the Agent leaves reasoning and starts interruption cleanup.
+        try:
+            await asyncio.sleep(0)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+        if cancellation is not None:
+            raise cancellation
 
     def _to_hints(self, item_id: str, messages: list[Msg]) -> list[HintBlock]:
         """Convert one steering input into correlated multimodal hints.
