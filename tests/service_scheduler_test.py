@@ -480,6 +480,36 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
                 await asyncio.sleep(0.02)
             self.assertListEqual(self.job_ids(), [])
 
+    async def test_cross_user_delete_preserves_owner_job(self) -> None:
+        """A failed user-scoped delete must not remove another user's timer."""
+        record = _make_record(user_id="owner")
+        await self.storage.upsert_schedule("owner", record)
+        delete_tool = next(
+            tool
+            for tool in await self.manager.list_tools(
+                user_id="u",
+                agent_id="a",
+                chat_model_config=_make_record().data.chat_model_config,
+            )
+            if tool.name == "ScheduleDelete"
+        )
+
+        async with self.manager:
+            self.assertListEqual(self.job_ids(), [record.id])
+            with patch.object(
+                self.bus,
+                "publish",
+                wraps=self.bus.publish,
+            ) as publish:
+                result = await delete_tool(schedule_id=record.id)
+
+            self.assertEqual(result.state, ToolResultState.ERROR)
+            self.assertIsNotNone(
+                await self.storage.get_schedule("owner", record.id),
+            )
+            self.assertListEqual(self.job_ids(), [record.id])
+            publish.assert_not_awaited()
+
     async def test_missing_delete_does_not_notify(self) -> None:
         """A missing record returns an error without a lifecycle event."""
         with patch.object(
