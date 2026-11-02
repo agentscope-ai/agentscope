@@ -264,16 +264,13 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
         self.assertIn("command_substitution", decision.message)
 
     async def test_separator_hidden_commands_not_auto_allowed(self) -> None:
-        """Test newline- and ``&``-hidden commands bypass nothing.
-
-        A command separated by a newline or a single ``&`` is compound;
-        a read-only prefix must not auto-allow a hidden mutation the way
-        it must not for ``;`` and ``&&``.
-        """
+        """Test newline and ``&`` separators cannot bypass permissions."""
         test_cases = [
             "cat file.txt\nrm -rf /tmp/victim",
             "cat file.txt & rm -rf /tmp/victim",
             "ls\nshutdown now",
+            "cat \u20ac\u20ac\u20ac\nrm -f ls",
+            "cat \u20ac\u20ac\u20ac & rm -f ls",
         ]
         for cmd in test_cases:
             with self.subTest(cmd=repr(cmd)):

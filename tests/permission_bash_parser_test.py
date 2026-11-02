@@ -393,12 +393,7 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 )
 
     async def test_separator_hidden_commands_not_read_only(self) -> None:
-        """Test newline- and ``&``-separated commands hide no mutations.
-
-        Newlines and a single ``&`` are command separators just like
-        ``;`` and ``&&``; every segment must be checked, otherwise a
-        payload hidden behind a read-only prefix would be auto-allowed.
-        """
+        """Test newline and ``&`` separators cannot hide mutations."""
         hidden_commands = [
             "cat file.txt\nrm -rf /tmp/victim",
             "cat file.txt\nmkdir new_dir",
@@ -406,6 +401,8 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "cat file.txt & touch file.txt",
             "ls\nshutdown now",
             "ls\r\nshutdown now",
+            "cat \u20ac\u20ac\u20ac\nrm -f ls",
+            "cat \u20ac\u20ac\u20ac & rm -f ls",
         ]
         for cmd in hidden_commands:
             with self.subTest(cmd=repr(cmd)):
@@ -422,6 +419,8 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "cat file1.txt\ncat file2.txt",
             "git status & git log",
             "cat file.txt &",
+            "cat caf\u00e9.txt\npwd",
+            "cat caf\u00e9.txt & pwd",
         ]
         for cmd in read_only_commands:
             with self.subTest(cmd=repr(cmd)):
@@ -430,6 +429,23 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd!r}' to be read-only "
                     f"(all subcommands are read-only)",
                 )
+
+    async def test_split_compound_command_unicode(self) -> None:
+        """Test compound splitting preserves Unicode command text."""
+        for separator in ["\n", " & "]:
+            for commands in [
+                ["cat \u20ac\u20ac\u20ac", "rm -f ls"],
+                ["cat caf\u00e9.txt", "pwd"],
+            ]:
+                command = separator.join(commands)
+                with self.subTest(command=command):
+                    root = self.parser.parser.parse(
+                        command.encode("utf8"),
+                    ).root_node
+                    self.assertEqual(
+                        self.parser.split_compound_command(root, command),
+                        commands,
+                    )
 
     async def test_separator_lookalikes_stay_read_only(self) -> None:
         """Test quoted ``&`` and heredoc newlines are not separators."""

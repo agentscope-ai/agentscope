@@ -154,11 +154,6 @@ class BashCommandParser:
         For compound commands (&&, ||, ;, |, newline, &), ALL subcommands
         must be read-only for the entire command to be considered read-only.
 
-        Newlines and a single ``&`` are command separators just like ``;``
-        and ``&&`` — without them in the list, ``cat file\\nrm -rf x`` would
-        reach the single-command prefix match and hide the second command
-        from inspection.
-
         Commands with output redirections (>, >>) are NOT considered read-only.
 
         Args:
@@ -177,10 +172,7 @@ class BashCommandParser:
         if ">" in cmd:
             return False
 
-        # Check if it's a compound command. The separator check is a
-        # substring pre-filter only: quoted separators (e.g. ``grep "a&b"
-        # f``) are re-joined into one subcommand by the AST-based split
-        # below, so they are not falsely flagged.
+        # Use AST splitting to distinguish separators from quoted text.
         if any(op in cmd for op in ["&&", "||", ";", "|", "\n", "&"]):
             # Split into subcommands and check each one
             try:
@@ -560,8 +552,8 @@ class BashCommandParser:
         def extract_commands(node: Node) -> None:
             """Recursively extract commands from AST."""
             if node.type == "command":
-                # Extract command text
-                cmd_text = command[node.start_byte : node.end_byte]
+                # Decode node bytes to preserve multibyte characters.
+                cmd_text = node.text.decode("utf8")
                 subcommands.append(cmd_text)
             elif node.type in ["list", "pipeline", "command_list"]:
                 # Recursively process compound structures
