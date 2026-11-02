@@ -1,5 +1,5 @@
 name: gpt-5.6-terra
-label: GPT-5.6 Terra
+label: GPT-5.6 Terra (Responses API)
 status: active
 
 input_types:

@@ -423,6 +423,43 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
     def _thinking(self) -> Any:
         return self.mock_create.call_args.kwargs.get("thinking")
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False disables thinking unless an explicit mode takes priority."""
+        self.assertIsNone(AnthropicChatModel.Parameters().thinking_enable)
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            for mode in (None, "adaptive", "disabled"):
+                with self.subTest(params=params, mode=mode):
+                    self.model.parameters = AnthropicChatModel.Parameters(
+                        **params,
+                        thinking_mode=mode,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "claude-opus-4-5",
+                        "messages": [],
+                        "stream": False,
+                        "max_tokens": 8192,
+                    }
+                    if mode is not None:
+                        expected["thinking"] = {"type": mode}
+                    elif params.get("thinking_enable") is False:
+                        expected["thinking"] = {"type": "disabled"}
+                    elif params.get("thinking_enable"):
+                        expected["thinking"] = {
+                            "type": "enabled",
+                            "budget_tokens": 4096,
+                        }
+                    self.assertEqual(
+                        self.mock_create.call_args.kwargs,
+                        expected,
+                    )
+
     async def test_no_thinking_by_default(self) -> None:
         """Neither control set means no thinking config is sent."""
         await self.model([])
@@ -458,6 +495,25 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         await self.model([])
 
         self.assertEqual(self._thinking(), {"type": "disabled"})
+
+    async def test_false_drops_budget_and_display(self) -> None:
+        """Disabled thinking omits budget/display without expanding tokens."""
+        self.model.parameters.thinking_enable = False
+        self.model.parameters.thinking_budget = 16_384
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs,
+            {
+                "model": "claude-opus-4-5",
+                "messages": [],
+                "stream": False,
+                "max_tokens": 8192,
+                "thinking": {"type": "disabled"},
+            },
+        )
 
     async def test_legacy_toggle_still_means_budget_mode(self) -> None:
         """thinking_enable keeps its old meaning when mode is unset."""
@@ -770,6 +826,49 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             responses[-1].usage,
             ChatUsage(input_tokens=10, output_tokens=5, time=20.0),
         )
+
+    async def test_cached_tokens_counted_in_input_tokens(self) -> None:
+        """The cache reads and writes count in ``input_tokens``, as for
+        the other providers, in both the stream and non-stream paths."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-c",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 3000,
+                },
+            },
+        )
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = MagicMock()
+        non_stream_model.client.messages.create = AsyncMock(
+            return_value=completion,
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        non_stream_usage = (await non_stream_model([])).usage
+        stream_usage = [r async for r in await self.model([])][-1].usage
+
+        for usage in (non_stream_usage, stream_usage):
+            self.assertEqual(
+                (
+                    usage.input_tokens,
+                    usage.cache_input_tokens,
+                    usage.cache_creation_input_tokens,
+                    usage.output_tokens,
+                ),
+                (3210, 3000, 200, 5),
+            )
 
     async def test_stream_redacted_thinking(self) -> None:
         """Stream redacted_thinking block is emitted at

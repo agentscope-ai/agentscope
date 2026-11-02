@@ -1067,6 +1067,136 @@ This skill is added through a tilde path.
         # Verify empty list is returned
         self.assertListEqual(skills, [])
 
+    async def test_add_skill_with_utf8_bom(self) -> None:
+        """Test installing and listing a skill with a UTF-8 BOM."""
+        skill_dir = self._create_test_skill(
+            "bom_skill",
+            "Installed despite the BOM",
+        )
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(skill_md_path, "rb") as f:
+            content = f.read()
+        with open(skill_md_path, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + content)
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+        await workspace.add_skill(skill_dir)
+
+        installed_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "bom_skill",
+        )
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Installed despite the BOM",
+                    "dir": installed_dir,
+                    "markdown": "# bom_skill\n\nInstalled despite the BOM",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(installed_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+    async def test_list_skills_reconciles_utf8_bom_skill(self) -> None:
+        """Test indexing a manually added skill with a UTF-8 BOM."""
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        skill_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "dropped_skill",
+        )
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+            f.write(
+                b"\xef\xbb\xbf---\n"
+                b"name: dropped_skill\n"
+                b"description: Dropped with a BOM\n"
+                b"---\n\nBody.\n",
+            )
+
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "dropped_skill",
+                    "description": "Dropped with a BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(skill_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+
+class _UnindexedWorkspace(WorkspaceBase):  # pylint: disable=abstract-method
+    """Use a local backend to test the base skill listing implementation."""
+
+    def __init__(self, workdir: str) -> None:
+        """Bind a local backend over ``workdir``."""
+        super().__init__()
+        self.workdir = workdir
+        self._backend = LocalBackend()
+
+    async def initialize(self) -> None:
+        """Nothing to provision for this workspace."""
+
+    async def close(self) -> None:
+        """Nothing to release for this workspace."""
+
+    async def _equip_partition(self, agent_id: str | None) -> str:
+        """Return the partition without copying the seed template."""
+        partition = self._skill_partition(agent_id)
+        os.makedirs(partition, exist_ok=True)
+        return partition
+
+
+class TestWorkspaceBaseListSkills(IsolatedAsyncioTestCase):
+    """Front-matter parsing in the default ``WorkspaceBase.list_skills``."""
+
+    async def test_list_skills_with_utf8_bom(self) -> None:
+        """A BOM-prefixed SKILL.md is listed, not silently dropped."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = _UnindexedWorkspace(workdir)
+            partition = await workspace._equip_partition(None)
+            skill_dir = os.path.join(partition, "bom_skill")
+            os.makedirs(skill_dir)
+            with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+                f.write(
+                    b"\xef\xbb\xbf---\n"
+                    b"name: bom_skill\n"
+                    b"description: Listed despite the BOM\n"
+                    b"---\n\nBody.\n",
+                )
+
+            skills = await workspace.list_skills()
+
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Listed despite the BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": 0.0,
+                },
+            ],
+        )
+
 
 class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
     """Test the local workspace class offloading with the agent."""

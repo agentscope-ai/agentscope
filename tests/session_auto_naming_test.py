@@ -57,19 +57,33 @@ class SessionNameOwnershipTest(IsolatedAsyncioTestCase):
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
 
         class _Storage(RedisStorage):
+            def __init__(self) -> None:
+                """Initialize the storage with no active test client."""
+                super().__init__()
+                self._client = None
+
             async def __aenter__(self) -> Any:
+                """Attach the shared fake Redis client."""
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Detach the client without closing the shared fake Redis."""
                 self._client = None
 
         class _Bus(RedisMessageBus):
+            def __init__(self) -> None:
+                """Initialize the bus with no active test client."""
+                super().__init__()
+                self._client = None
+
             async def __aenter__(self) -> Any:
+                """Attach the shared fake Redis client."""
                 self._client = redis
                 return self
 
             async def aclose(self) -> None:
+                """Detach the client without closing the shared fake Redis."""
                 self._client = None
 
         app = create_app(
@@ -343,6 +357,7 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
                         "type": "test",
                         "credential_id": "credential-1",
                         "model": "test-model",
+                        "model_class": "",
                         "parameters": {},
                     },
                     "fallback_chat_model_config": None,

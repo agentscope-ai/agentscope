@@ -11,7 +11,15 @@ from ._channel import (
     CreateChannelRequest,
     UpdateChannelRequest,
 )
-from ._chat import ChatRequest, ChatTriggerResponse
+from ._chat import (
+    ChatRequest,
+    ChatTriggerResponse,
+    ChatQueueItem,
+    ChatQueueResponse,
+    ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
+    UpdateChatQueueItemRequest,
+)
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
 from ._hub_mcp import InstallMCPRequest, MCPView, UpdateMCPRequest
@@ -19,7 +27,6 @@ from ._hub_skill import SkillView
 from ._workspace import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
-    AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
     DirectoryListing,
@@ -105,6 +112,20 @@ from ._session import (
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._voice_profile import (
+    AvailableEnginesResponse,
+    CloneVoiceRequest,
+    CloneVoiceResponse,
+    CreateVoiceProfileRequest,
+    CreateVoiceProfileResponse,
+    CredentialRef,
+    EngineInfo,
+    EngineModelInfo,
+    ListVoiceProfilesResponse,
+    OpenAIConsentRequest,
+    OpenAIConsentResponse,
+    UpdateVoiceProfileRequest,
+)
 
 __all__ = [
     # Health
@@ -119,7 +140,6 @@ __all__ = [
     # Workspace
     "AddFromLibraryRequest",
     "AddFromLibraryResponse",
-    "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
     "DirectoryEntry",
     "DirectoryListing",
@@ -154,6 +174,11 @@ __all__ = [
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",
+    "ChatQueueItem",
+    "ChatQueueResponse",
+    "ReorderChatQueueRequest",
+    "SteerChatQueueItemRequest",
+    "UpdateChatQueueItemRequest",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",
@@ -210,4 +235,17 @@ __all__ = [
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # Voice Profile
+    "AvailableEnginesResponse",
+    "CloneVoiceRequest",
+    "CloneVoiceResponse",
+    "CreateVoiceProfileRequest",
+    "CreateVoiceProfileResponse",
+    "CredentialRef",
+    "EngineInfo",
+    "EngineModelInfo",
+    "ListVoiceProfilesResponse",
+    "OpenAIConsentRequest",
+    "OpenAIConsentResponse",
+    "UpdateVoiceProfileRequest",
 ]

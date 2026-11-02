@@ -159,7 +159,7 @@ class KnowledgeBaseService:
         chunker_cls = self._chunkers_by_type.get(chunker_config.type)
         if chunker_cls is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Unknown chunker type: {chunker_config.type!r}, "
                     f"available: {sorted(self._chunkers_by_type)}"
@@ -169,7 +169,7 @@ class KnowledgeBaseService:
             chunker_cls.Parameters(**chunker_config.parameters)
         except (TypeError, ValueError, ValidationError) as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid chunker parameters: {exc}",
             ) from exc
 
@@ -332,18 +332,15 @@ class KnowledgeBaseService:
         """Delete a knowledge base, raising 404 if absent.
 
         Documents under the KB are cascade-deleted at the storage
-        layer; blob files referenced by those records are released
-        best-effort here so disk space is reclaimed even though the
-        manager + storage cascade would otherwise orphan them.
+        layer. Release their blobs only after the manager successfully
+        deletes the collection and record, so a failed deletion leaves
+        the original files available for retry or recovery.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
         documents = await self._storage.list_knowledge_documents(
             owner_id,
             knowledge_base_id,
         )
-        for document in documents:
-            await self._delete_blob_quietly(document.data.blob_uri)
-
         deleted = await self._manager.delete_knowledge_base(
             owner_id,
             knowledge_base_id,
@@ -353,6 +350,8 @@ class KnowledgeBaseService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Knowledge base {knowledge_base_id!r} not found.",
             )
+        for document in documents:
+            await self._delete_blob_quietly(document.data.blob_uri)
 
     # ------------------------------------------------------------------
     # Document management

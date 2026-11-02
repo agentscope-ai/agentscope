@@ -1,5 +1,5 @@
 import { CronExpressionParser } from 'cron-parser';
-import { format } from 'date-fns';
+import { endOfDay, format, startOfDay } from 'date-fns';
 import { CalendarIcon } from 'lucide-react';
 import * as React from 'react';
 import { type DateRange } from 'react-day-picker';
@@ -22,25 +22,24 @@ function scheduleHasOccurrencesInRange(
 ): boolean {
 	const { data } = schedule;
 	try {
-		const interval = CronExpressionParser.parse(data.cron_expression, {
-			currentDate: rangeStart,
-			endDate: rangeEnd,
-		});
-
 		const startTs = new Date(data.started_at).getTime();
 		const endTs = data.ended_at ? new Date(data.ended_at).getTime() : null;
+		const start = Math.max(startOfDay(rangeStart).getTime(), startTs);
+		const end = Math.min(endOfDay(rangeEnd).getTime(), endTs ?? Infinity);
 
-		while (interval.hasNext()) {
-			const date = interval.next().toDate();
-			const ts = date.getTime();
+		if (start > end) return false;
 
-			if (ts < startTs) continue;
-			if (endTs && ts > endTs) break;
+		// Forward iteration excludes currentDate; include the start boundary.
+		const currentDate = new Date(start - 1);
+		// Avoid fractional seconds excluding a trigger exactly at endDate.
+		currentDate.setMilliseconds(0);
 
-			return true;
-		}
+		const interval = CronExpressionParser.parse(data.cron_expression, {
+			currentDate,
+			endDate: new Date(end),
+		});
 
-		return false;
+		return interval.hasNext();
 	} catch {
 		return true;
 	}

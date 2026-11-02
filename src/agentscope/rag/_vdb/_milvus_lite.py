@@ -65,8 +65,14 @@ class MilvusLiteStore(VectorStoreBase):
                 Extra keyword arguments forwarded to
                 :class:`pymilvus.MilvusClient`.
             batch_size (`int`, defaults to ``256``):
-                Batch size used by inserts and document listing.
+                Positive batch size used by inserts and document listing.
+
+        Raises:
+            ValueError: If ``batch_size`` is not positive.
         """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+
         self._uri = uri
         self._metric_type = metric_type
         self._index_type = index_type
