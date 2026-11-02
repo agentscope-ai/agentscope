@@ -1625,6 +1625,113 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
             "context must hold the transcript under the new turn's id",
         )
 
+    async def test_early_stream_exit_cleans_up_local_turns(self) -> None:
+        """Closing or cancelling retires only unfinished local turns."""
+        for exit_mode in ["close", "cancel"]:
+            for committed in [False, True]:
+                with self.subTest(exit_mode=exit_mode, committed=committed):
+                    agent = self._make_agent()
+                    async with agent:
+                        await agent._forward_audio(
+                            b"",
+                            SpeechTransition.STARTED,
+                        )
+                        old_turn = agent._user_turn
+                        old_id = old_turn.reply_id
+                        if committed:
+                            await agent._forward_audio(
+                                b"",
+                                SpeechTransition.ENDED,
+                            )
+                        tasks_before = asyncio.all_tasks()
+                        stream = agent.reply_stream(GatedTransport([]))
+                        first = await anext(stream)
+                        self.assertEqual(
+                            (first.type, first.reply_id),
+                            ("REPLY_START", old_id),
+                        )
+                        if exit_mode == "close":
+                            await stream.aclose()
+                        else:
+                            consumer = asyncio.create_task(anext(stream))
+                            await asyncio.sleep(0)
+                            consumer.cancel()
+                            with self.assertRaises(asyncio.CancelledError):
+                                await consumer
+                        await asyncio.sleep(0)
+                        self.assertEqual(
+                            {
+                                "transport": agent._transport,
+                                "old_open": old_turn.open,
+                                "pending": list(agent._pending_user_turns),
+                                "events": self._drain(agent),
+                                "tasks": asyncio.all_tasks() - tasks_before,
+                            },
+                            {
+                                "transport": None,
+                                "old_open": False,
+                                "pending": [old_id] if committed else [],
+                                "events": [("end", old_id)],
+                                "tasks": set(),
+                            },
+                        )
+                        await agent._forward_audio(
+                            b"",
+                            SpeechTransition.STARTED,
+                        )
+                        new_id = self._drain(agent)[0][1]
+                        self.assertNotEqual(new_id, old_id)
+                        resumed = agent.reply_stream(GatedTransport([]))
+                        if committed:
+                            await agent._on_model_event(
+                                me.InputTranscriptionEvent(
+                                    item_id="u1",
+                                    text="first",
+                                ),
+                            )
+                            self.assertEqual(
+                                self._drain(agent),
+                                [("text", old_id, "first")],
+                            )
+                            self.assertTrue(agent._user_turn.open)
+                        await agent._on_model_event(
+                            me.InputTranscriptionEvent(
+                                item_id="u2",
+                                text="second",
+                            ),
+                        )
+                        try:
+                            events = []
+                            for _ in range(4):
+                                event = await asyncio.wait_for(
+                                    anext(resumed),
+                                    timeout=1,
+                                )
+                                events.append((event.type, event.reply_id))
+                        finally:
+                            await resumed.aclose()
+                        self.assertEqual(
+                            {
+                                "events": events,
+                                "context": [
+                                    (msg.id, msg.get_text_content())
+                                    for msg in agent.state.context
+                                ],
+                            },
+                            {
+                                "events": [
+                                    ("TEXT_BLOCK_START", new_id),
+                                    ("TEXT_BLOCK_DELTA", new_id),
+                                    ("TEXT_BLOCK_END", new_id),
+                                    ("REPLY_END", new_id),
+                                ],
+                                "context": (
+                                    [(old_id, "first")] if committed else []
+                                )
+                                + [(new_id, "second")],
+                            },
+                        )
+
     async def test_transport_end_keeps_committed_local_turns(self) -> None:
         """A late local transcription must not settle the resumed turn."""
         for old_event, old_context in [

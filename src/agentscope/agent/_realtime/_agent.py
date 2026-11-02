@@ -435,6 +435,7 @@ class RealtimeAgent:
             self._pump_uplink(transport),
             name="rt-up",
         )
+        getter: asyncio.Future[_QueuedEvent] | None = None
         try:
             while not uplink.done():
                 getter = asyncio.ensure_future(self._out.get())
@@ -476,10 +477,17 @@ class RealtimeAgent:
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
         finally:
-            if not uplink.done():
-                uplink.cancel()
-                await asyncio.gather(uplink, return_exceptions=True)
-            self._transport = None
+            try:
+                tasks = [task for task in (uplink, getter) if task is not None]
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                # Early close and cancellation skip the normal event drain.
+                # Stop readers before queuing the pending turns' end events.
+                self._retire_unbound_user_turns()
+                self._transport = None
 
     # ------------------------------------------------------------------
     # Discrete input
