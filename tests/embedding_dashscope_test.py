@@ -159,14 +159,21 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         )
         texts = [str(i) for i in range(11)]
         result = await model(texts)
-        self.assertEqual(result.embeddings, [[0.1]] * 11)
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1]] * 11,
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 20, "time": A, "type": "embedding"},
+                "source": "api",
+            },
+        )
         self.assertEqual(mock_api.call_count, 2)
-        for request, batch in zip(
-            mock_api.call_args_list,
-            [texts[:10], texts[10:]],
-        ):
-            self.assertDictEqual(
-                request.kwargs,
+        self.assertCountEqual(
+            [request.kwargs for request in mock_api.call_args_list],
+            [
                 {
                     "api_key": "k",
                     "input": batch,
@@ -174,10 +181,33 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
                     "dimension": 1,
                     "text_type": "query",
                     "instruct": "Find relevant documents",
-                },
-            )
-        await model(["override"], text_type="document")
-        self.assertEqual(mock_api.call_args.kwargs["text_type"], "document")
+                }
+                for batch in [texts[:10], texts[10:]]
+            ],
+        )
+        result = await model(["override"], text_type="document")
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1]],
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 10, "time": A, "type": "embedding"},
+                "source": "api",
+            },
+        )
+        self.assertDictEqual(
+            mock_api.call_args.kwargs,
+            {
+                "api_key": "k",
+                "input": ["override"],
+                "model": "text-embedding-v4",
+                "dimension": 1,
+                "text_type": "document",
+                "instruct": "Find relevant documents",
+            },
+        )
         self.assertDictEqual(
             parameters.model_dump(),
             {
@@ -213,8 +243,21 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
                     )
                     mock_api.return_value = _text_resp([vector])
                     result = await model(["same input"], **overrides)
-                    self.assertEqual(result.embeddings, [vector])
-                    self.assertEqual(result.source, source)
+                    self.assertDictEqual(
+                        asdict(result),
+                        {
+                            "embeddings": [vector],
+                            "id": A,
+                            "created_at": A,
+                            "type": "embedding",
+                            "usage": {
+                                "tokens": 10 if source == "api" else 0,
+                                "time": A if source == "api" else 0,
+                                "type": "embedding",
+                            },
+                            "source": source,
+                        },
+                    )
             self.assertEqual(mock_api.call_count, 2)
 
     @patch("dashscope.embeddings.TextEmbedding.call")
