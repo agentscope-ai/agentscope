@@ -109,7 +109,7 @@
 		"stopRecording": "停止并转写",
 		"requestingMicrophone": "正在请求麦克风权限…",
 		"transcribing": "正在转写…",
-		"asrUnavailable": "尚未配置语音识别模型",
+		"asrUnavailable": "语音识别未开启。请在顶部聊天模型旁的「模型设置」→「语音识别」中选择模型。",
 		"recordingUnsupported": "当前浏览器无法录制受支持的音频格式",
 		"microphonePermissionDenied": "麦克风权限已被拒绝",
 		"transcriptionFailed": "语音转写失败",
@@ -484,7 +484,7 @@
 		"parameters": "实时语音参数",
 		"noModels": "暂无可用的实时语音模型。",
 		"disable": "停用语音模型",
-		"selectFirst": "请先选择语音模型",
+		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
 		"start": "开始语音对话",
 		"stop": "结束语音对话"
 	},
@@ -592,6 +592,7 @@
 		"wednesday": "周三"
 	},
 	"model-parameters": {
+		"settings": "模型设置",
 		"title": "模型参数",
 		"booleanDefault": "默认",
 		"booleanEnabled": "开启",

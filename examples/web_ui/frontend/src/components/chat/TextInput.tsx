@@ -681,27 +681,33 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							{/* Speech-to-text recording */}
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon-lg"
-										onClick={speechRecorder.toggle}
-										disabled={speechInputDisabled}
-										className={cn(
-											'relative shrink-0 rounded-full transition-colors',
-											speechRecorder.state === 'recording' &&
-												'bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive',
-										)}
+									<span
+										className="inline-flex shrink-0"
+										tabIndex={speechInputDisabled ? 0 : undefined}
 									>
-										{speechRecorder.state === 'requesting' ||
-										speechRecorder.state === 'transcribing' ? (
-											<Loader2 className="size-4 animate-spin" />
-										) : speechRecorder.state === 'recording' ? (
-											<MicOff className="size-4" />
-										) : (
-											<Mic className="size-4" />
-										)}
-									</Button>
+										<Button
+											type="button"
+											aria-label={speechInputTooltip}
+											variant="ghost"
+											size="icon-lg"
+											onClick={speechRecorder.toggle}
+											disabled={speechInputDisabled}
+											className={cn(
+												'relative shrink-0 rounded-full transition-colors',
+												speechRecorder.state === 'recording' &&
+													'bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive',
+											)}
+										>
+											{speechRecorder.state === 'requesting' ||
+											speechRecorder.state === 'transcribing' ? (
+												<Loader2 className="size-4 animate-spin" />
+											) : speechRecorder.state === 'recording' ? (
+												<MicOff className="size-4" />
+											) : (
+												<Mic className="size-4" />
+											)}
+										</Button>
+									</span>
 								</TooltipTrigger>
 								<TooltipContent>{speechInputTooltip}</TooltipContent>
 							</Tooltip>
@@ -734,26 +740,32 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							{/* Voice or Send — driven by ``actionButton`` config. */}
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<Button
-										type="button"
-										variant={actionButton.variant}
-										onClick={actionButton.onClick}
-										disabled={actionButton.disabled}
-										size="icon-lg"
-										className={cn(
-											'relative shrink-0 rounded-full transition-colors',
-											voiceState === 'active' &&
-												'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
-										)}
+									<span
+										className="inline-flex shrink-0"
+										tabIndex={actionButton.disabled ? 0 : undefined}
 									>
-										<actionButton.icon
+										<Button
+											type="button"
+											aria-label={actionButton.tooltip}
+											variant={actionButton.variant}
+											onClick={actionButton.onClick}
+											disabled={actionButton.disabled}
+											size="icon-lg"
 											className={cn(
-												'h-4 w-4',
-												(voiceState === 'connecting' || submitting) &&
-													'animate-spin',
+												'relative shrink-0 rounded-full transition-colors',
+												voiceState === 'active' &&
+													'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
 											)}
-										/>
-									</Button>
+										>
+											<actionButton.icon
+												className={cn(
+													'h-4 w-4',
+													(voiceState === 'connecting' || submitting) &&
+														'animate-spin',
+												)}
+											/>
+										</Button>
+									</span>
 								</TooltipTrigger>
 								<TooltipContent>{actionButton.tooltip}</TooltipContent>
 							</Tooltip>

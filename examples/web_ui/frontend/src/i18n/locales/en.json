@@ -109,7 +109,7 @@
 		"stopRecording": "Stop and transcribe",
 		"requestingMicrophone": "Requesting microphone access…",
 		"transcribing": "Transcribing…",
-		"asrUnavailable": "No speech recognition model is configured",
+		"asrUnavailable": "Speech recognition is off. Open Model settings next to the chat model at the top, then select a model under Speech recognition.",
 		"recordingUnsupported": "This browser cannot record a supported audio format",
 		"microphonePermissionDenied": "Microphone access was denied",
 		"transcriptionFailed": "Voice transcription failed",
@@ -484,7 +484,7 @@
 		"parameters": "Realtime voice parameters",
 		"noModels": "No realtime voice models are available.",
 		"disable": "Disable voice model",
-		"selectFirst": "Select a voice model first",
+		"selectFirst": "Realtime voice is off. Select a model from Voice model (the waveform icon) at the top.",
 		"start": "Start voice conversation",
 		"stop": "End voice conversation"
 	},
@@ -592,6 +592,7 @@
 		"wednesday": "Wed"
 	},
 	"model-parameters": {
+		"settings": "Model settings",
 		"title": "Model Parameters",
 		"booleanDefault": "Default",
 		"booleanEnabled": "On",
