@@ -38,8 +38,10 @@ def _make_agent() -> SimpleNamespace:
         state=SimpleNamespace(
             session_id="session",
             reply_id="reply",
+            cur_iter=0,
             context=[UserMsg(name="user", content="initial")],
         ),
+        react_config=SimpleNamespace(max_iters=10),
     )
 
 
@@ -379,6 +381,60 @@ class TestSteeringQueueState(IsolatedAsyncioTestCase):
 class TestSteeringMiddleware(IsolatedAsyncioTestCase):
     """Steering is consumed before or after a model call as needed."""
 
+    async def test_injection_notification_failure_keeps_committed_hint(
+        self,
+    ) -> None:
+        """A failed terminal event cannot roll back an acknowledged hint."""
+        bus = InMemoryMessageBus()
+        agent = _make_agent()
+        message = UserMsg("user", "guide")
+        item = await enqueue_chat_input(
+            bus,
+            "user",
+            "session",
+            "agent",
+            message,
+        )
+
+        async def model_call(**_kwargs: object) -> AsyncGenerator:
+            yield AssistantMsg(id="reply", name="agent", content="done")
+
+        async with bus.acquire_lock(MessageBusKeys.session_lock("session")):
+            await register_active_chat_reply(bus, "session", "reply")
+            await steer_chat_input(
+                bus,
+                "user",
+                "session",
+                "agent",
+                item["id"],
+                "reply",
+            )
+            with patch(
+                "agentscope.app.middleware._steering_middleware."
+                "publish_session_event",
+                side_effect=ConnectionError("offline"),
+            ):
+                events = await _collect(
+                    SteeringMiddleware(bus).on_reasoning(
+                        agent,
+                        {},
+                        model_call,
+                    ),
+                )
+        self.assertEqual(await list_chat_inputs(bus, "session"), [])
+        self.assertEqual(
+            _message_structures(agent.state.context[1:]),
+            _message_structures([_expected_hint_message(item["id"], message)]),
+        )
+        self.assertEqual(
+            [
+                _hint_event_structure(event)
+                for event in events
+                if isinstance(event, HintBlockEvent)
+            ],
+            [_expected_hint_event(item["id"], message)],
+        )
+
     async def test_pre_call_steering_reaches_one_model_call(self) -> None:
         """An already reserved item is visible to the immediate model call."""
         bus = InMemoryMessageBus()
@@ -504,7 +560,7 @@ class TestSteeringMiddleware(IsolatedAsyncioTestCase):
         )
 
     async def test_post_call_steering_continues_model_only_reply(self) -> None:
-        """A steer arriving mid-stream causes another non-interrupting call."""
+        """A mid-stream steer yields continuation to the Agent's next round."""
         bus = InMemoryMessageBus()
         agent = _make_agent()
         guide = UserMsg(name="user", content="new direction")
@@ -551,6 +607,20 @@ class TestSteeringMiddleware(IsolatedAsyncioTestCase):
                     model_call,
                 ),
             )
+            self.assertEqual(calls, 1)
+            self.assertEqual(
+                [event for event in events if isinstance(event, Msg)],
+                [],
+            )
+            events.extend(
+                await _collect(
+                    SteeringMiddleware(bus).on_reasoning(
+                        agent,
+                        {},
+                        model_call,
+                    ),
+                ),
+            )
 
         self.assertEqual(calls, 2)
         self.assertEqual(
@@ -578,7 +648,7 @@ class TestSteeringMiddleware(IsolatedAsyncioTestCase):
         )
 
     async def test_post_call_tool_path_does_not_repeat_reasoning(self) -> None:
-        """A tool-bound response proceeds to acting with the hint retained."""
+        """A tool-bound response leaves steering for the next reasoning."""
         bus = InMemoryMessageBus()
         agent = _make_agent()
         initial = agent.state.context[0]
@@ -631,10 +701,22 @@ class TestSteeringMiddleware(IsolatedAsyncioTestCase):
                     tool_model_call,
                 ),
             )
+            self.assertEqual(events, [])
+
+            async def after_tool(**_kwargs: object) -> AsyncGenerator:
+                yield AssistantMsg(id="reply", name="agent", content="done")
+
+            events = await _collect(
+                SteeringMiddleware(bus).on_reasoning(agent, {}, after_tool),
+            )
 
         self.assertEqual(calls, 1)
         self.assertEqual(
-            [_hint_event_structure(event) for event in events],
+            [
+                _hint_event_structure(event)
+                for event in events
+                if isinstance(event, HintBlockEvent)
+            ],
             [_expected_hint_event(item["id"], guide)],
         )
         expected_tool_message = AssistantMsg(
