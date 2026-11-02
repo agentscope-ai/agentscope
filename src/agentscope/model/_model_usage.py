@@ -11,7 +11,8 @@ class ChatUsage(DictMixin):
     """The usage of a chat model API invocation."""
 
     input_tokens: int
-    """The number of input tokens."""
+    """The number of input tokens, including the cache reads and writes
+    counted in ``cache_input_tokens`` and ``cache_creation_input_tokens``."""
 
     output_tokens: int
     """The number of output tokens."""

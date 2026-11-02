@@ -151,8 +151,8 @@ class BashCommandParser:
     def is_read_only_command(self, command: str) -> bool:
         """Check if a command is read-only (safe to auto-allow).
 
-        For compound commands (&&, ||, ;, |), ALL subcommands must be
-        read-only for the entire command to be considered read-only.
+        For compound commands (&&, ||, ;, |, newline, &), ALL subcommands
+        must be read-only for the entire command to be considered read-only.
 
         Commands with output redirections (>, >>) are NOT considered read-only.
 

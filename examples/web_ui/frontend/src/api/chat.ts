@@ -10,6 +10,10 @@ export interface ChatQueueItem {
 	created_at: string;
 	/** One message or an ordered message group executed as one turn. */
 	input: Msg | Msg[];
+	/** Current deferred-send or steering lifecycle state. */
+	state: 'queued' | 'steering' | 'failed';
+	/** Visible preparation failure for a failed steering attempt. */
+	error: string | null;
 }
 
 export interface ChatQueueResponse {
@@ -85,6 +89,22 @@ export const chatApi = {
 		client.delete<ChatQueueResponse>(`/chat/queue/${encodeURIComponent(itemId)}`, {
 			agent_id: agentId,
 			session_id: sessionId,
+		}),
+
+	/**
+	 * Reserve one pending item for the reply that is currently active.
+	 *
+	 * @param itemId - Stable id of the pending item.
+	 * @param agentId - Agent that owns the target session.
+	 * @param sessionId - Session whose reply should be steered.
+	 * @param replyId - Active reply observed by the client.
+	 * @returns Complete queue snapshot with the item marked as steering.
+	 */
+	steerQueued: (itemId: string, agentId: string, sessionId: string, replyId: string) =>
+		client.post<ChatQueueResponse>(`/chat/queue/${encodeURIComponent(itemId)}/steer`, {
+			agent_id: agentId,
+			session_id: sessionId,
+			reply_id: replyId,
 		}),
 
 	/**
