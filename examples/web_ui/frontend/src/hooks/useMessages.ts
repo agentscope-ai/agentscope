@@ -164,6 +164,8 @@ export function useMessages(
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	// Only a running reply accepts steering. Parked replies retain their
+	// streaming phase and currentReplyRef for confirmation and Stop.
 	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
@@ -347,6 +349,14 @@ export function useMessages(
 					}
 				}
 				if (
+					event.type === EventType.REQUIRE_USER_CONFIRM ||
+					event.type === EventType.REQUIRE_EXTERNAL_EXECUTION
+				) {
+					setActiveReplyId((active) =>
+						!event.reply_id || active === event.reply_id ? null : active,
+					);
+				}
+				if (
 					event.type === EventType.REPLY_END &&
 					(!event.reply_id ||
 						currentReplyRef.current === null ||
@@ -442,7 +452,7 @@ export function useMessages(
 					const pendingToolCall = hasPendingToolCall(tail);
 					if (is_running || pendingToolCall) {
 						setPhase('streaming');
-						if (tail?.role === 'assistant') {
+						if (is_running && !pendingToolCall && tail?.role === 'assistant') {
 							setActiveReplyId(tail.id);
 						}
 						if (pendingToolCall) {
@@ -730,7 +740,7 @@ export function useMessages(
 		reorderQueued,
 		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
 		error: ownsConversation ? error : null,
-		activeReplyId: ownsConversation ? activeReplyId : null,
+		activeReplyId: ownsConversation && phase === 'streaming' ? activeReplyId : null,
 		steerQueued,
 		send,
 		onUserConfirm,
