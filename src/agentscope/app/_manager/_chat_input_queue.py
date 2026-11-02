@@ -65,8 +65,14 @@ class ChatInputQueue:
         self._retry_tasks: set[asyncio.Task] = set()
         self._closed = False
 
-    async def close(self) -> None:
-        """Cancel retained timers and release recovery leadership."""
+    async def close(self, *, release_leadership: bool = True) -> None:
+        """Cancel retained timers and optionally release recovery leadership.
+
+        Args:
+            release_leadership (`bool`):
+                Whether to contact the bus to release the recovery lease.
+                Failed startup skips this and lets any lease expire.
+        """
         self._closed = True
         tasks = list(self._retry_tasks)
         for task in tasks:
@@ -74,7 +80,8 @@ class ChatInputQueue:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._retry_tasks.clear()
         self._recovery_task = None
-        await self._release_recovery_leadership()
+        if release_leadership:
+            await self._release_recovery_leadership()
 
     def schedule_recovery(self) -> None:
         """Retain at most one non-blocking recovery sweep per process."""

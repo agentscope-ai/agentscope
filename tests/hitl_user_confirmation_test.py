@@ -3,6 +3,7 @@
 """Test the user confirmation events in the agent class."""
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
@@ -1837,6 +1838,63 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.model.cnt, 2)
         # One tool round plus the final reasoning
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_confirmation_resumption_counts_round_once(self) -> None:
+        """Denied and approved rounds each count once toward the budget."""
+        self.agent.toolkit = Toolkit(tools=[MockUserConfirmConcurrentTool()])
+        for confirmed, max_iters, finished_reason in (
+            (False, 1, "exceed_max_iters"),
+            (True, 2, "completed"),
+        ):
+            with self.subTest(confirmed=confirmed):
+                self.agent.react_config.max_iters = max_iters
+                tool_call = ToolCallBlock(
+                    id=self.tool_call_id_1,
+                    name=self.concurrent_tool_name,
+                    input=self.tool_input_1,
+                )
+                self.model.set_responses(
+                    [
+                        ChatResponse(content=[tool_call], is_last=True),
+                        self.final_mock_responses,
+                    ],
+                )
+                with patch.object(
+                    MockModel,
+                    "__call__",
+                    wraps=self.model.__call__,
+                ) as model_call:
+                    parked = await self.agent.reply(
+                        UserMsg(name="user", content=self.user_input_text),
+                    )
+                    self.assertEqual(
+                        (parked.finished_reason, self.agent.state.cur_iter),
+                        (None, 0),
+                    )
+                    final = await self.agent.reply(
+                        UserConfirmResultEvent(
+                            reply_id=self.agent.state.reply_id,
+                            confirm_results=[
+                                ConfirmResult(
+                                    confirmed=confirmed,
+                                    tool_call=tool_call,
+                                ),
+                            ],
+                        ),
+                    )
+                    self.assertEqual(
+                        (
+                            final.finished_reason,
+                            self.agent.state.cur_iter,
+                            self.model.cnt,
+                        ),
+                        (finished_reason, 2, 2),
+                    )
+                    if not confirmed:
+                        self.assertEqual(
+                            model_call.call_args.kwargs["tool_choice"].mode,
+                            "none",
+                        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
