@@ -38,6 +38,10 @@ from agentscope.tool import (
     Edit,
     Glob,
     Grep,
+    TaskCreate,
+    TaskGet,
+    TaskList,
+    TaskUpdate,
 )
 
 
@@ -240,6 +244,21 @@ class PermissionEngineExploreModeTest(IsolatedAsyncioTestCase):
             {"file_path": "/tmp/file.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+    async def test_explore_task_readers_allow(self) -> None:
+        """TaskList/TaskGet only read task state → ALLOW in EXPLORE."""
+        for tool in (TaskList(), TaskGet()):
+            decision = await self.engine.check_permission(tool, {"task_id": "1"})
+            self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_explore_task_writers_deny(self) -> None:
+        """TaskCreate/TaskUpdate modify state → DENY in EXPLORE."""
+        for tool in (TaskCreate(), TaskUpdate()):
+            decision = await self.engine.check_permission(
+                tool,
+                {"task_id": "1", "status": "completed"},
+            )
+            self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
     async def test_explore_deny_rule_returns_deny(self) -> None:
         """Deny rule still has top priority in EXPLORE."""
@@ -1059,3 +1078,6 @@ class PermissionEngineReadOnlyConsistencyTest(IsolatedAsyncioTestCase):
                 PermissionBehavior.ALLOW,
                 f"Expected ALLOW for read-only bash in mode {mode.value}",
             )
+
+
+
