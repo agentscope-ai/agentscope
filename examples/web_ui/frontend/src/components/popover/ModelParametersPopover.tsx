@@ -406,7 +406,9 @@ function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuPro
 						});
 					}}
 				>
-					<span className="min-w-0 flex-1 truncate">{model.label}</span>
+					<span className="min-w-0 flex-1 whitespace-normal wrap-anywhere">
+						{model.label}
+					</span>
 					{model.realtime && (
 						<Badge variant="outline" className="ml-1.5 shrink-0 px-1 py-0 text-[10px]">
 							Realtime
@@ -421,7 +423,7 @@ function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuPro
 			<DropdownMenuSubTrigger>
 				<span className="truncate">{t('model-parameters.asrLabel')}</span>
 			</DropdownMenuSubTrigger>
-			<DropdownMenuSubContent className="max-h-96 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto">
+			<DropdownMenuSubContent className="max-h-96 w-max max-w-[calc(100vw-2rem)] overflow-y-auto">
 				{groupEntries.length === 0 ? (
 					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 						<p>{t('model-parameters.asrEmpty')}</p>
@@ -456,7 +458,7 @@ function ASRModelMenu({ groups, selectedASRModel, onASRChange }: ASRModelMenuPro
 														{credentialLabel(credential)}
 													</DropdownMenuSubTrigger>
 													<DropdownMenuPortal>
-														<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
+														<DropdownMenuSubContent className="max-h-60 w-max max-w-[calc(100vw-2rem)] overflow-y-auto">
 															{renderModels(type, credential, models)}
 														</DropdownMenuSubContent>
 													</DropdownMenuPortal>
