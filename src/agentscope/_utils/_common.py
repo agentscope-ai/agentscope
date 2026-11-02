@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
-import asyncio
 import base64
 import copy
-import functools
 import inspect
 import json
 import os
-import types
 import uuid
 from datetime import datetime
 from typing import Any, Callable
@@ -234,28 +231,20 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
     return timestamp
 
 
-async def _is_async_func(func: Callable) -> bool:
-    """Check if the given function is an async function, including
-    coroutine functions, async generators, and coroutine objects.
-    """
-
-    return (
-        inspect.iscoroutinefunction(func)
-        or inspect.isasyncgenfunction(func)
-        or isinstance(func, types.CoroutineType)
-        or isinstance(func, types.GeneratorType)
-        and asyncio.iscoroutine(func)
-        or isinstance(func, functools.partial)
-        and await _is_async_func(func.func)
-    )
-
-
 async def _execute_async_or_sync_func(
     func: Callable,
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    """Execute an async or sync function based on its type.
+    """Execute an async or sync function and return its awaited result.
+
+    Whether the callable is async is decided from what it returns, not from
+    ``inspect.iscoroutinefunction``. A sync decorator built with
+    ``functools.wraps`` over an ``async def`` (logging, tracing, metrics) is
+    itself a sync function that returns the coroutine, so inspecting the
+    wrapper reported "sync", the coroutine was returned un-awaited, and the
+    truthy coroutine object made every permission rule match every input
+    (fail-open, see #3551).
 
     Args:
         func (`Callable`):
@@ -270,10 +259,10 @@ async def _execute_async_or_sync_func(
             The result of the function execution.
     """
 
-    if await _is_async_func(func):
-        return await func(*args, **kwargs)
-
-    return func(*args, **kwargs)
+    result = func(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def _get_bytes_from_web_url(
