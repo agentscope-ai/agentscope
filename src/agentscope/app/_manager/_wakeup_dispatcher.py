@@ -142,12 +142,39 @@ class WakeupDispatcher:
             name="wakeup-dispatcher",
         )
         await ready.wait()
-        self._fallback_task = asyncio.create_task(
-            self._fallback_loop(),
-            name="wakeup-dispatcher:fallback",
-        )
-        await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
-        self._chat_queue.schedule_recovery()
+        try:
+            if self._task.done():
+                raise RuntimeError("Wakeup subscription ended during startup")
+            self._fallback_task = asyncio.create_task(
+                self._fallback_loop(),
+                name="wakeup-dispatcher:fallback",
+            )
+            await self._bus.publish(MessageBusKeys.wakeup_signal(), {})
+            if self._task.done():
+                raise RuntimeError("Wakeup subscription ended during startup")
+            self._chat_queue.schedule_recovery()
+        except BaseException:
+            # Failed entry does not invoke __aexit__. The listener and
+            # fallback may already have spawned retries or recovery work.
+            tasks = [
+                task
+                for task in (
+                    self._task,
+                    self._fallback_task,
+                    *self._retry_tasks,
+                )
+                if task is not None
+            ]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._task = None
+            self._fallback_task = None
+            self._retry_tasks.clear()
+            # Stop queue helpers and late run callbacks without contacting
+            # the failed bus to release recovery leadership.
+            await self._chat_queue.close(release_leadership=False)
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:
