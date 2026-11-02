@@ -24,6 +24,20 @@ else:
     AsyncStream = Any
 
 
+def _total_input_tokens(usage: Any) -> int:
+    """The input tokens of an Anthropic usage, including the cached ones.
+
+    Anthropic reports the cache reads and writes apart from
+    ``input_tokens``, while the other providers count them in it. Summing
+    them keeps ``ChatUsage.input_tokens`` the whole prompt everywhere.
+    """
+    return (
+        (getattr(usage, "input_tokens", 0) or 0)
+        + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+    )
+
+
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
 
@@ -391,7 +405,7 @@ class AnthropicChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.input_tokens or 0,
+                input_tokens=_total_input_tokens(u),
                 output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_creation_input_tokens=getattr(
@@ -441,6 +455,7 @@ class AnthropicChatModel(ChatModelBase):
         """
 
         usage = None
+        uncached_input_tokens = 0
         response_id: str = _generate_id()
         # Keep text and thinking blocks distinct, including their signatures.
         block_id_mapping: dict[int, str] = {}
@@ -466,8 +481,9 @@ class AnthropicChatModel(ChatModelBase):
 
                     if message.usage:
                         u = message.usage
+                        uncached_input_tokens = u.input_tokens or 0
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens or 0,
+                            input_tokens=_total_input_tokens(u),
                             output_tokens=getattr(u, "output_tokens", 0) or 0,
                             time=(
                                 datetime.now() - start_datetime
@@ -573,6 +589,31 @@ class AnthropicChatModel(ChatModelBase):
                 elif event.type == "message_delta":
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens or 0
+                        # Update cumulative counts before adding cache tokens.
+                        value = getattr(event.usage, "input_tokens", None)
+                        if isinstance(value, int):
+                            uncached_input_tokens = max(
+                                uncached_input_tokens,
+                                value,
+                            )
+                        for source, target in (
+                            (
+                                "cache_creation_input_tokens",
+                                "cache_creation_input_tokens",
+                            ),
+                            ("cache_read_input_tokens", "cache_input_tokens"),
+                        ):
+                            value = getattr(event.usage, source, None)
+                            if isinstance(value, int) and value > getattr(
+                                usage,
+                                target,
+                            ):
+                                setattr(usage, target, value)
+                        usage.input_tokens = (
+                            uncached_input_tokens
+                            + usage.cache_creation_input_tokens
+                            + usage.cache_input_tokens
+                        )
                         # ``usage`` was stamped when ``message_start``
                         # arrived, i.e. at time-to-first-token. Refresh it
                         # here so ``time`` spans the whole generation, as

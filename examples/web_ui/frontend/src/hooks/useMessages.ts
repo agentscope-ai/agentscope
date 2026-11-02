@@ -164,6 +164,9 @@ export function useMessages(
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	// Only a running reply accepts steering. Parked replies retain their
+	// streaming phase and currentReplyRef for confirmation and Stop.
+	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
@@ -180,6 +183,7 @@ export function useMessages(
 		finishItem,
 		updateQueued,
 		deleteQueued,
+		steerQueued,
 		moveQueued,
 		reorderQueued,
 	} = useChatQueue(agentId, sessionId, setError);
@@ -272,6 +276,7 @@ export function useMessages(
 					clearInterruptTimer();
 					currentReplyRef.current = null;
 					setPhase('idle');
+					setActiveReplyId(null);
 					setError(failure);
 					toast.error(failure.message);
 				} else if (custom.name === 'chat_input_cancelled') {
@@ -281,7 +286,15 @@ export function useMessages(
 					clearInterruptTimer();
 					currentReplyRef.current = null;
 					setPhase('idle');
+					setActiveReplyId(null);
 					toast.info(message);
+				} else if (custom.name === 'chat_input_injected') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					toast.success(t('chatQueue.injected'));
+				} else if (custom.name === 'chat_input_steer_failed') {
+					const value = custom.value as ChatInputTerminalValue;
+					toast.error(value.message ?? t('chatQueue.steerFailed'));
 				}
 				return;
 			}
@@ -307,6 +320,7 @@ export function useMessages(
 					msgsRef.current = [...msgsRef.current, msg];
 					currentReplyRef.current = msg;
 				}
+				setActiveReplyId(e.reply_id);
 				clearInterruptTimer();
 				setPhase('streaming');
 			} else {
@@ -335,6 +349,14 @@ export function useMessages(
 					}
 				}
 				if (
+					event.type === EventType.REQUIRE_USER_CONFIRM ||
+					event.type === EventType.REQUIRE_EXTERNAL_EXECUTION
+				) {
+					setActiveReplyId((active) =>
+						!event.reply_id || active === event.reply_id ? null : active,
+					);
+				}
+				if (
 					event.type === EventType.REPLY_END &&
 					(!event.reply_id ||
 						currentReplyRef.current === null ||
@@ -342,6 +364,7 @@ export function useMessages(
 				) {
 					clearInterruptTimer();
 					setPhase('idle');
+					setActiveReplyId(null);
 					currentReplyRef.current = null;
 				}
 			}
@@ -393,6 +416,7 @@ export function useMessages(
 		setError(null);
 		clearInterruptTimer();
 		setPhase('idle');
+		setActiveReplyId(null);
 		setSubagentHitl([]);
 		audioManager?.disposeAll();
 
@@ -425,9 +449,13 @@ export function useMessages(
 					// while parked leaves the UI stuck on ``idle`` with no
 					// way to abort.
 					const tail = messages[messages.length - 1];
-					if (is_running || hasPendingToolCall(tail)) {
+					const pendingToolCall = hasPendingToolCall(tail);
+					if (is_running || pendingToolCall) {
 						setPhase('streaming');
-						if (hasPendingToolCall(tail)) {
+						if (is_running && !pendingToolCall && tail?.role === 'assistant') {
+							setActiveReplyId(tail.id);
+						}
+						if (pendingToolCall) {
 							// Prime the ref so continuation events (which
 							// arrive without a fresh REPLY_START) apply to
 							// the right msg.
@@ -712,6 +740,8 @@ export function useMessages(
 		reorderQueued,
 		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
 		error: ownsConversation ? error : null,
+		activeReplyId: ownsConversation && phase === 'streaming' ? activeReplyId : null,
+		steerQueued,
 		send,
 		onUserConfirm,
 		onSubagentConfirm,

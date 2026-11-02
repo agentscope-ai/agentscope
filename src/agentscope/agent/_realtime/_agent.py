@@ -435,6 +435,7 @@ class RealtimeAgent:
             self._pump_uplink(transport),
             name="rt-up",
         )
+        getter: asyncio.Future[_QueuedEvent] | None = None
         try:
             while not uplink.done():
                 getter = asyncio.ensure_future(self._out.get())
@@ -460,9 +461,7 @@ class RealtimeAgent:
             # events that produced (the interrupted ReplyEnd) before the
             # stream ends rather than leaking them into the next run.
             await self._barge_in()
-            for turn in list(self._pending_user_turns.values()):
-                self._end_user_turn(turn)
-            self._end_user_turn()
+            self._retire_unbound_user_turns()
             while not self._out.empty():
                 queued = self._out.get_nowait()
                 self._yielded_checkpoint = (
@@ -478,10 +477,17 @@ class RealtimeAgent:
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
         finally:
-            if not uplink.done():
-                uplink.cancel()
-                await asyncio.gather(uplink, return_exceptions=True)
-            self._transport = None
+            try:
+                tasks = [task for task in (uplink, getter) if task is not None]
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                # Early close and cancellation skip the normal event drain.
+                # Stop readers before queuing the pending turns' end events.
+                self._retire_unbound_user_turns()
+                self._transport = None
 
     # ------------------------------------------------------------------
     # Discrete input
@@ -871,6 +877,30 @@ class RealtimeAgent:
         self._end_user_turn()
         self._pending_user_turns.clear()
         self._user_turn = None
+
+    def _retire_unbound_user_turns(self) -> None:
+        """End pending user turns when their transport goes, keeping only
+        the ones a late transcript could still find.
+
+        A turn bound to a provider item id stays in
+        ``_pending_user_turns`` so a transcript that settles after the
+        transport died still lands in the reply the caller already saw
+        end. A local turn whose speech ended also stays: it can be
+        committed without a provider item id, and its late transcript
+        still needs ``_find_user_turn``'s ordered fallback. Drop only
+        unfinished, unbound turns so they cannot capture the next run's
+        first transcript.
+        """
+        turns = list(self._pending_user_turns.values())
+        if self._user_turn is not None and self._user_turn not in turns:
+            turns.append(self._user_turn)
+        for turn in turns:
+            self._end_user_turn(turn)
+        for turn in turns:
+            if not turn.item_id and not turn.speech_ended:
+                self._pending_user_turns.pop(turn.reply_id, None)
+                if self._user_turn is turn:
+                    self._user_turn = None
 
     def _on_transcription(self, event: me.InputTranscriptionEvent) -> None:
         """Record a settled user turn, merging a split one back together,

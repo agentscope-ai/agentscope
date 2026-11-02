@@ -11,7 +11,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
-import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
@@ -80,6 +80,7 @@ interface ChatContentProps {
 	queuedCount: number;
 	queuedItems: ChatQueueItem[];
 	queueReorderDisabled: boolean;
+	activeReplyId: string | null;
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => Promise<void> | void;
 	onUserConfirm: (
@@ -94,6 +95,7 @@ interface ChatContentProps {
 	onInterrupt?: () => void;
 	onUpdateQueued: (itemId: string, text: string) => Promise<void>;
 	onDeleteQueued: (itemId: string) => Promise<void>;
+	onSteerQueued: (itemId: string, replyId: string) => Promise<void>;
 	onMoveQueued: (itemId: string, direction: -1 | 1) => Promise<void>;
 	onReorderQueued: (itemIds: string[]) => Promise<void>;
 	voiceState?: RealtimeConnectionState;
@@ -132,6 +134,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	queuedCount,
 	queuedItems,
 	queueReorderDisabled,
+	activeReplyId,
 	disabled,
 	onSend,
 	onUserConfirm,
@@ -140,6 +143,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onInterrupt,
 	onUpdateQueued,
 	onDeleteQueued,
+	onSteerQueued,
 	onMoveQueued,
 	onReorderQueued,
 	voiceState,
@@ -156,10 +160,29 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onRefreshGit,
 }) => {
 	const { t, i18n } = useTranslation();
+	const { deferredItems, steeringMessages } = useMemo(() => {
+		const deferred: ChatQueueItem[] = [];
+		const steering: Array<{ id: string; content: ContentBlock[] }> = [];
+		for (const item of queuedItems) {
+			if (item.state !== 'steering') {
+				deferred.push(item);
+				continue;
+			}
+			const messages = Array.isArray(item.input) ? item.input : [item.input];
+			for (const message of messages) {
+				steering.push({
+					id: `${item.id}:${message.id}`,
+					content: message.content,
+				});
+			}
+		}
+		return { deferredItems: deferred, steeringMessages: steering };
+	}, [queuedItems]);
+
 	// Only a session that finished loading with nothing in it is empty.
 	// Treating "no messages yet" as empty would flash the greeting over
 	// every session that does have history.
-	const isEmpty = !loading && msgs.length === 0;
+	const isEmpty = !loading && msgs.length === 0 && steeringMessages.length === 0;
 
 	// A spinner that appears and vanishes inside a couple of frames reads
 	// as a flicker, not as feedback — so hold it back until the load has
@@ -236,6 +259,17 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 										</MessageScrollerItem>
 									);
 								})}
+								{steeringMessages.map((message) => (
+									<MessageScrollerItem
+										key={message.id}
+										messageId={`steering:${message.id}`}
+									>
+										<SteeringMessageBubble
+											blocks={message.content}
+											status="steering"
+										/>
+									</MessageScrollerItem>
+								))}
 								{msgs.length > 0 &&
 									msgs[msgs.length - 1].finished_reason ===
 										ReplyFinishedReason.EXCEED_MAX_ITERS &&
@@ -310,10 +344,12 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						)}
 					</FlipCard>
 					<QueuedMessages
-						items={queuedItems}
+						items={deferredItems}
 						reorderDisabled={queueReorderDisabled}
+						activeReplyId={activeReplyId}
 						onUpdate={onUpdateQueued}
 						onDelete={onDeleteQueued}
+						onSteer={onSteerQueued}
 						onMove={onMoveQueued}
 						onReorder={onReorderQueued}
 					/>
