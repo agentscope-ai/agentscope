@@ -264,7 +264,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		msgs,
 		loading: messagesLoading,
 		phase,
+		queuedCount,
+		queuedItems,
+		queueReorderDisabled,
 		send,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
 		onUserConfirm,
 		onSubagentConfirm,
 		subagentHitl,
@@ -535,11 +542,15 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		const items = groups[selectedModel.type];
 		if (!items) return null;
 		for (const { models } of items) {
-			const card = models.find((m) => m.name === selectedModel.model);
+			const card = models.find(
+				(m) =>
+					m.name === selectedModel.model &&
+					(!selectedModel.model_class || m.model_class === selectedModel.model_class),
+			);
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model]);
+	}, [groups, selectedModel?.type, selectedModel?.model, selectedModel?.model_class]);
 
 	const selectedRealtimeModelCard = useMemo(() => {
 		if (!selectedRealtimeModel) return null;
@@ -571,14 +582,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		const items = groups[firstType];
 		if (!items || items.length === 0) return null;
 		const firstItem = items[0];
-		const firstModel = (firstItem.models as { name?: string; id?: string }[])[0];
+		const firstModel = firstItem.models[0];
 		if (!firstModel) return null;
-		const modelName = firstModel.name ?? firstModel.id ?? null;
-		if (!modelName) return null;
 		return {
 			type: firstType,
 			credential_id: firstItem.credential.id,
-			model: modelName,
+			model: firstModel.name,
+			model_class: firstModel.model_class,
 			parameters: {},
 		};
 	};
@@ -914,20 +924,20 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
+									queuedCount={queuedCount}
+									queuedItems={queuedItems}
+									queueReorderDisabled={queueReorderDisabled}
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
+									onUpdateQueued={updateQueued}
+									onDeleteQueued={deleteQueued}
+									onMoveQueued={moveQueued}
+									onReorderQueued={reorderQueued}
 									voiceState={realtimeVoice.state}
 									onVoiceToggle={() => void realtimeVoice.toggle()}
 									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
-									// cwd={
-									// 	{cwd: view?.session.config.cwd, git: {
-									// 		branch: 'main',
-									// 		deletion: 0,
-									// 		addition: 0,
-									// 	}}
-									// }
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard

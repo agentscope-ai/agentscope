@@ -203,7 +203,7 @@ async def create_agent(
         data = AgentData.model_validate(body.model_dump(exclude_none=True))
     except ValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(),
         ) from exc
     record = AgentRecord(user_id=user_id, data=data)
@@ -270,7 +270,7 @@ async def update_agent(
         )
     except ValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(),
         ) from exc
     updated_agent = existing.model_copy(

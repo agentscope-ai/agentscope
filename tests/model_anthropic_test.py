@@ -423,6 +423,43 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
     def _thinking(self) -> Any:
         return self.mock_create.call_args.kwargs.get("thinking")
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False disables thinking unless an explicit mode takes priority."""
+        self.assertIsNone(AnthropicChatModel.Parameters().thinking_enable)
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            for mode in (None, "adaptive", "disabled"):
+                with self.subTest(params=params, mode=mode):
+                    self.model.parameters = AnthropicChatModel.Parameters(
+                        **params,
+                        thinking_mode=mode,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "claude-opus-4-5",
+                        "messages": [],
+                        "stream": False,
+                        "max_tokens": 8192,
+                    }
+                    if mode is not None:
+                        expected["thinking"] = {"type": mode}
+                    elif params.get("thinking_enable") is False:
+                        expected["thinking"] = {"type": "disabled"}
+                    elif params.get("thinking_enable"):
+                        expected["thinking"] = {
+                            "type": "enabled",
+                            "budget_tokens": 4096,
+                        }
+                    self.assertEqual(
+                        self.mock_create.call_args.kwargs,
+                        expected,
+                    )
+
     async def test_no_thinking_by_default(self) -> None:
         """Neither control set means no thinking config is sent."""
         await self.model([])
@@ -458,6 +495,25 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         await self.model([])
 
         self.assertEqual(self._thinking(), {"type": "disabled"})
+
+    async def test_false_drops_budget_and_display(self) -> None:
+        """Disabled thinking omits budget/display without expanding tokens."""
+        self.model.parameters.thinking_enable = False
+        self.model.parameters.thinking_budget = 16_384
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs,
+            {
+                "model": "claude-opus-4-5",
+                "messages": [],
+                "stream": False,
+                "max_tokens": 8192,
+                "thinking": {"type": "disabled"},
+            },
+        )
 
     async def test_legacy_toggle_still_means_budget_mode(self) -> None:
         """thinking_enable keeps its old meaning when mode is unset."""

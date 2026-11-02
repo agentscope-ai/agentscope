@@ -27,6 +27,7 @@ from ._router import (
     model_router,
     realtime_router,
     tts_model_router,
+    voice_profile_router,
     schedule_router,
     session_router,
     skill_router,
@@ -448,6 +449,7 @@ def create_app(
         model_router,
         realtime_router,
         tts_model_router,
+        voice_profile_router,
         embedding_model_router,
         channel_router,
     ):

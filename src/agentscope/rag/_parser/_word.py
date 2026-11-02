@@ -50,8 +50,9 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
     Each ``mc:AlternateContent`` containing a text box uses the first branch
     with readable Word text, retaining the fallback when its choices cannot
-    supply any text. Paragraph boundaries within each text box are retained.
-    Other paragraph content keeps its original behavior.
+    supply any text. Run-level tabs and soft line breaks are preserved in
+    both the paragraph and its text boxes. Paragraph boundaries within each
+    text box are retained.
 
     Args:
         para (`DocxParagraph`):
@@ -66,11 +67,22 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     text_tag = qn("w:t")
     paragraph_tag = qn("w:p")
     text_box_tag = qn("w:txbxContent")
+    deleted_tag = qn("w:del")
+    run_tag = qn("w:r")
+    tab_tag = qn("w:tab")
+    carriage_return_tag = qn("w:cr")
+    separator_tags = {tab_tag, carriage_return_tag, qn("w:br")}
     root = para._element
 
     def iter_text(element: Any) -> Iterator[Any]:
-        """Visit text in one readable branch of each AlternateContent."""
-        if element.tag == text_tag:
+        """Visit text and inline separators in one readable branch."""
+        if element.tag == deleted_tag:
+            # Deleted runs must not contribute text or inline separators.
+            return
+        if element.tag == text_tag or (
+            element.tag in separator_tags
+            and element.getparent().tag == run_tag
+        ):
             yield element
         elif (
             element.tag == _MC_ALTERNATE_CONTENT
@@ -79,7 +91,11 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
             texts: list[Any] = []
             for branch in element:
                 texts = list(iter_text(branch))
-                if any(t.text and t.text.strip() for t in texts):
+                # Separators alone must not hide a readable fallback.
+                if any(
+                    text.tag == text_tag and text.text and text.text.strip()
+                    for text in texts
+                ):
                     break
             yield from texts
         else:
@@ -88,12 +104,23 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
 
     own_parts: list[str] = []
     text_boxes: dict[Any, dict[Any, list[str]]] = {}
-    for text in iter_text(root):
-        if not text.text:
+    for element in iter_text(root):
+        if element.tag == text_tag:
+            value = element.text or ""
+        elif element.tag == tab_tag:
+            value = "\t"
+        elif element.tag == carriage_return_tag:
+            value = "\n"
+        elif element.get(qn("w:type"), "textWrapping") == "textWrapping":
+            value = "\n"
+        else:
+            # Page and column breaks do not contribute text.
+            value = ""
+        if not value:
             continue
         parts = own_parts
         paragraph = root
-        for ancestor in text.iterancestors():
+        for ancestor in element.iterancestors():
             if ancestor is root:
                 break
             if ancestor.tag == paragraph_tag:
@@ -104,11 +131,15 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
                     [],
                 )
                 break
-        parts.append(text.text)
+        parts.append(value)
 
     own_text = "".join(own_parts)
-    if not own_text and not text_boxes:
-        # python-docx also reads characters such as w:noBreakHyphen.
+    if not own_text.strip() and not any(
+        "".join(parts).strip()
+        for paragraphs in text_boxes.values()
+        for parts in paragraphs.values()
+    ):
+        # Separator-only extraction must not hide w:noBreakHyphen, etc.
         own_text = para.text
     blocks = [
         own_text,

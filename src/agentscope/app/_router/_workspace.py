@@ -32,7 +32,6 @@ from ...skill import Skill
 from ._schema import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
-    AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
     DirectoryListing,
@@ -238,33 +237,6 @@ async def list_skills(
 
 
 @workspace_router.post(
-    "/skill",
-    status_code=status.HTTP_201_CREATED,
-    deprecated=True,
-)
-async def add_skill(
-    body: AddSkillRequest,
-    agent_id: str = Query(...),
-    session_id: str = Query(...),
-    user_id: str = Depends(get_current_user_id),
-    workspace_service: WorkspaceService = Depends(get_workspace_service),
-) -> None:
-    """Add a skill to the session's workspace from the given path.
-
-    Deprecated: the path is resolved on the server, which only means
-    anything for a single-host deployment. Use ``POST /skill/upload``
-    to send a folder, or ``POST /skill/from-library`` to install one
-    the user already has.
-    """
-    workspace = await workspace_service.resolve(
-        user_id,
-        agent_id,
-        session_id,
-    )
-    await workspace.add_skill(body.skill_path, agent_id=agent_id)
-
-
-@workspace_router.post(
     "/skill/upload",
     status_code=status.HTTP_201_CREATED,
 )
@@ -293,7 +265,7 @@ async def upload_skill(
         workspace_service.validate_manifest(parsed, len(files))
     except (ValidationError, SkillUploadError) as e:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             str(e),
         ) from e
 
@@ -314,7 +286,7 @@ async def upload_skill(
         )
     except (SkillUploadError, ValueError) as e:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             str(e),
         ) from e
 

@@ -54,6 +54,8 @@ from ._model import (
     TeamMember,
     AgentChatConfig,
     InviteConfig,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 
 if TYPE_CHECKING:
@@ -137,4 +139,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]

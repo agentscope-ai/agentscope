@@ -2,6 +2,7 @@ type: realtime_model
 name: qwen3-omni-flash-realtime
 label: Qwen3-Omni-Flash Realtime
 status: active
+release_date: 2025-12-04
 
 input_types:
   - audio/pcm

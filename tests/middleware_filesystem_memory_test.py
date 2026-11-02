@@ -4,20 +4,23 @@ import asyncio
 import os
 import shutil
 import tempfile
-from typing import Any, Type
+from typing import Any, AsyncGenerator, Type
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, call, patch
 
 from pydantic import BaseModel
 from utils import AnyString, AnyValue, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.message import (
+    DataBlock,
     HintBlock,
     Msg,
     TextBlock,
     ToolCallBlock,
     UserMsg,
+    URLSource,
 )
 from agentscope.middleware import AgenticMemoryMiddleware
 from agentscope.model import ChatResponse, StructuredResponse
@@ -319,6 +322,62 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Remove the temporary workspace after each test."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_retrieval_input_skips_messages_without_text_blocks(
+        self,
+    ) -> None:
+        """Keep text-block presence distinct from empty text content."""
+        textless = [
+            UserMsg(name="empty", content=[]),
+            UserMsg(
+                name="image",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/image.png",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        cases = [
+            (textless, []),
+            (
+                [
+                    *textless,
+                    UserMsg(name="blank", content=""),
+                    UserMsg(name="user", content="hello"),
+                ],
+                ["blank: \nuser: hello"],
+            ),
+        ]
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        agent = self._make_agent(_RecordingMockModel(), middleware)
+
+        async def next_handler(**_kwargs: Any) -> AsyncGenerator:
+            await asyncio.sleep(0)
+            yield "done"
+
+        for inputs, expected in cases:
+            with self.subTest(inputs=inputs), patch.object(
+                middleware,
+                "_retrieve_relevant_files",
+                new_callable=AsyncMock,
+            ) as retrieve:
+                actual = [
+                    item
+                    async for item in middleware.on_reply(
+                        agent,
+                        {"inputs": inputs},
+                        next_handler,
+                    )
+                ]
+                self.assertEqual(actual, ["done"])
+                self.assertEqual(
+                    retrieve.await_args_list,
+                    [call(agent, text) for text in expected],
+                )
 
     def _make_agent(
         self,

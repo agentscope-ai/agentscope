@@ -3,8 +3,11 @@
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
 import asyncio
+from itertools import count
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from utils import AnyString, MockModel
 
 from agentscope.agent import (
@@ -21,7 +24,7 @@ from agentscope.event import (
     TextBlockDeltaEvent,
     TextBlockEndEvent,
 )
-from agentscope.message import AssistantMsg, Msg, UserMsg
+from agentscope.message import AssistantMsg, Msg, Usage, UserMsg
 from agentscope.model import ChatResponse
 from agentscope.realtime import (
     AudioFrame,
@@ -540,6 +543,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "monk.",
                 ("user_start", "u2"),
                 ("reply_end", "interrupted"),
+                ("reply_end", "completed"),
             ],
         )
         self.assertEqual(
@@ -801,6 +805,12 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
     async def test_provider_timeout_reconnects_on_next_audio(self) -> None:
         """When the provider closes the session, nothing reconnects until
         the next user audio, which reconnects with the current context."""
+        self.enterContext(
+            patch(
+                "agentscope.agent._realtime._aggregator.time",
+                SimpleNamespace(monotonic=count(step=1.0).__next__),
+            ),
+        )
         model = ScriptedModel(
             [
                 REPLY_R1 + [me.SessionEndedEvent(reason="idle")],
@@ -811,7 +821,6 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             "Friday",
             "be brief",
             model,
-            aggregator=TurnAggregator(merge_window_ms=0),
         )
 
         async with agent:
@@ -1082,7 +1091,9 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 "connection_generation": agent._connection_generation,
                 "sessions": model.sessions,
                 "reply_open": agent._reply is not None,
-                "user_turn_open": agent._user_turn_open,
+                "user_turn_open": (
+                    agent._user_turn is not None and agent._user_turn.open
+                ),
                 "iterator_started": [
                     event.is_set() for event in model.iterator_started
                 ],
@@ -1288,6 +1299,328 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
 
 class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
     """Verify user reply boundaries around delayed transcription."""
+
+    @staticmethod
+    def _drain(agent: RealtimeAgent) -> list[tuple]:
+        """Read all queued user lifecycle and text events."""
+        events: list[tuple] = []
+        while not agent._out.empty():
+            event = agent._out.get_nowait().event
+            if isinstance(event, ReplyStartEvent):
+                events.append(("start", event.reply_id))
+            elif isinstance(event, ReplyEndEvent):
+                events.append(("end", event.reply_id))
+            elif isinstance(event, TextBlockDeltaEvent):
+                events.append(("text", event.reply_id, event.delta))
+        return events
+
+    def _make_agent(self) -> RealtimeAgent:
+        """Build an agent with independent, provider-transcribed user turns."""
+        # Space transcripts beyond the merge window without changing asyncio.
+        self.enterContext(
+            patch(
+                "agentscope.agent._realtime._aggregator.time",
+                SimpleNamespace(monotonic=count(step=1.0).__next__),
+            ),
+        )
+        return RealtimeAgent(
+            "Friday",
+            "be brief",
+            ScriptedModel([[]], input_audio_transcription=True),
+        )
+
+    async def test_text_and_usage_after_transcript_update_existing_reply(
+        self,
+    ) -> None:
+        """Even deltas within one response can follow user transcription."""
+        agent = self._make_agent()
+        for event in [
+            me.ResponseCreatedEvent(item_id="r1"),
+            me.TranscriptDeltaEvent(item_id="r1", delta="Hello"),
+            me.InputTranscriptionEvent(item_id="u1", text="Hi"),
+            me.TranscriptDeltaEvent(item_id="r1", delta=" there"),
+            me.ResponseDoneEvent(
+                item_id="r1",
+                input_tokens=7,
+                output_tokens=3,
+            ),
+        ]:
+            await agent._on_model_event(event)
+        self.assertEqual(
+            [(msg.id, msg.get_text_content()) for msg in agent.state.context],
+            [("r1", "Hello there"), ("u1", "Hi")],
+        )
+        self.assertEqual(
+            agent.state.context[0].usage,
+            Usage(input_tokens=7, output_tokens=3),
+        )
+
+    async def test_old_transcript_after_resume_does_not_end_new_turn(
+        self,
+    ) -> None:
+        """Exercise success, failure and dropped text after a disconnect."""
+        for old_event, old_text in [
+            (me.InputTranscriptionEvent(item_id="u1", text="first"), "first"),
+            (me.InputTranscriptionFailedEvent(item_id="u1"), None),
+            (me.InputTranscriptionEvent(item_id="u1", text=""), None),
+        ]:
+            with self.subTest(event=old_event):
+                agent = self._make_agent()
+                await agent._on_model_event(
+                    me.SpeechStartedEvent(item_id="u1"),
+                )
+                await agent._on_model_event(
+                    me.SpeechEndedEvent(item_id="u1"),
+                )
+                _ = [
+                    event
+                    async for event in agent.reply_stream(FakeTransport(0))
+                ]
+                await agent._on_model_event(
+                    me.SpeechStartedEvent(item_id="u2"),
+                )
+                self._drain(agent)
+                await agent._on_model_event(old_event)
+                old_events = self._drain(agent)
+                await agent._on_model_event(
+                    me.InputTranscriptionEvent(item_id="u2", text="second"),
+                )
+                self.assertEqual(
+                    {
+                        "old_events": old_events,
+                        "new_events": self._drain(agent),
+                        "context": [
+                            (msg.id, msg.get_text_content())
+                            for msg in agent.state.context
+                        ],
+                    },
+                    {
+                        "old_events": (
+                            [("text", "u1", "first")] if old_text else []
+                        ),
+                        "new_events": [
+                            ("text", "u2", "second"),
+                            ("end", "u2"),
+                        ],
+                        "context": ([("u1", "first")] if old_text else [])
+                        + [("u2", "second")],
+                    },
+                )
+
+    async def test_transcripts_can_arrive_in_reverse_order(self) -> None:
+        """Provider IDs disambiguate two pending turns without reconnect."""
+        agent = self._make_agent()
+        for item_id in ["u1", "u2"]:
+            await agent._on_model_event(
+                me.SpeechStartedEvent(item_id=item_id),
+            )
+            await agent._on_model_event(
+                me.SpeechEndedEvent(item_id=item_id),
+            )
+        self._drain(agent)
+        for item_id in ["u2", "u1"]:
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id=item_id, text=item_id),
+            )
+        self.assertEqual(
+            self._drain(agent),
+            [
+                ("text", "u2", "u2"),
+                ("end", "u2"),
+                ("text", "u1", "u1"),
+                ("end", "u1"),
+            ],
+        )
+        self.assertEqual(
+            [(msg.id, msg.get_text_content()) for msg in agent.state.context],
+            [("u2", "u2"), ("u1", "u1")],
+        )
+
+    async def test_overlapping_turns_close_on_transport_end_or_reset(
+        self,
+    ) -> None:
+        """Close all pending replies while keeping only reusable IDs."""
+        for reset in [False, True]:
+            with self.subTest(reset=reset):
+                agent = self._make_agent()
+                for item_id in ["u1", "u2"]:
+                    await agent._on_model_event(
+                        me.SpeechStartedEvent(item_id=item_id),
+                    )
+                    await agent._on_model_event(
+                        me.SpeechEndedEvent(item_id=item_id),
+                    )
+                self.assertEqual(
+                    self._drain(agent),
+                    [("start", "u1"), ("start", "u2")],
+                )
+                if reset:
+                    agent._reset_user_turns()
+                    ended = self._drain(agent)
+                else:
+                    ended = [
+                        ("end", event.reply_id)
+                        async for event in agent.reply_stream(
+                            FakeTransport(0),
+                        )
+                        if isinstance(event, ReplyEndEvent)
+                    ]
+                self.assertEqual(
+                    {
+                        "ended": ended,
+                        "pending": list(agent._pending_user_turns),
+                        "open": [
+                            turn.reply_id
+                            for turn in agent._pending_user_turns.values()
+                            if turn.open
+                        ],
+                    },
+                    {
+                        "ended": [("end", "u1"), ("end", "u2")],
+                        "pending": [] if reset else ["u1", "u2"],
+                        "open": [],
+                    },
+                )
+
+    async def test_local_vad_turns_keep_their_generated_reply_ids(
+        self,
+    ) -> None:
+        """Unbound local turns match settled transcripts in commit order."""
+        agent = self._make_agent()
+        agent._connected = True
+        ids = []
+        for _ in range(2):
+            await agent._forward_audio(b"", SpeechTransition.STARTED)
+            ids.append(
+                next(
+                    event[1]
+                    for event in self._drain(agent)
+                    if event[0] == "start"
+                ),
+            )
+            await agent._forward_audio(b"", SpeechTransition.ENDED)
+        self._drain(agent)
+        for item_id, text in [("u1", "first"), ("u2", "second")]:
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id=item_id, text=text),
+            )
+        self.assertEqual(
+            [(msg.id, msg.get_text_content()) for msg in agent.state.context],
+            [(ids[0], "first"), (ids[1], "second")],
+        )
+
+    async def test_provider_id_binds_to_local_turn(self) -> None:
+        """Provider speech events preserve the reply opened by local VAD."""
+        agent = self._make_agent()
+        agent._connected = True
+        await agent._forward_audio(b"", SpeechTransition.STARTED)
+        reply_id = self._drain(agent)[0][1]
+        for event in [
+            me.SpeechStartedEvent(item_id="u1"),
+            me.SpeechStartedEvent(item_id="u1"),
+            me.SpeechEndedEvent(item_id="u1"),
+            me.InputTranscriptionEvent(item_id="u1", text="hello"),
+        ]:
+            await agent._on_model_event(event)
+        self.assertEqual(
+            self._drain(agent),
+            [("text", reply_id, "hello"), ("end", reply_id)],
+        )
+
+    async def test_unmatched_transcript_does_not_end_active_turn(self) -> None:
+        """A transcript without a speech event gets an independent reply."""
+        agent = self._make_agent()
+        await agent._on_model_event(me.SpeechStartedEvent(item_id="u2"))
+        self._drain(agent)
+        for item_id in ["u1", "u2"]:
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id=item_id, text=item_id),
+            )
+        self.assertEqual(
+            self._drain(agent),
+            [
+                ("start", "u1"),
+                ("text", "u1", "u1"),
+                ("end", "u1"),
+                ("text", "u2", "u2"),
+                ("end", "u2"),
+            ],
+        )
+
+    async def test_model_error_clears_pending_local_turns(self) -> None:
+        """A model error retires the old unbound transcript identities."""
+        agent = self._make_agent()
+        async with agent:
+            await agent._forward_audio(b"", SpeechTransition.STARTED)
+            old_id = self._drain(agent)[0][1]
+            await agent._on_model_event(
+                me.ModelErrorEvent(code="failed", message="failed"),
+            )
+            self.assertEqual(self._drain(agent), [("end", old_id)])
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id="u2", text="new"),
+            )
+        self.assertEqual(
+            [(msg.id, msg.get_text_content()) for msg in agent.state.context],
+            [("u2", "new")],
+        )
+
+    async def test_transcription_after_transport_end_keeps_turn(self) -> None:
+        """A late transcript stays in the user reply already closed."""
+        model = ScriptedModel(
+            [
+                [
+                    me.SpeechStartedEvent(item_id="u1"),
+                    me.SpeechEndedEvent(item_id="u1"),
+                ],
+            ],
+            input_audio_transcription=True,
+        )
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async def _collect() -> list[tuple[Any, ...]]:
+            transport = FakeTransport(frames=1)
+            async with transport:
+                return [
+                    (
+                        event.type,
+                        getattr(event, "role", None),
+                        getattr(event, "delta", None),
+                        getattr(event, "finished_reason", None),
+                    )
+                    async for event in agent.reply_stream(transport)
+                    if getattr(event, "reply_id", None) == "u1"
+                ]
+
+        async with agent:
+            first_events = await _collect()
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id="u1", text="hello"),
+            )
+            next_events = await _collect()
+
+        self.assertEqual(
+            {
+                "first_events": first_events,
+                "next_events": next_events,
+                "context": [
+                    (message.role, message.id, message.get_text_content())
+                    for message in agent.state.context
+                ],
+            },
+            {
+                "first_events": [
+                    ("REPLY_START", "user", None, None),
+                    ("REPLY_END", None, None, "completed"),
+                ],
+                "next_events": [
+                    ("TEXT_BLOCK_START", None, None, None),
+                    ("TEXT_BLOCK_DELTA", None, "hello", None),
+                    ("TEXT_BLOCK_END", None, None, None),
+                ],
+                "context": [("user", "u1", "hello")],
+            },
+        )
 
     async def test_user_reply_ends_after_transcription_result(self) -> None:
         """Success and failure both close their delayed user replies."""
@@ -1743,8 +2076,9 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         pcm=b"\x01\x00",
                         sample_rate=24000,
                     ),
+                    me.ResponseCreatedEvent(item_id="r2"),
                     me.ToolCallEvent(
-                        item_id="r1",
+                        item_id="r2",
                         tool_call=ToolCallBlock(
                             id="c1",
                             name="stream_tool",
@@ -1752,23 +2086,23 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                         ),
                     ),
                     me.ResponseDoneEvent(
-                        item_id="r1",
+                        item_id="r2",
                         input_tokens=5,
                         output_tokens=2,
                     ),
                     "WAIT",
-                    me.ResponseCreatedEvent(item_id="r2"),
+                    me.ResponseCreatedEvent(item_id="r3"),
                     me.TranscriptDeltaEvent(
-                        item_id="r2",
+                        item_id="r3",
                         delta="It is sunny.",
                     ),
                     me.AudioDeltaEvent(
-                        item_id="r2",
+                        item_id="r3",
                         pcm=b"\x01\x00",
                         sample_rate=24000,
                     ),
                     me.ResponseDoneEvent(
-                        item_id="r2",
+                        item_id="r3",
                         input_tokens=9,
                         output_tokens=3,
                     ),
@@ -1827,6 +2161,8 @@ class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):
                 ("DATA_BLOCK_DELTA", "r1", None, None, None, None),
                 ("TEXT_BLOCK_END", "r1", None, None, None, None),
                 ("DATA_BLOCK_END", "r1", None, None, None, None),
+                ("MODEL_CALL_END", "r1", None, None, None, "completed"),
+                ("MODEL_CALL_START", "r1", None, None, None, None),
                 ("MODEL_CALL_END", "r1", None, None, None, "completed"),
                 ("TOOL_CALL_START", "r1", None, None, "c1", None),
                 (

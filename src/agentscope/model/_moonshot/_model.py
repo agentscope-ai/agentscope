@@ -36,13 +36,15 @@ class MoonshotChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
-                "enabled by default but can be disabled."
+                "enabled by default but can be disabled. When None, no "
+                "``thinking`` option is sent and the model's default "
+                "behavior applies."
             ),
         )
 
@@ -208,7 +210,7 @@ class MoonshotChatModel(ChatModelBase):
         if is_k3:
             if self.parameters.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = self.parameters.reasoning_effort
-        else:
+        elif self.parameters.thinking_enable is not None:
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
@@ -282,14 +284,15 @@ class MoonshotChatModel(ChatModelBase):
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
                             0,
                         )
+                        or 0
                         if details
                         else 0,
                     )
@@ -391,14 +394,15 @@ class MoonshotChatModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )
