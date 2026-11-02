@@ -69,6 +69,14 @@ class ChatQueueItem(BaseModel):
     input: Msg | NonEmptyMsgList = Field(
         description="One message or non-empty ordered message list.",
     )
+    state: Literal["queued", "steering", "failed"] = Field(
+        default="queued",
+        description="Current deferred-send or steering state.",
+    )
+    error: str | None = Field(
+        default=None,
+        description="Visible steering failure, when state is failed.",
+    )
 
 
 class ChatQueueResponse(BaseModel):
@@ -90,6 +98,20 @@ class UpdateChatQueueItemRequest(BaseModel):
     )
     input: Msg | NonEmptyMsgList = Field(
         description="Replacement message or non-empty message list.",
+    )
+
+
+class SteerChatQueueItemRequest(BaseModel):
+    """Reserve one pending input for a currently active reply."""
+
+    agent_id: str = Field(
+        description="Agent that owns the target session.",
+    )
+    session_id: str = Field(
+        description="Session whose pending item will steer the reply.",
+    )
+    reply_id: str = Field(
+        description="Active reply that should consume the pending item.",
     )
 
 

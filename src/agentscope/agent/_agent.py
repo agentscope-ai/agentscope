@@ -9,6 +9,7 @@ import warnings
 
 from asyncio import Queue
 from copy import deepcopy
+from contextlib import aclosing
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
@@ -322,13 +323,13 @@ class Agent:
             agent won't re-send the requiring events for the unconfirmed
             or unexecuted tool calls.
         """
-        async for chunk in self._reply(
-            inputs=inputs,
-            structured_schema=structured_schema,
-        ):
-            if isinstance(chunk, Msg) and not yield_final_msg:
-                continue
-            yield chunk
+        async with aclosing(
+            self._reply(inputs=inputs, structured_schema=structured_schema),
+        ) as stream:
+            async for chunk in stream:
+                if isinstance(chunk, Msg) and not yield_final_msg:
+                    continue
+                yield chunk
 
     async def reply(
         self,
@@ -930,11 +931,14 @@ class Agent:
                 structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(
-                        inputs=inputs,
-                        structured_schema=structured_schema,
-                    ):
-                        yield item
+                    async with aclosing(
+                        self._reply_impl(
+                            inputs=inputs,
+                            structured_schema=structured_schema,
+                        ),
+                    ) as stream:
+                        async for item in stream:
+                            yield item
                 else:
                     mw = self._reply_middlewares[index]
                     input_kwargs = {
@@ -945,28 +949,34 @@ class Agent:
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(
-                            index + 1,
-                            **{**input_kwargs, **kwargs},
-                        ):
-                            yield item
+                        async with aclosing(
+                            execute_chain(
+                                index + 1,
+                                **{**input_kwargs, **kwargs},
+                            ),
+                        ) as stream:
+                            async for item in stream:
+                                yield item
 
-                    async for item in mw.on_reply(
-                        agent=self,
-                        input_kwargs=input_kwargs,
-                        next_handler=next_handler,
-                    ):
-                        yield item
+                    async with aclosing(
+                        mw.on_reply(
+                            agent=self,
+                            input_kwargs=input_kwargs,
+                            next_handler=next_handler,
+                        ),
+                    ) as stream:
+                        async for item in stream:
+                            yield item
 
             agen = execute_chain()
 
         self._receive_reply_end = False
-        async for item in agen:
-            # Set before the yield: the suspended `_reply_impl` checks the
-            # flag once resumed by the next pull
-            if isinstance(item, ReplyEndEvent):
-                self._receive_reply_end = True
-            yield item
+        async with aclosing(agen):
+            async for item in agen:
+                # Set before yielding so the suspended loop can observe it.
+                if isinstance(item, ReplyEndEvent):
+                    self._receive_reply_end = True
+                yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -1096,6 +1106,10 @@ class Agent:
             #  - if incoming event and agent is waiting for an event
             #  - if event is None and agent is not waiting for an event
             # ===================================================================
+            if event is not None:
+                # Receive cancellation redirected by the service before a
+                # continuation can apply a decision or execute a tool.
+                await asyncio.sleep(0)
             is_awaiting = await self._check_incoming_event(event)
 
             # ===================================================================
@@ -1121,6 +1135,10 @@ class Agent:
                     reply_id=self.state.reply_id,
                     name=self.name,
                 )
+                # A consumer may re-arm cancellation while registering or
+                # publishing REPLY_START. Receive it inside this cleanup scope
+                # even when subsequent model/tool awaits complete inline.
+                await asyncio.sleep(0)
 
             # Update the structured output tool for new requirements or
             #  from the previous reply
