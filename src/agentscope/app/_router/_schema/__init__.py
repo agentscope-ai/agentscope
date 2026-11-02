@@ -17,6 +17,7 @@ from ._chat import (
     ChatQueueItem,
     ChatQueueResponse,
     ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
     UpdateChatQueueItemRequest,
 )
 from ._health import ComponentStatus, HealthResponse
@@ -176,6 +177,7 @@ __all__ = [
     "ChatQueueItem",
     "ChatQueueResponse",
     "ReorderChatQueueRequest",
+    "SteerChatQueueItemRequest",
     "UpdateChatQueueItemRequest",
     # Credential
     "CreateCredentialRequest",

@@ -1771,6 +1771,8 @@ class TestChatEndpointQueue(IsolatedAsyncioTestCase):
                     "id": response.queue_item_id,
                     "created_at": items[0]["created_at"],
                     "input": message.model_dump(mode="json"),
+                    "state": "queued",
+                    "error": None,
                 },
             ],
         )
@@ -1820,6 +1822,8 @@ class TestChatEndpointQueue(IsolatedAsyncioTestCase):
                                 "id": response.queue_item_id,
                                 "created_at": items[0]["created_at"],
                                 "input": message.model_dump(mode="json"),
+                                "state": "queued",
+                                "error": None,
                             },
                         ],
                     )

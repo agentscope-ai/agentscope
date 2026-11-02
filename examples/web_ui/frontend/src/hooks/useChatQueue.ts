@@ -152,6 +152,8 @@ export function useChatQueue(
 					id: optimisticId,
 					created_at: message.created_at,
 					input: message,
+					state: 'queued',
+					error: null,
 				},
 			]);
 			return optimisticId;
@@ -283,6 +285,40 @@ export function useChatQueue(
 		[agentId, sessionId, session, applyMutationSnapshot, onError],
 	);
 
+	const steerQueued = useCallback(
+		async (itemId: string, replyId: string) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+			const previousItem = itemsRef.current.find((item) => item.id === itemId);
+			if (!previousItem) return;
+			updateItems(
+				itemsRef.current.map((item) =>
+					item.id === itemId
+						? { ...item, state: 'steering' as const, error: null }
+						: item,
+				),
+			);
+			const snapshotVersion = snapshotVersionRef.current;
+			try {
+				const response = await chatApi.steerQueued(itemId, agentId, sessionId, replyId);
+				applyMutationSnapshot(response.items, snapshotVersion);
+			} catch (error) {
+				if (activeSessionRef.current === session) {
+					if (snapshotVersion === snapshotVersionRef.current) {
+						updateItems(
+							itemsRef.current.map((item) =>
+								item.id === itemId ? previousItem : item,
+							),
+						);
+					}
+					void refreshQueue();
+					onError(error as Error);
+				}
+				throw error;
+			}
+		},
+		[agentId, sessionId, session, applyMutationSnapshot, onError, updateItems, refreshQueue],
+	);
+
 	const reorderQueued = useCallback(
 		async (visibleItemIds: string[]) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
@@ -356,13 +392,16 @@ export function useChatQueue(
 		[conversationMessageIds, items],
 	);
 	const reorderDisabled = useMemo(
-		() => items.some((item) => item.id.startsWith(OPTIMISTIC_ITEM_PREFIX)),
+		() =>
+			items.some(
+				(item) => item.id.startsWith(OPTIMISTIC_ITEM_PREFIX) || item.state === 'steering',
+			),
 		[items],
 	);
 
 	return {
 		items: visibleItems,
-		visibleCount: visibleItems.length,
+		visibleCount: visibleItems.filter((item) => item.state !== 'steering').length,
 		pendingCount: items.length,
 		reorderDisabled,
 		addOptimistic,
@@ -373,6 +412,7 @@ export function useChatQueue(
 		finishItem,
 		updateQueued,
 		deleteQueued,
+		steerQueued,
 		moveQueued,
 		reorderQueued,
 	};

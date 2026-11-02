@@ -263,6 +263,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHAT_INPUT_MUTATION_LOCK = "agentscope:chat:inputs:mutation:{sid}"
     _CHAT_INPUT_PENDING_REGISTRY = "agentscope:chat:pending"
     _CHAT_INPUT_INFLIGHT_REGISTRY = "agentscope:chat:inflight"
+    _CHAT_ACTIVE_REPLY_REGISTRY = "agentscope:chat:active_reply"
     _CHAT_INPUT_RECOVERY_LOCK = "agentscope:chat:recovery:lock"
     _CHAT_INPUT_RECOVERY_STATE = "agentscope:chat:recovery:state"
     _CHAT_INPUT_USER_QUOTA_LOCK = "agentscope:chat:quota:lock:{uid}"
@@ -367,6 +368,16 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
                 Global per-session in-flight claim registry key.
         """
         return cls._CHAT_INPUT_INFLIGHT_REGISTRY
+
+    @classmethod
+    def chat_active_reply_registry(cls) -> str:
+        """Return the registry containing each session's active reply id.
+
+        Returns:
+            `str`:
+                Global registry mapping session ids to active reply ids.
+        """
+        return cls._CHAT_ACTIVE_REPLY_REGISTRY
 
     @classmethod
     def chat_input_user_quota_lock(cls, user_id: str) -> str:

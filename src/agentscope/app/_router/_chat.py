@@ -35,6 +35,7 @@ from ._schema import (
     ChatRequest,
     ChatTriggerResponse,
     ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
     UpdateChatQueueItemRequest,
 )
 from .._manager import ChatRunRegistry
@@ -48,11 +49,13 @@ from ..storage import StorageBase
 from .._bus_ops import (
     ChatQueueBusyError,
     ChatQueueFullError,
+    ChatSteeringUnavailableError,
     delete_chat_input,
     enqueue_chat_input,
     enqueue_run_trigger,
     list_chat_inputs,
     reorder_chat_inputs,
+    steer_chat_input,
     update_chat_input,
 )
 from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
@@ -188,6 +191,72 @@ async def reorder_chat_queue(
             request.item_ids,
         )
     except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except ChatQueueBusyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    return ChatQueueResponse(items=items)
+
+
+@chat_router.post(
+    "/queue/{item_id}/steer",
+    response_model=ChatQueueResponse,
+    summary="Steer an active reply with one pending user turn",
+)
+async def steer_chat_queue_item(
+    item_id: Annotated[
+        str,
+        Path(description="Stable id of the pending item to inject."),
+    ],
+    request: SteerChatQueueItemRequest,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    message_bus: MessageBus = Depends(get_message_bus),
+) -> ChatQueueResponse:
+    """Reserve a pending item for non-interrupting reply steering.
+
+    Args:
+        item_id (`str`):
+            Stable id of the pending item to inject.
+        request (`SteerChatQueueItemRequest`):
+            Target session, agent, and active reply id.
+        user_id (`str`):
+            Injected authenticated user id.
+        storage (`StorageBase`):
+            Injected persistent session storage.
+        message_bus (`MessageBus`):
+            Injected message bus containing queue and active-reply state.
+
+    Returns:
+        `ChatQueueResponse`:
+            Complete queue snapshot with the selected item steering.
+
+    Raises:
+        `HTTPException`:
+            HTTP 404 for a missing session, HTTP 409 for a stale reply or
+            started item, or HTTP 503 when the queue is busy.
+    """
+    await _ensure_session(
+        storage,
+        user_id,
+        request.agent_id,
+        request.session_id,
+    )
+    try:
+        items = await steer_chat_input(
+            message_bus,
+            user_id,
+            request.session_id,
+            request.agent_id,
+            item_id,
+            request.reply_id,
+        )
+    except (LookupError, ChatSteeringUnavailableError) as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
