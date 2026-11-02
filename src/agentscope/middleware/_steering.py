@@ -87,8 +87,14 @@ class SteeringMiddleware(MiddlewareBase):
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator[Any, None]:
         """Run one model call, yielding continuation control to the Agent."""
+        consumed = False
         async for event in self._consume(agent):
+            consumed = True
             yield event
+        if consumed:
+            # The Agent checked context before entering reasoning. Include
+            # newly injected text and attachments before calling the model.
+            await agent.compress_context()
 
         terminal_messages: list[Msg] = []
         async for event in next_handler(**input_kwargs):

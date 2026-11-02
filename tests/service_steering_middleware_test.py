@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 
@@ -52,6 +52,7 @@ def _make_agent() -> SimpleNamespace:
             context=[UserMsg(name="user", content="initial")],
         ),
         react_config=SimpleNamespace(max_iters=10),
+        compress_context=AsyncMock(),
     )
 
 
