@@ -21,6 +21,7 @@ import wave
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import call as mock_call
 
 import dashscope
 import httpx
@@ -1303,22 +1304,61 @@ class TestDashScopeCosyVoiceRealtimeMode(
                     2,
                 )
 
-    async def test_push_after_cold_start_raises_on_send_failure(self) -> None:
-        """A failed send after the cold-start latch must surface instead of
-        silently dropping the delta."""
+    async def test_push_after_cold_start_retries_failed_delta_once(
+        self,
+    ) -> None:
+        """Caller retries must not duplicate text in a full-utterance retry."""
         with patch.dict("sys.modules", self.mock_modules):
-            async with self._make_model(cold_start_length=3) as model:
+            async with self._make_model(
+                cold_start_length=3,
+                max_retries=2,
+                stream=False,
+            ) as model:
                 model._callback.get_audio_response = Mock(
                     return_value=TTSResponse(content=None),
                 )
+                self.mock_synthesizer.streaming_call.side_effect = [
+                    None,
+                    RuntimeError("socket gone"),
+                    None,
+                    None,
+                ]
                 await model.push("Hello")
-                self.assertTrue(model._cold_start_done)
 
-                self.mock_synthesizer.streaming_call = Mock(
-                    side_effect=RuntimeError("socket gone"),
-                )
                 with self.assertRaisesRegex(RuntimeError, "socket gone"):
                     await model.push(" world")
+                self.assertEqual(
+                    (
+                        model._accumulated_text,
+                        model._cold_start_buffer,
+                        model._cold_start_done,
+                    ),
+                    ("Hello", "", True),
+                )
+
+                await model.push(" world")
+                self.assertEqual(model._accumulated_text, "Hello world")
+
+                def complete() -> None:
+                    # Only the reconnected synthesis produces audio.
+                    if (
+                        self.mock_synthesizer.streaming_complete.call_count
+                        == 2
+                    ):
+                        model._callback.on_data(b"\x00\x00")
+                    model._callback.on_complete()
+
+                self.mock_synthesizer.streaming_complete.side_effect = complete
+                await model.synthesize()
+                self.assertEqual(
+                    self.mock_synthesizer.streaming_call.call_args_list,
+                    [
+                        mock_call("Hello"),
+                        mock_call(" world"),
+                        mock_call(" world"),
+                        mock_call("Hello world"),
+                    ],
+                )
 
     async def test_push_returns_audio_when_available(self) -> None:
         """push() returns audio data from the callback when available."""

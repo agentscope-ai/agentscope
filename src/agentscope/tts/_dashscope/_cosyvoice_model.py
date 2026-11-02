@@ -266,6 +266,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
+        previous_text = self._accumulated_text
         self._accumulated_text += text
 
         if self._cold_start_done:
@@ -290,10 +291,9 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 # Cold-start flush failed: keep the buffer and flag intact
                 # so the next push retries the whole buffered text.
                 return TTSResponse(content=None)
-            # The latch is set, so this delta cannot be buffered for a
-            # retry — swallowing it would silently drop the text from the
-            # synthesized speech. Surface the failure instead, consistent
-            # with the ``not self._connected`` guard above.
+            # This delta is not buffered. Restore the accumulated text
+            # before raising so a caller retry counts the delta only once.
+            self._accumulated_text = previous_text
             raise
 
         if not self._cold_start_done:
