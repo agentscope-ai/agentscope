@@ -27,6 +27,13 @@ class CreateScheduleRequest(BaseModel):
         "'Asia/Shanghai'.",
     )
 
+    started_at: AwareDatetime | None = Field(
+        default=None,
+        description="Inclusive start time of the schedule. Omit or set to "
+        "null to use the creation time. Must include a UTC offset, e.g. "
+        "'2026-11-01T20:26:00+08:00'.",
+    )
+
     ended_at: AwareDatetime | None = Field(
         default=None,
         description="Inclusive end time of the schedule. Omit or set to null "

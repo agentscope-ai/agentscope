@@ -266,6 +266,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
+        previous_text = self._accumulated_text
         self._accumulated_text += text
 
         if self._cold_start_done:
@@ -286,9 +287,14 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         try:
             self._synthesizer.streaming_call(text_to_send)
         except Exception:
-            # Send failed: keep the cold-start buffer and flag intact so
-            # the next push retries it, mirroring the realtime model.
-            return TTSResponse(content=None)
+            if not self._cold_start_done:
+                # Cold-start flush failed: keep the buffer and flag intact
+                # so the next push retries the whole buffered text.
+                return TTSResponse(content=None)
+            # This delta is not buffered. Restore the accumulated text
+            # before raising so a caller retry counts the delta only once.
+            self._accumulated_text = previous_text
+            raise
 
         if not self._cold_start_done:
             # The cold-start flush succeeded; only now clear the buffer
