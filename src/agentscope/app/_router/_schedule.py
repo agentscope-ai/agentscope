@@ -118,9 +118,9 @@ async def create_schedule(
             permission_mode=body.permission_mode,
             chat_model_config=body.chat_model_config,
             source=ScheduleSource.USER,
-            # Aware on purpose: the trigger reads a naive start time in
-            # the schedule's own timezone, not the server's.
-            started_at=datetime.now().astimezone(),
+            # Keep the fallback aware so it denotes an absolute instant
+            # even when the task's timezone differs from the server's.
+            started_at=body.started_at or datetime.now().astimezone(),
             ended_at=body.ended_at,
         ),
     )
