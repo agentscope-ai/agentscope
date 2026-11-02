@@ -154,11 +154,15 @@ class WakeupDispatcher:
                 raise RuntimeError("Wakeup subscription ended during startup")
             self._chat_queue.schedule_recovery()
         except BaseException:
-            # Failed entry does not invoke __aexit__. No recovery sweep has
-            # started yet, so unwind local tasks without calling the bus.
+            # Failed entry does not invoke __aexit__. The listener and
+            # fallback may already have spawned retries or recovery work.
             tasks = [
                 task
-                for task in (self._task, self._fallback_task)
+                for task in (
+                    self._task,
+                    self._fallback_task,
+                    *self._retry_tasks,
+                )
                 if task is not None
             ]
             for task in tasks:
@@ -166,6 +170,10 @@ class WakeupDispatcher:
             await asyncio.gather(*tasks, return_exceptions=True)
             self._task = None
             self._fallback_task = None
+            self._retry_tasks.clear()
+            # Stop queue helpers and late run callbacks without contacting
+            # the failed bus to release recovery leadership.
+            await self._chat_queue.close(release_leadership=False)
             raise
         return self
 

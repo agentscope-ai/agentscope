@@ -1570,6 +1570,161 @@ class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
         self.assertIsNone(dispatcher._task)
         self.assertIsNone(dispatcher._fallback_task)
 
+    async def test_failed_startup_cancels_dispatched_retries(self) -> None:
+        """A signal can schedule retries before initial publish fails."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        bus._locks.add(MessageBusKeys.session_lock("s"))
+        await enqueue_run_trigger(
+            bus,
+            user_id="u",
+            session_id="s",
+            agent_id="a",
+            signal=False,
+        )
+        scheduled = asyncio.Event()
+        schedule_retry = dispatcher._schedule_retry
+        publish_signal = bus.publish
+        started: list[asyncio.Task] = []
+        error = ConnectionError("publish response lost")
+
+        def schedule(*args: Any) -> None:
+            schedule_retry(*args)
+            started.extend(dispatcher._retry_tasks)
+            scheduled.set()
+
+        async def publish(key: str, payload: dict) -> None:
+            await publish_signal(key, payload)
+            await scheduled.wait()
+            raise error
+
+        with patch.object(dispatcher, "_schedule_retry", schedule), patch(
+            "agentscope.app._manager._wakeup_dispatcher."
+            "_RESUME_RETRY_BACKOFF_SECS",
+            60,
+        ), patch.object(bus, "publish", publish):
+            with self.assertRaises(ConnectionError) as raised:
+                # pylint: disable=unnecessary-dunder-call
+                await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(
+            ([task.done() for task in started], dispatcher._retry_tasks),
+            ([True], set()),
+        )
+
+    async def test_failed_startup_cancels_fallback_recovery(self) -> None:
+        """A slow initial publish lets fallback start a recovery sweep."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        recovering = asyncio.Event()
+        started: list[asyncio.Task] = []
+        error = ConnectionError("initial publish timed out")
+        publish_calls = 0
+
+        async def registry_getall(_namespace: str) -> dict[str, str]:
+            task = asyncio.current_task()
+            assert task is not None
+            started.append(task)
+            recovering.set()
+            await asyncio.Event().wait()
+            return {}
+
+        async def publish(_key: str, _payload: dict) -> None:
+            nonlocal publish_calls
+            publish_calls += 1
+            if publish_calls == 1:
+                await recovering.wait()
+                raise error
+
+        with patch(
+            "agentscope.app._manager._wakeup_dispatcher."
+            "_MESSAGE_FALLBACK_TICK_SECS",
+            0.001,
+        ), patch.object(bus, "publish", publish), patch.object(
+            bus,
+            "registry_getall",
+            registry_getall,
+        ), patch.object(
+            dispatcher._chat_queue,
+            "_release_recovery_leadership",
+        ) as release:
+            with self.assertRaises(ConnectionError) as raised:
+                # pylint: disable=unnecessary-dunder-call
+                await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+            release.assert_not_awaited()
+
+        self.assertIs(raised.exception, error)
+        self.assertEqual(
+            (
+                [task.done() for task in started],
+                dispatcher._chat_queue._retry_tasks,
+                dispatcher._chat_queue._recovery_task,
+                dispatcher._chat_queue._closed,
+            ),
+            ([True], set(), None, True),
+        )
+
+    async def test_failed_startup_blocks_late_run_nudges(self) -> None:
+        """Runs finishing after failed startup must not create bus tasks."""
+        bus = _FakeBus()
+        registry = ChatRunRegistry()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            registry,
+        )
+        running = asyncio.Event()
+        finish_run = asyncio.Event()
+        publish_signal = bus.publish
+        await enqueue_run_trigger(
+            bus,
+            user_id="u",
+            session_id="s",
+            agent_id="a",
+            signal=False,
+        )
+
+        async def run(**_kwargs: Any) -> None:
+            running.set()
+            await finish_run.wait()
+
+        async def publish(key: str, payload: dict) -> None:
+            await publish_signal(key, payload)
+            await running.wait()
+            raise ConnectionError("publish response lost")
+
+        with patch.object(dispatcher._chat_service, "run", run), patch.object(
+            bus,
+            "publish",
+            publish,
+        ), patch.object(
+            bus,
+            "registry_get",
+            return_value=None,
+        ) as registry_get:
+            async with registry:
+                with self.assertRaises(ConnectionError):
+                    # pylint: disable=unnecessary-dunder-call
+                    await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+                task = registry.get("s")
+                finish_run.set()
+                await task
+                await asyncio.sleep(0)
+                registry_get.assert_not_awaited()
+        self.assertEqual(dispatcher._chat_queue._retry_tasks, set())
+
     async def test_recovery_sweep_has_one_cluster_leader(self) -> None:
         """Two processes sharing a bus do not both run the O(N) sweep."""
 
