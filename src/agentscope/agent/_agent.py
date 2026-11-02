@@ -1120,6 +1120,9 @@ class Agent:
             if is_awaiting:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
+                # Count the round if this event completed its last tool call.
+                if not self.state.get_unfinished_tool_calls(self.name):
+                    self.state.cur_iter += 1
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
