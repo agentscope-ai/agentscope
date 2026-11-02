@@ -859,6 +859,7 @@ class SOPServiceTest(  # pylint: disable=too-many-public-methods
             self.sessions,
         )
         run = await service.create_run("user-1", sop.id)
+        expected_run = run.model_dump()
         started = asyncio.Event()
 
         async def pending_advance() -> None:
@@ -871,8 +872,10 @@ class SOPServiceTest(  # pylint: disable=too-many-public-methods
         try:
             self.assertFalse(await service.delete_run("other-user", run.id))
             self.assertFalse(task.done())
-            self.assertIsNotNone(
-                await self.storage.get_sop_run("user-1", run.id),
+            stored = await self.storage.get_sop_run("user-1", run.id)
+            self.assertEqual(
+                stored.model_dump() if stored is not None else None,
+                expected_run,
             )
         finally:
             task.cancel()
