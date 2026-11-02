@@ -36,7 +36,8 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
 
         Returns:
             `dict[str, Any] | None`:
-                The formatted content block, or ``None`` when unsupported.
+                The formatted content block, or a text placeholder when
+                unsupported.
         """
         if not any(
             fnmatch(block.source.media_type, pattern)
@@ -44,11 +45,11 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         ):
             logger.warning(
                 "Unsupported media type %s for Volcengine Ark API. "
-                "Supported types: %s. This block will be skipped.",
+                "Supported types: %s. Replaced with a text placeholder.",
                 block.source.media_type,
                 ", ".join(self.supported_input_media_types),
             )
-            return None
+            return self._unsupported_media_placeholder(block.source)
 
         main_type = block.source.media_type.split("/")[0]
         if main_type == "image":
@@ -58,10 +59,24 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
 
         logger.warning(
             "Unsupported main media type %s for Volcengine Ark API. "
-            "This block will be skipped.",
+            "Replaced with a text placeholder.",
             main_type,
         )
-        return None
+        return self._unsupported_media_placeholder(block.source)
+
+    @staticmethod
+    def _unsupported_media_placeholder(
+        source: URLSource | Base64Source,
+    ) -> dict[str, Any]:
+        """Build a text placeholder standing in for a media block the
+        endpoint cannot ingest, so the enclosing message is not dropped
+        when the media block was its only content."""
+        main_type = source.media_type.split("/", 1)[0]
+        if isinstance(source, URLSource):
+            text = f"[{main_type} file returned, URL: {source.url}]"
+        else:
+            text = f"[{main_type} file returned, type: {source.media_type}]"
+        return {"type": "text", "text": text}
 
     def _format_video_source(
         self,
