@@ -51,7 +51,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     Each ``mc:AlternateContent`` containing a text box uses the first branch
     with readable Word text, retaining the fallback when its choices cannot
     supply any text. Run-level tabs and soft line breaks are preserved in
-    both the paragraph and its text boxes.
+    both the paragraph and its text boxes. Paragraph boundaries within each
+    text box are retained.
 
     Args:
         para (`DocxParagraph`):
@@ -64,6 +65,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     from docx.oxml.ns import qn
 
     text_tag = qn("w:t")
+    paragraph_tag = qn("w:p")
     text_box_tag = qn("w:txbxContent")
     deleted_tag = qn("w:del")
     run_tag = qn("w:r")
@@ -101,7 +103,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
                 yield from iter_text(child)
 
     own_parts: list[str] = []
-    text_boxes: dict[Any, list[str]] = {}
+    text_boxes: dict[Any, dict[Any, list[str]]] = {}
     for element in iter_text(root):
         if element.tag == text_tag:
             value = element.text or ""
@@ -117,21 +119,35 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
         if not value:
             continue
         parts = own_parts
+        paragraph = root
         for ancestor in element.iterancestors():
             if ancestor is root:
                 break
+            if ancestor.tag == paragraph_tag:
+                paragraph = ancestor
             if ancestor.tag == text_box_tag:
-                parts = text_boxes.setdefault(ancestor, [])
+                parts = text_boxes.setdefault(ancestor, {}).setdefault(
+                    paragraph,
+                    [],
+                )
                 break
         parts.append(value)
 
     own_text = "".join(own_parts)
     if not own_text.strip() and not any(
-        "".join(parts).strip() for parts in text_boxes.values()
+        "".join(parts).strip()
+        for paragraphs in text_boxes.values()
+        for parts in paragraphs.values()
     ):
         # Separator-only extraction must not hide w:noBreakHyphen, etc.
         own_text = para.text
-    blocks = [own_text, *("".join(parts) for parts in text_boxes.values())]
+    blocks = [
+        own_text,
+        *(
+            "\n".join("".join(parts) for parts in paragraphs.values())
+            for paragraphs in text_boxes.values()
+        ),
+    ]
     return "\n".join(block.strip() for block in blocks if block.strip())
 
 

@@ -3119,6 +3119,67 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
                     _expected_word_sections("Paragraph text\nCallout\nAfter"),
                 )
 
+    async def test_text_box_paragraph_boundaries_are_preserved(self) -> None:
+        """Separate text-box paragraphs while joining runs within each."""
+        paragraphs = (
+            "<w:p><w:r><w:t>First </w:t></w:r>"
+            "<w:r><w:t>paragraph</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>Second paragraph</w:t></w:r></w:p>"
+        )
+        for name, template in (
+            ("modern", _DOCX_MODERN_TEXT_BOX),
+            ("with_fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+            (
+                "fallback_only",
+                _DOCX_TEXT_BOX_WITH_VML_FALLBACK.replace(
+                    "<w:t>{inside}</w:t>",
+                    "<w:t/>",
+                    1,
+                ),
+            ),
+        ):
+            with self.subTest(shape=name):
+                template = template.replace(
+                    "<w:p><w:r><w:t>{inside}</w:t></w:r></w:p>",
+                    paragraphs,
+                )
+                sections = await WordParser(include_image=False).parse(
+                    _make_docx_with_text_box(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(
+                        "Paragraph text\nFirst paragraph\n"
+                        "Second paragraph\nAfter",
+                    ),
+                )
+
+    async def test_text_box_paragraphs_keep_inline_separators(self) -> None:
+        """Keep paragraph and inline boundaries with no surrounding text."""
+        paragraphs = (
+            "<w:p><w:r><w:t>A</w:t><w:tab/><w:t>B</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>C</w:t><w:br/><w:t>D</w:t>"
+            "<w:cr/><w:t>E</w:t></w:r></w:p>"
+        )
+        for name, template in (
+            ("modern", _DOCX_MODERN_TEXT_BOX),
+            ("with_fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(shape=name):
+                template = template.replace(
+                    "<w:p><w:r><w:t>{inside}</w:t></w:r></w:p>",
+                    paragraphs,
+                )
+                sections = await WordParser(include_image=False).parse(
+                    _make_docx_with_text_box(template, before=""),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections("A\tB\nC\nD\nE\nAfter"),
+                )
+
     async def test_inline_separators_with_text_box_branches(self) -> None:
         """Preserve inline separators while reading each text box once."""
         for name, template in (
