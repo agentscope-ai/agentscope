@@ -671,6 +671,125 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].id, "msg-1")
 
+    async def test_stream_takes_cumulative_message_delta_usage(self) -> None:
+        """Merge cumulative counters and include cache tokens exactly once."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-cumulative",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 7,
+                    "cache_read_input_tokens": 9,
+                },
+            },
+        )
+        full_delta = {
+            "input_tokens": 5120,
+            "cache_creation_input_tokens": 32,
+            "cache_read_input_tokens": 64,
+        }
+        cases: list[tuple[str, list[dict[str, Any]], int, int, int]] = [
+            ("all counters", [full_delta], 5216, 32, 64),
+            ("input only", [{"input_tokens": 125}], 141, 7, 9),
+            (
+                "cache only",
+                [
+                    {
+                        "cache_creation_input_tokens": 32,
+                        "cache_read_input_tokens": 64,
+                    },
+                ],
+                216,
+                32,
+                64,
+            ),
+            ("omitted counters", [{}], 136, 7, 9),
+            (
+                "null counters",
+                [{key: None for key in full_delta}],
+                136,
+                7,
+                9,
+            ),
+            (
+                "non-integer counters",
+                [
+                    {
+                        "input_tokens": "5120",
+                        "cache_creation_input_tokens": 32.5,
+                        "cache_read_input_tokens": "64",
+                    },
+                ],
+                136,
+                7,
+                9,
+            ),
+            (
+                "smaller counters",
+                [{key: 0 for key in full_delta}],
+                136,
+                7,
+                9,
+            ),
+            ("repeated counters", [full_delta, full_delta, {}], 5216, 32, 64),
+            (
+                "successive partial updates",
+                [
+                    {"input_tokens": 125},
+                    {"cache_creation_input_tokens": 32},
+                    {"cache_read_input_tokens": 64},
+                    {"input_tokens": 130},
+                ],
+                226,
+                32,
+                64,
+            ),
+        ]
+        for name, deltas, total, created, cached in cases:
+            with self.subTest(name=name):
+                events = _completion_events(completion)
+                events[-2:-1] = [
+                    events[-2].model_copy(
+                        update={
+                            "usage": events[-2].usage.model_copy(
+                                update=delta,
+                            ),
+                        },
+                    )
+                    for delta in deltas
+                ]
+                self.mock_client.messages.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(events),
+                )
+                start = datetime(2026, 10, 1, 10, 0, 0)
+                with patch(
+                    "agentscope.model._anthropic._model.datetime",
+                ) as mock_datetime:
+                    mock_datetime.now.side_effect = [
+                        start,
+                        start + timedelta(seconds=1),
+                        *[start + timedelta(seconds=2)] * len(deltas),
+                    ]
+                    responses = [r async for r in await self.model([])]
+
+                self.assertEqual(
+                    responses[-1].usage,
+                    ChatUsage(
+                        input_tokens=total,
+                        output_tokens=5,
+                        time=2.0,
+                        cache_creation_input_tokens=created,
+                        cache_input_tokens=cached,
+                    ),
+                )
+
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()
