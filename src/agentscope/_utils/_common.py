@@ -138,7 +138,18 @@ def _json_loads_with_repair(
             )
 
         elif schema is None:
-            return parsed
+            try:
+                # NaN and Infinity are accepted as numbers by jsonschema, but
+                # silently bypass the minimum/maximum constraints. Apply the
+                # same guard as the schema path so both paths treat them
+                # identically.
+                json.dumps(parsed, allow_nan=False)
+            except ValueError:
+                error_message = (
+                    "Error: NaN and Infinity are not valid JSON numbers."
+                )
+            else:
+                return parsed
     except json.JSONDecodeError as e:
         error_message = (
             f"Error: When decoding your tool arguments from JSON format "
