@@ -84,8 +84,8 @@ class ASRModelCard(BaseModel):
         with open(yaml_path, "r", encoding="utf-8") as file:
             config = yaml.safe_load(file)
 
-        base_schema = parameter_class.model_json_schema()
-        properties = copy.deepcopy(base_schema.get("properties", {}))
+        schema = copy.deepcopy(parameter_class.model_json_schema())
+        properties = schema.get("properties", {})
         overrides = config.get("parameter_overrides", {})
         for parameter_name, override in overrides.items():
             if override is None or override.get("hidden"):
@@ -96,21 +96,16 @@ class ASRModelCard(BaseModel):
                     **override,
                 }
 
-        required = [
-            name
-            for name in base_schema.get("required", [])
-            if name in properties
-        ]
+        if "required" in schema:
+            schema["required"] = [
+                name for name in schema["required"] if name in properties
+            ]
         return cls(
             name=config["name"],
             label=config["label"],
             input_types=config.get("input_types", []),
             output_types=config.get("output_types", ["text/plain"]),
             realtime=config.get("realtime", False),
-            parameter_schema={
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
+            parameter_schema=schema,
             parameters_overrides=overrides,
         )
