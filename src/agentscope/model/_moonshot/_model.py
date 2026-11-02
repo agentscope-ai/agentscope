@@ -36,13 +36,15 @@ class MoonshotChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
-                "enabled by default but can be disabled."
+                "enabled by default but can be disabled. When None, no "
+                "``thinking`` option is sent and the model's default "
+                "behavior applies."
             ),
         )
 
@@ -208,16 +210,19 @@ class MoonshotChatModel(ChatModelBase):
         if is_k3:
             if self.parameters.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = self.parameters.reasoning_effort
-        else:
+        elif self.parameters.thinking_enable is not None:
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
-            kwargs.setdefault("extra_body", {})
-            kwargs["extra_body"].setdefault("thinking", {})
-            kwargs["extra_body"]["thinking"].setdefault(
-                "type",
-                thinking_type,
-            )
+            # Build a new dict so the caller's extra_body is never mutated
+            extra_body = kwargs.get("extra_body") or {}
+            kwargs["extra_body"] = {
+                **extra_body,
+                "thinking": {
+                    "type": thinking_type,
+                    **extra_body.get("thinking", {}),
+                },
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -277,15 +282,19 @@ class MoonshotChatModel(ChatModelBase):
 
                 if chunk.usage:
                     u = chunk.usage
+                    details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
-                            u,
+                            details,
                             "cached_tokens",
                             0,
-                        ),
+                        )
+                        or 0
+                        if details
+                        else 0,
                     )
 
                 if not chunk.choices:
@@ -383,11 +392,19 @@ class MoonshotChatModel(ChatModelBase):
         usage = None
         if response.usage:
             u = response.usage
+            details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                cache_input_tokens=getattr(u, "cached_tokens", 0),
+                cache_input_tokens=getattr(
+                    details,
+                    "cached_tokens",
+                    0,
+                )
+                or 0
+                if details
+                else 0,
             )
 
         resp_kwargs: dict[str, Any] = {

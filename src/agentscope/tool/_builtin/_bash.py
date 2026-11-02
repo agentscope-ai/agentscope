@@ -393,12 +393,23 @@ easier to review tool calls and give permission.
             message=f"Execute bash command: {command}",
         )
 
+    def get_permission_inputs(
+        self,
+        tool_input: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return complete subcommands for permission rule evaluation."""
+        command = tool_input.get("command", "")
+        return [
+            {**tool_input, "command": subcommand}
+            for subcommand in self._bash_parser.split_into_subcommands(command)
+        ]
+
     async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
-        r"""Match Bash command using regex-based wildcard matching.
+        r"""Match one Bash operation using regex-based wildcard matching.
 
         Implements wildcard matching with escape sequences:
         - Supports \* for literal asterisk and \\ for literal backslash
@@ -409,12 +420,16 @@ easier to review tool calls and give permission.
         - If rule_content is None, matches all invocations
          (tool-name-level rule)
 
+        Matches the supplied operation without parsing or splitting it.
+        The permission engine uses :meth:`get_permission_inputs` to split
+        compound invocations and aggregate matches by rule behavior.
+
         Args:
             rule_content: The command pattern to match, or None to match all
-            tool_input: Must contain a "command" key with the command string
+            tool_input: Must contain a "command" key with the operation string
 
         Returns:
-            True if pattern matches the command
+            True if the pattern matches the supplied operation
         """
         # None = tool-name-level rule, matches everything
         if rule_content is None:

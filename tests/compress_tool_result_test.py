@@ -572,5 +572,87 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             expected_offload,
         )
 
+    async def test_split_keeps_metadata_and_timestamps(self) -> None:
+        """Both halves of a split tool result keep metadata and timestamps."""
+        tool_result = ToolResultBlock(
+            id="test_9",
+            name="Write",
+            output=[
+                TextBlock(text="A" * 20, id="block1"),
+                TextBlock(text="B" * 400, id="block2"),
+            ],
+            state="success",
+            metadata={"diff": "--- a/x\n+++ b/x", "file_path": "/tmp/x.py"},
+            created_at="2026-09-21T10:00:00",
+            finished_at="2026-09-21T10:00:05",
+        )
+
+        async def mock_count_tokens(
+            messages: list,
+            tools: list | None = None,
+        ) -> int:
+            """Mock token counting function based on content length."""
+            content = messages[0].content
+            if isinstance(content, list):
+                return sum(len(b.text) for b in content if hasattr(b, "text"))
+            return 0
+
+        self.mock_model.count_tokens = mock_count_tokens
+        (
+            reserved,
+            offload,
+        ) = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+
+        self.assertDictEqual(
+            reserved.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "test_9",
+                "name": "Write",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": "A" * 20 + "B" * 80,
+                        "id": "block1",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "success",
+                "metadata": {
+                    "diff": "--- a/x\n+++ b/x",
+                    "file_path": "/tmp/x.py",
+                },
+                "created_at": "2026-09-21T10:00:00",
+                "finished_at": "2026-09-21T10:00:05",
+            },
+        )
+        self.assertDictEqual(
+            offload.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "test_9",
+                "name": "Write",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": "B" * 320,
+                        "id": "block2",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "success",
+                "metadata": {
+                    "diff": "--- a/x\n+++ b/x",
+                    "file_path": "/tmp/x.py",
+                },
+                "created_at": "2026-09-21T10:00:00",
+                "finished_at": "2026-09-21T10:00:05",
+            },
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

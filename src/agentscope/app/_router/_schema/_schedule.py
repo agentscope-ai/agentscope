@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the schedule router."""
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 from ...storage import (
     ScheduleRecord,
@@ -25,6 +25,14 @@ class CreateScheduleRequest(BaseModel):
         default="UTC",
         description="IANA timezone name, e.g. 'America/New_York' or "
         "'Asia/Shanghai'.",
+    )
+
+    ended_at: AwareDatetime | None = Field(
+        default=None,
+        description="Inclusive end time of the schedule. Omit or set to null "
+        "for no end boundary. Must include a UTC offset, e.g. "
+        "'2026-10-31T23:59:59.999+08:00'; a naive value is rejected rather "
+        "than guessed, because the stored record would lose the zone.",
     )
 
     agent_id: str = Field(description="Agent to run when the schedule fires.")

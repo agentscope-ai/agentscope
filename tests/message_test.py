@@ -16,11 +16,49 @@ from agentscope.message import (
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
+    Usage,
 )
 
 
 class MessageTest(IsolatedAsyncioTestCase):
     """The template test case."""
+
+    def test_get_text_content(self) -> None:
+        """Extract only top-level text and always return a string."""
+        data = DataBlock(
+            source=URLSource(
+                url="https://example.com/image.png",
+                media_type="image/png",
+            ),
+        )
+        thinking = ThinkingBlock(thinking="internal reasoning")
+        result = ToolResultBlock(
+            id="tool-result",
+            name="tool",
+            output=[TextBlock(text="nested text")],
+        )
+        cases = [
+            ([], "\n", ""),
+            ([data, thinking, result], "\n", ""),
+            ([TextBlock(text="")], "\n", ""),
+            ([TextBlock(text="hello")], "\n", "hello"),
+            (
+                [TextBlock(text="first"), data, TextBlock(text="second")],
+                "\n",
+                "first\nsecond",
+            ),
+            (
+                [TextBlock(text="first"), thinking, TextBlock(text="last")],
+                " | ",
+                "first | last",
+            ),
+            ([TextBlock(text=""), TextBlock(text="")], "\n", "\n"),
+            ([TextBlock(text="a"), TextBlock(text="b")], "", "ab"),
+        ]
+        for content, separator, expected in cases:
+            with self.subTest(content=content, separator=separator):
+                msg = AssistantMsg(name="assistant", content=content)
+                self.assertEqual(msg.get_text_content(separator), expected)
 
     async def test_creating_message(self) -> None:
         """The template test."""
@@ -312,3 +350,81 @@ class MessageTest(IsolatedAsyncioTestCase):
                     ),
                 ],
             )
+
+    async def test_append_usage_keeps_a_copy(self) -> None:
+        """The message accumulates a copy of the usage it is given."""
+        first = Usage(
+            input_tokens=10,
+            output_tokens=5,
+            cache_input_tokens=2,
+            cache_creation_input_tokens=1,
+        )
+        second = Usage(input_tokens=7, output_tokens=3, cache_input_tokens=4)
+        msg = AssistantMsg(name="agent", content=[])
+        msg.append_usage(first)
+        msg.append_usage(second)
+        accumulated = msg.usage
+        assert accumulated is not None
+
+        self.assertDictEqual(
+            {
+                "accumulated": accumulated.model_dump(),
+                "first": first.model_dump(),
+                "second": second.model_dump(),
+            },
+            {
+                "accumulated": {
+                    "input_tokens": 17,
+                    "output_tokens": 8,
+                    "cache_input_tokens": 6,
+                    "cache_creation_input_tokens": 1,
+                },
+                # Each model call keeps its own usage, so it can still be
+                # reported or accumulated into other messages afterwards.
+                "first": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_input_tokens": 2,
+                    "cache_creation_input_tokens": 1,
+                },
+                "second": {
+                    "input_tokens": 7,
+                    "output_tokens": 3,
+                    "cache_input_tokens": 4,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+        )
+
+    async def test_append_usage_does_not_share_one_object(self) -> None:
+        """Messages given the same usage stay independent."""
+        shared = Usage(input_tokens=4, output_tokens=2)
+        first = AssistantMsg(name="agent_a", content=[])
+        second = AssistantMsg(name="agent_b", content=[])
+        first.append_usage(shared)
+        second.append_usage(shared)
+        first.append_usage(Usage(input_tokens=1, output_tokens=1))
+        first_usage = first.usage
+        second_usage = second.usage
+        assert first_usage is not None and second_usage is not None
+
+        self.assertDictEqual(
+            {
+                "first": first_usage.model_dump(),
+                "second": second_usage.model_dump(),
+            },
+            {
+                "first": {
+                    "input_tokens": 5,
+                    "output_tokens": 3,
+                    "cache_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+                "second": {
+                    "input_tokens": 4,
+                    "output_tokens": 2,
+                    "cache_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+            },
+        )

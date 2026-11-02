@@ -16,7 +16,9 @@ from ._service import (
     ChannelService,
     CredentialBindingService,
     ChatService,
+    SOPService,
     KnowledgeBaseService,
+    RealtimeService,
     ResourceAccessService,
     SessionService,
     WorkspaceService,
@@ -89,6 +91,11 @@ async def get_chat_service(request: Request) -> ChatService:
         `ChatService`: The chat service instance stored in ``app.state``.
     """
     return request.app.state.chat_service
+
+
+async def get_realtime_service(request: Request) -> RealtimeService:
+    """Return the application-wide realtime agent assembly service."""
+    return request.app.state.realtime_service
 
 
 async def get_resource_access_service(
@@ -170,6 +177,18 @@ async def get_background_task_manager(
         ``app.state``.
     """
     return request.app.state.background_task_manager
+
+
+async def get_sop_service(request: Request) -> SOPService:
+    """Return the application-wide SOP service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `SOPService`: The SOP service instance stored in ``app.state``.
+    """
+    return request.app.state.sop_service
 
 
 async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:

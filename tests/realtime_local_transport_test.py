@@ -3,6 +3,8 @@
 directly — no sound card is opened."""
 # pylint: disable=protected-access
 import asyncio
+import sys
+from unittest.mock import MagicMock, patch
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import numpy as np
@@ -132,6 +134,33 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
             (len(queued), queued[0], queued[-1]),
             (transport._max_queued, 3, (transport._max_queued + 2) % 256),
         )
+
+    async def test_restart_drops_previous_session_audio(self) -> None:
+        """A reused transport starts with fresh capture and playout state."""
+        transport = LocalAudioTransport()
+        transport._enqueue(AudioFrame(pcm=b"stale-input"))
+        await transport.send_audio(b"\x01\x00" * 10, "stale-output")
+        await transport.close()
+
+        with patch.dict(sys.modules, {"sounddevice": MagicMock()}):
+            await transport.start()
+        transport._enqueue(AudioFrame(pcm=b"fresh-input"))
+        incoming = transport.incoming()
+
+        self.assertEqual(
+            (
+                (await anext(incoming)).pcm,
+                transport.playout().model_dump(),
+                bytes(transport._pending),
+            ),
+            (
+                b"fresh-input",
+                {"item_id": "", "played_ms": 0, "first_played_at": None},
+                b"",
+            ),
+        )
+        await incoming.aclose()
+        await transport.close()
 
     async def test_playout_position_shape(self) -> None:
         """The position is a plain value object."""

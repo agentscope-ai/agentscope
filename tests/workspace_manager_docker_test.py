@@ -6,7 +6,7 @@ import asyncio
 import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agentscope.app.workspace_manager import (
     PrewarmConfig,
@@ -67,7 +67,7 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
                 "workspace_id": "fixed-id",
                 "host_workdir": os.path.join(self.basedir, "fixed-id"),
                 "base_image": "python:3.11-slim",
-                "node_version": "20",
+                "node_version": "22.23.4",
                 "extra_pip": [],
                 "gateway_port": 5600,
                 "env": {},
@@ -76,6 +76,59 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
             },
         )
         self.assertTrue(os.path.isdir(os.path.join(self.basedir, "fixed-id")))
+
+    async def test_missing_id_is_assigned_and_cached(self) -> None:
+        """Missing and empty ids resolve before cache lookup and build."""
+        for workspace_id in (None, ""):
+            with self.subTest(workspace_id=workspace_id):
+                manager = DockerWorkspaceManager(self.basedir)
+                created_before = len(_FakeWorkspace.created)
+                with patch.object(
+                    manager,
+                    "assign_workspace_id",
+                    AsyncMock(return_value="assigned-id"),
+                ) as assign:
+                    ws = await manager.get_workspace(
+                        "u1",
+                        "a1",
+                        "s1",
+                        workspace_id,
+                    )
+                    cached = await manager.get_workspace(
+                        "u1",
+                        "a1",
+                        "s1",
+                        "assigned-id",
+                    )
+
+                assign.assert_awaited_once_with(
+                    user_id="u1",
+                    agent_id="a1",
+                    session_id="",
+                )
+                self.assertIs(cached, ws)
+                self.assertEqual(
+                    len(_FakeWorkspace.created) - created_before,
+                    1,
+                )
+                self.assertEqual(list(manager._cache), ["assigned-id"])
+                self.assertDictEqual(
+                    ws.kwargs,
+                    {
+                        "workspace_id": "assigned-id",
+                        "host_workdir": os.path.join(
+                            self.basedir,
+                            "assigned-id",
+                        ),
+                        "base_image": "python:3.11-slim",
+                        "node_version": "22.23.4",
+                        "extra_pip": [],
+                        "gateway_port": 5600,
+                        "env": {},
+                        "default_mcps": [],
+                        "skill_paths": [],
+                    },
+                )
 
     async def test_workspace_id_cannot_escape_the_basedir(self) -> None:
         """A caller-supplied id may not point the bind-mount outside."""
@@ -99,7 +152,7 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
                 "workspace_id": "fixed-id",
                 "host_workdir": legacy,
                 "base_image": "python:3.11-slim",
-                "node_version": "20",
+                "node_version": "22.23.4",
                 "extra_pip": [],
                 "gateway_port": 5600,
                 "env": {},
@@ -168,6 +221,22 @@ class TestDockerWorkspaceManager(IsolatedAsyncioTestCase):
         # One replacement build, and nothing built for the request itself.
         await asyncio.sleep(0.05)
         self.assertEqual(len(_FakeWorkspace.created), 2)
+
+    async def test_failed_initialize_closes_the_workspace(self) -> None:
+        """A workspace whose ``initialize`` fails is closed, not leaked."""
+        manager = DockerWorkspaceManager(self.basedir)
+        with patch.object(
+            _FakeWorkspace,
+            "initialize",
+            AsyncMock(side_effect=RuntimeError("gateway failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "gateway failed"):
+                await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        self.assertListEqual(
+            [ws.closed for ws in _FakeWorkspace.created],
+            [True],
+        )
 
     async def test_aexit_closes_buffered_and_cached_workspaces(self) -> None:
         """Neither the buffer nor the cache survives shutdown."""

@@ -221,7 +221,7 @@ class AgentState(BaseModel):
     """The uncompressed conversation context, which will be fed into the LLM"""
 
     # =================================================================
-    # For backword compatibility
+    # For backward compatibility
     # =================================================================
     @model_validator(mode="before")
     @classmethod

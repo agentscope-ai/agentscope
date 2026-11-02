@@ -35,6 +35,7 @@ from .._utils._common import (
 )
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -590,12 +591,20 @@ class Agent:
                 ),
             )
 
+        # Same time text as the runtime injection; keeps other braces intact
+        timezone = self.injection_config.timezone
+        now = datetime.now(_resolve_timezone(timezone))
+        compression_prompt = cfg.compression_prompt.replace(
+            "{current_time}",
+            f"{now.strftime(self.injection_config.time_format)} ({timezone})",
+        )
+
         messages = (
             msgs_system
             + msgs_to_compress
             + instruction_msgs
             + [
-                UserMsg(name="user", content=cfg.compression_prompt),
+                UserMsg(name="user", content=compression_prompt),
             ]
         )
 
@@ -650,7 +659,7 @@ class Agent:
                         + [
                             UserMsg(
                                 name="user",
-                                content=cfg.compression_prompt,
+                                content=compression_prompt,
                             ),
                         ]
                     )
@@ -2134,7 +2143,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls sequentially and yield the events.
@@ -2153,7 +2163,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
         """
         break_execution = False
@@ -2184,7 +2195,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls concurrently and yield the events.
@@ -2204,11 +2216,7 @@ class Agent:
         tasks are cancelled explicitly (to avoid orphan tasks), any events
         already queued by the workers (including interruption chunks emitted
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
-        flushed to the caller, and the generator returns normally. The
-        caller is expected to detect the interruption via the flushed
-        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
-        event-based propagation used by
-        :meth:`_execute_sequential_tool_calls`.
+        flushed to the caller before re-raising ``CancelledError``.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -2220,10 +2228,14 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
 
         Raises:
+            `asyncio.CancelledError`:
+                Re-raised after cancelling workers and draining queued events
+                when the caller task is cancelled.
             `ExceptionGroup`:
                 Raised after all tool calls finish when one or more of them
                 raised an exception. Each individual exception is included in
@@ -2290,13 +2302,9 @@ class Agent:
                 if event is sentinel:
                     continue
                 yield event
-            # Consume the cancel so this generator returns normally. The
-            # caller relies on the flushed ``ToolResultEndEvent(state=
-            # INTERRUPTED)`` events, not on the exception, to detect the
-            # interruption — mirroring the event-based propagation used by
-            # :meth:`_execute_sequential_tool_calls`.
-            asyncio.current_task().uncancel()
-            return
+            # Calls cancelled before reaching the toolkit emit no interrupted
+            # result, so propagate to let the reply loop close them
+            raise
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
@@ -2430,7 +2438,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute a single tool call with permission checking and context
@@ -2462,7 +2471,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the tool call execution.
         """
         # ===================================================================
@@ -2696,6 +2706,16 @@ class Agent:
 
                 else:
                     # Intermediate ToolChunk — convert to streaming events
+                    progress = chunk.metadata.get("mcp_progress")
+                    if progress is not None:
+                        yield CustomEvent(
+                            name="mcp_progress",
+                            value={
+                                **progress,
+                                "reply_id": self.state.reply_id,
+                                "tool_call_id": tool_call.id,
+                            },
+                        )
                     async for evt in self._convert_tool_chunk_to_event(
                         tool_call.id,
                         chunk.content,
@@ -3186,12 +3206,18 @@ class Agent:
             name=tool_result.name,
             output=reserved_blocks,
             state=tool_result.state,
+            metadata=deepcopy(tool_result.metadata),
+            created_at=tool_result.created_at,
+            finished_at=tool_result.finished_at,
         )
         offload_tool_result = ToolResultBlock(
             id=tool_result.id,
             name=tool_result.name,
             output=offload_blocks,
             state=tool_result.state,
+            metadata=deepcopy(tool_result.metadata),
+            created_at=tool_result.created_at,
+            finished_at=tool_result.finished_at,
         )
 
         return reserved_tool_result, offload_tool_result
@@ -3564,7 +3590,7 @@ class Agent:
             )
 
         elif required and not satisfied:
-            # Maybe the model needs futher reasoning-acting to
+            # Maybe the model needs further reasoning-acting to
             # generate the structured output
             tool_choice = None
             suffix = (
@@ -3901,6 +3927,8 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        # Keep the block id so replay groups one payload.
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
@@ -3908,6 +3936,7 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )

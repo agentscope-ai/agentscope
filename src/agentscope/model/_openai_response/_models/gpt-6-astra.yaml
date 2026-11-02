@@ -1,5 +1,5 @@
 name: gpt-6-astra
-label: GPT-6 Astra
+label: GPT-6 Astra (Responses API)
 status: active
 
 input_types:

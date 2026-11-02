@@ -1,21 +1,26 @@
 # -*- coding: utf-8 -*-
 """Unit tests for AgenticMemoryMiddleware with real Agent execution."""
+import asyncio
 import os
 import shutil
 import tempfile
-from typing import Any, Type
+from typing import Any, AsyncGenerator, Type
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, call, patch
 
 from pydantic import BaseModel
 from utils import AnyString, AnyValue, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.message import (
+    DataBlock,
     HintBlock,
     Msg,
     TextBlock,
     ToolCallBlock,
     UserMsg,
+    URLSource,
 )
 from agentscope.middleware import AgenticMemoryMiddleware
 from agentscope.model import ChatResponse, StructuredResponse
@@ -105,6 +110,11 @@ class _DummyTool(ToolBase):
     is_external_tool: bool = False
     is_mcp: bool = False
 
+    def __init__(self, memory: AgenticMemoryMiddleware) -> None:
+        """Keep the middleware whose retrieval the call waits for."""
+        super().__init__()
+        self.memory = memory
+
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
@@ -139,6 +149,10 @@ class _DummyTool(ToolBase):
             `ToolChunk`:
                 The fixed tool output.
         """
+        # Let retrieval land before the next reasoning step polls it.
+        task = self.memory._retrieval_task  # pylint: disable=protected-access
+        if task is not None:
+            await asyncio.wait_for(task, timeout=10)
         return ToolChunk(content=[TextBlock(text="tool result")])
 
 
@@ -287,7 +301,7 @@ def _write_memory_file(
     """
     path = os.path.join(memory_dir, filename)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(
             "---\n"
             f"name: {filename}\n"
@@ -308,6 +322,62 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Remove the temporary workspace after each test."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    async def test_retrieval_input_skips_messages_without_text_blocks(
+        self,
+    ) -> None:
+        """Keep text-block presence distinct from empty text content."""
+        textless = [
+            UserMsg(name="empty", content=[]),
+            UserMsg(
+                name="image",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/image.png",
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        cases = [
+            (textless, []),
+            (
+                [
+                    *textless,
+                    UserMsg(name="blank", content=""),
+                    UserMsg(name="user", content="hello"),
+                ],
+                ["blank: \nuser: hello"],
+            ),
+        ]
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        agent = self._make_agent(_RecordingMockModel(), middleware)
+
+        async def next_handler(**_kwargs: Any) -> AsyncGenerator:
+            await asyncio.sleep(0)
+            yield "done"
+
+        for inputs, expected in cases:
+            with self.subTest(inputs=inputs), patch.object(
+                middleware,
+                "_retrieve_relevant_files",
+                new_callable=AsyncMock,
+            ) as retrieve:
+                actual = [
+                    item
+                    async for item in middleware.on_reply(
+                        agent,
+                        {"inputs": inputs},
+                        next_handler,
+                    )
+                ]
+                self.assertEqual(actual, ["done"])
+                self.assertEqual(
+                    retrieve.await_args_list,
+                    [call(agent, text) for text in expected],
+                )
 
     def _make_agent(
         self,
@@ -425,7 +495,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "what do you remember?"))
@@ -542,7 +612,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         await agent.reply(UserMsg("user", "recall memory"))
@@ -563,6 +633,47 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                     "has_real_memory": True,
                     "has_missing_memory": False,
                 },
+            ],
+        )
+
+    async def test_agent_deduplicates_selected_memory_filenames(self) -> None:
+        """Duplicate selections should not consume the retrieval budget."""
+        memory_dir = os.path.join(self.temp_dir, "Memory")
+        os.makedirs(memory_dir)
+        for name in ["a", "b"]:
+            _write_memory_file(
+                memory_dir,
+                f"{name}.md",
+                f"Memory {name}",
+                "project",
+                f"Fact {name}.",
+            )
+
+        model = _RecordingMockModel()
+        model.set_structured_response(
+            _structured_response(["a.md"] * 5 + ["b.md"]),
+        )
+        model.set_responses([_tool_response(), _text_response("done")])
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
+        agent = self._make_agent(
+            model,
+            middleware,
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
+        )
+
+        await agent.reply(UserMsg("user", "recall my project"))
+        a_path, b_path = (
+            os.path.join(memory_dir, _) for _ in ["a.md", "b.md"]
+        )
+        self.assertListEqual(
+            _hint_texts(agent),
+            [
+                f"Memory (saved today): {a_path}:\n\n"
+                "---\nname: a.md\ndescription: Memory a\ntype: project\n"
+                "---\n\nFact a.\n\n\n---\n\n"
+                f"Memory (saved today): {b_path}:\n\n"
+                "---\nname: b.md\ndescription: Memory b\ntype: project\n"
+                "---\n\nFact b.\n",
             ],
         )
 
@@ -593,7 +704,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "ignore memories"))
@@ -635,7 +746,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "hello"))
@@ -745,7 +856,7 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         agent = self._make_agent(
             model,
             middleware,
-            toolkit=Toolkit(tools=[_DummyTool()]),
+            toolkit=Toolkit(tools=[_DummyTool(middleware)]),
         )
 
         reply = await agent.reply(UserMsg("user", "remember?"))
@@ -773,4 +884,35 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
                 "hints": [],
                 "structured_call_count": 0,
             },
+        )
+
+
+class FrontmatterParseTest(TestCase):
+    """Parsing of memory-file frontmatter."""
+
+    def test_closing_fence_at_end_of_text_keeps_fields(self) -> None:
+        """Keep fields when the closing fence is the last line.
+
+        Discovery reads a byte-capped prefix, and that prefix often ends
+        on the closing ``---``. A file can end there too. Both must still
+        expose ``description`` and ``type``.
+        """
+        fields = {
+            "name": "tea.md",
+            "description": "User likes tea",
+            "type": "user",
+        }
+        ending_on_fence = (
+            "---\n"
+            "name: tea.md\n"
+            "description: User likes tea\n"
+            "type: user\n"
+            "---"
+        )
+        # pylint: disable-next=protected-access
+        parse = AgenticMemoryMiddleware._parse_frontmatter_fields
+        self.assertDictEqual(parse(ending_on_fence), fields)
+        self.assertDictEqual(
+            parse(ending_on_fence + "\n\nThey drink tea daily.\n"),
+            fields,
         )

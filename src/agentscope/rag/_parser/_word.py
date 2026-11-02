@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Literal, TYPE_CHECKING
+from collections.abc import Iterator
+from typing import Any, Literal, TYPE_CHECKING
 
 from ..._logging import logger
 from ...message import Base64Source, DataBlock, TextBlock
@@ -33,42 +34,116 @@ if TYPE_CHECKING:
     from docx.text.paragraph import Paragraph as DocxParagraph
 
 _VML_NS = "{urn:schemas-microsoft-com:vml}"
+_MATH_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+_MC_ALTERNATE_CONTENT = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+    "AlternateContent"
+)
 
 
 def _extract_text_from_paragraph(para: DocxParagraph) -> str:
-    """Extract text from a paragraph, including text in text boxes and
-    VML shapes.
+    """Extract text from a paragraph, including any text box anchored to it.
 
-    Tries three methods in order:
-    1. All ``w:t`` elements in the paragraph XML (covers revisions,
-       hyperlinks, etc.).
-    2. The standard ``para.text`` property.
-    3. Text inside ``w:txbxContent`` and VML ``v:textbox`` elements.
+    The paragraph's own runs come first, then each text box once, as its own
+    line. Reading every ``w:t`` under the paragraph in one pass would splice a
+    text box into the middle of the surrounding sentence, and would read the
+    ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
+    Each ``mc:AlternateContent`` containing a text box uses the first branch
+    with readable Word text, retaining the fallback when its choices cannot
+    supply any text. Other paragraph content keeps its original behavior.
+
+    Args:
+        para (`DocxParagraph`):
+            The python-docx paragraph to read.
+
+    Returns:
+        `str`:
+            The paragraph's text, with each text box on its own line.
     """
     from docx.oxml.ns import qn
 
-    text = ""
-    for t_elem in para._element.findall(".//" + qn("w:t")):
-        if t_elem.text:
-            text += t_elem.text
+    text_tag = qn("w:t")
+    text_box_tag = qn("w:txbxContent")
+    root = para._element
 
-    if not text:
-        text = para.text.strip()
+    def iter_text(element: Any) -> Iterator[Any]:
+        """Visit text in one readable branch of each AlternateContent."""
+        if element.tag == text_tag:
+            yield element
+        elif (
+            element.tag == _MC_ALTERNATE_CONTENT
+            and element.find(".//" + text_box_tag) is not None
+        ):
+            texts: list[Any] = []
+            for branch in element:
+                texts = list(iter_text(branch))
+                if any(t.text and t.text.strip() for t in texts):
+                    break
+            yield from texts
+        else:
+            for child in element:
+                yield from iter_text(child)
 
-    if not text:
-        for txbx in para._element.findall(".//" + qn("w:txbxContent")):
-            for p_elem in txbx.findall(".//" + qn("w:p")):
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        text += t_elem.text
+    own_parts: list[str] = []
+    text_boxes: dict[Any, list[str]] = {}
+    for text in iter_text(root):
+        if not text.text:
+            continue
+        parts = own_parts
+        for ancestor in text.iterancestors():
+            if ancestor is root:
+                break
+            if ancestor.tag == text_box_tag:
+                parts = text_boxes.setdefault(ancestor, [])
+                break
+        parts.append(text.text)
 
-        for vml_tb in para._element.findall(".//" + _VML_NS + "textbox"):
-            for p_elem in vml_tb.findall(".//" + qn("w:p")):
-                for t_elem in p_elem.findall(".//" + qn("w:t")):
-                    if t_elem.text:
-                        text += t_elem.text
+    own_text = "".join(own_parts)
+    if not own_text and not text_boxes:
+        # python-docx also reads characters such as w:noBreakHyphen.
+        own_text = para.text
+    blocks = [own_text, *("".join(parts) for parts in text_boxes.values())]
+    return "\n".join(block.strip() for block in blocks if block.strip())
 
-    return text.strip()
+
+def _is_blank_paragraph(para: DocxParagraph) -> bool:
+    """Return whether Word renders *para* as a blank line.
+
+    A blank line has no text and no picture. It may still hold a run:
+    typing a space before Enter leaves ``<w:t> </w:t>``, and Shift+Enter
+    on an empty line leaves a run holding only ``<w:br/>``. A run that
+    carries anything else (field instructions, a symbol, an equation) is
+    not blank even when the extractor finds no text in it.
+    """
+    from docx.oxml.ns import qn
+
+    root = para._element
+    for tag in ("w:drawing", "w:pict", "w:object"):
+        if root.findall(".//" + qn(tag)):
+            return False
+    if root.findall(".//" + _MATH_NS + "oMath"):
+        return False
+
+    blank_run_tags = {
+        qn(tag)
+        for tag in (
+            "w:rPr",
+            "w:br",
+            "w:cr",
+            "w:tab",
+            "w:lastRenderedPageBreak",
+            "w:softHyphen",
+        )
+    }
+    text_tag = qn("w:t")
+    for run in root.findall(".//" + qn("w:r")):
+        for child in run:
+            if child.tag == text_tag:
+                if (child.text or "").strip():
+                    return False
+            elif child.tag not in blank_run_tags:
+                return False
+    return True
 
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
@@ -76,7 +151,9 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     within cells.
 
     Horizontal merges (``w:gridSpan``) are expanded with empty strings so
-    that every row has the same number of columns.  Vertically merged
+    that every row has the same number of columns. Omitted leading and
+    trailing cells (``w:gridBefore`` / ``w:gridAfter``) are also padded to
+    preserve their grid positions. Vertically merged
     continuation cells (``w:vMerge`` without ``val="restart"``) are kept
     as-is — their XML content is typically empty, which is the desired
     behaviour for downstream renderers.
@@ -88,9 +165,13 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
         row_data: list[str] = []
+        grid_before = tr.find(f"{qn('w:trPr')}/{qn('w:gridBefore')}")
+        if grid_before is not None:
+            row_data.extend([""] * int(grid_before.get(qn("w:val"), "0")))
         for tc in tr.findall(qn("w:tc")):
             paragraphs: list[str] = []
-            for p_elem in tc.findall(qn("w:p")):
+            # Include paragraphs of tables nested in this cell.
+            for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
                     if element.tag == text_tag and element.text:
@@ -111,6 +192,9 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                     )
                     row_data.extend([""] * (span - 1))
 
+        grid_after = tr.find(f"{qn('w:trPr')}/{qn('w:gridAfter')}")
+        if grid_after is not None:
+            row_data.extend([""] * int(grid_after.get(qn("w:val"), "0")))
         table_data.append(row_data)
     return table_data
 
@@ -170,6 +254,35 @@ def _extract_image_blocks(
                 logger.warning("Failed to extract VML image: %s", e)
 
     return blocks
+
+
+def _body_elements(body: Any) -> Iterator[Any]:
+    """Yield the top-level content elements of a document body.
+
+    Block-level content controls (``w:sdt`` — how Word writes its
+    automatic table of contents and every developer-mode block control)
+    are containers, not content: their ``w:sdtContent`` children are
+    yielded in their place, recursively, so a control cannot hide a
+    paragraph or a table.  Inline ``w:sdt`` needs no handling here, as
+    its runs are already descendants of the paragraph holding it.
+
+    Args:
+        body (`Any`):
+            The ``w:body`` element of a python-docx document.
+
+    Yields:
+        `Any`:
+            Each body child, with content controls replaced by theirs.
+    """
+    from docx.oxml.ns import qn
+
+    for element in body:
+        if element.tag == qn("w:sdt"):
+            content = element.find(qn("w:sdtContent"))
+            if content is not None:
+                yield from _body_elements(content)
+        else:
+            yield element
 
 
 class WordParser(ParserBase):
@@ -272,9 +385,15 @@ class WordParser(ParserBase):
             ) from e
 
         if isinstance(file, str):
-            doc = DocxDocument(file)
-        else:
+            with open(file, "rb") as fp:
+                file = fp.read()
+
+        try:
             doc = DocxDocument(io.BytesIO(file))
+        except Exception as e:  # pylint: disable=broad-except
+            raise ValueError(
+                f"Failed to parse {filename!r} as DOCX: {e}",
+            ) from e
 
         sections: list[Section] = []
         text_buffer: list[str] = []
@@ -293,17 +412,16 @@ class WordParser(ParserBase):
             )
             text_buffer.clear()
 
-        for element in doc.element.body:
+        for element in _body_elements(doc.element.body):
             if isinstance(element, CT_P):
                 para = Paragraph(element, doc)
 
                 text = _extract_text_from_paragraph(para)
                 if text:
                     text_buffer.append(text)
-                elif text_buffer and not para._element.findall(
-                    ".//" + qn("w:r"),
-                ):
-                    # No runs at all, i.e. a blank line in Word
+                elif text_buffer and _is_blank_paragraph(para):
+                    # A blank line in Word: an empty <w:p>, a run holding
+                    # only spaces, or a run holding only <w:br/>/<w:cr/>.
                     text_buffer.append("")
 
                 if self.include_image:
@@ -335,20 +453,50 @@ class WordParser(ParserBase):
                     if self.table_format == "markdown"
                     else _table_to_json(table_data)
                 )
-                if not rendered:
-                    continue
 
-                if self.separate_table:
-                    flush_text()
-                    sections.append(
-                        Section(
-                            content=TextBlock(text=rendered),
-                            source=filename,
-                            metadata={},
-                        ),
-                    )
-                else:
-                    text_buffer.append(rendered)
+                if rendered:
+                    if self.separate_table:
+                        flush_text()
+                        sections.append(
+                            Section(
+                                content=TextBlock(text=rendered),
+                                source=filename,
+                                metadata={},
+                            ),
+                        )
+                    else:
+                        text_buffer.append(rendered)
+
+                # Images pasted into table cells live under the table's
+                # ``w:p`` elements, not under body-level paragraphs; without
+                # this pass they are silently dropped.
+                if self.include_image:
+                    image_blocks: list[DataBlock] = []
+                    for p_elem in element.findall(".//" + qn("w:p")):
+                        # The outer paragraph scan already covers images in
+                        # nested text-box paragraphs.
+                        if p_elem.xpath("ancestor::w:p"):
+                            continue
+                        image_blocks.extend(
+                            _extract_image_blocks(
+                                Paragraph(p_elem, doc),
+                                filename,
+                            ),
+                        )
+                    if image_blocks:
+                        flush_text()
+                        for block in image_blocks:
+                            sections.append(
+                                Section(
+                                    content=block,
+                                    source=filename,
+                                    metadata={
+                                        "media_type": (
+                                            block.source.media_type
+                                        ),
+                                    },
+                                ),
+                            )
 
         flush_text()
         return sections

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { credentialApi } from '../api';
 import type { CredentialView, CreateCredentialRequest, UpdateCredentialRequest } from '../api';
 import { AVAILABLE_MODELS_KEY } from './useAvailableModels';
+import { AVAILABLE_REALTIME_MODELS_KEY } from './useAvailableRealtimeModels';
 
 /**
  * Manages API key credentials with CRUD operations.
@@ -32,13 +33,14 @@ export function useCredentials() {
 		refetch();
 	}, [refetch]);
 
-	// Every model picker reads its options from the cached
-	// `available-models` query, which is derived from the credentials —
-	// so a credential that just changed has to drop that cache too,
-	// rather than leaving the pickers to time out of it.
+	// Every model picker derives its options from the credentials, so a
+	// credential change must invalidate both cached model catalogues.
 	const refresh = useCallback(async () => {
 		await refetch();
-		await queryClient.invalidateQueries({ queryKey: AVAILABLE_MODELS_KEY });
+		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: AVAILABLE_MODELS_KEY }),
+			queryClient.invalidateQueries({ queryKey: AVAILABLE_REALTIME_MODELS_KEY }),
+		]);
 	}, [refetch, queryClient]);
 
 	/** Stores a new credential and refreshes the list. */

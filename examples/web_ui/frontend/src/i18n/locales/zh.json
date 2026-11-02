@@ -17,6 +17,7 @@
 		"error": "出错了",
 		"information": "信息",
 		"knowledge": "知识库",
+		"voiceProfile": "语音配置",
 		"loading": "加载中...",
 		"shownCount": "已显示 {{count}} 个",
 		"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
@@ -99,8 +100,25 @@
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
-		"stop": "停止生成",
-		"stopping": "停止中 ..."
+		"queue": "加入队列",
+		"queued_one": "{{count}} 条消息正在排队",
+		"queued_other": "{{count}} 条消息正在排队",
+		"stop": "停止当前回复",
+		"stopping": "正在停止当前回复 ..."
+	},
+	"chatQueue": {
+		"title_one": "待发送消息（{{count}} 条）",
+		"title_other": "待发送消息（{{count}} 条）",
+		"attachmentOnly": "附件消息",
+		"drag": "拖动调整顺序",
+		"moveUp": "上移",
+		"moveDown": "下移",
+		"edit": "编辑",
+		"delete": "删除",
+		"save": "保存",
+		"cancel": "取消",
+		"processFailed": "排队消息处理失败。",
+		"processingCancelled": "排队消息处理已中断。"
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
@@ -137,6 +155,7 @@
 		"copy": "复制"
 	},
 	"chat": {
+		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
@@ -444,6 +463,15 @@
 		"clear": "清除选择",
 		"noFallback": "无兜底模型"
 	},
+	"realtime": {
+		"selectModel": "语音模型",
+		"parameters": "实时语音参数",
+		"noModels": "暂无可用的实时语音模型。",
+		"disable": "停用语音模型",
+		"selectFirst": "请先选择语音模型",
+		"start": "开始语音对话",
+		"stop": "结束语音对话"
+	},
 	"embedding-select": {
 		"placeholder": "选择 Embedding 模型",
 		"loading": "加载中…",
@@ -492,6 +520,7 @@
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
 		"parseError": "JSON 配置无效：{{message}}",
+		"invalidStreamProgress": "{{name}}.stream_progress 必须为布尔值（true 或 false）。",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
 	},
@@ -548,6 +577,9 @@
 	},
 	"model-parameters": {
 		"title": "模型参数",
+		"booleanDefault": "默认",
+		"booleanEnabled": "开启",
+		"booleanDisabled": "关闭",
 		"description": "调整所选模型的推理参数。",
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
@@ -557,6 +589,8 @@
 		"ttsEmpty": "暂无可用的语音合成模型。",
 		"ttsParameters": "参数",
 		"ttsParametersDescription": "调整所选语音合成模型的参数。",
+		"voiceProfiles": "语音配置",
+		"voiceProfileUnavailable": "绑定的凭证或模型不可用。",
 		"noTts": "不使用语音合成"
 	},
 	"setup": {
@@ -867,5 +901,50 @@
 		"empty": "此文件夹为空",
 		"pressEnter": "先按回车校验该路径",
 		"gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
+	},
+	"voiceProfile": {
+		"title": "语音配置",
+		"subtitle": "管理 Agent 使用的语音配置",
+		"newProfile": "新建配置",
+		"noProfiles": "暂无语音配置",
+		"noProfilesDescription": "创建语音配置以为您的 Agent 设置 TTS 语音参数。",
+		"createTitle": "创建语音配置",
+		"editTitle": "编辑语音配置",
+		"name": "名称",
+		"namePlaceholder": "我的语音配置",
+		"engine": "引擎",
+		"enginePlaceholder": "选择引擎",
+		"model": "语音合成模型",
+		"modelPlaceholder": "选择语音合成模型",
+		"customModel": "自定义模型",
+		"customModelPlaceholder": "输入模型或部署名称",
+		"unavailableCredential": "凭据不可用：{{id}}",
+		"credential": "凭据",
+		"credentialPlaceholder": "选择凭据",
+		"loadingModels": "加载模型列表...",
+		"voice": "音色",
+		"voicePlaceholderPreset": "预设音色名",
+		"voicePlaceholderClone": "预设音色名或克隆音色 ID",
+		"cloneVoice": "声音克隆",
+		"enrollmentModel": "音色复刻模型（自动匹配）",
+		"enrollmentModelHint": "复刻模型用于创建音色，合成模型用于生成语音。复刻模型根据所选合成模型自动匹配。",
+		"cloning": "克隆中...",
+		"clone": "克隆",
+		"uploadAudio": "上传音频克隆",
+		"cloneUrlPlaceholder": "https://公开可访问的音频文件URL",
+		"consentPlaceholder": "OpenAI Consent ID (cons_xxx)",
+		"consentRequired": "请先填写 OpenAI Consent ID",
+		"uploadConsent": "上传同意录音",
+		"consentLanguage": "同意录音语言",
+		"consentRecordingHint": "请按所选语言逐字朗读以下声明，并上传录音。",
+		"consentRequirements": "查看 OpenAI 官方录音要求",
+		"openaiCloneHint": "OpenAI 克隆需要两步：1) 上传声优朗读同意声明的录音获取 Consent ID；2) 上传音频样本创建音色。",
+		"fileTooLarge": "文件过大，最大支持 {{max}}MB",
+		"deleteTitle": "删除语音配置",
+		"deleteDescription": "确定要删除「{{name}}」吗？此操作无法撤销。",
+		"noEngines": "尚未配置 TTS 凭据，请先添加凭据。",
+		"saving": "保存中...",
+		"save": "保存",
+		"cancel": "取消"
 	}
 }

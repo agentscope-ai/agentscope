@@ -4,10 +4,13 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.tool import Write
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 from agentscope.state import AgentState
@@ -126,6 +129,39 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             content = f.read()
         self.assertEqual(content, "")
 
+    async def test_written_line_count_matches_read_numbering(self) -> None:
+        """The reported line count matches the ``Read`` tool numbering."""
+        cases = [
+            ("alpha\nbeta\n", 2),
+            ("alpha\nbeta", 2),
+            ("alpha\n", 1),
+            ("alpha", 1),
+            ("", 0),
+        ]
+        for index, (content, line_count) in enumerate(cases):
+            file_path = os.path.join(self.temp_dir, f"count-{index}.txt")
+
+            chunk = await self.write_tool(
+                file_path=file_path,
+                content=content,
+            )
+
+            self.assertListEqual(
+                [block.model_dump() for block in chunk.content],
+                [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"The file {file_path} has been written "
+                            f"successfully ({line_count} lines)."
+                        ),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+            )
+
     async def test_overwrite_existing_without_prior_read_errors(self) -> None:
         """Overwriting an existing file via state-injected call requires
         the file to have been read first (cached in tool_context).
@@ -210,3 +246,58 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent."""
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {
+                    "file_path": f"/tmp/probe/{parent}/out.csv",
+                    "content": "x",
+                }
+                engine = PermissionEngine(PermissionContext())
+                first = await engine.check_permission(
+                    self.write_tool,
+                    tool_input,
+                )
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Write",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                engine.add_rule(first.suggested_rules[0])
+                approved = await engine.check_permission(
+                    self.write_tool,
+                    tool_input,
+                )
+                unrelated = await engine.check_permission(
+                    self.write_tool,
+                    {
+                        **tool_input,
+                        "file_path": f"/tmp/probe/{sibling}/out.csv",
+                    },
+                )
+                self.assertEqual(
+                    [
+                        first.behavior,
+                        approved.behavior,
+                        unrelated.behavior,
+                    ],
+                    [
+                        PermissionBehavior.ASK,
+                        PermissionBehavior.ALLOW,
+                        PermissionBehavior.ASK,
+                    ],
+                )

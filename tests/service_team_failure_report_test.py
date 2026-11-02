@@ -16,6 +16,7 @@ from unittest.mock import patch
 from utils import AnyString
 
 from agentscope.agent import ContextConfig, ReActConfig
+from agentscope.app._bus_ops import deliver_to_inbox
 from agentscope.app._service import ChatService
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
@@ -28,6 +29,7 @@ from agentscope.app.storage import (
     TeamRecord,
 )
 from agentscope.event import ReplyEndEvent, ReplyStartEvent
+from agentscope.message import AssistantMsg, ToolCallBlock, ToolCallState
 from agentscope.types import ErrorInfo, ErrorType, ReplyFinishedReason
 
 _USER = "user-1"
@@ -139,8 +141,14 @@ def _agent_cls(events: list) -> type:
     class _Agent:
         """Replay ``events``; the state is only read back for persistence."""
 
-        def __init__(self, *, state: object = None, **_: object) -> None:
-            self.state = state or SimpleNamespace()
+        def __init__(
+            self,
+            *,
+            name: str,
+            state: object = None,
+            **_: object,
+        ) -> None:
+            self.name, self.state = name, state or SimpleNamespace()
 
         async def reply_stream(
             self,
@@ -186,6 +194,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
         agent_id: str,
         events: list,
         *,
+        agent_cls: type | None = None,
         model_fails: bool = False,
         workspace_fails: bool = False,
         persist_fails: bool = False,
@@ -226,7 +235,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
             background_task_manager=object(),
             message_bus=self.bus,
             resource_access_service=_Access(self.storage),
-            custom_agent_cls=_agent_cls(events),
+            custom_agent_cls=agent_cls or _agent_cls(events),
         )
         with (
             patch(
@@ -423,4 +432,61 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
         self.assertIn(
             "Error: boom.",
             entries[0][1]["hint"],
+        )
+
+    async def test_parked_worker_keeps_inbox_for_resume(self) -> None:
+        """A worker parked on a confirmation must not take a ``None`` turn
+        for a payload that arrived mid-turn, nor report a failure."""
+        bus, worker_session = self.bus, self.worker_session
+
+        class _ParkingAgent:
+            """Park on a confirmation while a payload lands in the inbox."""
+
+            def __init__(self, *, name: str, state: object, **_: object):
+                self.name, self.state = name, state
+
+            async def reply_stream(
+                self,
+                inputs: object,
+            ) -> AsyncGenerator[object, None]:
+                """Park on the first turn, fail like ``Agent`` on a rerun."""
+                del inputs
+                if self.state.has_awaiting_tool_calls(self.name):
+                    raise ValueError("awaiting confirmation, got no event")
+                self.state.context.append(
+                    AssistantMsg(
+                        name=self.name,
+                        content=[
+                            ToolCallBlock(
+                                id="call-1",
+                                name="Bash",
+                                input="{}",
+                                state=ToolCallState.ASKING,
+                            ),
+                        ],
+                    ),
+                )
+                await deliver_to_inbox(
+                    bus,
+                    user_id=_USER,
+                    session_id=worker_session.id,
+                    agent_id="agent-l",
+                    payload={"type": "hint", "hint": "from leader"},
+                )
+                if False:
+                    yield
+
+        delivered = await self._run(
+            worker_session,
+            self.worker_agent.id,
+            [],
+            agent_cls=_ParkingAgent,
+        )
+        self.assertListEqual(delivered, [])
+        entries = await self.bus.queue_drain(
+            MessageBusKeys.inbox(worker_session.id),
+        )
+        self.assertListEqual(
+            [payload for _entry_id, payload in entries],
+            [{"type": "hint", "hint": "from leader"}],
         )

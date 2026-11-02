@@ -64,6 +64,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     is_alive: bool
     """Inherited lifecycle flag, repeated for file-scoped type checks."""
 
+    _mcp_specs: dict[tuple[str, str], list[MCPClient]]
+    """Inherited MCP declarations, repeated for file-scoped type checks."""
+
     _bootstrap_cmd_timeout: float = 1800.0
     """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
     bootstrap step. Subclasses lower this for lighter base images
@@ -318,7 +321,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Register a new MCP server through the in-sandbox gateway.
 
         Args:
@@ -328,6 +331,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 The owning agent. ``None`` means the legacy ``""``.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The connected gateway proxy stored by the workspace.
 
         Raises:
             `ValueError`:
@@ -362,6 +369,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             # persisted copy is self-contained.
             self._mcp_specs[(agent_id, session_id)] = [*specs, mcp_client]
             await self._save_mcp_file()
+            return client
 
     async def remove_mcp(
         self,

@@ -7,7 +7,10 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
-from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._audio import (
+    _build_streaming_wav_header,
+    _build_wav_header,
+)
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
@@ -45,13 +48,15 @@ class OpenAIChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for reasoning models "
-                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
-                "control the depth of reasoning."
+                "None and True forward reasoning_effort when it is set, "
+                "including 'none'. If reasoning_effort is unset, neither "
+                "adds reasoning parameters; the provider default applies. "
+                "False overrides reasoning_effort with 'none' to request "
+                "that reasoning be disabled."
             ),
         )
 
@@ -66,6 +71,9 @@ class OpenAIChatModel(ChatModelBase):
                 "model-dependent and may include: none, minimal, low, "
                 "medium, high, xhigh."
             ),
+            json_schema_extra={
+                "x-reset-hidden-on-change": {"thinking_enable": None},
+            },
         )
 
         temperature: float | None = Field(
@@ -237,10 +245,9 @@ class OpenAIChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.thinking_enable is False:
+            kwargs["reasoning_effort"] = "none"
+        elif self.parameters.reasoning_effort is not None:
             kwargs["reasoning_effort"] = self.parameters.reasoning_effort
 
         if self.parameters.voice is not None:
@@ -350,14 +357,15 @@ class OpenAIChatModel(ChatModelBase):
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
                             0,
                         )
+                        or 0
                         if details
                         else 0,
                     )
@@ -505,11 +513,22 @@ class OpenAIChatModel(ChatModelBase):
                 if not choice.message.content and audio_transcript:
                     content_blocks.append(TextBlock(text=audio_transcript))
                 if audio_data:
+                    payload = base64.b64decode(audio_data)
+                    media_type = f"audio/{audio_format}"
+                    if audio_format == "pcm16":
+                        # The request forces ``format: pcm16`` (see the
+                        # ``audio`` request block), which comes back as
+                        # headerless raw PCM. Wrap it so the block is a
+                        # playable WAV, matching the streaming path and the
+                        # documented intent.
+                        payload = _build_wav_header(len(payload)) + payload
+                        media_type = "audio/wav"
+                    encoded = base64.b64encode(payload).decode("ascii")
                     content_blocks.append(
                         DataBlock(
                             source=Base64Source(
-                                data=audio_data,
-                                media_type=f"audio/{audio_format}",
+                                data=encoded,
+                                media_type=media_type,
                             ),
                         ),
                     )
@@ -528,14 +547,15 @@ class OpenAIChatModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )

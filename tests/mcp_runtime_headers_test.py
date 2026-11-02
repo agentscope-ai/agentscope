@@ -7,7 +7,6 @@ from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-import httpx
 from fastapi.testclient import TestClient
 from mcp.client.streamable_http import create_mcp_http_client
 
@@ -32,7 +31,7 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
         async def fake_transport(
             url: str,
             *,
-            http_client: httpx.AsyncClient,
+            http_client: Any,
         ) -> AsyncGenerator[tuple[object, object, object], None]:
             self.seen.update(url=url, http_client=http_client)
             yield object(), object(), object()
@@ -174,6 +173,14 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "untimed",
                 HttpMCPConfig(url="https://example.com/mcp", timeout=None),
             ),
+            (
+                "untimed_with_headers",
+                HttpMCPConfig(
+                    url="https://example.com/mcp",
+                    headers={"X-Static": "static"},
+                    timeout=None,
+                ),
+            ),
         ):
             client = MCPClient(
                 name="runtime_headers",
@@ -185,16 +192,25 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 defaults[label] = {
                     "follow_redirects": http_client.follow_redirects,
                     "read_timeout": http_client.timeout.read,
+                    "static_header": http_client.headers.get("X-Static"),
                 }
 
         self.assertDictEqual(
             defaults,
             {
                 "configured": {
-                    "follow_redirects": False,
+                    "follow_redirects": transport_defaults["follow_redirects"],
                     "read_timeout": 30.0,
+                    "static_header": "static",
                 },
-                "untimed": transport_defaults,
+                "untimed": {
+                    **transport_defaults,
+                    "static_header": None,
+                },
+                "untimed_with_headers": {
+                    **transport_defaults,
+                    "static_header": "static",
+                },
             },
         )
 
@@ -224,6 +240,7 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
             },
         )
 
@@ -441,6 +458,7 @@ class GatewayMCPClientRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
             },
         )
 
@@ -476,6 +494,7 @@ class GatewayMCPClientRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
                 "runtime_headers": {"Authorization": "Bearer runtime"},
             },
         )
