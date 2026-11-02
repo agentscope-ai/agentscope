@@ -2,8 +2,8 @@
 """A transport that dies mid-turn must retire the unbound local user turn.
 
 The reply_stream teardown ends pending user turns so their ReplyEnd is
-handed to the caller, but it must also drop the unbound identities from
-``_pending_user_turns``. Otherwise, once the caller attaches a new
+handed to the caller, but it must also drop unfinished, unbound identities
+from ``_pending_user_turns``. Otherwise, once the caller attaches a new
 transport to the same (still connected) model session, the dead turn
 stays first in insertion order and ``_find_user_turn``'s unbound
 fallback attributes the next transcript to the reply that already
@@ -11,11 +11,11 @@ ended, instead of the freshly started one.
 """
 
 # pylint: disable=protected-access
-import asyncio
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from realtime_agent_test import FakeTransport, ScriptedModel
 
-from agentscope.agent import RealtimeAgent
+from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -23,8 +23,6 @@ from agentscope.event import (
 )
 from agentscope.realtime import SpeechTransition, VADBase
 from agentscope.realtime import _events as me
-
-from realtime_agent_test import FakeTransport, ScriptedModel
 
 
 class StartOnlyVAD(VADBase):
@@ -47,7 +45,7 @@ class StartOnlyVAD(VADBase):
 
 
 class TransportTeardownTurnTest(IsolatedAsyncioTestCase):
-    """Unbound local turns must not survive their transport."""
+    """Retire unfinished local turns but retain pending transcriptions."""
 
     @staticmethod
     def _drain(agent: RealtimeAgent) -> list[tuple[Any, ...]]:
@@ -117,3 +115,87 @@ class TransportTeardownTurnTest(IsolatedAsyncioTestCase):
             [(new_id, "hello")],
             "context must hold the transcript under the new turn's id",
         )
+
+    async def test_transport_end_keeps_committed_local_turns(self) -> None:
+        """A late local transcription must not settle the resumed turn."""
+        for old_event, old_context in [
+            (me.InputTranscriptionEvent(item_id="u1", text="first"), True),
+            (me.InputTranscriptionFailedEvent(item_id="u1"), False),
+            (me.InputTranscriptionEvent(item_id="u1", text=""), False),
+        ]:
+            with self.subTest(event=old_event):
+                model = ScriptedModel([[]], input_audio_transcription=True)
+                agent = RealtimeAgent(
+                    "Friday",
+                    "be brief",
+                    model,
+                    aggregator=TurnAggregator(merge_window_ms=0),
+                )
+                async with agent:
+                    await agent._forward_audio(b"", SpeechTransition.STARTED)
+                    old_id = self._drain(agent)[0][1]
+                    await agent._forward_audio(b"", SpeechTransition.ENDED)
+                    self.assertIn("commit_turn", model.calls)
+
+                    ended = [
+                        (event.type, event.reply_id)
+                        async for event in agent.reply_stream(FakeTransport(0))
+                    ]
+                    self.assertEqual(ended, [("REPLY_END", old_id)])
+
+                    await agent._forward_audio(b"", SpeechTransition.STARTED)
+                    new_id = self._drain(agent)[0][1]
+                    await agent._on_model_event(old_event)
+                    self.assertEqual(
+                        {
+                            "events": self._drain(agent),
+                            "pending": [
+                                (turn.reply_id, turn.item_id, turn.open)
+                                for turn in agent._pending_user_turns.values()
+                            ],
+                            "context": [
+                                (msg.id, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                        },
+                        {
+                            "events": (
+                                [("text", old_id, "first")]
+                                if old_context
+                                else []
+                            ),
+                            "pending": [(new_id, "", True)],
+                            "context": (
+                                [(old_id, "first")] if old_context else []
+                            ),
+                        },
+                    )
+                    await agent._on_model_event(
+                        me.InputTranscriptionEvent(
+                            item_id="u2",
+                            text="second",
+                        ),
+                    )
+                    self.assertEqual(
+                        {
+                            "events": self._drain(agent),
+                            "pending": list(agent._pending_user_turns),
+                            "current": agent._user_turn,
+                            "context": [
+                                (msg.id, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                        },
+                        {
+                            "events": [
+                                ("text", new_id, "second"),
+                                ("end", new_id),
+                            ],
+                            "pending": [],
+                            "current": None,
+                            "context": (
+                                [(old_id, "first")] if old_context else []
+                            )
+                            + [(new_id, "second")],
+                        },
+                    )

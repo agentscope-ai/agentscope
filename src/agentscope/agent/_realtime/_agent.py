@@ -877,10 +877,11 @@ class RealtimeAgent:
         A turn bound to a provider item id stays in
         ``_pending_user_turns`` so a transcript that settles after the
         transport died still lands in the reply the caller already saw
-        end. An unbound local turn has no id a late transcript could
-        match; keeping it would let it capture the next run's first
-        transcript through ``_find_user_turn``'s unbound fallback, so it
-        is dropped here.
+        end. A local turn whose speech ended also stays: it can be
+        committed without a provider item id, and its late transcript
+        still needs ``_find_user_turn``'s ordered fallback. Drop only
+        unfinished, unbound turns so they cannot capture the next run's
+        first transcript.
         """
         turns = list(self._pending_user_turns.values())
         if self._user_turn is not None and self._user_turn not in turns:
@@ -888,7 +889,7 @@ class RealtimeAgent:
         for turn in turns:
             self._end_user_turn(turn)
         for turn in turns:
-            if not turn.item_id:
+            if not turn.item_id and not turn.speech_ended:
                 self._pending_user_turns.pop(turn.reply_id, None)
                 if self._user_turn is turn:
                     self._user_turn = None
