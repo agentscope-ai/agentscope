@@ -65,6 +65,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
 
     text_tag = qn("w:t")
     text_box_tag = qn("w:txbxContent")
+    deleted_tag = qn("w:del")
     run_tag = qn("w:r")
     tab_tag = qn("w:tab")
     carriage_return_tag = qn("w:cr")
@@ -73,6 +74,9 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
 
     def iter_text(element: Any) -> Iterator[Any]:
         """Visit text and inline separators in one readable branch."""
+        if element.tag == deleted_tag:
+            # Deleted runs must not contribute text or inline separators.
+            return
         if element.tag == text_tag or (
             element.tag in separator_tags
             and element.getparent().tag == run_tag

@@ -2982,6 +2982,44 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
             ["Before linked\tlabel revised\ntext after"],
         )
 
+    async def test_deleted_inline_separators_are_ignored(self) -> None:
+        """Deleted separators are omitted while inserted ones are kept."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        for separator, expected in (("tab", "\t"), ("br", "\n"), ("cr", "\n")):
+            with self.subTest(separator=separator):
+                doc = DocxDocument()
+                paragraph = doc.add_paragraph("Before")
+                deleted = parse_xml(
+                    f'<w:del {nsdecls("w")} w:id="1" w:author="test">'
+                    "<w:r><w:delText>removed</w:delText>"
+                    f"<w:{separator}/></w:r></w:del>",
+                )
+                # pylint: disable-next=protected-access
+                paragraph._element.append(deleted)
+                paragraph.add_run("After")
+                inserted = parse_xml(
+                    f'<w:ins {nsdecls("w")} w:id="2" w:author="test">'
+                    f"<w:r><w:{separator}/><w:t>Inserted</w:t></w:r>"
+                    "</w:ins>",
+                )
+                # pylint: disable-next=protected-access
+                paragraph._element.append(inserted)
+                buffer = io.BytesIO()
+                doc.save(buffer)
+
+                sections = await WordParser(include_image=False).parse(
+                    buffer.getvalue(),
+                    "demo.docx",
+                )
+
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(f"BeforeAfter{expected}Inserted"),
+                )
+
     async def test_inline_separators_preserve_text_fallback(self) -> None:
         """Separators alone do not hide non-w:t text from the fallback."""
         from docx import Document as DocxDocument
