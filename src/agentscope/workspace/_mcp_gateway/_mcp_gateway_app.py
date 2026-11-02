@@ -214,6 +214,8 @@ def _build_app(
         arguments = body.get("arguments") or {}
         try:
             tool_obj = await client.get_tool(tool)
+            # Sandbox calls return only the final result in this gateway.
+            tool_obj.stream_progress = False
             chunk = await tool_obj(**arguments)
         except ValueError as e:
             raise HTTPException(404, str(e)) from e

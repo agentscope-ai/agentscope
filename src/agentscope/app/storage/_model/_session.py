@@ -120,6 +120,10 @@ class ChatModelConfig(BaseModel):
     model: str
     """The model name."""
 
+    model_class: str = ""
+    """The model implementation class type (e.g. ``openai_chat``,
+    ``openai_response``). Empty string means use default resolution."""
+
     parameters: dict
     """The model parameters."""
 
@@ -135,6 +139,14 @@ class TTSModelConfig(BaseModel):
 
     model: str
     """The TTS model name."""
+
+    voice_profile_id: str | None = None
+    """The owner-scoped voice profile used for a custom voice.
+
+    Profiles bind the voice to its owner, credential and synthesis model.
+    Direct voice IDs remain supported with owned credentials. Shared
+    credentials may only use default or known preset voices without a profile.
+    """
 
     parameters: dict
     """TTS parameters (voice, language, etc.)."""

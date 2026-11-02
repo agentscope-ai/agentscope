@@ -16,7 +16,7 @@ from ...event import (
     ReplyStartEvent,
 )
 from ...state import AgentState
-from .._bus_ops import publish_session_event
+from .._bus_ops import nudge_chat_inputs, publish_session_event
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ._webrtc_audio_transport import WebRTCAudioTransport
@@ -225,6 +225,12 @@ class WebRTCSession:
             )
             self.transport.send_error(str(exc))
         finally:
+            await nudge_chat_inputs(
+                self.message_bus,
+                self.user_id,
+                self.session_id,
+                self.agent_id,
+            )
             async with self._close_lock:
                 self._closing = True
             await self.transport.close()

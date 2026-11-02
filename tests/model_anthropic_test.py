@@ -7,10 +7,11 @@ Anthropic uses event-based streaming (message_start, content_block_start,
 content_block_delta, message_delta events).
 """
 import json
+from datetime import datetime, timedelta
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from anthropic import types as anthropic_types
 
@@ -22,7 +23,7 @@ from agentscope.message import (
     ToolCallBlock,
     ThinkingBlock,
 )
-from agentscope.model import AnthropicChatModel
+from agentscope.model import AnthropicChatModel, ChatUsage
 from agentscope.credential import AnthropicCredential
 from agentscope.tool import ToolChoice
 
@@ -422,6 +423,43 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
     def _thinking(self) -> Any:
         return self.mock_create.call_args.kwargs.get("thinking")
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False disables thinking unless an explicit mode takes priority."""
+        self.assertIsNone(AnthropicChatModel.Parameters().thinking_enable)
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            for mode in (None, "adaptive", "disabled"):
+                with self.subTest(params=params, mode=mode):
+                    self.model.parameters = AnthropicChatModel.Parameters(
+                        **params,
+                        thinking_mode=mode,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "claude-opus-4-5",
+                        "messages": [],
+                        "stream": False,
+                        "max_tokens": 8192,
+                    }
+                    if mode is not None:
+                        expected["thinking"] = {"type": mode}
+                    elif params.get("thinking_enable") is False:
+                        expected["thinking"] = {"type": "disabled"}
+                    elif params.get("thinking_enable"):
+                        expected["thinking"] = {
+                            "type": "enabled",
+                            "budget_tokens": 4096,
+                        }
+                    self.assertEqual(
+                        self.mock_create.call_args.kwargs,
+                        expected,
+                    )
+
     async def test_no_thinking_by_default(self) -> None:
         """Neither control set means no thinking config is sent."""
         await self.model([])
@@ -457,6 +495,25 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         await self.model([])
 
         self.assertEqual(self._thinking(), {"type": "disabled"})
+
+    async def test_false_drops_budget_and_display(self) -> None:
+        """Disabled thinking omits budget/display without expanding tokens."""
+        self.model.parameters.thinking_enable = False
+        self.model.parameters.thinking_budget = 16_384
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs,
+            {
+                "model": "claude-opus-4-5",
+                "messages": [],
+                "stream": False,
+                "max_tokens": 8192,
+                "thinking": {"type": "disabled"},
+            },
+        )
 
     async def test_legacy_toggle_still_means_budget_mode(self) -> None:
         """thinking_enable keeps its old meaning when mode is unset."""
@@ -724,6 +781,50 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     ],
                 ),
             ],
+        )
+
+    async def test_stream_final_usage_reports_full_generation_time(
+        self,
+    ) -> None:
+        """The final response reports the full generation time."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-t",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        start = datetime(2026, 10, 1, 10, 0, 0)
+        first_event_at = start + timedelta(milliseconds=300)
+        last_event_at = start + timedelta(seconds=20)
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+        ) as mock_datetime:
+            mock_datetime.now.side_effect = [
+                start,
+                first_event_at,
+                last_event_at,
+            ]
+            responses = [r async for r in await self.model([])]
+
+        self.assertTrue(responses[-1].is_last)
+        self.assertEqual(
+            responses[-1].usage,
+            ChatUsage(input_tokens=10, output_tokens=5, time=20.0),
         )
 
     async def test_stream_redacted_thinking(self) -> None:

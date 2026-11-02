@@ -10,6 +10,7 @@ export interface ChatModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	model_class: string;
 	parameters: Record<string, unknown>;
 }
 
@@ -17,6 +18,7 @@ export interface TTSModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	voice_profile_id?: string | null;
 	parameters: Record<string, unknown>;
 }
 
@@ -526,6 +528,8 @@ export interface HttpMCPConfig {
 export interface MCPClient {
 	name: string;
 	is_stateful: boolean;
+	/** Opt in to tool progress streaming; omitted means false. */
+	stream_progress?: boolean;
 	mcp_config: StdioMCPConfig | HttpMCPConfig;
 }
 
@@ -553,15 +557,6 @@ export interface Skill {
 	dir: string;
 	markdown: string;
 	updated_at: number;
-}
-
-/**
- * @deprecated The path is resolved on the server, which only means
- * anything for a single-host deployment. Upload a folder or install
- * from the library instead.
- */
-export interface AddSkillRequest {
-	skill_path: string;
 }
 
 // ─── Hub ──────────────────────────────────────────────────────────────────────
@@ -801,6 +796,8 @@ export interface CreateScheduleRequest {
 	description?: string;
 	cron_expression: string;
 	timezone?: string;
+	started_at?: string | null;
+	ended_at?: string | null;
 	agent_id: string;
 	chat_model_config: ChatModelConfig;
 	enabled?: boolean;
@@ -831,6 +828,7 @@ export interface ScheduleListResponse {
 
 export interface ModelCard {
 	type: 'chat_model';
+	model_class: string;
 	name: string;
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
@@ -859,6 +857,7 @@ export interface RealtimeModelCard {
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
+	release_date: string | null;
 	input_types: string[];
 	output_types: string[];
 	input_sample_rate: number;
@@ -1361,6 +1360,7 @@ export interface TTSModelCard {
 	input_types: string[];
 	output_types: string[];
 	realtime: boolean;
+	voice_cloning: boolean;
 	parameter_schema: Record<string, unknown>;
 	parameters_overrides: Record<string, Record<string, unknown>>;
 }

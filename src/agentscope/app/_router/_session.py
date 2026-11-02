@@ -39,6 +39,7 @@ from .._service import (
     SessionStatus,
     SessionProjection,
     SubagentHitlProjector,
+    validate_tts_model_config,
 )
 from ..storage import (
     ASRModelConfig,
@@ -338,7 +339,12 @@ async def create_session(
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await validate_tts_model_config(
+        user_id,
+        body.tts_model_config,
+        access,
+        storage,
+    )
     await _ensure_credential_exists(access, user_id, body.asr_model_config)
     await _ensure_credential_exists(
         access,
@@ -530,7 +536,12 @@ async def update_session(
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await validate_tts_model_config(
+        user_id,
+        body.tts_model_config,
+        access,
+        storage,
+    )
     await _ensure_credential_exists(access, user_id, body.asr_model_config)
     await _ensure_credential_exists(
         access,

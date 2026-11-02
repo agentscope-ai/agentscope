@@ -21,7 +21,11 @@ from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._mcp_render import MCPRenderError, render_mcp
 from ._model import get_model, get_realtime_model
-from ._tts_model import get_tts_model
+from ._tts_model import (
+    get_tts_model,
+    validate_tts_model_config,
+    validate_voice_profile_model,
+)
 from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
@@ -63,6 +67,8 @@ __all__ = [
     "get_model",
     "get_realtime_model",
     "get_tts_model",
+    "validate_tts_model_config",
+    "validate_voice_profile_model",
     "get_toolkit",
     "render_mcp",
 ]

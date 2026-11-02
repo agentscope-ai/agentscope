@@ -1,4 +1,5 @@
 import {
+	AudioWaveform,
 	BookText,
 	BotMessageSquare,
 	Cable,
@@ -143,6 +144,16 @@ export function AppSidebar() {
 									className="justify-center"
 								>
 									<LibraryBig />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.voiceProfile'), hidden: false }}
+									isActive={location.pathname === '/voice-profile'}
+									onClick={() => navigate('/voice-profile')}
+									className="px-2"
+								>
+									<AudioWaveform />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 						</SidebarMenu>

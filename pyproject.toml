@@ -21,7 +21,8 @@ requires-python = ">=3.11"
 dependencies = [
     "aioitertools",
     "anthropic",
-    "dashscope",
+    "certifi>=2026.10.19",
+    "dashscope>=1.20.0",
     "docstring_parser",
     "filetype",
     "json5",
