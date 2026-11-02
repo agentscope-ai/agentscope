@@ -198,8 +198,24 @@ class WriteToolTest(IsolatedAsyncioTestCase):
             content="a,b\n",
         )
 
-        self.assertEqual(chunk.state, ToolResultState.ERROR)
-        self.assertTrue(chunk.is_last)
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": AnyString(),
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": ToolResultState.ERROR,
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
         self.assertIn("Error writing file:", chunk.content[0].text)
 
     async def test_match_rule_glob_pattern(self) -> None:
