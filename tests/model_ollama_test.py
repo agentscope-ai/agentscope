@@ -15,7 +15,6 @@ import httpx
 from utils import AnyString
 
 from agentscope.agent import Agent
-from agentscope.exception import StructuredOutputError
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
 from agentscope.model import OllamaChatModel
 from agentscope.tool import FunctionTool, ToolChoice, ToolChunk, Toolkit
@@ -616,20 +615,6 @@ class TestOllamaRepeatedToolCall(IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 
-class _RecordingOllamaModel(OllamaChatModel):
-    """Record the kwargs of every ``_call_api`` attempt, then fail."""
-
-    def __init__(self) -> None:
-        super().__init__(model="qwen3:8b", stream=False, context_size=40_960)
-        self.recorded_kwargs: list[dict] = []
-
-    async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
-        self.recorded_kwargs.append(kwargs)
-        raise StructuredOutputError(
-            "simulated parse failure to exercise the fallback ladder",
-        )
-
-
 class OllamaNoThinkFallbackTest(IsolatedAsyncioTestCase):
     """The structured-output fallback ladder must include a no_think
     attempt for Ollama."""
@@ -641,35 +626,47 @@ class OllamaNoThinkFallbackTest(IsolatedAsyncioTestCase):
             {"think": False},
         )
 
-    async def test_fallback_ladder_attempts_no_think(self) -> None:
-        """The forced/auto strategies are followed by a no_think attempt
-        carrying ``think=False``."""
+    async def test_fallback_ladder_sends_think_false_and_parses(
+        self,
+    ) -> None:
+        """The no_think attempt sends ``think=False`` to the client, and
+        its tool arguments are parsed and validated."""
         from pydantic import BaseModel
 
         class _Schema(BaseModel):
             answer: str
 
-        model = _RecordingOllamaModel()
-        with self.assertRaises(Exception):  # pylint: disable=broad-exception-caught
-            await model.generate_structured_output(
-                [UserMsg(name="user", content="hi")],
-                _Schema,
-            )
-
-        strategies = [
-            (
-                kwargs.get("tool_choice").mode
-                if kwargs.get("tool_choice") is not None
-                else None
-            )
-            for kwargs in model.recorded_kwargs
-        ]
-        self.assertIn("generate_structured_output", strategies)
-        self.assertTrue(
-            any(
-                kwargs.get("think") is False
-                for kwargs in model.recorded_kwargs
+        model = OllamaChatModel(
+            model="qwen3:8b",
+            stream=False,
+            context_size=40_960,
+            parameters=OllamaChatModel.Parameters(
+                thinking_enable=True,
             ),
-            f"no_think strategy never sent think=False; "
-            f"strategies={strategies}",
+        )
+        model.client.chat = AsyncMock(
+            side_effect=[
+                _mock_completion(content="I will answer in text."),
+                _mock_completion(content="Still text."),
+                _mock_completion(
+                    tool_calls=[
+                        {
+                            "name": "generate_structured_output",
+                            "args": {"answer": "Paris"},
+                        },
+                    ],
+                ),
+            ],
+        )
+
+        result = await model.generate_structured_output(
+            [UserMsg(name="user", content="What is the capital of France?")],
+            _Schema,
+        )
+
+        self.assertEqual(result.content, {"answer": "Paris"})
+        calls = model.client.chat.call_args_list
+        self.assertEqual(
+            [call.kwargs["think"] for call in calls],
+            [True, True, False],
         )
