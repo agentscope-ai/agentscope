@@ -57,6 +57,8 @@ export function useRealtimeAudioRecorder({
 
 	const reset = useCallback(() => {
 		generationRef.current += 1;
+		flushResolveRef.current?.();
+		flushResolveRef.current = null;
 		stopCapture();
 		transportRef.current?.close();
 		transportRef.current = null;
@@ -73,26 +75,33 @@ export function useRealtimeAudioRecorder({
 		const generation = ++generationRef.current;
 		setState('requesting');
 		callbacksRef.current.onStart();
+		let stream: MediaStream | null = null;
+		let context: AudioContext | null = null;
+		let transport: BrowserRealtimeASRTransport | null = null;
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({
+			stream = await navigator.mediaDevices.getUserMedia({
 				audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
 			});
-			if (generation !== generationRef.current) {
-				stream.getTracks().forEach((track) => track.stop());
-				return;
-			}
+			if (generation !== generationRef.current) return;
 			streamRef.current = stream;
 
-			const context = new AudioContext();
+			context = new AudioContext();
 			contextRef.current = context;
 			await context.audioWorklet.addModule(
 				`${import.meta.env.BASE_URL}pcm-recorder-worklet.js`,
 			);
-			const transport = new BrowserRealtimeASRTransport({
+			if (generation !== generationRef.current) return;
+			transport = new BrowserRealtimeASRTransport({
 				config,
 				onTranscript: (text, isLast) => {
 					if (generation === generationRef.current) {
 						callbacksRef.current.onTranscript(text, isLast);
+					}
+				},
+				onError: (error) => {
+					if (generation === generationRef.current) {
+						reset();
+						callbacksRef.current.onError(error);
 					}
 				},
 			});
@@ -105,8 +114,9 @@ export function useRealtimeAudioRecorder({
 			const silentOutput = context.createGain();
 			silentOutput.gain.value = 0;
 			worklet.port.onmessage = (event: MessageEvent<ArrayBuffer | { type: string }>) => {
+				if (generation !== generationRef.current) return;
 				if (event.data instanceof ArrayBuffer) {
-					transport.sendAudio(event.data);
+					transport?.sendAudio(event.data);
 				} else if (event.data.type === 'flushed') {
 					flushResolveRef.current?.();
 					flushResolveRef.current = null;
@@ -117,17 +127,22 @@ export function useRealtimeAudioRecorder({
 			sourceRef.current = source;
 			workletRef.current = worklet;
 			await context.resume();
+			if (generation !== generationRef.current) return;
 			setState('recording');
 		} catch (error) {
 			if (generation === generationRef.current) {
-				stopCapture();
-				transportRef.current?.close();
-				transportRef.current = null;
-				setState('idle');
+				reset();
 				callbacksRef.current.onError(error);
 			}
+		} finally {
+			// A cancelled start must only release its own resources.
+			if (generation !== generationRef.current) {
+				stream?.getTracks().forEach((track) => track.stop());
+				if (context && context.state !== 'closed') void context.close();
+				transport?.close();
+			}
 		}
-	}, [config, state, stopCapture, supported]);
+	}, [config, state, reset, supported]);
 
 	const stop = useCallback(async () => {
 		if (state !== 'recording') return;
@@ -144,8 +159,9 @@ export function useRealtimeAudioRecorder({
 				};
 				worklet.port.postMessage({ type: 'flush' });
 			});
-			flushResolveRef.current = null;
 		}
+		if (generation !== generationRef.current) return;
+		flushResolveRef.current = null;
 		stopCapture();
 		try {
 			await transport?.stop();
@@ -154,8 +170,8 @@ export function useRealtimeAudioRecorder({
 				callbacksRef.current.onError(error);
 			}
 		} finally {
+			transport?.close();
 			if (generation === generationRef.current) {
-				transport?.close();
 				transportRef.current = null;
 				setState('idle');
 			}

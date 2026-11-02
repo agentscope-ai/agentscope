@@ -10,6 +10,7 @@ export interface RealtimeASRConfig {
 interface RealtimeASRTransportOptions {
 	config: RealtimeASRConfig;
 	onTranscript: (text: string, isLast: boolean) => void;
+	onError: (error: Error) => void;
 }
 
 interface ServerEvent {
@@ -67,7 +68,7 @@ export class BrowserRealtimeASRTransport {
 		socket.onmessage = (event) => this.handleMessage(event.data);
 		socket.onerror = () => this.fail(new Error('Realtime ASR connection failed.'));
 		socket.onclose = () => {
-			if (!this.closedByClient && (this.readyReject || this.finalReject)) {
+			if (!this.closedByClient) {
 				this.fail(new Error('Realtime ASR connection closed unexpectedly.'));
 			}
 		};
@@ -102,7 +103,7 @@ export class BrowserRealtimeASRTransport {
 	}
 
 	private handleMessage(data: unknown): void {
-		if (typeof data !== 'string') return;
+		if (this.closedByClient || typeof data !== 'string') return;
 		let event: ServerEvent;
 		try {
 			event = JSON.parse(data) as ServerEvent;
@@ -131,11 +132,14 @@ export class BrowserRealtimeASRTransport {
 	}
 
 	private fail(error: Error): void {
+		if (this.closedByClient) return;
+		this.closedByClient = true;
 		this.readyReject?.(error);
 		this.finalReject?.(error);
 		this.clearPending();
-		this.closedByClient = true;
 		this.socket?.close();
+		this.socket = null;
+		this.options.onError(error);
 	}
 
 	private clearPending(): void {
