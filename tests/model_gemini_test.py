@@ -6,12 +6,15 @@ Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
 import base64
+import copy
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Annotated, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from pydantic import BaseModel, Field
 
 from utils import AnyString
 
@@ -1409,6 +1412,179 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     },
                 },
             },
+        )
+
+    def test_flatten_removes_local_discriminators(self) -> None:
+        """Flattened unions retain constraints without dangling mappings."""
+
+        class Ring(BaseModel):
+            """One branch of the discriminated union."""
+
+            kind: Literal["ring"]
+            radius: float
+
+        class Disc(BaseModel):
+            """The other branch of the discriminated union."""
+
+            kind: Literal["disc"]
+            diameter: float
+
+        class ShapeTool(BaseModel):
+            """Tool schema containing a discriminated union."""
+
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        class Drawing(BaseModel):
+            """A branch containing another discriminated union."""
+
+            kind: Literal["drawing"]
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        class DrawingTool(BaseModel):
+            """Tool schema containing nested discriminated unions."""
+
+            drawing: Annotated[Drawing | Ring, Field(discriminator="kind")]
+
+        ring = {
+            "description": "One branch of the discriminated union.",
+            "properties": {
+                "kind": {"const": "ring", "title": "Kind", "type": "string"},
+                "radius": {"title": "Radius", "type": "number"},
+            },
+            "required": ["kind", "radius"],
+            "title": "Ring",
+            "type": "object",
+        }
+        disc = {
+            "description": "The other branch of the discriminated union.",
+            "properties": {
+                "kind": {"const": "disc", "title": "Kind", "type": "string"},
+                "diameter": {"title": "Diameter", "type": "number"},
+            },
+            "required": ["kind", "diameter"],
+            "title": "Disc",
+            "type": "object",
+        }
+        shape = {
+            "oneOf": [ring, disc],
+            "title": "Shape",
+        }
+        for model, expected in (
+            (
+                ShapeTool,
+                {
+                    "description": (
+                        "Tool schema containing a discriminated union."
+                    ),
+                    "properties": {"shape": shape},
+                    "required": ["shape"],
+                    "title": "ShapeTool",
+                    "type": "object",
+                },
+            ),
+            (
+                DrawingTool,
+                {
+                    "description": (
+                        "Tool schema containing nested discriminated unions."
+                    ),
+                    "properties": {
+                        "drawing": {
+                            "oneOf": [
+                                {
+                                    "description": (
+                                        "A branch containing another "
+                                        "discriminated union."
+                                    ),
+                                    "properties": {
+                                        "kind": {
+                                            "const": "drawing",
+                                            "title": "Kind",
+                                            "type": "string",
+                                        },
+                                        "shape": shape,
+                                    },
+                                    "required": ["kind", "shape"],
+                                    "title": "Drawing",
+                                    "type": "object",
+                                },
+                                ring,
+                            ],
+                            "title": "Drawing",
+                        },
+                    },
+                    "required": ["drawing"],
+                    "title": "DrawingTool",
+                    "type": "object",
+                },
+            ),
+        ):
+            with self.subTest(model=model.__name__):
+                schema = model.model_json_schema()
+                original = copy.deepcopy(schema)
+                self.assertEqual(_flatten_json_schema(schema), expected)
+                self.assertEqual(schema, original)
+
+    def test_flatten_removes_local_discriminators_from_anyof(self) -> None:
+        """Local mappings are removed for both definition dialects."""
+        branch = {
+            "type": "object",
+            "properties": {"kind": {"type": "string", "enum": ["ring"]}},
+            "required": ["kind"],
+        }
+        for keyword in ("$defs", "definitions"):
+            with self.subTest(keyword=keyword):
+                ref = f"#/{keyword}/Ring"
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            keyword: {"Ring": branch},
+                            "anyOf": [{"$ref": ref}],
+                            "discriminator": {
+                                "propertyName": "kind",
+                                "mapping": {
+                                    "ring": ref,
+                                    "remote": "https://example.com/schema",
+                                },
+                            },
+                        },
+                    ),
+                    {"anyOf": [branch]},
+                )
+
+    def test_flatten_keeps_other_discriminators(self) -> None:
+        """Mappings unrelated to removed definitions stay unchanged."""
+        for discriminator in (
+            {"propertyName": "kind"},
+            {"propertyName": "kind", "mapping": {}},
+            {
+                "propertyName": "kind",
+                "mapping": {
+                    "missing": "#/$defs/Ghost",
+                    "legacy": "#/definitions/Ghost",
+                    "remote": "https://example.com/schema",
+                    "implicit": "Ring",
+                },
+            },
+        ):
+            with self.subTest(discriminator=discriminator):
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            "$defs": {"Ring": {"type": "object"}},
+                            "discriminator": discriminator,
+                        },
+                    ),
+                    {"discriminator": discriminator},
+                )
+
+        discriminator = {
+            "propertyName": "kind",
+            "mapping": {"ring": "#/$defs/Ring"},
+        }
+        self.assertEqual(
+            _flatten_json_schema({"discriminator": discriminator}),
+            {"discriminator": discriminator},
         )
 
     def test_flatten_keeps_property_names(self) -> None:
