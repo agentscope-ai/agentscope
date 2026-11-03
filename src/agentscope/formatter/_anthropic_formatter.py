@@ -139,6 +139,9 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
          continuity. For more details, please refer to
          `Anthropic's documentation
          <https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks>`_.
+
+        Empty text blocks are omitted from requests, including those restored
+        after an interrupted reply. The source messages remain unchanged.
         """
         self.assert_list_of_msgs(msgs)
 
@@ -148,6 +151,10 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
 
             for block in msg.get_content_blocks():
                 typ = block.get("type")
+                # A nonempty block list can still contain an invalid empty
+                # text block after an interrupted reply is saved and loaded.
+                if typ == "text" and block.get("text") == "":
+                    continue
                 if typ in ["thinking", "text"]:
                     content_blocks.append({**block})
 
