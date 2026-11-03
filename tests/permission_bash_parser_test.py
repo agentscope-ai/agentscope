@@ -762,6 +762,26 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 "cp -t ../outside ./note.txt",
                 [("cp", "../outside"), ("cp", "./note.txt")],
             ),
+            (
+                "cp -t'../outside' ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "cp --target-directory='../outside' ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "cp --target-directory '../outside' ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "cp --target-d=../outside ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "cp --target ../outside ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
         ]
         for cmd, expected in test_cases:
             with self.subTest(cmd=cmd):

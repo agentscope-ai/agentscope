@@ -66,9 +66,42 @@ SAFE_ENV_VARS = {
 # that receives the copied or moved files.
 _TARGET_DIRECTORY_COMMANDS = ("cp", "mv", "ln")
 
+# The long spelling of the target-directory option.
+_TARGET_DIRECTORY_LONG_OPTION = "target-directory"
+
 # Short options that never carry a value, so they may appear in front of
 # the value-taking "-t" inside a combined short option cluster.
-_NON_VALUE_SHORT_OPTIONS = frozenset("abBfinprRsuvx")
+_NON_VALUE_SHORT_OPTIONS = frozenset("abBfinprRsuvxLP")
+
+
+def _is_target_directory_flag(cmd_name: str, arg: str) -> bool:
+    """Return whether the token is the bare target-directory option.
+
+    ``-t`` and ``--target-directory`` take their value from the next
+    argument. GNU long options may be abbreviated as long as the
+    abbreviation stays unambiguous, so ``--target-d`` names the same
+    option.
+
+    Args:
+        cmd_name (`str`):
+            The command the argument belongs to.
+        arg (`str`):
+            The argument token.
+
+    Returns:
+        `bool`:
+            Whether the token is the target-directory option.
+    """
+    if cmd_name not in _TARGET_DIRECTORY_COMMANDS:
+        return False
+    if arg == "-t":
+        return True
+    if arg.startswith("--"):
+        option = arg[2:]
+        return bool(option) and _TARGET_DIRECTORY_LONG_OPTION.startswith(
+            option,
+        )
+    return False
 
 
 def _extract_attached_target_directory(
@@ -84,8 +117,8 @@ def _extract_attached_target_directory(
     directory never reaches the dangerous-path and working-directory
     checks.
 
-    The separated spelling (``cp -t DIR``) needs no special handling: there
-    the value is a bare word and is picked up as a file argument.
+    The separated spelling (``cp -t DIR``) needs no special handling here:
+    there the value is the next argument.
 
     Args:
         cmd_name (`str`):
@@ -101,11 +134,16 @@ def _extract_attached_target_directory(
     if cmd_name not in _TARGET_DIRECTORY_COMMANDS:
         return None
 
-    if arg.startswith("--target-directory="):
-        value = arg.split("=", 1)[1]
-    elif arg.startswith("--"):
-        # A long option without an inline value, e.g. "--target-directory".
-        return None
+    if arg.startswith("--"):
+        # A long option may carry its value after "=", e.g.
+        # "--target-directory=DIR". GNU long options may be abbreviated,
+        # so "--target-d=DIR" names the same option.
+        name, separator, value = arg.partition("=")
+        if not separator:
+            return None
+        option = name[2:]
+        if not option or not _TARGET_DIRECTORY_LONG_OPTION.startswith(option):
+            return None
     elif arg.startswith("-") and len(arg) > 2:
         # A short option cluster whose value-taking member is "-t", e.g.
         # "-tDIR" or "-rtDIR". An uppercase "T" is a different flag
@@ -386,14 +424,25 @@ class BashCommandParser:
         if node.type == "command":
             # Extract command name and arguments
             cmd_name = None
-            args = []
+            # Each argument is kept as (text, is_bare_word). A quoted
+            # value is a raw_string node and a value glued to its option
+            # ("-t'../outside'") is a concatenation node; both have to
+            # stay visible when they carry the target directory of
+            # cp/mv/ln, so their raw text is kept as well.
+            args: List[Tuple[str, bool]] = []
 
             for child in node.children:
                 if child.type == "command_name":
                     cmd_name = command[child.start_byte : child.end_byte]
-                elif child.type == "word" and cmd_name:
+                elif cmd_name and child.type == "word":
                     arg = command[child.start_byte : child.end_byte]
-                    args.append(arg.strip("'\""))
+                    args.append((arg.strip("'\""), True))
+                elif cmd_name and child.type in (
+                    "raw_string",
+                    "concatenation",
+                ):
+                    arg = command[child.start_byte : child.end_byte]
+                    args.append((arg, False))
 
             # Check if this is a file-manipulating command
             if cmd_name in [
@@ -410,7 +459,13 @@ class BashCommandParser:
                 "rmdir",
             ]:
                 # Extract file arguments (skip flags)
-                for arg in args:
+                expects_target_directory = False
+                for arg, is_bare_word in args:
+                    if expects_target_directory:
+                        # The value of the target-directory option.
+                        paths.append((cmd_name, arg.strip("'\"")))
+                        expects_target_directory = False
+                        continue
                     # An option may carry its value in attached form, e.g.
                     # "cp -tDIR" or "cp --target-directory=DIR". The value is
                     # a path and must stay visible to the path checks.
@@ -421,7 +476,10 @@ class BashCommandParser:
                     if target_directory:
                         paths.append((cmd_name, target_directory))
                         continue
-                    if not arg.startswith("-"):
+                    if _is_target_directory_flag(cmd_name, arg):
+                        expects_target_directory = True
+                        continue
+                    if is_bare_word and not arg.startswith("-"):
                         paths.append((cmd_name, arg))
 
         # Recursively process children
@@ -472,6 +530,7 @@ class BashCommandParser:
                 cmd_name = token
                 # Look for file arguments after this command
                 j = i + 1
+                expects_target_directory = False
                 while j < len(tokens):
                     arg = tokens[j].strip("'\"")
                     # An option may carry its value in attached form, e.g.
@@ -483,6 +542,16 @@ class BashCommandParser:
                     )
                     if target_directory:
                         paths.append((cmd_name, target_directory))
+                        j += 1
+                        continue
+                    if _is_target_directory_flag(cmd_name, arg):
+                        expects_target_directory = True
+                        j += 1
+                        continue
+                    if expects_target_directory:
+                        # The value of the target-directory option.
+                        paths.append((cmd_name, arg))
+                        expects_target_directory = False
                         j += 1
                         continue
                     # Skip flags

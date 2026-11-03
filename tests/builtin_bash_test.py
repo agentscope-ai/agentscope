@@ -184,6 +184,10 @@ class BashToolTest(IsolatedAsyncioTestCase):
             "cp -t../outside ./note.txt",
             "cp --target-directory=../outside ./note.txt",
             "mv -t../outside ./note.txt",
+            "cp -t'../outside' ./note.txt",
+            "cp --target-directory='../outside' ./note.txt",
+            "cp -t '../outside' ./note.txt",
+            "cp --target-d=../outside ./note.txt",
         ]
         for mode in (PermissionMode.ACCEPT_EDITS, PermissionMode.DONT_ASK):
             context = PermissionContext(mode=mode)
