@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import fnmatch
+import glob
 import json
 import sys
 from typing import TYPE_CHECKING, Any, List
@@ -210,7 +211,10 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
         # POSIX-style strings (matched by fnmatch), not real filesystem
         # paths — do NOT use backend.join_path here.
         abs_path = self._backend.abspath(path, cwd=backend_cwd)
-        pattern = abs_path.rstrip("/\\") + "/**"
+        # ``abs_path`` is a literal path, so its fnmatch metacharacters
+        # must be escaped, otherwise the suggested rule matches sibling
+        # directories.
+        pattern = glob.escape(abs_path).rstrip("/\\") + "/**"
 
         return [
             PermissionRule(

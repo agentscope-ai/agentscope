@@ -324,6 +324,33 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn(expected_pattern, suggestion_contents)
 
+    async def test_permission_suggestions_escape_path(self) -> None:
+        """An approved suggestion covers only files under the literal path."""
+        for name, sibling in (
+            ("reports [2024]", "reports 2"),
+            ("reports ?", "reports x"),
+            ("reports *", "reports other"),
+        ):
+            with self.subTest(name=name):
+                parent = os.path.join(self.temp_dir, name)
+                sibling_path = os.path.join(self.temp_dir, sibling)
+                suggestions = await self.grep_tool.generate_suggestions(
+                    {"path": parent, "pattern": "hello"},
+                )
+                rule = suggestions[0].rule_content
+                self.assertTrue(
+                    await self.grep_tool.match_rule(
+                        rule,
+                        {"path": os.path.join(parent, "a.py")},
+                    ),
+                )
+                self.assertFalse(
+                    await self.grep_tool.match_rule(
+                        rule,
+                        {"path": os.path.join(sibling_path, "a.py")},
+                    ),
+                )
+
     async def test_generate_suggestions_defaults_to_cwd(self) -> None:
         """Test generate_suggestions defaults to cwd when no path provided."""
 

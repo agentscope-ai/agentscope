@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The grep tool in agentscope."""
 import fnmatch
+import glob
 from typing import Any, List, Literal
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -245,7 +246,10 @@ class Grep(ToolBase):
         abs_path = self._backend.abspath(path, cwd=backend_cwd)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = abs_path.rstrip("/\\") + "/**"
+        # ``abs_path`` is a literal path, so its fnmatch metacharacters must
+        # be escaped, otherwise the suggested rule matches sibling
+        # directories.
+        pattern = glob.escape(abs_path).rstrip("/\\") + "/**"
 
         return [
             PermissionRule(
