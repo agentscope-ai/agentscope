@@ -4,6 +4,7 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
+from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
@@ -354,7 +355,10 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
-                with open(url.removeprefix("file://"), "rb") as f:
+                with open(
+                    url2pathname(url.removeprefix("file://")),
+                    "rb",
+                ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 response = requests.get(url, timeout=30)
@@ -485,6 +489,14 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_anthropic_data_block(block)
                     if formatted_block:
+                        # Commit this message's pending text first, so a
+                        # media part never precedes the caption that
+                        # introduces it within the same message.
+                        if agent_text_parts:
+                            accumulated_text.append(
+                                f"{agent_name}: {' '.join(agent_text_parts)}",
+                            )
+                            agent_text_parts = []
                         if accumulated_text:
                             conversation_blocks.append(
                                 {

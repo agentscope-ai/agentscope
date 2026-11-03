@@ -27,7 +27,7 @@ from ...storage import (
 )
 
 if TYPE_CHECKING:
-    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.base import BaseTrigger
 
 
 class SchedulerManager:
@@ -91,6 +91,10 @@ class SchedulerManager:
         # ``updated_at`` of each registered job, so a reconcile can tell
         # an edited schedule from an unchanged one.
         self._versions: dict[str, datetime] = {}
+        # Serialises reconcile. The periodic loop and the lifecycle listener
+        # both call it, and a slow read must not apply its stale snapshot
+        # after a newer reconcile has already changed the job set.
+        self._reconcile_lock = asyncio.Lock()
         self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
@@ -329,7 +333,7 @@ class SchedulerManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def validate_schedule(record: ScheduleRecord) -> "CronTrigger":
+    def validate_schedule(record: ScheduleRecord) -> "BaseTrigger":
         """Build the record's cron trigger, rejecting a bad schedule.
 
         Writers call this before persisting so an invalid schedule never
@@ -341,12 +345,17 @@ class SchedulerManager:
         ``start_date`` / ``end_date``, so the configured activation
         window would be dropped.
 
+        Restricted day-of-month and day-of-week fields are alternatives,
+        as in standard cron: ``0 9 1 * 1`` runs at 09:00 on every month's
+        first day and every Monday, once when they coincide. If either day
+        field contains ``*``, both fields must match instead.
+
         Args:
             record (`ScheduleRecord`):
                 The schedule to check.
 
         Returns:
-            `CronTrigger`:
+            `BaseTrigger`:
                 The trigger the job would fire on.
 
         Raises:
@@ -355,6 +364,7 @@ class SchedulerManager:
                 window is invalid.
         """
         from apscheduler.triggers.cron import CronTrigger
+        from apscheduler.triggers.combining import OrTrigger
 
         fields = record.data.cron_expression.split()
         if len(fields) != 5:
@@ -369,16 +379,49 @@ class SchedulerManager:
             # than raising, which is not what the caller asked for.
             raise ValueError("timezone must be a non-empty IANA name")
 
+        # Standard cron counts weekdays from Sunday (0 or 7) while
+        # APScheduler counts from Monday, so map numeric terms to names.
+        weekdays = []
+        for term in day_of_week.split(","):
+            bounds, _, step = term.replace("*", "0-7").partition("/")
+            if term == "*" or not bounds.replace("-", "").isdigit():
+                weekdays.append(term)
+                continue
+            first, _, last = bounds.partition("-")
+            last = last or ("7" if step else first)
+            days = range(int(first), int(last) + 1, int(step or 1))
+            if int(last) > 7 or not days:
+                raise ValueError(f"Invalid day of week: {term!r}")
+            weekdays.extend(
+                ("sun", "mon", "tue", "wed", "thu", "fri", "sat")[d % 7]
+                for d in days
+            )
+
+        # Standard cron ORs the two day fields only when both are restricted.
+        # Wildcards, including stepped ones, retain intersection semantics.
+        union_days = "*" not in day and "*" not in day_of_week
+        common = {
+            "minute": minute,
+            "hour": hour,
+            "month": month,
+            "timezone": record.data.timezone,
+            "start_date": record.data.started_at,
+            "end_date": record.data.ended_at,
+        }
         try:
             trigger = CronTrigger(
-                minute=minute,
-                hour=hour,
+                **common,
                 day=day,
-                month=month,
-                day_of_week=day_of_week,
-                timezone=record.data.timezone,
-                start_date=record.data.started_at,
-                end_date=record.data.ended_at,
+                day_of_week="*" if union_days else ",".join(weekdays),
+            )
+            weekday_trigger = (
+                CronTrigger(
+                    **common,
+                    day="*",
+                    day_of_week=",".join(weekdays),
+                )
+                if union_days
+                else None
             )
         except (ValueError, ZoneInfoNotFoundError) as exc:
             # Field ranges, expression syntax and the timezone are all
@@ -393,6 +436,8 @@ class SchedulerManager:
         ):
             raise ValueError("ended_at must be later than started_at")
 
+        if weekday_trigger is not None:
+            return OrTrigger([trigger, weekday_trigger])
         return trigger
 
     async def notify_changed(self, schedule_id: str) -> None:
@@ -425,7 +470,19 @@ class SchedulerManager:
         no longer enabled, and re-registers those whose ``updated_at``
         moved. Safe to call repeatedly — that is how a dropped
         notification heals.
+
+        Both the periodic loop and the lifecycle listener call this
+        method, so concurrent runs are serialised across the storage read
+        and the resulting job updates. Without that ordering an older read
+        can finish last and restore a job a newer reconcile had just
+        deleted or disabled, or overwrite an edited job with its previous
+        record.
         """
+        async with self._reconcile_lock:
+            await self._reconcile_locked()
+
+    async def _reconcile_locked(self) -> None:
+        """Apply one storage snapshot; caller must hold the reconcile lock."""
         try:
             records = await self._storage.list_all_schedules()
         except Exception:  # pylint: disable=broad-except
@@ -597,6 +654,7 @@ class SchedulerManager:
                 scheduler=self._scheduler,
                 storage=self._storage,
                 message_bus=self._message_bus,
+                scheduler_manager=self,
             ),
             ScheduleList(
                 user_id=user_id,

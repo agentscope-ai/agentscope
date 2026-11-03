@@ -207,6 +207,7 @@ class VectorStoreBase(ABC):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -221,6 +222,11 @@ class VectorStoreBase(ABC):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records whose chunk metadata matches
+                every ``key == value`` pair in addition to the document ID.
+                ``None`` or an empty dict deletes all records of the
+                document. Backends must not ignore a non-empty filter.
         """
 
     # ------------------------------------------------------------------

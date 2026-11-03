@@ -3,6 +3,9 @@
 AnthropicMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import (
@@ -19,14 +22,15 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
 
 
-class TestAnthropicFormatter(
+class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
     IsolatedAsyncioTestCase,
-):  # pylint: disable=too-many-public-methods
+):
     """Comprehensive tests for Anthropic Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -331,6 +335,50 @@ class TestAnthropicFormatter(
                                 "type": "base64",
                                 "media_type": "image/png",
                                 "data": self.image_b64,
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = AnthropicChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": expected_b64,
                             },
                         },
                     ],
@@ -702,6 +750,62 @@ class TestAnthropicFormatter(
                                 fmt.conversation_history_prompt
                                 + "<history>\nuser: hello\n</history>"
                             ),
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_text_before_media_in_same_message(
+        self,
+    ) -> None:
+        """A media part must not precede the text of its own message."""
+        fmt = AnthropicMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="alice",
+                    content=[
+                        TextBlock(text="look at this"),
+                        DataBlock(
+                            source=Base64Source(
+                                data=self.image_b64,
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+                UserMsg(
+                    name="bob",
+                    content=[TextBlock(text="ok")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                fmt.conversation_history_prompt
+                                + "<history>\nalice: look at this"
+                            ),
+                        },
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "bob: ok\n</history>",
                         },
                     ],
                 },

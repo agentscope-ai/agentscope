@@ -5,6 +5,7 @@ import base64
 from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -143,7 +144,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -189,7 +190,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -239,7 +240,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 data = f"data:;base64,{encoded}"
@@ -503,6 +504,8 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
             `list[dict[str, Any]]`:
                 A list of dictionaries formatted for the DashScope API.
         """
+
+        self.assert_list_of_msgs(msgs)
 
         formatted_msgs = []
         start_index = 0

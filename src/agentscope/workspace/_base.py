@@ -80,7 +80,9 @@ from .._utils._common import _generate_id, _normalize_local_path
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
+    ContentBlock,
     DataBlock,
+    HintBlock,
     Msg,
     TextBlock,
     ToolResultBlock,
@@ -218,6 +220,42 @@ _EXTRACT_ARCHIVE_SHIM = (
 
 #: Ceiling on what an archive may expand to inside the sandbox.
 DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
+
+
+def _read_skill_frontmatter(raw: bytes, origin: str) -> tuple[str, str]:
+    """Parse and validate the YAML front matter of a ``SKILL.md``.
+
+    Args:
+        raw (`bytes`):
+            The raw bytes of the ``SKILL.md`` file.
+        origin (`str`):
+            The source path or install name used in the error message.
+
+    Returns:
+        `tuple[str, str]`:
+            The skill's ``name`` and ``description``.
+
+    Raises:
+        `ValueError`:
+            If the file has no usable front matter, or either field is
+            missing.
+    """
+    import frontmatter as fm
+
+    message = (
+        f"Invalid skill at {origin!r}: missing or malformed SKILL.md "
+        "(requires 'name' and 'description' fields)."
+    )
+    try:
+        doc = fm.loads(raw.decode("utf-8-sig"))
+    except Exception as e:  # pylint: disable=broad-except
+        raise ValueError(message) from e
+
+    name = doc.get("name")
+    description = doc.get("description")
+    if not name or not description:
+        raise ValueError(message)
+    return str(name), str(description)
 
 
 class WorkspaceBase:
@@ -665,7 +703,7 @@ class WorkspaceBase:
         *,
         agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
+    ) -> MCPClient:
         """Register a new MCP server for one agent/session and persist.
 
         Implementations record the config in :attr:`_mcp_specs`, start
@@ -681,6 +719,12 @@ class WorkspaceBase:
                 them positionally could silently hit another session.
             session_id (`str | None`, optional):
                 The owning session. ``None`` means the legacy ``""``.
+
+        Returns:
+            `MCPClient`:
+                The live client stored and used by the workspace, which may
+                differ from ``mcp_client`` for sandboxed implementations.
+                It can be evicted later, use :meth:`list_mcps` then.
 
         Raises:
             `ValueError`:
@@ -792,9 +836,9 @@ class WorkspaceBase:
     async def _close_mcp_instance(instance: MCPClient) -> None:
         """Close one live handle, downgrading failures to warnings.
 
-        Stateless clients hold no connection, so they are skipped.
+        Unconnected clients (e.g. local stateless ones) are skipped.
         """
-        if not (instance.is_stateful and instance.is_connected):
+        if not instance.is_connected:
             return
         try:
             await instance.close()
@@ -943,7 +987,8 @@ class WorkspaceBase:
             if not await backend.file_exists(self._mcp_file):
                 return {}
             raw = await backend.read_file(self._mcp_file)
-            data = json.loads(raw.decode("utf-8"))
+            # Accept a leading UTF-8 BOM from external editors.
+            data = json.loads(raw.decode("utf-8-sig"))
         except Exception as e:
             logger.warning(
                 "Failed to read MCP file at %s, falling back to "
@@ -1011,9 +1056,10 @@ class WorkspaceBase:
         Appends every message in ``msgs`` to
         ``${workdir}/sessions/<session_id>/context.jsonl`` (one
         message per JSONL line). Inline base64
-        :class:`DataBlock` payloads are extracted into ``data/`` and
-        rewritten as ``file://`` URL blocks before serialisation so
-        the JSONL line size stays bounded.
+        :class:`DataBlock` payloads, including those in tool results and
+        hints, are extracted into ``data/`` and rewritten as portable
+        ``workspace://`` URL sources before serialisation so the JSONL
+        line size stays bounded.
 
         Args:
             session_id (`str`):
@@ -1032,20 +1078,44 @@ class WorkspaceBase:
         base = backend.join_path(self._sessions_dir, session_id)
         path = backend.join_path(base, "context.jsonl")
 
+        async def offload_block(block: ContentBlock) -> ContentBlock:
+            """Offload inline media from a copied content block.
+
+            Args:
+                block (`ContentBlock`):
+                    The copied block to inspect.
+
+            Returns:
+                `ContentBlock`:
+                    The block with inline media replaced by workspace URLs.
+            """
+            if isinstance(block, DataBlock) and isinstance(
+                block.source,
+                Base64Source,
+            ):
+                return await self.offload_data_block(block)
+            if isinstance(block, ToolResultBlock) and isinstance(
+                block.output,
+                list,
+            ):
+                block.output = [
+                    await offload_block(item) for item in block.output
+                ]
+            elif isinstance(block, HintBlock) and isinstance(block.hint, list):
+                block.hint = [await offload_block(item) for item in block.hint]
+            return block
+
         copied = deepcopy(msgs)
         lines: list[str] = []
         for msg in copied:
             if not isinstance(msg.content, str):
-                content: list = []
-                for block in msg.content:
-                    if isinstance(block, DataBlock) and isinstance(
-                        block.source,
-                        Base64Source,
-                    ):
-                        block = await self.offload_data_block(block)
-                    content.append(block)
-                msg.content = content
+                msg.content = [await offload_block(b) for b in msg.content]
             lines.append(msg.model_dump_json())
+
+        if not lines:
+            # Nothing to append: writing the empty join would still add a
+            # standalone blank line that is not a JSONL record.
+            return path
 
         payload = "\n".join(lines) + "\n"
 
@@ -1213,7 +1283,8 @@ class WorkspaceBase:
                 continue
             try:
                 raw = await backend.read_file(md_path)
-                doc = fm.loads(raw.decode("utf-8"))
+                # Strip an optional UTF-8 BOM before parsing front matter.
+                doc = fm.loads(raw.decode("utf-8-sig"))
                 name = doc.get("name")
                 desc = doc.get("description")
                 if not name or not desc:
@@ -1267,6 +1338,8 @@ class WorkspaceBase:
             raise ValueError(
                 f"Invalid skill at {skill_path!r}: SKILL.md not found",
             )
+        with open(skill_md, "rb") as f:
+            _read_skill_frontmatter(f.read(), skill_path)
 
         backend = self.get_backend()
         partition = await self._equip_partition(agent_id)
@@ -1387,6 +1460,10 @@ class WorkspaceBase:
                     )
 
                 root = await self._find_skill_root(staging)
+                raw = await backend.read_file(
+                    backend.join_path(root, "SKILL.md"),
+                )
+                _read_skill_frontmatter(raw, dir_name)
                 installed = await self._free_skill_dir(dir_name, partition)
                 move = await backend.exec_shell(
                     [

@@ -34,10 +34,9 @@ async def open_reply_stream(
 ) -> AsyncGenerator[dict, None]:
     """Subscribe to a run's events and return a gap-free reader.
 
-    The subscription is live by the time this returns, which is what the
-    caller needs: a run drops its whole event log when it persists, so a
-    reader that only subscribes afterwards would find nothing to replay
-    and then wait on a feed that has already gone quiet.
+    The subscription is live by the time this returns. Replay starts after
+    the persisted checkpoint so retained events from an earlier run are not
+    delivered as the current reply.
 
     Args:
         bus (`MessageBus`): The application message bus.
@@ -62,10 +61,14 @@ async def open_reply_stream(
     feeder_task = asyncio.create_task(feeder())
     try:
         await asyncio.wait_for(ready.wait(), timeout=_SUBSCRIBE_TIMEOUT_SECS)
+        cursor = await bus.registry_get(
+            MessageBusKeys.session_event_checkpoint(session_id),
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+        )
     except BaseException:
         feeder_task.cancel()
         raise
-    return _read(bus, event_key, queue, feeder_task)
+    return _read(bus, event_key, queue, feeder_task, cursor)
 
 
 async def _read(
@@ -73,6 +76,7 @@ async def _read(
     event_key: str,
     queue: "asyncio.Queue[dict]",
     feeder_task: "asyncio.Task",
+    after: str | None,
 ) -> AsyncGenerator[dict, None]:
     """Replay the log, then go live, stopping at the terminal event.
 
@@ -84,6 +88,7 @@ async def _read(
         event_key (`str`): The session's event log / channel key.
         queue (`asyncio.Queue[dict]`): Live events buffered so far.
         feeder_task (`asyncio.Task`): The subscription, cancelled on close.
+        after (`str | None`): Persisted checkpoint cursor to replay after.
 
     Yields:
         `dict`: Each session event, up to and including the terminal one.
@@ -92,6 +97,7 @@ async def _read(
     try:
         for entry_id, evt in await bus.log_read(
             event_key,
+            since=after,
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
             seen.add(str(entry_id))

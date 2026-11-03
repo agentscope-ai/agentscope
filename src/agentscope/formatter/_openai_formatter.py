@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """The OpenAI formatter for agentscope."""
 import base64
+import re
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
+from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
@@ -21,6 +23,33 @@ from ..message import (
     HintBlock,
     ThinkingBlock,
 )
+
+
+# The Chat Completions API rejects a message ``name`` containing whitespace
+# or any of ``<|\/>`` with a 400 error: "string does not match pattern.
+# Expected a string that matches the pattern '^[^\s<|\\/>]+$'".
+_INVALID_MESSAGE_NAME_CHARS = re.compile(r"[\s<|\\/>]+")
+
+
+def _format_message_name(name: str | None) -> dict[str, str]:
+    """Build the ``name`` field of an OpenAI chat message.
+
+    Agent and user names are free text (e.g. ``"Research Assistant"``),
+    while the API only accepts names without whitespace and ``<|\\/>``.
+    Each run of such characters is replaced with ``_``, and the field is
+    omitted for an empty name, which the API rejects as well.
+
+    Args:
+        name (`str | None`):
+            The name of the message sender.
+
+    Returns:
+        `dict[str, str]`:
+            ``{"name": <valid name>}``, or an empty dict.
+    """
+    if not name:
+        return {}
+    return {"name": _INVALID_MESSAGE_NAME_CHARS.sub("_", name)}
 
 
 class _OpenAIFormatterBase(FormatterBase, ABC):
@@ -113,7 +142,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -183,7 +212,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
@@ -232,7 +261,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                with open(url_str.removeprefix("file://"), "rb") as f:
+                with open(
+                    url2pathname(url_str.removeprefix("file://")),
+                    "rb",
+                ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 response = requests.get(url_str, timeout=30)
@@ -315,7 +347,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls:
                         msg_openai = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if tool_calls:
@@ -367,7 +399,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls:
                         msg_openai_flush = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if tool_calls:
@@ -427,7 +459,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
 
             msg_openai = {
                 "role": msg.role,
-                "name": msg.name,
+                **_format_message_name(msg.name),
                 "content": content_blocks or None,
             }
 

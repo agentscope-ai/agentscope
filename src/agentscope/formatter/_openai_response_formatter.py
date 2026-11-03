@@ -206,6 +206,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
             msg = msgs[i]
             content_parts: list[dict] = []
             function_calls: list[dict] = []
+            reasoning_item_ids: set[str] = set()
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -291,6 +292,12 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         None,
                     )
                     if reasoning_item_id:
+                        # Summary and raw reasoning can occupy separate
+                        # blocks while sharing one upstream reasoning item.
+                        # Replay that complete item only once per message.
+                        if reasoning_item_id in reasoning_item_ids:
+                            continue
+                        reasoning_item_ids.add(reasoning_item_id)
                         if content_parts and block.thinking:
                             items.append(
                                 {

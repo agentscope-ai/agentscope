@@ -6,6 +6,7 @@ Tests cover both non-streaming and streaming modes.
 """
 import base64
 import io
+import struct
 import wave
 from typing import Any
 import unittest
@@ -249,6 +250,59 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
                     TextBlock.model_construct(id=A, created_at=A, text="42"),
                 ],
             ),
+        )
+
+    async def test_thinking_enable_not_sent_when_unset(self) -> None:
+        """Unset thinking leaves the server default unchanged."""
+        self.model = DashScopeChatModel(
+            credential=DashScopeCredential(api_key="test"),
+            model="qwen3-max",
+            stream=False,
+        )
+        self.model.client = self.mock_client
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertEqual(
+            (
+                self.model.parameters.thinking_enable,
+                mock_create.await_args.kwargs,
+            ),
+            (
+                None,
+                {
+                    "model": "qwen3-max",
+                    "messages": [],
+                    "stream": False,
+                    "extra_body": {},
+                },
+            ),
+        )
+
+    async def test_thinking_enable_explicit_false_is_sent(self) -> None:
+        """Explicitly disabling thinking is forwarded to the API."""
+        self.model.parameters = DashScopeChatModel.Parameters(
+            thinking_enable=False,
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "qwen3-max",
+                "messages": [],
+                "stream": False,
+                "extra_body": {"enable_thinking": False},
+            },
         )
 
     async def test_extra_body_is_not_mutated(self) -> None:
@@ -574,12 +628,71 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
             b for b in final.content if isinstance(b, DataBlock)
         )
         wav_bytes = base64.b64decode(final_audio.source.data)
+        self.assertEqual(
+            struct.unpack("<I", wav_bytes[4:8])[0],
+            36 + len(pcm_full),
+        )
+        self.assertEqual(
+            struct.unpack("<I", wav_bytes[40:44])[0],
+            len(pcm_full),
+        )
         with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
             self.assertEqual(wav.getnchannels(), 1)
             self.assertEqual(wav.getsampwidth(), 2)
             self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm_full) // 2)
             frames = wav.readframes(wav.getnframes())
         self.assertEqual(frames, pcm_full)
+
+    async def test_stream_audio_transcript_yields_text(
+        self,
+    ) -> None:
+        """An omni audio transcript is emitted as text, not dropped.
+
+        Omni models send the spoken text in ``delta.audio.transcript``
+        instead of ``delta.content``, so the parser has to pick it up for
+        the agent to receive what the model said.
+        """
+        pcm = bytes([1, 2, 3, 4])
+        chunks = [
+            _make_stream_chunk(
+                delta_audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello",
+                },
+            ),
+            _make_stream_chunk(
+                delta_audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello",
+                },
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 5, "completion_tokens": 3},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        self.mock_client.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        # The transcript is folded into the same text block, so the final
+        # response carries it concatenated.
+        final = responses[-1]
+        self.assertTrue(final.is_last)
+        texts = [b.text for b in final.content if isinstance(b, TextBlock)]
+        self.assertEqual("".join(texts), "HelloHello")
+
+        # The audio stream itself is untouched: one stable id across chunks.
+        audio_ids = {
+            b.id
+            for r in responses
+            for b in r.content
+            if isinstance(b, DataBlock)
+        }
+        self.assertEqual(len(audio_ids), 1)
 
 
 # ---------------------------------------------------------------------------

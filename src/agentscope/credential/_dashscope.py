@@ -2,7 +2,13 @@
 """The DashScope credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import ConfigDict, Field, SecretStr
+from pydantic import (
+    ConfigDict,
+    Field,
+    SecretStr,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from ._base import CredentialBase
 
@@ -10,7 +16,7 @@ if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
     from ..realtime import RealtimeModelBase
-    from ..tts import TTSModelBase
+    from ..tts import TTSModelBase, VoiceCloningClientBase
 
 _DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -38,12 +44,42 @@ class DashScopeCredential(CredentialBase):
         ),
     )
 
+    websocket_url: str | None = Field(
+        default=None,
+        pattern=r"^wss?://[^/?#]+(?:[/?#].*)?$",
+        title="TTS WebSocket URL",
+        description=(
+            "Optional CosyVoice/Qwen Audio WebSocket endpoint for gateways. "
+            "Overrides automatic resolution and DashScope SDK settings."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_endpoint_choice(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict:
+        """Keep an implicit endpoint implicit across storage round trips."""
+        data = handler(self)
+        if "base_url" not in self.model_fields_set:
+            data.pop("base_url", None)
+        return data
+
     @classmethod
     def get_chat_model_class(cls) -> Type["ChatModelBase"]:
         """Return the DashScopeChatModel class."""
         from ..model import DashScopeChatModel
 
         return DashScopeChatModel
+
+    @classmethod
+    def get_voice_cloning_client_class(
+        cls,
+    ) -> Type["VoiceCloningClientBase"] | None:
+        """Return the voice creation client, or None when unsupported."""
+        from ..tts import DashScopeVoiceCloningClient
+
+        return DashScopeVoiceCloningClient
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:

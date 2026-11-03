@@ -24,6 +24,20 @@ else:
     AsyncStream = Any
 
 
+def _total_input_tokens(usage: Any) -> int:
+    """The input tokens of an Anthropic usage, including the cached ones.
+
+    Anthropic reports the cache reads and writes apart from
+    ``input_tokens``, while the other providers count them in it. Summing
+    them keeps ``ChatUsage.input_tokens`` the whole prompt everywhere.
+    """
+    return (
+        (getattr(usage, "input_tokens", 0) or 0)
+        + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+    )
+
+
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
 
@@ -43,10 +57,15 @@ class AnthropicChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="The thinking enable for the LLM output.",
+            description=(
+                "Whether to enable budget-based thinking. False sends "
+                "thinking.type='disabled'. When None, this toggle does not "
+                "add a thinking configuration. An explicit thinking_mode "
+                "takes precedence."
+            ),
         )
 
         thinking_budget: int | None = Field(
@@ -178,11 +197,43 @@ class AnthropicChatModel(ChatModelBase):
         """Resolve the effective thinking mode.
 
         ``thinking_mode`` is the modern control; ``thinking_enable`` is the
-        legacy toggle that only ever meant the budget-based mode.
+        legacy toggle that enables budget-based thinking or disables it.
         """
         if self.parameters.thinking_mode is not None:
             return self.parameters.thinking_mode
+        if self.parameters.thinking_enable is False:
+            return "disabled"
         return "enabled" if self.parameters.thinking_enable else None
+
+    def _build_thinking_config(
+        self,
+        max_tokens: int,
+    ) -> tuple[dict[str, Any] | None, int]:
+        """Build the provider-specific thinking configuration."""
+        mode = self._thinking_mode()
+        if mode is None:
+            return None, max_tokens
+
+        thinking: dict[str, Any] = {"type": mode}
+        if mode == "enabled":
+            # Anthropic requires max_tokens > budget_tokens strictly.
+            budget = self.parameters.thinking_budget or (max_tokens // 2)
+            if budget >= max_tokens:
+                # Auto-expand max_tokens to satisfy the inequality.
+                max_tokens = budget + 1024
+            thinking["budget_tokens"] = budget
+
+        # ``display`` is invalid alongside ``type: "disabled"``.
+        if mode != "disabled" and self.parameters.thinking_display:
+            thinking["display"] = self.parameters.thinking_display
+
+        return thinking, max_tokens
+
+    def _build_output_config(self) -> dict[str, Any] | None:
+        """Build the provider-specific output configuration."""
+        if self.parameters.reasoning_effort:
+            return {"effort": self.parameters.reasoning_effort}
+        return None
 
     async def _call_api(
         self,
@@ -226,27 +277,20 @@ class AnthropicChatModel(ChatModelBase):
             **generate_kwargs,
         }
 
-        mode = self._thinking_mode()
-        if mode is not None and "thinking" not in kwargs:
-            thinking: dict[str, Any] = {"type": mode}
-            if mode == "enabled":
-                # Anthropic requires max_tokens > budget_tokens strictly.
-                budget = self.parameters.thinking_budget or (max_tokens // 2)
-                if budget >= max_tokens:
-                    # Auto-expand max_tokens to satisfy the inequality.
-                    max_tokens = budget + 1024
-                    kwargs["max_tokens"] = max_tokens
-                thinking["budget_tokens"] = budget
-            # ``display`` is invalid alongside ``type: "disabled"``.
-            if mode != "disabled" and self.parameters.thinking_display:
-                thinking["display"] = self.parameters.thinking_display
-            kwargs["thinking"] = thinking
+        if "thinking" not in kwargs:
+            thinking, expanded_max_tokens = self._build_thinking_config(
+                max_tokens,
+            )
+            if thinking is not None:
+                kwargs["thinking"] = thinking
+            if expanded_max_tokens != max_tokens:
+                kwargs["max_tokens"] = expanded_max_tokens
 
         # Effort travels inside ``output_config``, not as a top-level field.
-        if self.parameters.reasoning_effort and "output_config" not in kwargs:
-            kwargs["output_config"] = {
-                "effort": self.parameters.reasoning_effort,
-            }
+        if "output_config" not in kwargs:
+            output_config = self._build_output_config()
+            if output_config is not None:
+                kwargs["output_config"] = output_config
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
         if fmt_tools:
@@ -361,8 +405,8 @@ class AnthropicChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=_total_input_tokens(u),
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_creation_input_tokens=getattr(
                     u,
@@ -411,11 +455,14 @@ class AnthropicChatModel(ChatModelBase):
         """
 
         usage = None
+        uncached_input_tokens = 0
         response_id: str = _generate_id()
         # Keep text and thinking blocks distinct, including their signatures.
         block_id_mapping: dict[int, str] = {}
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        # The indexes of the tool calls that received argument text
+        tool_call_with_input: set[int] = set()
 
         async with response as stream:
             async for event in stream:
@@ -434,9 +481,10 @@ class AnthropicChatModel(ChatModelBase):
 
                     if message.usage:
                         u = message.usage
+                        uncached_input_tokens = u.input_tokens or 0
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens,
-                            output_tokens=getattr(u, "output_tokens", 0),
+                            input_tokens=_total_input_tokens(u),
+                            output_tokens=getattr(u, "output_tokens", 0) or 0,
                             time=(
                                 datetime.now() - start_datetime
                             ).total_seconds(),
@@ -444,12 +492,14 @@ class AnthropicChatModel(ChatModelBase):
                                 u,
                                 "cache_creation_input_tokens",
                                 0,
-                            ),
+                            )
+                            or 0,
                             cache_input_tokens=getattr(
                                 u,
                                 "cache_read_input_tokens",
                                 0,
-                            ),
+                            )
+                            or 0,
                         )
 
                 elif event.type == "content_block_start":
@@ -514,15 +564,64 @@ class AnthropicChatModel(ChatModelBase):
                         and block_index in tool_call_mapping
                     ):
                         block_id, name = tool_call_mapping[block_index]
+                        if delta.partial_json:
+                            tool_call_with_input.add(block_index)
                         delta_res.append_tool_call(
                             block_id=block_id,
                             name=name,
                             input=delta.partial_json or "",
                         )
 
+                # A call without arguments streams no JSON text, so close it
+                # with the empty object the non-streaming response carries
+                elif (
+                    event.type == "content_block_stop"
+                    and event.index in tool_call_mapping
+                    and event.index not in tool_call_with_input
+                ):
+                    block_id, name = tool_call_mapping[event.index]
+                    delta_res.append_tool_call(
+                        block_id=block_id,
+                        name=name,
+                        input="{}",
+                    )
+
                 elif event.type == "message_delta":
                     if event.usage and usage:
-                        usage.output_tokens = event.usage.output_tokens
+                        usage.output_tokens = event.usage.output_tokens or 0
+                        # Update cumulative counts before adding cache tokens.
+                        value = getattr(event.usage, "input_tokens", None)
+                        if isinstance(value, int):
+                            uncached_input_tokens = max(
+                                uncached_input_tokens,
+                                value,
+                            )
+                        for source, target in (
+                            (
+                                "cache_creation_input_tokens",
+                                "cache_creation_input_tokens",
+                            ),
+                            ("cache_read_input_tokens", "cache_input_tokens"),
+                        ):
+                            value = getattr(event.usage, source, None)
+                            if isinstance(value, int) and value > getattr(
+                                usage,
+                                target,
+                            ):
+                                setattr(usage, target, value)
+                        usage.input_tokens = (
+                            uncached_input_tokens
+                            + usage.cache_creation_input_tokens
+                            + usage.cache_input_tokens
+                        )
+                        # ``usage`` was stamped when ``message_start``
+                        # arrived, i.e. at time-to-first-token. Refresh it
+                        # here so ``time`` spans the whole generation, as
+                        # every other provider (and this model's
+                        # non-streaming path) already does.
+                        usage.time = (
+                            datetime.now() - start_datetime
+                        ).total_seconds()
 
                 if delta_res.content:
                     delta_res.usage = usage

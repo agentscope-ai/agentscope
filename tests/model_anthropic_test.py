@@ -7,10 +7,11 @@ Anthropic uses event-based streaming (message_start, content_block_start,
 content_block_delta, message_delta events).
 """
 import json
+from datetime import datetime, timedelta
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from anthropic import types as anthropic_types
 
@@ -22,7 +23,7 @@ from agentscope.message import (
     ToolCallBlock,
     ThinkingBlock,
 )
-from agentscope.model import AnthropicChatModel
+from agentscope.model import AnthropicChatModel, ChatUsage
 from agentscope.credential import AnthropicCredential
 from agentscope.tool import ToolChoice
 
@@ -422,6 +423,43 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
     def _thinking(self) -> Any:
         return self.mock_create.call_args.kwargs.get("thinking")
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False disables thinking unless an explicit mode takes priority."""
+        self.assertIsNone(AnthropicChatModel.Parameters().thinking_enable)
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            for mode in (None, "adaptive", "disabled"):
+                with self.subTest(params=params, mode=mode):
+                    self.model.parameters = AnthropicChatModel.Parameters(
+                        **params,
+                        thinking_mode=mode,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "claude-opus-4-5",
+                        "messages": [],
+                        "stream": False,
+                        "max_tokens": 8192,
+                    }
+                    if mode is not None:
+                        expected["thinking"] = {"type": mode}
+                    elif params.get("thinking_enable") is False:
+                        expected["thinking"] = {"type": "disabled"}
+                    elif params.get("thinking_enable"):
+                        expected["thinking"] = {
+                            "type": "enabled",
+                            "budget_tokens": 4096,
+                        }
+                    self.assertEqual(
+                        self.mock_create.call_args.kwargs,
+                        expected,
+                    )
+
     async def test_no_thinking_by_default(self) -> None:
         """Neither control set means no thinking config is sent."""
         await self.model([])
@@ -457,6 +495,25 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         await self.model([])
 
         self.assertEqual(self._thinking(), {"type": "disabled"})
+
+    async def test_false_drops_budget_and_display(self) -> None:
+        """Disabled thinking omits budget/display without expanding tokens."""
+        self.model.parameters.thinking_enable = False
+        self.model.parameters.thinking_budget = 16_384
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs,
+            {
+                "model": "claude-opus-4-5",
+                "messages": [],
+                "stream": False,
+                "max_tokens": 8192,
+                "thinking": {"type": "disabled"},
+            },
+        )
 
     async def test_legacy_toggle_still_means_budget_mode(self) -> None:
         """thinking_enable keeps its old meaning when mode is unset."""
@@ -614,6 +671,125 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].id, "msg-1")
 
+    async def test_stream_takes_cumulative_message_delta_usage(self) -> None:
+        """Merge cumulative counters and include cache tokens exactly once."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-cumulative",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 7,
+                    "cache_read_input_tokens": 9,
+                },
+            },
+        )
+        full_delta = {
+            "input_tokens": 5120,
+            "cache_creation_input_tokens": 32,
+            "cache_read_input_tokens": 64,
+        }
+        cases: list[tuple[str, list[dict[str, Any]], int, int, int]] = [
+            ("all counters", [full_delta], 5216, 32, 64),
+            ("input only", [{"input_tokens": 125}], 141, 7, 9),
+            (
+                "cache only",
+                [
+                    {
+                        "cache_creation_input_tokens": 32,
+                        "cache_read_input_tokens": 64,
+                    },
+                ],
+                216,
+                32,
+                64,
+            ),
+            ("omitted counters", [{}], 136, 7, 9),
+            (
+                "null counters",
+                [{key: None for key in full_delta}],
+                136,
+                7,
+                9,
+            ),
+            (
+                "non-integer counters",
+                [
+                    {
+                        "input_tokens": "5120",
+                        "cache_creation_input_tokens": 32.5,
+                        "cache_read_input_tokens": "64",
+                    },
+                ],
+                136,
+                7,
+                9,
+            ),
+            (
+                "smaller counters",
+                [{key: 0 for key in full_delta}],
+                136,
+                7,
+                9,
+            ),
+            ("repeated counters", [full_delta, full_delta, {}], 5216, 32, 64),
+            (
+                "successive partial updates",
+                [
+                    {"input_tokens": 125},
+                    {"cache_creation_input_tokens": 32},
+                    {"cache_read_input_tokens": 64},
+                    {"input_tokens": 130},
+                ],
+                226,
+                32,
+                64,
+            ),
+        ]
+        for name, deltas, total, created, cached in cases:
+            with self.subTest(name=name):
+                events = _completion_events(completion)
+                events[-2:-1] = [
+                    events[-2].model_copy(
+                        update={
+                            "usage": events[-2].usage.model_copy(
+                                update=delta,
+                            ),
+                        },
+                    )
+                    for delta in deltas
+                ]
+                self.mock_client.messages.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(events),
+                )
+                start = datetime(2026, 10, 1, 10, 0, 0)
+                with patch(
+                    "agentscope.model._anthropic._model.datetime",
+                ) as mock_datetime:
+                    mock_datetime.now.side_effect = [
+                        start,
+                        start + timedelta(seconds=1),
+                        *[start + timedelta(seconds=2)] * len(deltas),
+                    ]
+                    responses = [r async for r in await self.model([])]
+
+                self.assertEqual(
+                    responses[-1].usage,
+                    ChatUsage(
+                        input_tokens=total,
+                        output_tokens=5,
+                        time=2.0,
+                        cache_creation_input_tokens=created,
+                        cache_input_tokens=cached,
+                    ),
+                )
+
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()
@@ -725,6 +901,93 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_final_usage_reports_full_generation_time(
+        self,
+    ) -> None:
+        """The final response reports the full generation time."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-t",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        start = datetime(2026, 10, 1, 10, 0, 0)
+        first_event_at = start + timedelta(milliseconds=300)
+        last_event_at = start + timedelta(seconds=20)
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+        ) as mock_datetime:
+            mock_datetime.now.side_effect = [
+                start,
+                first_event_at,
+                last_event_at,
+            ]
+            responses = [r async for r in await self.model([])]
+
+        self.assertTrue(responses[-1].is_last)
+        self.assertEqual(
+            responses[-1].usage,
+            ChatUsage(input_tokens=10, output_tokens=5, time=20.0),
+        )
+
+    async def test_cached_tokens_counted_in_input_tokens(self) -> None:
+        """The cache reads and writes count in ``input_tokens``, as for
+        the other providers, in both the stream and non-stream paths."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-c",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 3000,
+                },
+            },
+        )
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = MagicMock()
+        non_stream_model.client.messages.create = AsyncMock(
+            return_value=completion,
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        non_stream_usage = (await non_stream_model([])).usage
+        stream_usage = [r async for r in await self.model([])][-1].usage
+
+        for usage in (non_stream_usage, stream_usage):
+            self.assertEqual(
+                (
+                    usage.input_tokens,
+                    usage.cache_input_tokens,
+                    usage.cache_creation_input_tokens,
+                    usage.output_tokens,
+                ),
+                (3210, 3000, 200, 5),
+            )
 
     async def test_stream_redacted_thinking(self) -> None:
         """Stream redacted_thinking block is emitted at
@@ -1011,6 +1274,70 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     replay,
                     [{"role": "assistant", "content": content}],
+                )
+
+    async def test_stream_tool_call_without_arguments(self) -> None:
+        """A tool call without arguments streams as ``{}``, as without
+        streaming."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-no-args",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "list_tasks",
+                        "input": {},
+                    },
+                ],
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            },
+        )
+        events = _completion_events(completion)
+        tool_delta = next(_ for _ in events if _.type == "content_block_delta")
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = self.mock_client
+
+        cases = {
+            "no_delta": [_ for _ in events if _ is not tool_delta],
+            "empty_delta": [
+                (
+                    _.model_copy(
+                        update={
+                            "delta": _.delta.model_copy(
+                                update={"partial_json": ""},
+                            ),
+                        },
+                    )
+                    if _ is tool_delta
+                    else _
+                )
+                for _ in events
+            ],
+        }
+        for name, case_events in cases.items():
+            with self.subTest(name=name):
+                self.mock_client.messages.create = AsyncMock(
+                    side_effect=[
+                        _MockAsyncEventStream(case_events),
+                        completion,
+                    ],
+                )
+
+                final = [r async for r in await self.model([])][-1]
+                non_stream = await non_stream_model([])
+
+                self.assertListEqual(
+                    [
+                        (_.id, _.name, _.input)
+                        for _ in (final.content[0], non_stream.content[0])
+                    ],
+                    [("toolu_1", "list_tasks", "{}")] * 2,
                 )
 
 

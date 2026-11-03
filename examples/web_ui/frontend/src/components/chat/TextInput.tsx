@@ -1,12 +1,13 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
 import {
-	Paperclip,
+	AudioLines,
+	ArrowUp,
+	FileText,
 	Loader2,
+	Paperclip,
 	Square,
 	type LucideIcon,
 	XIcon,
-	FileText,
-	ArrowUp,
 } from 'lucide-react';
 import mime from 'mime';
 import React, {
@@ -34,6 +35,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
 import { cn } from '@/lib/utils';
 
 /**
@@ -49,7 +51,7 @@ interface ProcessedFile {
 }
 
 interface TextInputProps {
-	onSend: (blocks: ContentBlock[]) => void;
+	onSend: (blocks: ContentBlock[]) => Promise<void> | void;
 	placeholder?: string;
 	autoComplete?: (input: string) => string | null;
 	disabled?: boolean;
@@ -76,14 +78,20 @@ interface TextInputProps {
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
 	/**
-	 * The current reply lifecycle phase from ``useMessages``. Drives the
-	 * send / stop button in one shot:
-	 *   - ``idle`` — Send (enabled when there is content to send)
-	 *   - ``streaming`` — Stop (click to interrupt)
-	 *   - ``interrupting`` — Stop (disabled while the interrupt is in flight)
+	 * The current reply lifecycle phase from ``useMessages``. A running
+	 * reply adds a separate Stop action while Send remains available for
+	 * appending another turn to the queue.
 	 */
 	phase?: ReplyPhase;
+	/** Number of accepted user turns that have not started a reply yet. */
+	queuedCount?: number;
 	onInterrupt?: () => void;
+	/** Current browser realtime voice connection state. */
+	voiceState?: RealtimeConnectionState;
+	/** Starts or stops the browser realtime voice connection. */
+	onVoiceToggle?: () => void;
+	/** Prevents voice start when no realtime model is configured. */
+	voiceDisabled?: boolean;
 	/**
 	 * Content rendered directly above the input pill, inside the outer
 	 * wrapper that {@link className} styles (e.g. the working directory
@@ -125,6 +133,8 @@ const TEXTAREA_PADDING_X_PX = 12;
  * @param root0.autoComplete - Function to provide autocomplete suggestions.
  * @param root0.disabled - Whether the input is disabled.
  * @param root0.className - Additional CSS classes for styling.
+ * @param root0.queuedCount - Accepted turns waiting to start.
+ * @param root0.onInterrupt - Stops the currently active reply.
  * @returns A TextInput component.
  */
 export const TextInput = forwardRef<TextInputRef, TextInputProps>(
@@ -138,7 +148,11 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			phase = 'idle',
+			queuedCount = 0,
 			onInterrupt,
+			voiceState = 'idle',
+			onVoiceToggle,
+			voiceDisabled = false,
 			headerSlot,
 		},
 		ref,
@@ -148,6 +162,14 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const [value, setValue] = useState('');
 		const [files, setFiles] = useState<ProcessedFile[]>([]);
 		const [isFocused, setIsFocused] = useState(false);
+		const [submitting, setSubmitting] = useState(false);
+		const mountedRef = useRef(false);
+		useLayoutEffect(() => {
+			mountedRef.current = true;
+			return () => {
+				mountedRef.current = false;
+			};
+		}, []);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
@@ -166,6 +188,13 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 		// Whether any file is still being processed (block send until all done)
 		const hasProcessing = files.some((f) => f.status === 'processing');
+
+		// A finished attachment is content on its own: the composer can send it
+		// without any text, and the file processor already built the DataBlock.
+		const hasReadyAttachment = files.some((f) => f.status === 'done' && f.block !== null);
+
+		// Something to send: either text or a processed attachment.
+		const hasContent = value.trim().length > 0 || hasReadyAttachment;
 
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
@@ -213,14 +242,12 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			// Enter to send message, Shift+Enter for new line
 			if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
 				e.preventDefault();
-				handleSend();
+				void handleSend();
 			}
 		};
 
-		const handleSend = () => {
-			// ``phase`` is guarded here rather than only on the button, since Enter
-			// calls this directly and would otherwise send during a running reply.
-			if (phase !== 'idle' || !value.trim() || disabled || hasProcessing) return;
+		const handleSend = async () => {
+			if (!hasContent || disabled || hasProcessing || submitting) return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -243,42 +270,74 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				}
 			});
 
-			onSend?.(blocks);
+			const submittedValue = value;
+			const submittedFiles = files;
+			setSubmitting(true);
+			// Start a fresh draft immediately. If the request fails, merge the
+			// submitted draft back without erasing anything typed meanwhile.
 			setValue('');
 			setFiles([]);
+			try {
+				await onSend(blocks);
+			} catch {
+				if (!mountedRef.current) return;
+				// The API layer reports the error; restore both the failed turn
+				// and any new draft content so neither is silently lost.
+				setValue((current) => (current ? `${submittedValue}\n${current}` : submittedValue));
+				setFiles((current) => [...submittedFiles, ...current]);
+			} finally {
+				if (mountedRef.current) setSubmitting(false);
+			}
 		};
 
+		const replyActive = phase !== 'idle';
+		const voiceActive = voiceState === 'active' || voiceState === 'connecting';
+
 		/**
-		 * Send / stop button configuration derived from the current reply
-		 * phase. One struct = one branch of rendering, so the JSX stays flat.
+		 * The primary action controls realtime voice when it is connected,
+		 * otherwise it sends a normal or queued text turn. A running text
+		 * reply gets its own Stop button so sending remains available.
 		 */
-		const sendButton: {
+		const actionButton: {
 			icon: LucideIcon;
 			tooltip: string;
 			disabled: boolean;
+			variant: 'default' | 'ghost';
 			onClick: (() => void) | undefined;
 		} = (() => {
-			if (phase === 'streaming') {
+			if (voiceState === 'connecting') {
 				return {
-					icon: Square,
-					tooltip: t('textInput.stop'),
+					icon: Loader2,
+					tooltip: t('realtime.stop'),
 					disabled: false,
-					onClick: onInterrupt,
+					variant: 'default',
+					onClick: onVoiceToggle,
 				};
 			}
-			if (phase === 'interrupting') {
+			if (voiceState === 'active') {
 				return {
 					icon: Square,
-					tooltip: t('textInput.stopping'),
-					disabled: true,
-					onClick: onInterrupt,
+					tooltip: t('realtime.stop'),
+					disabled: false,
+					variant: 'default',
+					onClick: onVoiceToggle,
+				};
+			}
+			if (hasContent || replyActive || submitting) {
+				return {
+					icon: submitting ? Loader2 : ArrowUp,
+					tooltip: replyActive ? t('textInput.queue') : t('textInput.send'),
+					disabled: disabled || !hasContent || hasProcessing || submitting,
+					variant: 'default',
+					onClick: handleSend,
 				};
 			}
 			return {
-				icon: ArrowUp,
-				tooltip: t('textInput.send'),
-				disabled: disabled || !value.trim() || hasProcessing,
-				onClick: handleSend,
+				icon: AudioLines,
+				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
+				disabled: voiceDisabled,
+				variant: 'ghost',
+				onClick: onVoiceToggle,
 			};
 		})();
 
@@ -418,6 +477,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							<div className="flex shrink-0 gap-2">
 								<div className="size-9" />
 								<div className="size-9" />
+								{replyActive && <div className="size-9" />}
 							</div>
 						</div>
 
@@ -502,20 +562,56 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipContent>
 							</Tooltip>
 
-							{/* Send / Stop button — driven by ``sendButton`` config */}
+							{/* Keep Stop and Send separate while a reply is active:
+							    users can enqueue another turn without losing the
+							    ability to interrupt the current generation. */}
+							{replyActive && !voiceActive && (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="outline"
+											onClick={onInterrupt}
+											disabled={phase === 'interrupting'}
+											size="icon-lg"
+											className="shrink-0 rounded-full"
+										>
+											<Square className="h-4 w-4" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>
+										{phase === 'interrupting'
+											? t('textInput.stopping')
+											: t('textInput.stop')}
+									</TooltipContent>
+								</Tooltip>
+							)}
+
+							{/* Voice or Send — driven by ``actionButton`` config. */}
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<Button
 										type="button"
-										onClick={sendButton.onClick}
-										disabled={sendButton.disabled}
+										variant={actionButton.variant}
+										onClick={actionButton.onClick}
+										disabled={actionButton.disabled}
 										size="icon-lg"
-										className="shrink-0 rounded-full"
+										className={cn(
+											'relative shrink-0 rounded-full transition-colors',
+											voiceState === 'active' &&
+												'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
+										)}
 									>
-										<sendButton.icon className="h-4 w-4" />
+										<actionButton.icon
+											className={cn(
+												'h-4 w-4',
+												(voiceState === 'connecting' || submitting) &&
+													'animate-spin',
+											)}
+										/>
 									</Button>
 								</TooltipTrigger>
-								<TooltipContent>{sendButton.tooltip}</TooltipContent>
+								<TooltipContent>{actionButton.tooltip}</TooltipContent>
 							</Tooltip>
 
 							{/* Hidden file input */}
@@ -530,6 +626,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 						</div>
 					</div>
 				</div>
+				{queuedCount > 0 && (
+					<div
+						className="px-3 text-xs text-muted-foreground"
+						role="status"
+						aria-live="polite"
+					>
+						{t('textInput.queued', { count: queuedCount })}
+					</div>
+				)}
 			</div>
 		);
 	},
