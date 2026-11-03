@@ -19,6 +19,7 @@ from ..message_bus import MessageBus, MessageBusKeys
 
 # How long to wait for the bus subscription to come up.
 _SUBSCRIBE_TIMEOUT_SECS = 5.0
+_closing_feeders: set[asyncio.Task[None]] = set()
 _TERMINAL_EVENTS = frozenset(
     {
         EventType.REPLY_END,
@@ -26,6 +27,13 @@ _TERMINAL_EVENTS = frozenset(
         EventType.REQUIRE_EXTERNAL_EXECUTION,
     },
 )
+
+
+def _feeder_closed(task: asyncio.Task[None]) -> None:
+    """Release a failed setup's feeder and observe any cleanup error."""
+    _closing_feeders.discard(task)
+    if not task.cancelled():
+        task.exception()
 
 
 async def open_reply_stream(
@@ -72,23 +80,19 @@ async def open_reply_stream(
             timeout=_SUBSCRIBE_TIMEOUT_SECS,
             return_when=asyncio.FIRST_COMPLETED,
         )
-        if feeder_task in done:
-            await feeder_task
-        if ready_task not in done:
+        if not ready.is_set():
+            if feeder_task in done:
+                await feeder_task
             raise TimeoutError("Timed out waiting for the bus subscription")
         cursor = await bus.registry_get(
             MessageBusKeys.session_event_checkpoint(session_id),
             MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
         )
     except BaseException:
+        # A bus may block while closing. Let it finish off the caller's path.
+        _closing_feeders.add(feeder_task)
+        feeder_task.add_done_callback(_feeder_closed)
         feeder_task.cancel()
-        try:
-            await feeder_task
-        except (
-            asyncio.CancelledError,
-            Exception,
-        ):  # pylint: disable=broad-except
-            pass
         raise
     finally:
         ready_task.cancel()
