@@ -17,6 +17,7 @@ with service-mode listing would leave records out of sync, and the
 project's stance is that a knowledge base is managed end-to-end in one
 mode.
 """
+import asyncio
 import uuid
 from collections import Counter
 from typing import IO, TYPE_CHECKING, AsyncIterator
@@ -428,9 +429,9 @@ class KnowledgeBaseService:
                 owner_id,
                 record,
             )
-        except Exception:
-            # Storage write failed — drop the blob so the orphan
-            # sweeper doesn't later see a referenced-by-nobody file.
+        except (Exception, asyncio.CancelledError):
+            # Storage write failed or cancelled — drop the blob so the
+            # orphan sweeper doesn't later see a referenced-by-nobody file.
             await self._delete_blob_quietly(blob_uri)
             raise
 

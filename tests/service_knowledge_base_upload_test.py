@@ -607,3 +607,55 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
                     document.data.blob_uri,
                 ),
             )
+
+    async def test_cancelled_registration_cleans_up_source_blob(
+        self,
+    ) -> None:
+        """Cancellation during document persistence must clean up the blob."""
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+
+            async def _exercise() -> None:
+                service = self._app.state.knowledge_base_service
+                storage = self._app.state.storage
+                blob_store = self._app.state.blob_store
+
+                persisting = asyncio.Event()
+                blob_uris: list[str] = []
+
+                async def pause_before_document_persists(
+                    user_id: str,
+                    record: KnowledgeDocumentRecord,
+                ) -> KnowledgeDocumentRecord:
+                    self.assertEqual(user_id, "user-1")
+                    blob_uris.append(record.data.blob_uri)
+                    persisting.set()
+                    await asyncio.Event().wait()
+
+                with patch.object(
+                    storage,
+                    "upsert_knowledge_document",
+                    side_effect=pause_before_document_persists,
+                ):
+                    task = asyncio.create_task(
+                        service.register_document(
+                            user_id="user-1",
+                            knowledge_base_id=self._kb_id,
+                            filename="cancel.txt",
+                            stream=io.BytesIO(b"cancelled upload payload"),
+                            size=24,
+                            content_type="text/plain",
+                        ),
+                    )
+                    try:
+                        await asyncio.wait_for(persisting.wait(), timeout=5.0)
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    finally:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+                self.assertEqual(len(blob_uris), 1)
+                self.assertFalse(await blob_store.exists(blob_uris[0]))
+
+            client.portal.call(_exercise)
