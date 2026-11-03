@@ -12,6 +12,7 @@ import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 from anthropic import types as anthropic_types
 
 from utils import AnyString
@@ -516,27 +517,57 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
             {"type": "enabled", "budget_tokens": 1024},
         )
 
-    async def test_explicit_budget_floors_at_provider_minimum(self) -> None:
-        """A thinking_budget below 1024 is clamped, never emitted."""
+    async def test_explicit_budget_is_forwarded(self) -> None:
+        """Let the provider validate the caller's explicit budget."""
         self.model.parameters.thinking_enable = True
         self.model.parameters.thinking_budget = 512
 
         await self.model([])
 
         kwargs = self.mock_create.call_args.kwargs
-        self.assertEqual(kwargs["thinking"]["budget_tokens"], 1024)
-        self.assertGreater(kwargs["max_tokens"], 1024)
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 512},
+        )
 
     async def test_unsatisfiable_cap_fails_fast(self) -> None:
         """No valid budget exists while max_tokens <= 1024."""
         self.model.parameters.thinking_enable = True
 
         with self.assertRaises(ValueError) as ctx:
-            await self.model([], max_tokens=1000)
+            await self.model([], max_tokens=1024)
 
         self.assertIn("1024", str(ctx.exception))
         self.assertIn("max_tokens", str(ctx.exception))
         self.mock_create.assert_not_called()
+
+    async def test_interleaved_tool_budget_can_exceed_cap(self) -> None:
+        """Only a tool request opting into interleaving can use this cap."""
+        self.model.parameters.thinking_enable = True
+        tools = [{"function": {"name": "lookup"}}]
+        headers = {"Anthropic-Beta": "other, interleaved-thinking-2025-05-14"}
+        await self.model(
+            [],
+            tools=tools,
+            max_tokens=1000,
+            extra_headers=headers,
+        )
+        self.assertEqual(
+            self.mock_create.call_args.kwargs,
+            {
+                "model": self.model.model,
+                "messages": [],
+                "stream": False,
+                "max_tokens": 1000,
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+                "tools": [
+                    {"name": "lookup", "description": "", "input_schema": {}},
+                ],
+                "extra_headers": headers,
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "max_tokens=1000"):
+            await self.model([], tools=tools, max_tokens=1000)
 
     async def test_caller_can_disable_thinking_per_call(self) -> None:
         """An explicit thinking kwarg is the per-call escape hatch."""
@@ -552,16 +583,81 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["max_tokens"], 1000)
         self.assertEqual(kwargs["thinking"], {"type": "disabled"})
 
-    async def test_per_call_max_tokens_expands_for_fixed_budget(self) -> None:
-        """A fixed budget forces even a per-call max_tokens above it."""
+    async def test_explicit_limits_on_wire(self) -> None:
+        """Exercise SDK body overrides and caller limits at the HTTP layer."""
         self.model.parameters.thinking_enable = True
-        self.model.parameters.thinking_budget = 4096
+        self.model.parameters.max_tokens = 1500
+        bodies = []
 
-        await self.model([], max_tokens=1000)
+        def capture(request: httpx.Request) -> httpx.Response:
+            bodies.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": self.model.model,
+                    "content": [],
+                    "usage": {"input_tokens": 1, "output_tokens": 0},
+                },
+            )
 
-        kwargs = self.mock_create.call_args.kwargs
-        self.assertEqual(kwargs["thinking"]["budget_tokens"], 4096)
-        self.assertGreater(kwargs["max_tokens"], 4096)
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(capture),
+        ) as client:
+            model = AnthropicChatModel(
+                credential=self.model.credential,
+                model=self.model.model,
+                parameters=self.model.parameters,
+                stream=False,
+                client_kwargs={"http_client": client},
+            )
+            # (budget, call overrides, wire limit, wire thinking)
+            cases: list[tuple[int | None, dict, int, dict]] = [
+                (4096, {}, 1500, {"type": "enabled", "budget_tokens": 4096}),
+                (
+                    4096,
+                    {"max_tokens": 1000},
+                    1000,
+                    {"type": "enabled", "budget_tokens": 4096},
+                ),
+                (
+                    None,
+                    {"max_tokens": 1000, "extra_body": {"max_tokens": 8192}},
+                    8192,
+                    {"type": "enabled", "budget_tokens": 4096},
+                ),
+                (
+                    None,
+                    {"extra_body": {"max_tokens": 1025}},
+                    1025,
+                    {"type": "enabled", "budget_tokens": 1024},
+                ),
+                (
+                    None,
+                    {
+                        "max_tokens": 1000,
+                        "extra_body": {"thinking": {"type": "disabled"}},
+                    },
+                    1000,
+                    {"type": "disabled"},
+                ),
+            ]
+            for budget, overrides, limit, thinking in cases:
+                with self.subTest(budget=budget, overrides=overrides):
+                    model.parameters.thinking_budget = budget
+                    await model([], **overrides)
+                    self.assertEqual(
+                        bodies[-1],
+                        {
+                            "model": model.model,
+                            "stream": False,
+                            "messages": [],
+                            "max_tokens": limit,
+                            "thinking": thinking,
+                        },
+                    )
 
     def test_resolved_mode_drives_tool_choice_downgrade(self) -> None:
         """Only budget mode forbids forced tool use, so only it downgrades.
