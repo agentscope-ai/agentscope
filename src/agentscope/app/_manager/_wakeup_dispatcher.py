@@ -224,6 +224,12 @@ class WakeupDispatcher:
             logger.exception(
                 "WakeupDispatcher loop crashed; subscription ended.",
             )
+        finally:
+            # If ``subscribe`` raises before ``on_ready`` fires, the
+            # ``__aenter__`` coroutine would deadlock on ``ready.wait()``.
+            # Set the event unconditionally on the way out so startup
+            # fails fast on a broken bus instead of hanging forever.
+            ready.set()
 
     async def _fallback_loop(self) -> None:
         """Periodically signal the sole drain loop and schedule recovery."""
