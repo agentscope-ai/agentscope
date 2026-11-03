@@ -62,6 +62,68 @@ SAFE_ENV_VARS = {
     "CLICOLOR_FORCE",
 }
 
+# Commands whose "-t" / "--target-directory" option names the directory
+# that receives the copied or moved files.
+_TARGET_DIRECTORY_COMMANDS = ("cp", "mv", "ln")
+
+# Short options that never carry a value, so they may appear in front of
+# the value-taking "-t" inside a combined short option cluster.
+_NON_VALUE_SHORT_OPTIONS = frozenset("abBfinprRsuvx")
+
+
+def _extract_attached_target_directory(
+    cmd_name: str,
+    arg: str,
+) -> Optional[str]:
+    """Return the target directory carried by an attached option value.
+
+    The target directory of ``cp``/``mv``/``ln`` may be written in attached
+    form (``cp -tDIR``, ``cp --target-directory=DIR``). Such a token starts
+    with a dash, so the generic "skip every argument that starts with a
+    dash" rule drops it together with the directory it names, and that
+    directory never reaches the dangerous-path and working-directory
+    checks.
+
+    The separated spelling (``cp -t DIR``) needs no special handling: there
+    the value is a bare word and is picked up as a file argument.
+
+    Args:
+        cmd_name (`str`):
+            The command the argument belongs to.
+        arg (`str`):
+            The argument token.
+
+    Returns:
+        `Optional[str]`:
+            The target directory, or ``None`` when the token does not carry
+            one.
+    """
+    if cmd_name not in _TARGET_DIRECTORY_COMMANDS:
+        return None
+
+    if arg.startswith("--target-directory="):
+        value = arg.split("=", 1)[1]
+    elif arg.startswith("--"):
+        # A long option without an inline value, e.g. "--target-directory".
+        return None
+    elif arg.startswith("-") and len(arg) > 2:
+        # A short option cluster whose value-taking member is "-t", e.g.
+        # "-tDIR" or "-rtDIR". An uppercase "T" is a different flag
+        # ("ln -T" means --no-target-directory) and never carries a value.
+        index = arg.find("t", 1)
+        if index == -1:
+            return None
+        prefix = arg[1:index]
+        if any(letter not in _NON_VALUE_SHORT_OPTIONS for letter in prefix):
+            return None
+        value = arg[index + 1 :]
+    else:
+        return None
+
+    value = value.strip("'\"")
+    return value or None
+
+
 # Read-only git commands
 GIT_READ_ONLY_COMMANDS = {
     "git status",
@@ -349,6 +411,16 @@ class BashCommandParser:
             ]:
                 # Extract file arguments (skip flags)
                 for arg in args:
+                    # An option may carry its value in attached form, e.g.
+                    # "cp -tDIR" or "cp --target-directory=DIR". The value is
+                    # a path and must stay visible to the path checks.
+                    target_directory = _extract_attached_target_directory(
+                        cmd_name,
+                        arg,
+                    )
+                    if target_directory:
+                        paths.append((cmd_name, target_directory))
+                        continue
                     if not arg.startswith("-"):
                         paths.append((cmd_name, arg))
 
@@ -402,6 +474,17 @@ class BashCommandParser:
                 j = i + 1
                 while j < len(tokens):
                     arg = tokens[j].strip("'\"")
+                    # An option may carry its value in attached form, e.g.
+                    # "cp -tDIR" or "cp --target-directory=DIR". The value is
+                    # a path and must stay visible to the path checks.
+                    target_directory = _extract_attached_target_directory(
+                        cmd_name,
+                        arg,
+                    )
+                    if target_directory:
+                        paths.append((cmd_name, target_directory))
+                        j += 1
+                        continue
                     # Skip flags
                     if arg.startswith("-"):
                         j += 1

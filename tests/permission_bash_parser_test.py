@@ -2,6 +2,7 @@
 """Test cases for BashCommandParser."""
 import sys
 import unittest
+from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool._builtin._bash_parser import BashCommandParser
@@ -727,6 +728,54 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
             with self.subTest(cmd=cmd):
                 result = self.parser.extract_file_paths(cmd)
                 self.assertEqual(result, expected)
+
+    async def test_attached_target_directory_option(self) -> None:
+        """Test extraction of a target directory that rides along with the
+        option token, e.g. ``cp -tDIR`` or ``cp --target-directory=DIR``.
+
+        The separated spelling (``cp -t DIR``) always worked because the
+        value is a bare word, so the attached spelling must extract the
+        very same paths.
+        """
+        test_cases = [
+            (
+                "cp -t../outside ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "cp --target-directory=../outside ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "mv -t../outside ./note.txt",
+                [("mv", "../outside"), ("mv", "./note.txt")],
+            ),
+            (
+                "ln -t../outside ./link.txt",
+                [("ln", "../outside"), ("ln", "./link.txt")],
+            ),
+            (
+                "cp -r -t../outside ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+            (
+                "cp -t ../outside ./note.txt",
+                [("cp", "../outside"), ("cp", "./note.txt")],
+            ),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_attached_target_directory_option_fallback(self) -> None:
+        """Test that the token-based fallback keeps the attached target
+        directory visible as well."""
+        with mock.patch.object(self.parser, "parser", None):
+            result = self.parser.extract_file_paths(
+                "cp -t../outside ./note.txt",
+            )
+        self.assertEqual(result, [("cp", "../outside"), ("cp", "./note.txt")])
 
     async def test_sed_command(self) -> None:
         """Test file path extraction from sed commands."""

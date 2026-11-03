@@ -177,6 +177,52 @@ class BashToolTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_attached_target_directory_not_auto_allowed(self) -> None:
+        """A target directory attached to its option must not slip past the
+        working-directory check in ACCEPT_EDITS / DONT_ASK."""
+        commands = [
+            "cp -t../outside ./note.txt",
+            "cp --target-directory=../outside ./note.txt",
+            "mv -t../outside ./note.txt",
+        ]
+        for mode in (PermissionMode.ACCEPT_EDITS, PermissionMode.DONT_ASK):
+            context = PermissionContext(mode=mode)
+            for command in commands:
+                with self.subTest(mode=mode, command=command):
+                    decision = await self.bash_tool.check_permissions(
+                        {"command": command},
+                        context,
+                    )
+                    self.assertNotEqual(
+                        decision.behavior,
+                        PermissionBehavior.ALLOW,
+                    )
+
+    async def test_attached_target_directory_inside_working_dir(self) -> None:
+        """A target directory inside the working directory stays
+        auto-allowed."""
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+
+        decision = await self.bash_tool.check_permissions(
+            {"command": "cp -t./sub ./note.txt"},
+            context,
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_attached_target_directory_dangerous_path_asks(self) -> None:
+        """``cp -t<home>/.ssh`` must trigger the bypass-immune dangerous-path
+        ASK, just like the separated spelling does."""
+        dangerous_dir = os.path.join(os.path.expanduser("~"), ".ssh")
+        dangerous_dir = dangerous_dir.replace(os.sep, "/")
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+
+        decision = await self.bash_tool.check_permissions(
+            {"command": f"cp -t{dangerous_dir} ./note.txt"},
+            context,
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertTrue(decision.bypass_immune)
+
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []
