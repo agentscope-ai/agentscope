@@ -70,17 +70,18 @@ class _StubMessage:
 class _StubImage:
     """Comparable stub for xai_sdk.chat.image()."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, detail: str = "auto") -> None:
         self.type = "image"
         self.url = url
+        self.detail = detail
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, _StubImage):
             return NotImplemented
-        return self.url == other.url
+        return self.url == other.url and self.detail == other.detail
 
     def __repr__(self) -> str:
-        return f"_StubImage(url={self.url!r})"
+        return f"_StubImage(url={self.url!r}, detail={self.detail!r})"
 
 
 def user(*args: Any) -> _StubMessage:
@@ -103,9 +104,9 @@ def tool_result(*args: Any, **kwargs: Any) -> _StubMessage:
     return _StubMessage(role="tool", args=args, kwargs=kwargs)
 
 
-def image(url: str) -> _StubImage:
+def image(url: str, *, detail: str = "auto") -> _StubImage:
     """Create a comparable stub image object."""
-    return _StubImage(url=url)
+    return _StubImage(url=url, detail=detail)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +257,39 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     # XAIChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """DataBlock detail extra param is forwarded to xAI image()."""
+        fmt = XAIChatFormatter()
+        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=image_b64,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    "Inspect this image.",
+                    image(
+                        f"data:image/png;base64,{image_b64}",
+                        detail="high",
+                    ),
+                ),
+            ],
+            res,
+        )
+
     async def test_chat_formatter_system_message(self) -> None:
         """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
@@ -299,6 +333,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                                     url=path.as_uri(),
                                     media_type="image/png",
                                 ),
+                                detail="high",
                             ),
                         ],
                     ),
@@ -308,7 +343,10 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             [
                 user(
                     "What's in this image?",
-                    image(f"data:image/png;base64,{expected_b64}"),
+                    image(
+                        f"data:image/png;base64,{expected_b64}",
+                        detail="high",
+                    ),
                 ),
             ],
             res,
@@ -731,6 +769,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             data="Zmlyc3Q=",
                             media_type="image/jpeg",
                         ),
+                        detail="high",
                     ),
                 ],
             ),
@@ -743,6 +782,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             url="https://example.com/second.png",
                             media_type="image/png",
                         ),
+                        detail="low",
                     ),
                 ],
             ),
@@ -755,8 +795,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     "user: Compare these two charts.\n"
                     "agent: The second one differs.\n"
                     "</history>",
-                    image("data:image/jpeg;base64,Zmlyc3Q="),
-                    image("https://example.com/second.png"),
+                    image("data:image/jpeg;base64,Zmlyc3Q=", detail="high"),
+                    image("https://example.com/second.png", detail="low"),
                 ),
             ],
             res,
@@ -954,6 +994,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                                     data=image_b64,
                                     media_type="image/png",
                                 ),
+                                detail="high",
                             ),
                         ],
                     ),
@@ -965,7 +1006,10 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             [
                 user(
                     "Inspect this screenshot:",
-                    image(f"data:image/png;base64,{image_b64}"),
+                    image(
+                        f"data:image/png;base64,{image_b64}",
+                        detail="high",
+                    ),
                 ),
             ],
             res,
