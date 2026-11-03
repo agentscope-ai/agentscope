@@ -336,7 +336,10 @@ def _flatten_json_schema(schema: dict) -> dict:
 
     This function resolves every such reference by substituting the full
     definition inline, then drops the ``$defs`` / ``definitions``
-    sections so the output is a flat, self-contained schema.
+    sections so the output is a flat, self-contained schema. Discriminators
+    mapping to removed definitions are dropped: their mapping values must
+    be strings, not inline schemas. Union branches and their constraints
+    are preserved. Other discriminators are left unchanged.
 
     Circular references are detected and replaced with a fallback object
     schema to avoid infinite recursion.  Only local references of the
@@ -384,6 +387,8 @@ def _flatten_json_schema(schema: dict) -> dict:
                 return obj
 
             def_name = ref_path.split("/")[-1]
+            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
+            def_name = def_name.replace("~1", "/").replace("~0", "~")
             if def_name in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
@@ -403,6 +408,16 @@ def _flatten_json_schema(schema: dict) -> dict:
             if key in ("$ref", "$defs", "definitions"):
                 continue
             if key in _INSTANCE_VALUE_KEYWORDS:
+                resolved[key] = value
+            elif key == "discriminator" and isinstance(value, dict):
+                mapping = value.get("mapping")
+                if isinstance(mapping, dict) and any(
+                    isinstance(ref, str)
+                    and ref.startswith(("#/$defs/", "#/definitions/"))
+                    and ref.rsplit("/", 1)[-1] in defs
+                    for ref in mapping.values()
+                ):
+                    continue
                 resolved[key] = value
             elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
                 resolved[key] = {

@@ -313,6 +313,50 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
     # DashScopeChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_video_extra_params(self) -> None:
+        """DataBlock extra params are forwarded at content-item level."""
+        fmt = DashScopeChatFormatter()
+        video_url = str(
+            URLSource(
+                url="https://example.com/video.mp4",
+                media_type="video/mp4",
+            ).url,
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this video."),
+                    DataBlock(
+                        source=URLSource(
+                            url=video_url,
+                            media_type="video/mp4",
+                        ),
+                        fps=2,
+                        snippet=[0, 30],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize this video."},
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": video_url},
+                            "fps": 2,
+                            "snippet": [0, 30],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = DashScopeChatFormatter()
