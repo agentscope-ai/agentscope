@@ -1,10 +1,15 @@
 import { client } from './client';
 import type {
+	ListASRModelResponse,
 	ListEmbeddingModelResponse,
 	ListModelResponse,
 	ListRealtimeModelResponse,
 	ListTTSModelResponse,
 } from './types';
+
+export const asrModelApi = {
+	list: (provider: string) => client.get<ListASRModelResponse>('/asr-model/', { provider }),
+};
 
 export const modelApi = {
 	list: (provider: string) => client.get<ListModelResponse>('/model/', { provider }),

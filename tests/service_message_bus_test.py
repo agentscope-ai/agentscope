@@ -245,6 +245,17 @@ class TestLogPrimitive(IsolatedAsyncioTestCase):
         await self.bus.log_trim("k")
         self.assertEqual(await self.bus.log_read("k"), [])
 
+    async def test_trim_with_before_id_keeps_newer(self) -> None:
+        """Trimming keeps the cursor entry and all newer entries."""
+        await self.bus.log_append("k", {"i": 1})
+        id2 = await self.bus.log_append("k", {"i": 2})
+        await self.bus.log_append("k", {"i": 3})
+        with patch.object(self.fr, "xtrim", wraps=self.fr.xtrim) as xtrim:
+            await self.bus.log_trim("k", before_id=id2)
+        xtrim.assert_called_once_with("k", minid=id2, approximate=False)
+        entries = await self.bus.log_read("k")
+        self.assertEqual([p["i"] for _id, p in entries], [2, 3])
+
 
 class TestPubSubPrimitive(IsolatedAsyncioTestCase):
     """Mode D — transient broadcast: publish / subscribe."""

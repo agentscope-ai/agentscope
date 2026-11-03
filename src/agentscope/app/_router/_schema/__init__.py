@@ -17,7 +17,16 @@ from ._chat import (
     ChatQueueItem,
     ChatQueueResponse,
     ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
     UpdateChatQueueItemRequest,
+)
+from ._asr import (
+    ListASRModelsRequest,
+    ListASRModelsResponse,
+    RealtimeASRStartRequest,
+    RealtimeASRTokenRequest,
+    RealtimeASRTokenResponse,
+    TranscriptionResponse,
 )
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
@@ -176,7 +185,15 @@ __all__ = [
     "ChatQueueItem",
     "ChatQueueResponse",
     "ReorderChatQueueRequest",
+    "SteerChatQueueItemRequest",
     "UpdateChatQueueItemRequest",
+    # ASR
+    "ListASRModelsRequest",
+    "ListASRModelsResponse",
+    "RealtimeASRStartRequest",
+    "RealtimeASRTokenRequest",
+    "RealtimeASRTokenResponse",
+    "TranscriptionResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",

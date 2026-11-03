@@ -817,6 +817,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             MessageBusKeys.chat_input_inflight_registry(),
             session_id,
         )
+        await self.registry_del(
+            MessageBusKeys.chat_active_reply_registry(),
+            session_id,
+        )
         await self.registry_drop(self._BG_TASKS_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------

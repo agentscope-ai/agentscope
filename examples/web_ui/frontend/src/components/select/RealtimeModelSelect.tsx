@@ -63,6 +63,8 @@ export function RealtimeModelSelect({
 				<Button
 					variant="ghost"
 					size="sm"
+					aria-label={t('realtime.selectModel')}
+					tooltip={t('realtime.selectModel')}
 					className={cn('max-w-52 justify-between gap-1 font-mono', className)}
 					{...props}
 				>
