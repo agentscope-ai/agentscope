@@ -20,7 +20,11 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import (
+    BackendBase,
+    _detect_line_ending,
+    _normalize_newlines,
+)
 
 
 class Write(ToolBase):
@@ -314,6 +318,9 @@ Usage:
                 file_path=file_path,
                 lines=_normalize_newlines(content).splitlines(keepends=True),
                 mtime=await self._backend.stat_mtime(file_path),
+                # Remember the ending that is now on disk, so a later Edit
+                # writes the file back in the same style.
+                line_ending=_detect_line_ending(content),
             )
 
         # Count lines the way the ``Read`` tool numbers them

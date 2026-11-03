@@ -279,6 +279,25 @@ class EditToolTest(IsolatedAsyncioTestCase):
         with open(self.temp_file.name, "rb") as f:
             self.assertEqual(f.read(), original)
 
+    async def test_edit_preserves_crlf_line_endings(self) -> None:
+        """Editing a CRLF file keeps its Windows line endings."""
+        with open(self.temp_file.name, "wb") as f:
+            f.write(b"@echo off\r\necho first\r\necho second\r\n")
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="echo first",
+            new_string="echo renamed",
+        )
+
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "rb") as f:
+            data = f.read()
+        self.assertEqual(
+            data,
+            b"@echo off\r\necho renamed\r\necho second\r\n",
+        )
+
     async def test_permission_suggestions_escape_parent(self) -> None:
         """Test approved suggestions cover only the literal parent."""
         for parent, escaped, sibling in (

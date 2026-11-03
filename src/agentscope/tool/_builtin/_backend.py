@@ -132,6 +132,31 @@ def _normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _detect_line_ending(text: str) -> str:
+    """Detect the dominant line ending of a decoded text file.
+
+    Used together with :func:`_normalize_newlines`: content is matched and
+    edited in normalized form, and this value restores the original ending
+    when the file is written back, so editing a Windows (``\\r\\n``) file
+    does not silently rewrite every line.
+
+    Args:
+        text (`str`):
+            Decoded file contents, before normalization.
+
+    Returns:
+        `str`:
+            ``"\\r\\n"`` when the text contains a Windows line ending,
+            otherwise ``"\\r"`` for a classic-Mac file, otherwise
+            ``"\\n"`` (also the fallback for a file with no line ending).
+    """
+    if "\r\n" in text:
+        return "\r\n"
+    if "\r" in text:
+        return "\r"
+    return "\n"
+
+
 # ── base class ─────────────────────────────────────────────────────────
 
 
