@@ -101,17 +101,42 @@ class LocalAudioTransport(TransportBase):
         """Stop both streams and end :meth:`incoming`."""
         # Detach first so a late callback cannot enqueue behind the sentinel.
         self._loop = None
-        for stream in (self._in_stream, self._out_stream):
-            if stream is not None:
-                stream.stop()
-                stream.close()
-        self._in_stream = self._out_stream = None
-        with self._lock:
-            self._pending.clear()
-            self._item_id = ""
-            self._played_samples = 0
-            self._first_played_at = None
-        self._in_queue.put_nowait(None)
+        try:
+            for stream in (self._in_stream, self._out_stream):
+                if stream is not None:
+                    self._close_stream(stream)
+        finally:
+            # A failing stop()/close() must not skip the rest of the
+            # teardown: leaving ``_in_stream``/``_out_stream`` set keeps
+            # the peer stream open, and skipping the sentinel below makes
+            # every ``incoming()`` consumer wait forever.
+            self._in_stream = self._out_stream = None
+            with self._lock:
+                self._pending.clear()
+                self._item_id = ""
+                self._played_samples = 0
+                self._first_played_at = None
+            self._in_queue.put_nowait(None)
+
+    @staticmethod
+    def _close_stream(stream: Any) -> None:
+        """Stop and close one PortAudio stream, logging teardown failures.
+
+        PortAudio raises from ``stop()`` when the device disappears while
+        the stream is running. The exception is logged rather than
+        propagated so the peer stream is still released.
+
+        Args:
+            stream (`Any`):
+                The ``sounddevice`` input or output stream to tear down.
+        """
+        for step in (stream.stop, stream.close):
+            try:
+                step()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "LocalAudioTransport: stream teardown failed.",
+                )
 
     # ------------------------------------------------------------------
     # Upstream
