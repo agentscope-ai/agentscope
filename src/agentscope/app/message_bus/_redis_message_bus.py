@@ -812,13 +812,23 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(max(1.0, ttl_secs / 2))
-                await self._client.eval(
-                    _LOCK_RENEW_LUA,
-                    1,
-                    key,
-                    token,
-                    ttl_secs,
-                )
+                try:
+                    await self._client.eval(
+                        _LOCK_RENEW_LUA,
+                        1,
+                        key,
+                        token,
+                        ttl_secs,
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    # A transient transport error must not end the
+                    # heartbeat: the lease would then expire while the
+                    # body still runs, letting a second holder in.
+                    logger.warning(
+                        "Lock heartbeat renewal failed for %s; retrying.",
+                        key,
+                        exc_info=True,
+                    )
 
         hb_task = asyncio.create_task(
             _heartbeat(),
