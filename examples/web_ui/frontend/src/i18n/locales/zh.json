@@ -104,7 +104,16 @@
 		"queued_one": "{{count}} 条消息正在排队",
 		"queued_other": "{{count}} 条消息正在排队",
 		"stop": "停止当前回复",
-		"stopping": "正在停止当前回复 ..."
+		"stopping": "正在停止当前回复 ...",
+		"startRecording": "开始语音输入",
+		"stopRecording": "停止并转写",
+		"requestingMicrophone": "正在请求麦克风权限…",
+		"transcribing": "正在转写…",
+		"asrUnavailable": "语音识别未开启。请在顶部聊天模型旁的「模型设置」→「语音识别」中选择模型。",
+		"recordingUnsupported": "当前浏览器无法录制受支持的音频格式",
+		"microphonePermissionDenied": "麦克风权限已被拒绝",
+		"transcriptionFailed": "语音转写失败",
+		"transcriptionEmpty": "未检测到语音"
 	},
 	"chatQueue": {
 		"title_one": "待发送消息（{{count}} 条）",
@@ -475,7 +484,7 @@
 		"parameters": "实时语音参数",
 		"noModels": "暂无可用的实时语音模型。",
 		"disable": "停用语音模型",
-		"selectFirst": "请先选择语音模型",
+		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
 		"start": "开始语音对话",
 		"stop": "结束语音对话"
 	},
@@ -583,6 +592,7 @@
 		"wednesday": "周三"
 	},
 	"model-parameters": {
+		"settings": "模型设置",
 		"title": "模型参数",
 		"booleanDefault": "默认",
 		"booleanEnabled": "开启",
@@ -598,7 +608,12 @@
 		"ttsParametersDescription": "调整所选语音合成模型的参数。",
 		"voiceProfiles": "语音配置",
 		"voiceProfileUnavailable": "绑定的凭证或模型不可用。",
-		"noTts": "不使用语音合成"
+		"noTts": "不使用语音合成",
+		"asrLabel": "语音识别",
+		"asrEmpty": "暂无可用的语音识别模型。",
+		"asrParameters": "参数",
+		"asrParametersDescription": "调整所选语音识别模型的参数，数组和对象请使用 JSON。",
+		"noAsr": "不使用语音识别"
 	},
 	"setup": {
 		"title": "连接到服务器",
