@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The local sound-card transport."""
 import asyncio
+import contextlib
 import threading
 import time
 from typing import Any, AsyncIterator
@@ -79,23 +80,41 @@ class LocalAudioTransport(TransportBase):
         # not leak into this one.
         self._in_queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
-        self._in_stream = sd.InputStream(
-            samplerate=self.input_sample_rate,
-            channels=1,
-            dtype="int16",
-            blocksize=self._chunk_frames,
-            device=self._input_device,
-            callback=self._on_input,
-        )
-        self._out_stream = sd.OutputStream(
-            samplerate=self.output_sample_rate,
-            channels=1,
-            dtype="int16",
-            device=self._output_device,
-            callback=self._on_output,
-        )
-        self._in_stream.start()
-        self._out_stream.start()
+        self._in_stream = None
+        self._out_stream = None
+        try:
+            self._in_stream = sd.InputStream(
+                samplerate=self.input_sample_rate,
+                channels=1,
+                dtype="int16",
+                blocksize=self._chunk_frames,
+                device=self._input_device,
+                callback=self._on_input,
+            )
+            self._out_stream = sd.OutputStream(
+                samplerate=self.output_sample_rate,
+                channels=1,
+                dtype="int16",
+                device=self._output_device,
+                callback=self._on_output,
+            )
+            self._in_stream.start()
+            self._out_stream.start()
+        except BaseException:
+            # ``TransportBase.__aenter__`` only calls ``close()`` when
+            # ``start()`` succeeds, so a failure halfway through would
+            # otherwise leave the microphone (and/or speaker) open until
+            # the process exits. Release whatever was acquired here.
+            self._loop = None
+            for stream in (self._in_stream, self._out_stream):
+                if stream is None:
+                    continue
+                with contextlib.suppress(Exception):
+                    stream.stop()
+                with contextlib.suppress(Exception):
+                    stream.close()
+            self._in_stream = self._out_stream = None
+            raise
 
     async def close(self) -> None:
         """Stop both streams and end :meth:`incoming`."""
