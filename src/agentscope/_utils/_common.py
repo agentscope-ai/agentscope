@@ -325,9 +325,10 @@ def _flatten_json_schema(schema: dict) -> dict:
 
     This function resolves every such reference by substituting the full
     definition inline, then drops the ``$defs`` / ``definitions``
-    sections so the output is a flat, self-contained schema.  Local
-    definition references in a discriminator's ``mapping`` are expanded
-    as well.
+    sections so the output is a flat, self-contained schema. Discriminators
+    mapping to removed definitions are dropped: their mapping values must
+    be strings, not inline schemas. Union branches and their constraints
+    are preserved. Other discriminators are left unchanged.
 
     Circular references are detected and replaced with a fallback object
     schema to avoid infinite recursion.  Only local references of the
@@ -396,18 +397,15 @@ def _flatten_json_schema(schema: dict) -> dict:
             if key in _INSTANCE_VALUE_KEYWORDS:
                 resolved[key] = value
             elif key == "discriminator" and isinstance(value, dict):
-                discriminator = _resolve_ref(value, visited)
                 mapping = value.get("mapping")
-                if isinstance(mapping, dict):
-                    discriminator["mapping"] = {
-                        name: _resolve_ref({"$ref": ref}, visited)
-                        if isinstance(ref, str)
-                        and ref.startswith(("#/$defs/", "#/definitions/"))
-                        and ref.rsplit("/", 1)[-1] in defs
-                        else ref
-                        for name, ref in mapping.items()
-                    }
-                resolved[key] = discriminator
+                if isinstance(mapping, dict) and any(
+                    isinstance(ref, str)
+                    and ref.startswith(("#/$defs/", "#/definitions/"))
+                    and ref.rsplit("/", 1)[-1] in defs
+                    for ref in mapping.values()
+                ):
+                    continue
+                resolved[key] = value
             elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
                 resolved[key] = {
                     name: _resolve_ref(sub, visited)
