@@ -215,13 +215,13 @@ class TestLogPrimitive(IsolatedAsyncioTestCase):
         self.assertEqual(await self.bus.log_read("k"), [])
 
     async def test_trim_with_before_id_keeps_newer(self) -> None:
-        """``log_trim(key, before_id)`` drops every entry older than the
-        cursor and keeps the rest — the contract the in-memory backend
-        already honours."""
+        """Trimming keeps the cursor entry and all newer entries."""
         await self.bus.log_append("k", {"i": 1})
         id2 = await self.bus.log_append("k", {"i": 2})
         await self.bus.log_append("k", {"i": 3})
-        await self.bus.log_trim("k", before_id=id2)
+        with patch.object(self.fr, "xtrim", wraps=self.fr.xtrim) as xtrim:
+            await self.bus.log_trim("k", before_id=id2)
+        xtrim.assert_called_once_with("k", minid=id2, approximate=False)
         entries = await self.bus.log_read("k")
         self.assertEqual([p["i"] for _id, p in entries], [2, 3])
 

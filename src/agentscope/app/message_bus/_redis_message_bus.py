@@ -400,11 +400,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if before_id is None:
             await self._client.delete(key)
             return
-        # XTRIM MINID drops entries with id < before_id. ``approximate``
-        # must be off: redis-py defaults it to True, which sends
-        # ``XTRIM key MINID ~ id`` — and approximate trimming only
-        # removes whole macro-nodes, so a small stream keeps every entry
-        # and a longer one stops at a node boundary instead of the cursor.
+        # Approximate trimming can leave entries older than the cursor.
         await self._client.xtrim(
             key,
             minid=before_id,
