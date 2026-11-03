@@ -389,8 +389,11 @@ class OpenAIChatModel(ChatModelBase):
                         thinking=delta_thinking,
                     )
 
-                # Text
+                # Text, or the refusal the model sends in its place
                 delta_text = getattr(delta, "content", None) or ""
+                delta_refusal = getattr(delta, "refusal", None)
+                if not delta_text and isinstance(delta_refusal, str):
+                    delta_text = delta_refusal
 
                 # Audio (delta.audio.data / delta.audio.transcript). Omni
                 # models deliver text via ``delta.audio.transcript`` rather
@@ -497,6 +500,10 @@ class OpenAIChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
+            refusal = getattr(choice.message, "refusal", None)
+            if not choice.message.content and isinstance(refusal, str):
+                if refusal:
+                    content_blocks.append(TextBlock(text=refusal))
 
             # Extract audio output (message.audio.data /
             # message.audio.transcript)

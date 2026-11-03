@@ -52,10 +52,12 @@ def _mock_completion(
     reasoning: Any = None,
     response_id: str = "resp-1",
     audio: dict | None = None,
+    refusal: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
     msg.content = text
+    msg.refusal = refusal
     msg.reasoning_content = reasoning
     msg.reasoning = None
     msg.audio = audio
@@ -91,6 +93,7 @@ def _make_stream_chunk(
     usage: dict | None = None,
     has_choices: bool = True,
     delta_audio: dict | None = None,
+    delta_refusal: str | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
@@ -107,6 +110,7 @@ def _make_stream_chunk(
     if has_choices:
         delta = MagicMock()
         delta.content = delta_text
+        delta.refusal = delta_refusal
         delta.reasoning_content = delta_reasoning
         delta.reasoning = None
         delta.audio = delta_audio
@@ -227,6 +231,29 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "resp-1")
+
+    async def test_refusal_response(self) -> None:
+        """A refusal arrives in ``message.refusal`` with ``content`` unset,
+        and must reach the agent instead of an empty reply."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(
+                reasoning="Thinking.",
+                refusal="I can't help with that.",
+            ),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(
+            result.content[1:],
+            [
+                TextBlock.model_construct(
+                    id=A,
+                    created_at=A,
+                    text="I can't help with that.",
+                ),
+            ],
+        )
 
     async def test_default_thinking_enable_not_forwarded(
         self,
@@ -562,6 +589,30 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(responses[-1].id, "resp-1")
+
+    async def test_stream_refusal(self) -> None:
+        """Streamed refusal deltas accumulate like text deltas."""
+        chunks = [
+            _make_stream_chunk(delta_refusal="I can't"),
+            _make_stream_chunk(delta_refusal=" help."),
+        ]
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_MockAsyncStream(chunks),
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertEqual(
+            responses[-1].content,
+            [
+                TextBlock.model_construct(
+                    id=A,
+                    created_at=A,
+                    text="I can't help.",
+                ),
+            ],
+        )
 
     async def test_stream_thinking_and_text(
         self,
