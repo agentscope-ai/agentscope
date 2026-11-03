@@ -104,7 +104,16 @@
 		"queued_one": "{{count}} message queued",
 		"queued_other": "{{count}} messages queued",
 		"stop": "Stop current reply",
-		"stopping": "Stopping current reply ..."
+		"stopping": "Stopping current reply ...",
+		"startRecording": "Start voice input",
+		"stopRecording": "Stop and transcribe",
+		"requestingMicrophone": "Requesting microphone access…",
+		"transcribing": "Transcribing…",
+		"asrUnavailable": "Speech recognition is off. Open Model settings next to the chat model at the top, then select a model under Speech recognition.",
+		"recordingUnsupported": "This browser cannot record a supported audio format",
+		"microphonePermissionDenied": "Microphone access was denied",
+		"transcriptionFailed": "Voice transcription failed",
+		"transcriptionEmpty": "No speech was detected"
 	},
 	"chatQueue": {
 		"title_one": "Pending message ({{count}})",
@@ -475,7 +484,7 @@
 		"parameters": "Realtime voice parameters",
 		"noModels": "No realtime voice models are available.",
 		"disable": "Disable voice model",
-		"selectFirst": "Select a voice model first",
+		"selectFirst": "Realtime voice is off. Select a model from Voice model (the waveform icon) at the top.",
 		"start": "Start voice conversation",
 		"stop": "End voice conversation"
 	},
@@ -583,6 +592,7 @@
 		"wednesday": "Wed"
 	},
 	"model-parameters": {
+		"settings": "Model settings",
 		"title": "Model Parameters",
 		"booleanDefault": "Default",
 		"booleanEnabled": "On",
@@ -598,7 +608,12 @@
 		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
 		"voiceProfiles": "Voice Profiles",
 		"voiceProfileUnavailable": "The bound credential or model is unavailable.",
-		"noTts": "No TTS"
+		"noTts": "No TTS",
+		"asrLabel": "Speech recognition",
+		"asrEmpty": "No speech recognition models available.",
+		"asrParameters": "Parameters",
+		"asrParametersDescription": "Adjust parameters for the selected speech recognition model. Arrays and objects use JSON.",
+		"noAsr": "No speech recognition"
 	},
 	"setup": {
 		"title": "Connect to Service",
