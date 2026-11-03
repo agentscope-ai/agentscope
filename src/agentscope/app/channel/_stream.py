@@ -19,6 +19,7 @@ from ..message_bus import MessageBus, MessageBusKeys
 
 # How long to wait for the bus subscription to come up.
 _SUBSCRIBE_TIMEOUT_SECS = 5.0
+_closing_feeders: set[asyncio.Task[None]] = set()
 _TERMINAL_EVENTS = frozenset(
     {
         EventType.REPLY_END,
@@ -26,6 +27,13 @@ _TERMINAL_EVENTS = frozenset(
         EventType.REQUIRE_EXTERNAL_EXECUTION,
     },
 )
+
+
+def _feeder_closed(task: asyncio.Task[None]) -> None:
+    """Release a failed setup's feeder and observe any cleanup error."""
+    _closing_feeders.discard(task)
+    if not task.cancelled():
+        task.exception()
 
 
 async def open_reply_stream(
@@ -48,33 +56,57 @@ async def open_reply_stream(
     """
     event_key = MessageBusKeys.session_events(session_id)
     ready = asyncio.Event()
-    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue: asyncio.Queue[dict | Exception] = asyncio.Queue()
 
     async def feeder() -> None:
         """Buffer live subscription events into the local queue."""
         try:
             async for evt in bus.subscribe(event_key, on_ready=ready.set):
                 await queue.put(evt)
-        except asyncio.CancelledError:
-            pass
+        except Exception as error:
+            await queue.put(error)
+            raise
+        subscription_error = RuntimeError(
+            "Reply stream subscription ended unexpectedly",
+        )
+        await queue.put(subscription_error)
+        raise subscription_error
 
     feeder_task = asyncio.create_task(feeder())
+    ready_task = asyncio.create_task(ready.wait())
     try:
-        await asyncio.wait_for(ready.wait(), timeout=_SUBSCRIBE_TIMEOUT_SECS)
+        done, _ = await asyncio.wait(
+            {ready_task, feeder_task},
+            timeout=_SUBSCRIBE_TIMEOUT_SECS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not ready.is_set():
+            if feeder_task in done:
+                await feeder_task
+            raise TimeoutError("Timed out waiting for the bus subscription")
         cursor = await bus.registry_get(
             MessageBusKeys.session_event_checkpoint(session_id),
             MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
         )
     except BaseException:
+        # A bus may block while closing. Let it finish off the caller's path.
+        _closing_feeders.add(feeder_task)
+        feeder_task.add_done_callback(_feeder_closed)
         feeder_task.cancel()
         raise
+    finally:
+        ready_task.cancel()
+        try:
+            await ready_task
+        except asyncio.CancelledError:
+            pass
     return _read(bus, event_key, queue, feeder_task, cursor)
 
 
 async def _read(
     bus: MessageBus,
     event_key: str,
-    queue: "asyncio.Queue[dict]",
+    queue: "asyncio.Queue[dict | Exception]",
     feeder_task: "asyncio.Task",
     after: str | None,
 ) -> AsyncGenerator[dict, None]:
@@ -86,7 +118,8 @@ async def _read(
     Args:
         bus (`MessageBus`): The application message bus.
         event_key (`str`): The session's event log / channel key.
-        queue (`asyncio.Queue[dict]`): Live events buffered so far.
+        queue (`asyncio.Queue[dict | Exception]`): Live events or a
+            subscription failure buffered so far.
         feeder_task (`asyncio.Task`): The subscription, cancelled on close.
         after (`str | None`): Persisted checkpoint cursor to replay after.
 
@@ -106,6 +139,8 @@ async def _read(
                 return
         while True:
             evt = await queue.get()
+            if isinstance(evt, Exception):
+                raise evt
             eid = evt.get("_entry_id")
             if eid is not None:
                 if str(eid) in seen:
