@@ -7,6 +7,7 @@ from utils import MockModel, AnyString
 
 from agentscope.agent import Agent, ContextConfig
 from agentscope.message import (
+    AssistantMsg,
     ToolResultBlock,
     TextBlock,
     DataBlock,
@@ -651,51 +652,47 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_mixed_script_prefix_stays_within_counted_limit(
+    async def test_multibyte_prefix_stays_within_counted_limit(
         self,
     ) -> None:
         """A dense prefix is shortened until the counter itself fits."""
-        payload = "汉" * 400 + "a" * 1200
+        dense_char = "\u20ac"
+        payload = dense_char * 400 + "a" * 1200
         tool_result = ToolResultBlock(
             id="test_mixed",
             name="test_tool",
-            output=[TextBlock(text=payload)],
+            output=[TextBlock(text=payload, id="block1")],
         )
-
-        def counted_blocks(blocks: list) -> int:
-            text = "".join(
-                block.text for block in blocks if hasattr(block, "text")
-            )
-            return len(text.encode("utf-8")) // 4
-
-        async def mock_count_tokens(
-            messages: list,
-            tools: list | None = None,
-        ) -> int:
-            """UTF-8 bytes over four, like the default counter."""
-            content = messages[0].content
-            return counted_blocks(content) if isinstance(content, list) else 0
-
-        self.mock_model.count_tokens = mock_count_tokens
+        original = tool_result.model_dump()
         (
             reserved,
             offload,
         ) = await self.agent._split_tool_result_for_compression(
             tool_result,
         )
-        assert reserved is not None and isinstance(reserved.output, list)
-        assert offload is not None and isinstance(offload.output, list)
-
-        reserved_text = "".join(
-            block.text for block in reserved.output if block.type == "text"
+        assert offload is not None
+        self.assertLessEqual(
+            await self.mock_model.count_tokens(
+                [AssistantMsg(self.agent.name, content=reserved.output)],
+                None,
+            ),
+            self.agent.context_config.tool_result_limit,
         )
-        offload_text = "".join(
-            block.text for block in offload.output if block.type == "text"
+        # 133 three-byte characters use 399 bytes; 134 use 402 (101 tokens).
+        expected_block = {
+            "type": "text",
+            "id": "block1",
+            "created_at": AnyString(),
+            "finished_at": None,
+        }
+        self.assertListEqual(
+            [reserved.model_dump(), offload.model_dump()],
+            [
+                {**original, "output": [{**expected_block, "text": text}]}
+                for text in (payload[:133], payload[133:])
+            ],
         )
-
-        self.assertTrue(reserved_text)
-        self.assertLessEqual(counted_blocks(reserved.output), 100)
-        self.assertEqual(reserved_text + offload_text, payload)
+        self.assertDictEqual(tool_result.model_dump(), original)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
