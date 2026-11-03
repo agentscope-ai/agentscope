@@ -1456,7 +1456,24 @@ class ChatService:
 
                         else:
                             # Case B: continuation (UserConfirmResult
-                            #  / ExternalExecResult)
+                            #  / ExternalExecResult / UserInterrupt)
+                            #
+                            # An interrupt that reaches a session with
+                            # nothing parked is a documented silent
+                            # no-op: the agent short-circuits without
+                            # yielding anything. Emitting the synthetic
+                            # REPLY_START below in that case would leave
+                            # SSE clients with a reply that never ends,
+                            # and the old reply message would grow an
+                            # interrupt event it must not carry.
+                            if isinstance(
+                                input_msg,
+                                UserInterruptEvent,
+                            ) and not agent.state.has_awaiting_tool_calls(
+                                agent.name,
+                            ):
+                                break
+
                             continuation_reply_id = agent.state.reply_id
                             reply_msg = await self._storage.get_message(
                                 user_id,
