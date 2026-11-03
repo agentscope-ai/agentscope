@@ -157,8 +157,9 @@ class GeminiChatModel(ChatModelBase):
             default=None,
             title="Thinking",
             description="Whether to enable thinking output."
-            " When None, no ``thinking_config`` is sent and the"
-            " model's default behavior applies.",
+            " When no thinking settings are supplied, the model's"
+            " default behavior applies. For Gemini 4 Argon,"
+            " this controls summaries only, not reasoning itself.",
         )
 
         thinking_budget: int | None = Field(
@@ -166,6 +167,13 @@ class GeminiChatModel(ChatModelBase):
             title="Thinking Budget",
             description="The thinking budget in tokens.",
             gt=0,
+        )
+
+        thinking_level: Literal["low", "medium", "high"] | None = Field(
+            default=None,
+            title="Thinking Level",
+            description="The reasoning effort for Gemini 4 Argon."
+            " When unset, the model defaults to medium.",
         )
 
         temperature: float | None = Field(
@@ -237,9 +245,19 @@ class GeminiChatModel(ChatModelBase):
             context_size=context_size,
         )
         self.formatter = formatter or GeminiChatFormatter()
-        self.client_kwargs = client_kwargs or {}
+        self.client_kwargs = dict(client_kwargs or {})
 
         from google import genai
+
+        if self._is_argon(model):
+            http_options = genai.types.HttpOptions.model_validate(
+                self.client_kwargs.get("http_options") or {},
+            )
+            if http_options.timeout is None:
+                http_options = http_options.model_copy(
+                    update={"timeout": 900_000},
+                )
+            self.client_kwargs["http_options"] = http_options
 
         self.client: genai.Client = genai.Client(
             api_key=self.credential.api_key.get_secret_value(),
@@ -256,6 +274,46 @@ class GeminiChatModel(ChatModelBase):
         # set to make sure 429s are retried, at the cost of also retrying
         # rare 4xx like auth/bad-request a few times.
         return (errors.APIError,)
+
+    @staticmethod
+    def _is_argon(model_name: str) -> bool:
+        """Match the stable Argon ID, including qualified API names."""
+        return model_name.rsplit("/", 1)[-1] == "gemini-4-argon"
+
+    @staticmethod
+    def _prepare_argon_config(config: dict[str, Any]) -> None:
+        """Validate the final config and omit ignored sampling settings."""
+        from google.genai.types import ThinkingConfig
+
+        thinking = config.get("thinking_config")
+        if thinking is not None:
+            thinking = ThinkingConfig.model_validate(thinking).model_dump(
+                exclude_none=True,
+            )
+            if thinking.get("thinking_budget") is not None:
+                raise ValueError(
+                    "Gemini 4 Argon requires thinking_level instead of "
+                    "thinking_budget.",
+                )
+            level = thinking.get("thinking_level")
+            if level is not None:
+                level = level.upper()
+                if level not in ("LOW", "MEDIUM", "HIGH"):
+                    raise ValueError(
+                        "Gemini 4 Argon thinking_level must be low, "
+                        "medium, or high.",
+                    )
+                thinking["thinking_level"] = level
+            config["thinking_config"] = thinking
+
+        max_tokens = config.get("max_output_tokens")
+        if max_tokens is not None and max_tokens > 65_536:
+            raise ValueError(
+                "Gemini 4 Argon max_output_tokens must not exceed 65536; "
+                "long decode is not supported by this adapter yet.",
+            )
+        for key in ("temperature", "top_p", "top_k"):
+            config.pop(key, None)
 
     async def _call_api(
         self,
@@ -298,7 +356,23 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable is not None:
+        is_argon = self._is_argon(model_name)
+        if is_argon:
+            thinking = {}
+            if self.parameters.thinking_enable is not None:
+                thinking["include_thoughts"] = self.parameters.thinking_enable
+            if self.parameters.thinking_level is not None:
+                thinking["thinking_level"] = self.parameters.thinking_level
+            if self.parameters.thinking_budget is not None:
+                thinking["thinking_budget"] = self.parameters.thinking_budget
+            if thinking:
+                config["thinking_config"] = thinking
+        elif self.parameters.thinking_level is not None:
+            raise ValueError(
+                "The thinking_level parameter is currently supported only "
+                "for Gemini 4 Argon in this adapter.",
+            )
+        elif self.parameters.thinking_enable is not None:
             if self.parameters.thinking_enable:
                 config["thinking_config"] = {
                     "include_thoughts": True,
@@ -312,6 +386,8 @@ class GeminiChatModel(ChatModelBase):
 
         # Per-call config takes precedence over model-level defaults.
         config.update(config_kwargs)
+        if is_argon:
+            self._prepare_argon_config(config)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
