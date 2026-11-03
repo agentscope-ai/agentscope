@@ -244,17 +244,27 @@ class KnowledgeBase:
         await self.ensure_collection()
         response = await self._embedding_model(queries)
 
-        results_per_query = await asyncio.gather(
-            *(
+        tasks = [
+            asyncio.create_task(
                 self._vector_store.search(
                     collection=self._collection,
                     query_vector=vector,
                     top_k=top_k,
                     metadata_filter=self._metadata_filter,
-                )
-                for vector in response.embeddings
-            ),
-        )
+                ),
+            )
+            for vector in response.embeddings
+        ]
+        try:
+            results_per_query = await asyncio.gather(*tasks)
+        except BaseException:
+            # gather propagates a query error without stopping its siblings.
+            # Finish owned coroutine cleanup before returning to the caller.
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
         best: dict[tuple[str, int], VectorSearchResult] = {}
         for results in results_per_query:
