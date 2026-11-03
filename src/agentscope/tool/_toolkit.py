@@ -634,8 +634,14 @@ class Toolkit:
         return create_model("_DynamicModel", **fields)
 
     def clear(self) -> None:
-        """Clear the registered tools, skills and MCPs."""
-        self.tool_groups.clear()
+        """Clear the registered tools, skills and MCPs.
+
+        The reserved "basic" group is kept (empty), so the toolkit returns to
+        the state of a newly constructed one and ``add_tool`` keeps working.
+        The list is cleared in place because the built-in meta tool holds a
+        reference to it.
+        """
+        self.tool_groups[:] = [ToolGroup(name="basic")]
 
     async def add_tool(
         self,

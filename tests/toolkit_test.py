@@ -190,6 +190,44 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_clear_keeps_the_basic_group(self) -> None:
+        """Clearing resets the toolkit to its initial state, so the reserved
+        "basic" group is still there and accepts tools afterwards."""
+        toolkit = Toolkit(
+            tools=[Tool1()],
+            tool_groups=[
+                ToolGroup(
+                    name="extra",
+                    description="A group for testing.",
+                    tools=[Tool2()],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [_.name for _ in toolkit.tool_groups],
+            ["basic", "extra"],
+        )
+
+        toolkit.clear()
+
+        self.assertListEqual(
+            [_.name for _ in toolkit.tool_groups],
+            ["basic"],
+        )
+        self.assertListEqual(toolkit.tool_groups[0].tools, [])
+
+        # Adding a tool still works, and the meta tool sees the reset groups
+        await toolkit.add_tool(Tool1())
+        self.assertListEqual(
+            [_.name for _ in toolkit.tool_groups[0].tools],
+            ["tool_1"],
+        )
+        self.assertNotIn(
+            "extra",
+            # pylint: disable-next=protected-access
+            toolkit._get_meta_tool_schema().model_fields,
+        )
+
     async def test_tool(self) -> None:
         """Test executing a tool."""
         toolkit = Toolkit(tools=[Tool1(), Tool2()])
