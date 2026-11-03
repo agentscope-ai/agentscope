@@ -13,6 +13,7 @@ from pydantic import (
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..asr import ASRModelBase
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
     from ..realtime import RealtimeModelBase
@@ -95,6 +96,13 @@ class DashScopeCredential(CredentialBase):
             DashScopeRealtimeTTSModel,
             DashScopeCosyVoiceTTSModel,
         ]
+
+    @classmethod
+    def get_asr_model_classes(cls) -> list[Type["ASRModelBase"]]:
+        """Return the DashScope ASR model classes."""
+        from ..asr import DashScopeASRModel, DashScopeRealtimeASRModel
+
+        return [DashScopeASRModel, DashScopeRealtimeASRModel]
 
     @classmethod
     def get_realtime_model_classes(

@@ -20,6 +20,14 @@ from ._chat import (
     SteerChatQueueItemRequest,
     UpdateChatQueueItemRequest,
 )
+from ._asr import (
+    ListASRModelsRequest,
+    ListASRModelsResponse,
+    RealtimeASRStartRequest,
+    RealtimeASRTokenRequest,
+    RealtimeASRTokenResponse,
+    TranscriptionResponse,
+)
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
 from ._hub_mcp import InstallMCPRequest, MCPView, UpdateMCPRequest
@@ -179,6 +187,13 @@ __all__ = [
     "ReorderChatQueueRequest",
     "SteerChatQueueItemRequest",
     "UpdateChatQueueItemRequest",
+    # ASR
+    "ListASRModelsRequest",
+    "ListASRModelsResponse",
+    "RealtimeASRStartRequest",
+    "RealtimeASRTokenRequest",
+    "RealtimeASRTokenResponse",
+    "TranscriptionResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",
