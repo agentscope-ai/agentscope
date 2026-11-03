@@ -9,11 +9,14 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 
 from pydantic import BaseModel, Field
-from utils import AnyString
+from utils import AnyString, MockModel
 
+from agentscope.agent import Agent
+from agentscope.event import ToolResultStartEvent
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
     ToolCallBlock,
     DataBlock,
@@ -506,13 +509,15 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             },
         )
 
-    def test_tool_response_groups_streamed_blocks(self) -> None:
-        """Shared IDs group Base64 fragments and preserve URL attachments."""
+    async def test_tool_response_groups_streamed_blocks(self) -> None:
+        """The response and event replay preserve interleaved tool output."""
 
         class CustomDataBlock(DataBlock):
             """A tool-provided data block subclass."""
 
         text = TextBlock(id="s", text="progress")
+        before = TextBlock(id="s", text="before")
+        after = TextBlock(id="s", text="after")
         first = CustomDataBlock(
             id="s",
             source=Base64Source(data="YQ==", media_type="audio/wav"),
@@ -528,8 +533,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             )
             for url in ("https://example.org/one", "https://example.org/two")
         ]
-        blocks = [text, urls[0], first, urls[1], second]
-        expected = {
+        blocks = [text, urls[0], first, before, urls[1], second, after]
+        expected: dict[str, Any] = {
             "id": "tool",
             "state": "success",
             "metadata": {},
@@ -544,16 +549,50 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                         "media_type": "audio/wav",
                     },
                 },
+                before.model_dump(),
                 urls[1].model_dump(),
+                after.model_dump(),
             ],
         }
 
+        agent = Agent(name="agent", system_prompt="", model=MockModel())
         for chunks in ([blocks], [[block] for block in blocks]):
             with self.subTest(chunk_count=len(chunks)):
                 response = ToolResponse(id="tool")
+                message = AssistantMsg(
+                    name=agent.name,
+                    id=agent.state.reply_id,
+                    content=[],
+                )
+                message.append_event(
+                    ToolResultStartEvent(
+                        reply_id=message.id,
+                        tool_call_id=response.id,
+                        tool_call_name="stream",
+                    ),
+                )
                 for content in chunks:
                     response.append_chunk(ToolChunk(content=content))
+                    # pylint: disable-next=protected-access
+                    async for event in agent._convert_tool_chunk_to_event(
+                        response.id,
+                        content,
+                    ):
+                        message.append_event(event)
                 self.assertEqual(response.model_dump(), expected)
+                self.assertEqual(
+                    message.content[0].model_dump()["output"],
+                    [
+                        {
+                            **block,
+                            "created_at": AnyString(),
+                            "id": AnyString()
+                            if block["type"] == "text"
+                            else block["id"],
+                        }
+                        for block in expected["content"]
+                    ],
+                )
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):

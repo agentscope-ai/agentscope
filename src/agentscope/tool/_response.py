@@ -73,30 +73,24 @@ class ToolResponse(BaseModel):
         """Append a tool chunk to the current tool response, accumulate the
         data blocks and update the state and metadata."""
 
-        # URL attachments stand alone, even when they share a stream ID.
+        # Only Base64 fragments can continue an earlier block by ID.
         streams = {
-            (block.id, block.type): block
+            block.id: block
             for block in self.content
-            if block.type == "text" or block.source.type == "base64"
+            if block.type == "data" and block.source.type == "base64"
         }
         for block in chunk.content:
-            if block.type == "data" and block.source.type == "url":
+            if block.type == "text" or block.source.type == "url":
                 self.content.append(block.model_copy(deep=True))
                 continue
 
-            key = (block.id, block.type)
-            target = streams.get(key)
+            target = streams.get(block.id)
             if target is None:
                 target = block.model_copy(deep=True)
                 self.content.append(target)
-                streams[key] = target
-            elif isinstance(block, TextBlock):
-                assert isinstance(target, TextBlock)
-                target.text += block.text
+                streams[block.id] = target
             else:
-                assert isinstance(target, DataBlock)
                 assert isinstance(target.source, Base64Source)
-                assert isinstance(block.source, Base64Source)
                 target.source.data = _merge_base64_chunks(
                     target.source.data,
                     block.source.data,
