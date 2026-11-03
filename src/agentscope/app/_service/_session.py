@@ -165,11 +165,14 @@ class SessionService:
           persisted ``AgentState.context`` tail, and only applies when
           no worker owns the run.
 
-        The ``RUNNING`` check is performed **before** loading the
-        persisted context: while a worker owns the run, the live
-        in-memory state supersedes the stored snapshot, and the parked
-        derivation would be stale. This also saves a storage round-trip
-        in the hot ``RUNNING`` case.
+        The persisted record is loaded **before** the liveness check:
+        ``user_id`` / ``agent_id`` scope the lookup, and returning
+        ``RUNNING`` for a session the caller does not own would leak
+        cluster liveness (and make every locked session id look like a
+        valid one). Once ownership is established, the ``RUNNING``
+        answer still supersedes the parked derivation — while a worker
+        owns the run, the live in-memory state supersedes the stored
+        snapshot, and the parked derivation would be stale.
 
         .. note::
             The run lease auto-expires after
@@ -191,14 +194,10 @@ class SessionService:
                 The unified status, or ``None`` if the session does
                 not exist or is not owned by the user.
         """
-        # RUNNING is checked first: while a worker owns the lease, the
-        # persisted context is by definition a stale snapshot, and we
-        # save a storage round-trip.
-        if await self._bus.is_locked(
-            MessageBusKeys.session_lock(session_id),
-        ):
-            return SessionStatus.RUNNING
-
+        # Resolve the user-scoped record first: it is both the ownership
+        # check and the existence check, and it must run before the
+        # cluster-wide lock is consulted — otherwise a locked session
+        # belonging to someone else (or no one) reports RUNNING.
         session = await self._storage.get_session(
             user_id,
             agent_id,
@@ -206,6 +205,11 @@ class SessionService:
         )
         if session is None:
             return None
+
+        if await self._bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            return SessionStatus.RUNNING
 
         return self.derive_parked_status(session.state.context)
 
