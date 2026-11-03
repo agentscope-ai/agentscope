@@ -679,6 +679,28 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_exception_without_message_still_reports_cause(
+        self,
+    ) -> None:
+        """Test that an exception with an empty message (e.g. a bare
+        ``TimeoutError()``) does not reach the model as a blank error."""
+
+        def slow_tool() -> ToolChunk:
+            """A tool that times out."""
+            raise TimeoutError()
+
+        toolkit = Toolkit(tools=[FunctionTool(slow_tool)])
+        response = None
+        async for result in toolkit.call_tool(
+            ToolCallBlock(id="slow", name="slow_tool", input="{}"),
+            AgentState(),
+        ):
+            if isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(response.state, "error")
+        self.assertEqual(response.content[0].text, "TimeoutError")
+
     async def test_sync_function_returning_plain_string(self) -> None:
         """Test wrapping a sync function that returns a plain string."""
 

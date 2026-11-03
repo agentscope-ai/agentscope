@@ -363,7 +363,7 @@ class Toolkit:
                 content=[
                     TextBlock(
                         type="text",
-                        text=str(e),
+                        text=str(e) or type(e).__name__,
                     ),
                 ],
                 state=ToolResultState.ERROR,
