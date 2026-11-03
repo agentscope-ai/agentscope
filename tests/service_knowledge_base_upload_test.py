@@ -659,3 +659,85 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
                 self.assertFalse(await blob_store.exists(blob_uris[0]))
 
             client.portal.call(_exercise)
+
+    async def test_repeated_cancellation_during_delete_cleans_up_source_blob(
+        self,
+    ) -> None:
+        """A second cancellation during blob delete must not abort cleanup."""
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+
+            async def _exercise() -> None:
+                service = self._app.state.knowledge_base_service
+                storage = self._app.state.storage
+                blob_store = self._app.state.blob_store
+
+                persisting = asyncio.Event()
+                blob_uris: list[str] = []
+
+                async def pause_before_document_persists(
+                    user_id: str,
+                    record: KnowledgeDocumentRecord,
+                ) -> KnowledgeDocumentRecord:
+                    self.assertEqual(user_id, "user-1")
+                    blob_uris.append(record.data.blob_uri)
+                    persisting.set()
+                    await asyncio.Event().wait()
+
+                delete_started = asyncio.Event()
+                allow_delete = asyncio.Event()
+                delete_done = asyncio.Event()
+                real_delete = blob_store.delete
+
+                async def slow_delete(uri: str) -> None:
+                    delete_started.set()
+                    try:
+                        await allow_delete.wait()
+                        await real_delete(uri)
+                    finally:
+                        delete_done.set()
+
+                with (
+                    patch.object(
+                        storage,
+                        "upsert_knowledge_document",
+                        side_effect=pause_before_document_persists,
+                    ),
+                    patch.object(
+                        blob_store,
+                        "delete",
+                        side_effect=slow_delete,
+                    ),
+                ):
+                    task = asyncio.create_task(
+                        service.register_document(
+                            user_id="user-1",
+                            knowledge_base_id=self._kb_id,
+                            filename="cancel_repeated.txt",
+                            stream=io.BytesIO(b"cancel repeated payload"),
+                            size=23,
+                            content_type="text/plain",
+                        ),
+                    )
+                    try:
+                        await asyncio.wait_for(persisting.wait(), timeout=5.0)
+                        task.cancel()
+
+                        await asyncio.wait_for(
+                            delete_started.wait(),
+                            timeout=5.0,
+                        )
+                        task.cancel()
+
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    finally:
+                        allow_delete.set()
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+                    await asyncio.wait_for(delete_done.wait(), timeout=5.0)
+
+                self.assertEqual(len(blob_uris), 1)
+                self.assertFalse(await blob_store.exists(blob_uris[0]))
+
+            client.portal.call(_exercise)

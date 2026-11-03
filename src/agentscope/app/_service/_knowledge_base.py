@@ -893,10 +893,14 @@ class KnowledgeBaseService:
         record/vector-store state is still consistent and a future
         sweep can reclaim the disk space.  Surface only via logs.
         """
-        try:
-            await self._blob_store.delete(blob_uri)
-        except Exception:  # noqa: BLE001 — cleanup only
-            logger.exception(
-                "Failed to delete blob %s",
-                blob_uri,
-            )
+
+        async def _delete() -> None:
+            try:
+                await self._blob_store.delete(blob_uri)
+            except Exception:  # noqa: BLE001 — cleanup only
+                logger.exception(
+                    "Failed to delete blob %s",
+                    blob_uri,
+                )
+
+        await asyncio.shield(_delete())
