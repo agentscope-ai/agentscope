@@ -586,6 +586,35 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
         publish.assert_not_awaited()
 
 
+class TestScheduleDeleteAuthorization(_SchedulerOwnershipTestBase):
+    """A rejected delete must not touch the owner's live timer."""
+
+    async def test_unauthorized_delete_keeps_the_owner_timer(self) -> None:
+        """Another user's schedule id must not remove the running job."""
+        record = _make_record(user_id="owner")
+        await self.storage.upsert_schedule("owner", record)
+        async with self.manager:
+            await self.manager.reconcile()
+            self.assertListEqual(self.job_ids(), [record.id])
+            delete_tool = next(
+                tool
+                for tool in await self.manager.list_tools(
+                    user_id="intruder",
+                    agent_id="a",
+                    chat_model_config=record.data.chat_model_config,
+                )
+                if tool.name == "ScheduleDelete"
+            )
+
+            result = await delete_tool(schedule_id=record.id)
+
+            self.assertEqual(result.state, ToolResultState.ERROR)
+            self.assertIsNotNone(
+                await self.storage.get_schedule("owner", record.id),
+            )
+            self.assertListEqual(self.job_ids(), [record.id])
+
+
 class TestSchedulerFlag(TestCase):
     """``enable_scheduler`` decides whether a process owns the timers."""
 

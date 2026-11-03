@@ -114,13 +114,6 @@ class ScheduleDelete(ToolBase):
                 A chunk describing the result of the delete operation.
         """
 
-        # Remove from the in-memory scheduler (best-effort; may already be
-        # absent if the job finished naturally or the server restarted)
-        try:
-            self._scheduler.remove_job(schedule_id)
-        except JobLookupError:
-            pass
-
         # Local import to avoid a circular dependency between
         # ``_manager`` and ``_service`` at module load.
         from ...._service import SessionService  # noqa: PLC0415
@@ -146,6 +139,17 @@ class ScheduleDelete(ToolBase):
                 ],
                 state=ToolResultState.ERROR,
             )
+
+        # Remove from the in-memory scheduler only once the storage record
+        # is gone. ``delete_schedule`` reports False when the schedule
+        # belongs to another user; removing first would stop the owner's
+        # timer while leaving a record that reconciliation considers
+        # unchanged, so it would never be registered again.
+        # Best-effort: the job may already be absent after a restart.
+        try:
+            self._scheduler.remove_job(schedule_id)
+        except JobLookupError:
+            pass
 
         await self._scheduler_manager.notify_changed(schedule_id)
 
