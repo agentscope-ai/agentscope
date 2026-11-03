@@ -504,6 +504,40 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 ],
             )
 
+    async def _search_memory(self, query: str, limit: int) -> dict:
+        """Search using the installed SDK's entity and result-limit API.
+
+        Mem0 2.x moves entity IDs into filters and renames limit to top_k.
+        Keep all configured scopes together; never retry without filters.
+
+        Args:
+            query (`str`): The memory search query.
+            limit (`int`): Maximum results for this query.
+
+        Returns:
+            `dict`: The backend search response.
+        """
+        from packaging.version import Version
+
+        identifiers = {
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "run_id": self.run_id,
+        }
+        if Version(metadata.version("mem0ai")).major >= 2:
+            return await self.long_term_working_memory.search(
+                query=query,
+                filters={
+                    k: v for k, v in identifiers.items() if v is not None
+                },
+                top_k=limit,
+            )
+        return await self.long_term_working_memory.search(
+            query=query,
+            **identifiers,
+            limit=limit,
+        )
+
     async def retrieve_from_memory(
         self,
         keywords: list[str],
@@ -531,14 +565,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         try:
             results = []
             search_coroutines = [
-                self.long_term_working_memory.search(
-                    query=keyword,
-                    agent_id=self.agent_id,
-                    user_id=self.user_id,
-                    run_id=self.run_id,
-                    limit=limit,
-                )
-                for keyword in keywords
+                self._search_memory(keyword, limit) for keyword in keywords
             ]
             search_results = await asyncio.gather(*search_coroutines)
             for result in search_results:
@@ -723,14 +750,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         results = []
         search_coroutines = [
-            self.long_term_working_memory.search(
-                query=item,
-                agent_id=self.agent_id,
-                user_id=self.user_id,
-                run_id=self.run_id,
-                limit=limit,
-            )
-            for item in msg_strs
+            self._search_memory(item, limit) for item in msg_strs
         ]
         search_results = await asyncio.gather(*search_coroutines)
         for result in search_results:
