@@ -476,8 +476,12 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if before_id is None:
             await self._client.delete(key)
             return
-        # XTRIM MINID drops entries with id < before_id.
-        await self._client.xtrim(key, minid=before_id)
+        # Approximate trimming can leave entries older than the cursor.
+        await self._client.xtrim(
+            key,
+            minid=before_id,
+            approximate=False,
+        )
 
     # ------------------------------------------------------------------
     # Mode F — registry map (hash-keyed namespace)
