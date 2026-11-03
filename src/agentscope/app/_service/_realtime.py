@@ -44,6 +44,16 @@ class RealtimeService:
         self._subagent_templates = custom_subagent_templates or {}
         self._channel_clients = channel_clients
 
+    @property
+    def workspace_manager(self) -> WorkspaceManagerBase:
+        """The manager the session's cached workspace belongs to.
+
+        Exposed so a long-lived runner can lease the workspace for its
+        whole lifetime instead of relying on the cache's last-access
+        time.
+        """
+        return self._workspace_manager
+
     async def create_agent(
         self,
         *,

@@ -19,6 +19,7 @@ from ...state import AgentState
 from .._bus_ops import nudge_chat_inputs, publish_session_event
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
+from ..workspace_manager import WorkspaceManagerBase
 from ._webrtc_audio_transport import WebRTCAudioTransport
 
 _CHECKPOINT_LOCK_TTL_SECS = (
@@ -41,8 +42,10 @@ class WebRTCSession:
         agent_id: str,
         session_id: str,
         on_closed: Callable[["WebRTCSession"], None],
+        workspace_manager: WorkspaceManagerBase | None = None,
     ) -> None:
         self.peer_connection = peer_connection
+        self._workspace_manager = workspace_manager
         self.transport = transport
         self._agent_factory = agent_factory
         self.agent: RealtimeAgent | None = None
@@ -122,6 +125,23 @@ class WebRTCSession:
         return True
 
     async def _run(self) -> None:
+        """Lease the workspace, then run the locked session loop.
+
+        A voice session can outlast the workspace cache's TTL by a wide
+        margin, and the session only touches its workspace once while
+        assembling the agent, so the lease has to span the whole run.
+        """
+        if self._workspace_manager is None:
+            await self._run_locked()
+            return
+        async with self._workspace_manager.hold_session(
+            self.user_id,
+            self.agent_id,
+            self.session_id,
+        ):
+            await self._run_locked()
+
+    async def _run_locked(self) -> None:
         """Hold the session lock while forwarding events to the SSE log."""
         try:
             async with self.message_bus.acquire_lock(

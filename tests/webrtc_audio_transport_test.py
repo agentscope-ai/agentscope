@@ -791,7 +791,10 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
         self.message_bus = SimpleNamespace(
             is_locked=AsyncMock(return_value=False),
         )
-        self.realtime_service = SimpleNamespace(create_agent=AsyncMock())
+        self.realtime_service = SimpleNamespace(
+            create_agent=AsyncMock(),
+            workspace_manager=None,
+        )
         self.model = SimpleNamespace(
             input_sample_rate=16_000,
             output_sample_rate=24_000,

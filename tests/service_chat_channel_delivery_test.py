@@ -9,6 +9,7 @@ starts reading — which is the normal case, a platform call being slower
 than the agent's last event.
 """
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
@@ -157,6 +158,15 @@ class _WorkspaceManager:
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
         return SimpleNamespace(workdir="/tmp/agentscope-delivery-test")
+
+    @asynccontextmanager
+    async def hold_session(
+        self,
+        *_: object,
+        **__: object,
+    ) -> AsyncIterator[None]:
+        """Lease nothing — this workspace is never swept."""
+        yield
 
 
 class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
