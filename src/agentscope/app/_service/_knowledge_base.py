@@ -430,9 +430,14 @@ class KnowledgeBaseService:
                 record,
             )
         except (Exception, asyncio.CancelledError):
-            # Storage write failed or cancelled — drop the blob so the
-            # orphan sweeper doesn't later see a referenced-by-nobody file.
-            await self._delete_blob_quietly(blob_uri)
+            # Storage write failed or cancelled — drop the blob only if
+            # the record was not persisted, keeping it if already committed.
+            await self._cleanup_unpersisted_blob(
+                owner_id,
+                knowledge_base_id,
+                document_id,
+                blob_uri,
+            )
             raise
 
         await enqueue_index_task(
@@ -885,6 +890,51 @@ class KnowledgeBaseService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(exc),
             ) from exc
+
+    async def _cleanup_unpersisted_blob(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        blob_uri: str,
+    ) -> None:
+        """Clean up the blob only if storage persistence did not commit.
+
+        Decides from storage rather than the exception: if the document
+        record was already persisted before cancellation/failure occurred,
+        preserve the blob so background sweepers can recover the document.
+        Inside a single shielded unit, checks get_knowledge_document and
+        deletes the blob only when the record is absent (None). If the lookup
+        itself raises, keeps the blob (fail safe: leak > data loss) and logs
+        the failure.
+        """
+
+        async def _check_and_delete() -> None:
+            try:
+                persisted = await self._storage.get_knowledge_document(
+                    user_id,
+                    knowledge_base_id,
+                    document_id,
+                )
+            except Exception:  # noqa: BLE001 — fail safe: leak > data loss
+                logger.exception(
+                    "Failed to verify document %s persistence; keeping blob "
+                    "%s",
+                    document_id,
+                    blob_uri,
+                )
+                return
+
+            if persisted is None:
+                try:
+                    await self._blob_store.delete(blob_uri)
+                except Exception:  # noqa: BLE001 — cleanup only
+                    logger.exception(
+                        "Failed to delete blob %s",
+                        blob_uri,
+                    )
+
+        await asyncio.shield(_check_and_delete())
 
     async def _delete_blob_quietly(self, blob_uri: str) -> None:
         """Best-effort blob delete — swallow backend errors.

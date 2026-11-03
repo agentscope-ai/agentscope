@@ -741,3 +741,205 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
                 self.assertFalse(await blob_store.exists(blob_uris[0]))
 
             client.portal.call(_exercise)
+
+    async def test_cancellation_after_storage_upsert_preserves_source_blob(
+        self,
+    ) -> None:
+        """Cancellation after document persistence must preserve the blob."""
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+
+            async def _exercise() -> None:
+                service = self._app.state.knowledge_base_service
+                storage = self._app.state.storage
+                blob_store = self._app.state.blob_store
+
+                persisted = asyncio.Event()
+                park = asyncio.Event()
+                real_upsert = storage.upsert_knowledge_document
+                captured_records: list[KnowledgeDocumentRecord] = []
+
+                async def slow_upsert(
+                    user_id: str,
+                    record: KnowledgeDocumentRecord,
+                ) -> KnowledgeDocumentRecord:
+                    captured_records.append(record)
+                    result = await real_upsert(user_id, record)
+                    persisted.set()
+                    await park.wait()
+                    return result
+
+                with patch.object(
+                    storage,
+                    "upsert_knowledge_document",
+                    side_effect=slow_upsert,
+                ):
+                    task = asyncio.create_task(
+                        service.register_document(
+                            user_id="user-1",
+                            knowledge_base_id=self._kb_id,
+                            filename="after_upsert.txt",
+                            stream=io.BytesIO(b"after upsert payload"),
+                            size=20,
+                            content_type="text/plain",
+                        ),
+                    )
+                    try:
+                        await asyncio.wait_for(persisted.wait(), timeout=5.0)
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    finally:
+                        park.set()
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+                self.assertEqual(len(captured_records), 1)
+                record = captured_records[0]
+                stored = await storage.get_knowledge_document(
+                    "user-1",
+                    self._kb_id,
+                    record.id,
+                )
+                self.assertIsNotNone(stored)
+                self.assertTrue(await blob_store.exists(record.data.blob_uri))
+
+            client.portal.call(_exercise)
+
+    async def test_cancellation_after_redis_set_preserves_source_blob(
+        self,
+    ) -> None:
+        """Cancellation after Redis SET but before SADD keeps source blob."""
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+
+            async def _exercise() -> None:
+                service = self._app.state.knowledge_base_service
+                storage = self._app.state.storage
+                blob_store = self._app.state.blob_store
+
+                gated = asyncio.Event()
+                park = asyncio.Event()
+                real_sadd = storage._client.sadd
+                first_sadd = True
+                captured_records: list[KnowledgeDocumentRecord] = []
+                real_upsert = storage.upsert_knowledge_document
+
+                async def spy_upsert(
+                    user_id: str,
+                    record: KnowledgeDocumentRecord,
+                ) -> KnowledgeDocumentRecord:
+                    captured_records.append(record)
+                    return await real_upsert(user_id, record)
+
+                async def slow_sadd(*args: Any, **kwargs: Any) -> Any:
+                    nonlocal first_sadd
+                    if first_sadd:
+                        first_sadd = False
+                        gated.set()
+                        await park.wait()
+                    return await real_sadd(*args, **kwargs)
+
+                with (
+                    patch.object(
+                        storage,
+                        "upsert_knowledge_document",
+                        side_effect=spy_upsert,
+                    ),
+                    patch.object(
+                        storage._client,
+                        "sadd",
+                        side_effect=slow_sadd,
+                    ),
+                ):
+                    task = asyncio.create_task(
+                        service.register_document(
+                            user_id="user-1",
+                            knowledge_base_id=self._kb_id,
+                            filename="redis_set_done.txt",
+                            stream=io.BytesIO(b"redis set done payload"),
+                            size=22,
+                            content_type="text/plain",
+                        ),
+                    )
+                    try:
+                        await asyncio.wait_for(gated.wait(), timeout=5.0)
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    finally:
+                        park.set()
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+                self.assertEqual(len(captured_records), 1)
+                record = captured_records[0]
+                stored = await storage.get_knowledge_document(
+                    "user-1",
+                    self._kb_id,
+                    record.id,
+                )
+                self.assertIsNotNone(stored)
+                self.assertTrue(await blob_store.exists(record.data.blob_uri))
+
+            client.portal.call(_exercise)
+
+    async def test_cancellation_lookup_failure_preserves_source_blob(
+        self,
+    ) -> None:
+        """Storage lookup failure during cleanup must preserve the blob."""
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+
+            async def _exercise() -> None:
+                service = self._app.state.knowledge_base_service
+                storage = self._app.state.storage
+                blob_store = self._app.state.blob_store
+
+                persisting = asyncio.Event()
+                blob_uris: list[str] = []
+
+                async def pause_before_document_persists(
+                    user_id: str,
+                    record: KnowledgeDocumentRecord,
+                ) -> KnowledgeDocumentRecord:
+                    self.assertEqual(user_id, "user-1")
+                    blob_uris.append(record.data.blob_uri)
+                    persisting.set()
+                    await asyncio.Event().wait()
+
+                async def lookup_error(*args: Any, **kwargs: Any) -> Any:
+                    raise RuntimeError("database lookup failure")
+
+                with (
+                    patch.object(
+                        storage,
+                        "upsert_knowledge_document",
+                        side_effect=pause_before_document_persists,
+                    ),
+                    patch.object(
+                        storage,
+                        "get_knowledge_document",
+                        side_effect=lookup_error,
+                    ),
+                ):
+                    task = asyncio.create_task(
+                        service.register_document(
+                            user_id="user-1",
+                            knowledge_base_id=self._kb_id,
+                            filename="lookup_error.txt",
+                            stream=io.BytesIO(b"lookup error payload"),
+                            size=20,
+                            content_type="text/plain",
+                        ),
+                    )
+                    try:
+                        await asyncio.wait_for(persisting.wait(), timeout=5.0)
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    finally:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+                self.assertEqual(len(blob_uris), 1)
+                self.assertTrue(await blob_store.exists(blob_uris[0]))
+
+            client.portal.call(_exercise)
