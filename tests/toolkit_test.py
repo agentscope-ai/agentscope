@@ -18,6 +18,7 @@ from agentscope.message import (
     ToolCallBlock,
     DataBlock,
     Base64Source,
+    URLSource,
 )
 from agentscope.tool import (
     Toolkit,
@@ -451,7 +452,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
     async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
         """Base64 chunks with padding should merge as bytes, not strings."""
-        response = ToolResponse()
+        response = ToolResponse(id="tool")
         first = base64.b64encode(b"hello").decode("ascii")
         second = base64.b64encode(b"world").decode("ascii")
 
@@ -482,94 +483,77 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(len(response.content), 1)
-        merged = response.content[0]
-        self.assertIsInstance(merged, DataBlock)
         self.assertEqual(
-            base64.b64decode(merged.source.data),
-            b"helloworld",
-        )
-
-
-    def test_tool_response_groups_data_blocks_after_text_reuses_id(self) -> None:
-        """Same-id DataBlocks must still merge when a TextBlock used the id.
-
-        ``ToolChunk.content`` documents that the blocks of one multimodal
-        data share an id so the agent can group them. A tool labeling its
-        whole output stream with one id (a text status line first, then
-        binary chunks under the same id) must not break that grouping —
-        keying the accumulation map by ``id`` alone split every later
-        same-id DataBlock into its own block.
-        """
-        response = ToolResponse()
-        part1 = base64.b64encode(b"part1").decode("ascii")
-        part2 = base64.b64encode(b"part2").decode("ascii")
-
-        response.append_chunk(
-            ToolChunk(content=[TextBlock(id="s", text="progress")]),
-        )
-        response.append_chunk(
-            ToolChunk(
-                content=[
-                    DataBlock(
-                        id="s",
-                        source=Base64Source(data=part1, media_type="image/png"),
-                    ),
+            response.model_dump(),
+            {
+                "id": "tool",
+                "state": "success",
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "data",
+                        "id": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(b"helloworld").decode(),
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                 ],
-            ),
-        )
-        response.append_chunk(
-            ToolChunk(
-                content=[
-                    DataBlock(
-                        id="s",
-                        source=Base64Source(data=part2, media_type="image/png"),
-                    ),
-                ],
-            ),
+            },
         )
 
-        data_blocks = [
-            b for b in response.content if isinstance(b, DataBlock)
+    def test_tool_response_groups_streamed_blocks(self) -> None:
+        """Shared IDs group Base64 fragments and preserve URL attachments."""
+
+        class CustomDataBlock(DataBlock):
+            """A tool-provided data block subclass."""
+
+        text = TextBlock(id="s", text="progress")
+        first = CustomDataBlock(
+            id="s",
+            source=Base64Source(data="YQ==", media_type="audio/wav"),
+        )
+        second = DataBlock(
+            id="s",
+            source=Base64Source(data="Yg==", media_type="audio/wav"),
+        )
+        urls = [
+            DataBlock(
+                id="s",
+                source=URLSource(url=url, media_type="image/png"),
+            )
+            for url in ("https://example.org/one", "https://example.org/two")
         ]
-        self.assertEqual(len(data_blocks), 1)
-        self.assertEqual(
-            base64.b64decode(data_blocks[0].source.data),
-            b"part1part2",
-        )
-        texts = [b for b in response.content if isinstance(b, TextBlock)]
-        self.assertEqual(len(texts), 1)
-        self.assertEqual(texts[0].text, "progress")
+        blocks = [text, urls[0], first, urls[1], second]
+        expected = {
+            "id": "tool",
+            "state": "success",
+            "metadata": {},
+            "content": [
+                text.model_dump(),
+                urls[0].model_dump(),
+                {
+                    **first.model_dump(),
+                    "source": {
+                        "type": "base64",
+                        "data": "YWI=",
+                        "media_type": "audio/wav",
+                    },
+                },
+                urls[1].model_dump(),
+            ],
+        }
 
-    def test_tool_response_merges_same_id_data_blocks_within_one_chunk(self) -> None:
-        """Two same-id DataBlocks in one chunk also accumulate into one."""
-        response = ToolResponse()
-        part1 = base64.b64encode(b"aa").decode("ascii")
-        part2 = base64.b64encode(b"bb").decode("ascii")
-
-        response.append_chunk(
-            ToolChunk(
-                content=[
-                    DataBlock(
-                        id="img",
-                        source=Base64Source(data=part1, media_type="image/png"),
-                    ),
-                    DataBlock(
-                        id="img",
-                        source=Base64Source(data=part2, media_type="image/png"),
-                    ),
-                ],
-            ),
-        )
-
-        data_blocks = [
-            b for b in response.content if isinstance(b, DataBlock)
-        ]
-        self.assertEqual(len(data_blocks), 1)
-        self.assertEqual(
-            base64.b64decode(data_blocks[0].source.data),
-            b"aabb",
-        )
+        for chunks in ([blocks], [[block] for block in blocks]):
+            with self.subTest(chunk_count=len(chunks)):
+                response = ToolResponse(id="tool")
+                for content in chunks:
+                    response.append_chunk(ToolChunk(content=content))
+                self.assertEqual(response.model_dump(), expected)
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
