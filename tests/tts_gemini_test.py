@@ -9,10 +9,13 @@ Covers:
 """
 import base64
 import io
+import json
 import wave
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 
 from agentscope.credential import GeminiCredential
 from agentscope.tts import GeminiTTSModel, TTSResponse
@@ -24,9 +27,13 @@ _MEDIA_TYPE = "audio/wav"
 _TTS_SAMPLE_RATE = 24000
 _TTS_CHANNELS = 1
 _TTS_SAMPLE_WIDTH = 2  # bytes (= 16 bit)
+_NEW_MODELS = ("gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts")
 
 
-def _make_inline_data_part(data_bytes: bytes | None) -> MagicMock:
+def _make_inline_data_part(
+    data_bytes: bytes | None,
+    mime_type: str | None = "audio/L16;codec=pcm;rate=24000",
+) -> MagicMock:
     """Build a response part shaped like what the Gemini ``generateContent``
     API returns for ``responseModalities: ["AUDIO"]``."""
     part = MagicMock()
@@ -35,6 +42,7 @@ def _make_inline_data_part(data_bytes: bytes | None) -> MagicMock:
         return part
     part.inline_data = MagicMock()
     part.inline_data.data = base64.b64encode(data_bytes).decode("ascii")
+    part.inline_data.mime_type = mime_type
     return part
 
 
@@ -53,13 +61,16 @@ def _make_usage_metadata(
 def _make_api_response(
     chunks: list[bytes | None],
     usage: Any = None,
+    mime_type: str | None = "audio/L16;codec=pcm;rate=24000",
 ) -> MagicMock:
     """Build a response like ``client.aio.models.generate_content``
     returns."""
     response = MagicMock()
     response.usage_metadata = usage
     candidate = MagicMock()
-    candidate.content.parts = [_make_inline_data_part(c) for c in chunks]
+    candidate.content.parts = [
+        _make_inline_data_part(c, mime_type) for c in chunks
+    ]
     response.candidates = [candidate]
     return response
 
@@ -68,6 +79,17 @@ def _parse_wav_payload(wav_bytes: bytes) -> bytes:
     """Decode a full WAV file and return its raw PCM frames."""
     with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
         return wav.readframes(wav.getnframes())
+
+
+def _make_wav(pcm: bytes) -> bytes:
+    """Build a real WAV fixture so duplicate headers are observable."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(_TTS_CHANNELS)
+        wav.setsampwidth(_TTS_SAMPLE_WIDTH)
+        wav.setframerate(_TTS_SAMPLE_RATE)
+        wav.writeframes(pcm)
+    return buf.getvalue()
 
 
 class TestGeminiTTSModel(IsolatedAsyncioTestCase):
@@ -220,3 +242,143 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
             "Puck",
         )
         self.assertEqual(call_kwargs["model"], "gemini-2.5-pro-preview-tts")
+
+    def test_model_defaults_and_cards(self) -> None:
+        """Keep old defaults and expose style only on the two new cards."""
+        cards = {card.name: card for card in GeminiTTSModel.list_models()}
+        names = (
+            *_NEW_MODELS,
+            "gemini-2.5-flash-preview-tts",
+            "gemini-2.5-pro-preview-tts",
+        )
+        self.assertEqual(set(cards), set(names))
+        for name in names:
+            with self.subTest(model=name):
+                model = GeminiTTSModel(
+                    credential=GeminiCredential(api_key="test"),
+                    model=name,
+                )
+                properties = cards[name].parameter_schema["properties"]
+                self.assertEqual(
+                    (model.stream, model.realtime, set(properties)),
+                    (
+                        name in _NEW_MODELS,
+                        False,
+                        {"voice", "style"}
+                        if name in _NEW_MODELS
+                        else {"voice"},
+                    ),
+                )
+                self.assertEqual(
+                    properties["voice"]["enum"],
+                    cards[names[-1]].parameter_schema["properties"]["voice"][
+                        "enum"
+                    ],
+                )
+
+
+class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
+    """Verify request serialization and audio parsing through the real SDK."""
+
+    async def test_new_models_through_real_sdk(self) -> None:
+        """Cover both models, unary WAV, and incremental PCM with usage."""
+        for name in _NEW_MODELS:
+            for streaming in (False, True):
+                with self.subTest(model=name, streaming=streaming):
+                    await self._check_sdk_roundtrip(name, streaming)
+
+    async def _check_sdk_roundtrip(self, name: str, streaming: bool) -> None:
+        """Keep each transport capture isolated from the parameter loop."""
+        text, style = "你好 <sigh>", "warm and friendly"
+        pcm = b"AAAA" + b"BBBB"
+        wav_bytes = _make_wav(pcm)
+        part = {"text": text, "speechMetadata": {"style": style}}
+        expected_body = {
+            "contents": [{"role": "user", "parts": [part]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voice_config": {"voice": "Kore"}},
+            },
+        }
+        operation = "streamGenerateContent" if streaming else "generateContent"
+        mime_type = "audio/L16;rate=24000" if streaming else "audio/wav"
+
+        def audio_event(data: bytes) -> dict:
+            """Build an audio response in the provider's wire format."""
+            blob = {
+                "mimeType": mime_type,
+                "data": base64.b64encode(data).decode("ascii"),
+            }
+            content = {"parts": [{"inlineData": blob}]}
+            return {"candidates": [{"content": content}]}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """Check the entire request before returning unary or SSE audio."""
+            self.assertEqual(
+                (request.url.path, json.loads(request.content)),
+                (f"/v1beta/models/{name}:{operation}", expected_body),
+            )
+            usage = {
+                "usageMetadata": {
+                    "promptTokenCount": 5,
+                    "candidatesTokenCount": 10,
+                },
+            }
+            if streaming:
+                events = (audio_event(pcm[:4]), audio_event(pcm[4:]), usage)
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    text="".join(f"data: {json.dumps(e)}\n\n" for e in events),
+                )
+            return httpx.Response(
+                200,
+                json={**audio_event(wav_bytes), **usage},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+        ) as http_client:
+            model = GeminiTTSModel(
+                credential=GeminiCredential(api_key="test"),
+                model=name,
+                parameters=GeminiTTSModel.Parameters(
+                    voice="Kore",
+                    style=style,
+                ),
+                stream=streaming,
+                client_kwargs={
+                    "http_options": {
+                        "httpx_async_client": http_client,
+                    },
+                },
+            )
+            result = await model.synthesize(text)
+            responses = (
+                [chunk async for chunk in result] if streaming else [result]
+            )
+        payloads = [base64.b64decode(r.content.source.data) for r in responses]
+        self.assertEqual(_parse_wav_payload(b"".join(payloads)), pcm)
+        self.assertEqual(
+            [(r.content.source.media_type, r.is_last) for r in responses],
+            [("audio/wav", False), ("audio/wav", True)]
+            if streaming
+            else [("audio/wav", True)],
+        )
+        self.assertEqual(
+            [r.usage for r in responses[:-1]],
+            [None] if streaming else [],
+        )
+        usage = responses[-1].usage
+        self.assertEqual(
+            dict(usage),
+            {
+                "type": "tts",
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "time": usage.time,
+            },
+        )
+        self.assertEqual(payloads[1:], [pcm[4:]] if streaming else [])
+        if not streaming:
+            self.assertEqual(payloads, [wav_bytes])
