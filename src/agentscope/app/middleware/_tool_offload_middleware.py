@@ -240,9 +240,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             """Wait for the offloaded tool to finish, then push its
             result to the session inbox + enqueue a wakeup.
 
-            On cancellation (e.g. ``ToolStop``) or unhandled exception
-            no result is delivered — the agent is left without a
-            completion notification in those edge cases.
+            On cancellation (e.g. ``ToolStop``) no result is delivered —
+            the agent is left without a completion notification in that
+            edge case. A tool that raised is reported as a failure, so
+            the agent does not mistake it for a successful run.
             """
             try:
                 await drain_task
@@ -265,14 +266,20 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 return
 
             remaining_items: list = []
+            failure: BaseException | None = None
             while not queue.empty():
                 try:
                     item = queue.get_nowait()
-                    if isinstance(item, ToolResponse):
-                        remaining_items.append(item)
-                        break
                 except asyncio.QueueEmpty:
                     break
+                if isinstance(item, ToolResponse):
+                    remaining_items.append(item)
+                    break
+                # ``_drain_to_queue`` turns a tool exception into a queue
+                # item instead of raising, so the drain task finishes
+                # normally. Keep the exception to report the failure.
+                if isinstance(item, BaseException):
+                    failure = item
 
             all_items = snapshot + remaining_items
             response: ToolResponse | None = next(
@@ -290,7 +297,29 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 ensure_ascii=False,
             )
 
-            if response is None or len(response.content) == 0:
+            # The toolkit turns a tool exception into an ERROR-state
+            # response rather than letting it propagate, so the response's
+            # state — not the presence of an exception — decides whether the
+            # notification reports success.
+            failed = failure is not None or (
+                response is not None
+                and response.state
+                in (ToolResultState.ERROR, ToolResultState.DENIED)
+            )
+
+            if failure is not None:
+                hint = HintBlock(
+                    hint=(
+                        f"<system-notification>"
+                        f"Tool '{tool_name}' running in background "
+                        f"(id={tool_call_id}) failed: "
+                        f"{type(failure).__name__}: {failure}"
+                        f"</system-notification>"
+                    ),
+                    source=hint_source,
+                )
+
+            elif response is None or len(response.content) == 0:
                 hint = HintBlock(
                     hint=(
                         f"<system-notification>"
@@ -311,7 +340,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 prefix = (
                     f"<system-notification>"
                     f"Tool '{tool_name}' running in background "
-                    f"(id={tool_call_id}) has completed.\n\n"
+                    f"(id={tool_call_id}) has "
+                    f"{'failed' if failed else 'completed'}.\n\n"
                     f"Result:\n\n"
                 )
 
@@ -340,9 +370,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             # reasoning step, and WakeupDispatcher kicks an idle session
             # on whichever process picks up the wakeup.
             logger.info(
-                "Background tool '%s' completed, pushing result to inbox "
+                "Background tool '%s' %s, pushing result to inbox "
                 "and enqueueing wakeup: session_id=%s",
                 tool_name,
+                "failed" if failed else "completed",
                 session_id,
             )
             await deliver_to_inbox(

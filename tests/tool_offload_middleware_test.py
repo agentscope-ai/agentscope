@@ -86,6 +86,65 @@ class SlowTool(ToolBase):
         )
 
 
+class _RaisingSlowToolParams(BaseModel):
+    """Parameters for the failing slow test tool."""
+
+    delay: float
+
+
+class RaisingSlowTool(ToolBase):
+    """A slow tool that raises after ``delay`` seconds."""
+
+    name: str = "raising_slow_tool"
+    description: str = "A slow tool that fails, for offload error tests."
+    input_schema: dict = _RaisingSlowToolParams.model_json_schema()
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_state_injected: bool = False
+    is_external_tool: bool = False
+    is_mcp: bool = False
+    mcp_name: str | None = None
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input parameters.
+            context (`PermissionContext`):
+                The permission context.
+
+        Returns:
+            `PermissionDecision`:
+                Always ALLOW.
+        """
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed",
+        )
+
+    async def __call__(  # type: ignore[override]
+        self,
+        delay: float,
+    ) -> ToolChunk:
+        """Sleep for *delay* seconds then raise.
+
+        Args:
+            delay (`float`):
+                Seconds to sleep.
+
+        Raises:
+            `ValueError`:
+                Always, after the delay.
+        """
+        await asyncio.sleep(delay)
+        raise ValueError("background tool exploded")
+
+
 class _FastToolParams(BaseModel):
     """Parameters for the fast test tool."""
 
@@ -334,6 +393,41 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         hint_text = hint_dict["hint"][0]["text"]
         self.assertIn("SlowTool finished", hint_text)
         self.assertIn("<system-notification>", hint_text)
+
+    async def test_background_tool_failure_is_reported_as_failure(
+        self,
+    ) -> None:
+        """A background tool that raises is announced as a failure, not as
+        a successful run with no output."""
+
+        toolkit = Toolkit(tools=[RaisingSlowTool()])
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+
+        tool_call = ToolCallBlock(
+            id="call_bg_fail",
+            name="raising_slow_tool",
+            input=json.dumps({"delay": 0.1}),
+        )
+
+        # Trigger offload
+        # pylint: disable=protected-access
+        async for _ in agent._acting(tool_call):
+            pass
+
+        # Wait long enough for the background tool (0.1s) to raise
+        await asyncio.sleep(0.3)
+
+        mock_bus = middleware._message_bus
+        inbox_calls = [
+            c
+            for c in mock_bus.queue_push.call_args_list
+            if c.args[0] == MessageBusKeys.inbox(agent.state.session_id)
+        ]
+        self.assertEqual(len(inbox_calls), 1)
+        hint_text = inbox_calls[0].args[1]["hint"][0]["text"]
+        self.assertIn("has failed", hint_text)
+        self.assertIn("background tool exploded", hint_text)
+        self.assertNotIn("has completed", hint_text)
 
     async def test_background_task_triggers_wakeup_on_completion(
         self,
