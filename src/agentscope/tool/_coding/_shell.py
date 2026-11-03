@@ -18,6 +18,9 @@ async def execute_shell_command(
     error within <returncode></returncode>, <stdout></stdout> and
     <stderr></stderr> tags.
 
+    The output pipes are drained while the command runs. If the command times
+    out, buffered output is retained and a timeout message is added to stderr.
+
     Args:
         command (`str`):
             The shell command to execute.
@@ -37,9 +40,14 @@ async def execute_shell_command(
         bufsize=0,
     )
 
+    # Keep a single reader alive across timeout handling so bytes already
+    # consumed from the pipes are not lost when the deadline expires.
+    communication = asyncio.create_task(proc.communicate())
     try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await asyncio.wait_for(
+            asyncio.shield(communication),
+            timeout=timeout,
+        )
         stdout_str = stdout.decode("utf-8")
         stderr_str = stderr.decode("utf-8")
         returncode = proc.returncode
@@ -52,16 +60,25 @@ async def execute_shell_command(
         returncode = -1
         try:
             proc.terminate()
-            stdout, stderr = await proc.communicate()
-            stdout_str = stdout.decode("utf-8")
-            stderr_str = stderr.decode("utf-8")
-            if stderr_str:
-                stderr_str += f"\n{stderr_suffix}"
-            else:
-                stderr_str = stderr_suffix
         except ProcessLookupError:
-            stdout_str = ""
+            # The process may have exited just before termination; its pipe
+            # reader still owns any output collected before the timeout.
+            pass
+        stdout, stderr = await communication
+        stdout_str = stdout.decode("utf-8")
+        stderr_str = stderr.decode("utf-8")
+        if stderr_str:
+            stderr_str += f"\n{stderr_suffix}"
+        else:
             stderr_str = stderr_suffix
+
+    except asyncio.CancelledError:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+        await communication
+        raise
 
     return ToolResponse(
         content=[
