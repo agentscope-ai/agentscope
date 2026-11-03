@@ -549,7 +549,11 @@ class IndexWorker:
           "lost-lease" signal, cancelling the pipeline before it
           double-writes the vector store.
 
-        Anything other than ``ok=False`` keeps the loop alive.
+        Anything other than ``ok=False`` keeps the loop alive — a
+        transient renewal failure (storage blip, network error) is
+        logged and retried on the next tick, because returning here
+        would be read as a lost lease and abort an otherwise healthy
+        pipeline.
         """
         interval_seconds = self._renew_interval.total_seconds()
         while True:
@@ -557,13 +561,20 @@ class IndexWorker:
                 await asyncio.sleep(interval_seconds)
             except asyncio.CancelledError:
                 return
-            ok = await self._storage.renew_knowledge_document_lease(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                document_id=document_id,
-                processing_node=self._node_id,
-                lease_ttl=self._lease_ttl,
-            )
+            try:
+                ok = await self._storage.renew_knowledge_document_lease(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    document_id=document_id,
+                    processing_node=self._node_id,
+                    lease_ttl=self._lease_ttl,
+                )
+            except Exception:  # noqa: BLE001 — heartbeat must not die
+                logger.exception(
+                    "Failed to renew lease on %s; retrying next tick.",
+                    document_id,
+                )
+                continue
             if not ok:
                 logger.warning(
                     "Lost lease on %s while processing.",
