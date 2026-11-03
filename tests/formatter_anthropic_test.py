@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 """The Anthropic formatter unittests."""
+import copy
+import tempfile
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from agentscope.agent import ReActAgent
 from agentscope.formatter import (
     AnthropicMultiAgentFormatter,
     AnthropicChatFormatter,
 )
+from agentscope.memory import InMemoryMemory
 from agentscope.message import (
     Msg,
     ToolUseBlock,
@@ -14,6 +19,9 @@ from agentscope.message import (
     ImageBlock,
     URLSource,
 )
+from agentscope.model import ChatModelBase, ChatResponse
+from agentscope.session import JSONSession
+from agentscope.tool import Toolkit
 
 
 class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
@@ -675,3 +683,239 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
             img_items[0]["source"]["data"],
             "ZmFrZSBpbWFnZSBjb250ZW50",
         )
+
+
+class ReplayModel(ChatModelBase):
+    """Record replay requests without calling a provider API."""
+
+    def __init__(self) -> None:
+        """Initialize a deterministic model and request recorder."""
+        super().__init__("offline-replay", stream=False)
+        self.requests: list[list[dict]] = []
+
+    async def __call__(
+        self,
+        messages: list[dict],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Record the full request and return a fixed response."""
+        self.requests.append(copy.deepcopy(messages))
+        return ChatResponse(content=[TextBlock(type="text", text="recovered")])
+
+
+class FormatterReplayTest(IsolatedAsyncioTestCase):
+    """Keep saved history while omitting empty request text."""
+
+    def agent(self, model: ReplayModel) -> ReActAgent:
+        """Construct a real Agent without external tools or providers."""
+        agent = ReActAgent(
+            name="Friday",
+            sys_prompt="Continue the saved task.",
+            model=model,
+            formatter=AnthropicChatFormatter(),
+            memory=InMemoryMemory(),
+            toolkit=Toolkit(),
+        )
+        agent.set_console_output_enabled(False)
+        return agent
+
+    async def test_saved_interrupted_turn_can_be_replayed_twice(self) -> None:
+        """Preserve full history and requests across JSON round trips."""
+        for empty in ("", [], [TextBlock(type="text", text="")]):
+            with self.subTest(content=empty):
+                with tempfile.TemporaryDirectory() as directory:
+                    session = JSONSession(save_dir=directory)
+                    first = self.agent(ReplayModel())
+                    original = Msg("user", "remember the task", "user")
+                    interrupted = Msg("Friday", empty, "assistant")
+                    await first.memory.add([original, interrupted])
+                    expected_history = copy.deepcopy(
+                        [original.to_dict(), interrupted.to_dict()],
+                    )
+                    expected_request = [
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Continue the saved task.",
+                                },
+                            ],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "remember the task"},
+                            ],
+                        },
+                    ]
+                    await session.save_session_state("task", agent=first)
+                    for _ in range(2):
+                        model = ReplayModel()
+                        restored = self.agent(model)
+                        await session.load_session_state(
+                            "task",
+                            agent=restored,
+                        )
+                        saved = await restored.memory.get_memory()
+                        self.assertEqual(
+                            [msg.to_dict() for msg in saved],
+                            expected_history,
+                        )
+                        query = Msg("user", "continue", "user")
+                        expected_query = copy.deepcopy(query.to_dict())
+                        expected_request.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "continue"},
+                                ],
+                            },
+                        )
+                        reply = await restored(query)
+                        self.assertEqual(model.requests, [expected_request])
+                        self.assertEqual(
+                            reply.to_dict(),
+                            {
+                                "id": reply.id,
+                                "name": "Friday",
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "text", "text": "recovered"},
+                                ],
+                                "metadata": None,
+                                "timestamp": reply.timestamp,
+                            },
+                        )
+                        expected_history.extend(
+                            [expected_query, copy.deepcopy(reply.to_dict())],
+                        )
+                        # Memory stores the reply before metadata is updated.
+                        expected_history[-1]["metadata"] = {}
+                        saved = await restored.memory.get_memory()
+                        self.assertEqual(
+                            [msg.to_dict() for msg in saved],
+                            expected_history,
+                        )
+                        expected_request.append(
+                            {
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "text", "text": "recovered"},
+                                ],
+                            },
+                        )
+                        await session.save_session_state(
+                            "task",
+                            agent=restored,
+                        )
+
+    async def test_empty_text_does_not_remove_tool_protocol(self) -> None:
+        """Preserve the full tool protocol and source messages."""
+        messages = [
+            Msg("user", "check", "user"),
+            Msg(
+                "Friday",
+                [
+                    TextBlock(type="text", text=""),
+                    ToolUseBlock(
+                        type="tool_use",
+                        id="call-1",
+                        name="check",
+                        input={"value": 2},
+                    ),
+                ],
+                "assistant",
+            ),
+            Msg(
+                "tool",
+                [
+                    ToolResultBlock(
+                        type="tool_result",
+                        id="call-1",
+                        name="check",
+                        output=None,
+                    ),
+                ],
+                "system",
+            ),
+        ]
+        before = copy.deepcopy([msg.to_dict() for msg in messages])
+        formatted = await AnthropicChatFormatter().format(messages)
+        self.assertEqual(
+            formatted,
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "check"}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call-1",
+                            "name": "check",
+                            "input": {"value": 2},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call-1",
+                            "content": [{"type": "text", "text": ""}],
+                        },
+                    ],
+                },
+            ],
+        )
+        self.assertEqual([msg.to_dict() for msg in messages], before)
+
+    async def test_empty_text_preserves_other_context(self) -> None:
+        """Keep the summary, meaningful text and trailing user request."""
+        text = "  partial answer\n"
+        for empty in ("", [], [TextBlock(type="text", text="")]):
+            with self.subTest(content=empty):
+                messages = [
+                    Msg("system", "keep this summary", "system"),
+                    Msg("user", "question", "user"),
+                    Msg("Friday", empty, "assistant"),
+                    Msg(
+                        "Friday",
+                        [
+                            TextBlock(type="text", text=""),
+                            TextBlock(type="text", text=text),
+                        ],
+                        "assistant",
+                    ),
+                    Msg("user", "next task", "user"),
+                ]
+                before = copy.deepcopy([msg.to_dict() for msg in messages])
+                formatted = await AnthropicChatFormatter().format(messages)
+                self.assertEqual(
+                    formatted,
+                    [
+                        {
+                            "role": "system",
+                            "content": [
+                                {"type": "text", "text": "keep this summary"},
+                            ],
+                        },
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "question"}],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": text}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "next task"}],
+                        },
+                    ],
+                )
+                self.assertEqual([msg.to_dict() for msg in messages], before)
