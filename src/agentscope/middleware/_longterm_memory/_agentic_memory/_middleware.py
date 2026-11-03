@@ -433,8 +433,10 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             default=256,
             title="Retrieval Max Tokens per Frontmatter",
             description=(
-                "The maximum number of tokens to read from the beginning of "
-                "each Markdown file when parsing frontmatter."
+                "The maximum estimated tokens of type and description per "
+                "memory file included in relevance selection. Complete "
+                "frontmatter is parsed before truncation, retaining type "
+                "before description within the shared budget."
             ),
         )
 
@@ -894,31 +896,36 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             for fm in cls._FIELD_RE.finditer(m.group("body"))
         }
 
-    @staticmethod
-    def _frontmatter_snippet(raw: bytes, max_frontmatter_bytes: int) -> str:
+    @classmethod
+    def _frontmatter_snippet(
+        cls,
+        raw: bytes,
+        max_frontmatter_bytes: int,
+    ) -> str:
         """Return the leading bytes to inspect for frontmatter.
 
         Args:
             raw (`bytes`):
                 The full file content.
             max_frontmatter_bytes (`int`):
-                The byte cap for the parsing prefix.
+                The initial byte cap for the parsing prefix.
 
         Returns:
             `str`:
                 The decoded prefix to parse. When the frontmatter block is
                 longer than the cap, the window extends to the closing
-                fence (bounded by the file length) so its fields survive —
-                the fence sits near the top of the file by definition, so
-                the extension is bounded. Files without a closing fence
-                keep the capped prefix.
+                fence so its fields survive. Files without a complete
+                leading frontmatter block keep the capped prefix. The
+                metadata budget is applied separately after parsing.
         """
         snippet_end = min(len(raw), max_frontmatter_bytes)
-        closing = raw.find(b"\n---", 1)
-        if closing != -1:
-            newline = raw.find(b"\n", closing + 1)
-            fence_end = len(raw) if newline == -1 else newline + 1
-            snippet_end = max(snippet_end, min(len(raw), fence_end))
+        match = re.match(
+            cls._FRONTMATTER_RE.pattern.encode("ascii"),
+            raw,
+            re.DOTALL,
+        )
+        if match:
+            snippet_end = max(snippet_end, match.end())
         return raw[:snippet_end].decode("utf-8", errors="replace")
 
     async def _list_md_files(self) -> list[_MemoryFileHeader]:
@@ -960,7 +967,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
 
             try:
                 raw = await self._backend.read_file(full_path)
-                # Only parse the leading bytes to keep this cheap.
+                # Recover complete fields before limiting manifest metadata.
                 max_frontmatter_bytes = _estimate_bytes(
                     self._parameters.retrieval_max_tokens_per_frontmatter,
                 )
@@ -969,6 +976,14 @@ class AgenticMemoryMiddleware(MiddlewareBase):
                     max_frontmatter_bytes,
                 )
                 fields = self._parse_frontmatter_fields(snippet)
+                remaining_bytes = max(0, max_frontmatter_bytes)
+                for key in ("type", "description"):
+                    fields[key] = (
+                        fields.get(key, "")
+                        .encode("utf-8")[:remaining_bytes]
+                        .decode("utf-8", errors="ignore")
+                    )
+                    remaining_bytes -= len(fields[key].encode("utf-8"))
                 mtime = await self._backend.stat_mtime(full_path)
                 headers.append(
                     _MemoryFileHeader(
