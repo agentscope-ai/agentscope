@@ -137,25 +137,25 @@ class DashScopeRealtimeASRModel(ASRModelBase):
                 "X-DashScope-DataInspection": "disable",
             },
         )
-        websocket = self._websocket
-        self._reader = asyncio.create_task(
-            self._read_events(websocket),
-            name="dashscope-asr",
-        )
-        await self._send_json(self._run_task_event())
         try:
-            await asyncio.wait_for(
-                self._started.wait(),
-                timeout=_CONNECT_TIMEOUT_SECONDS,
+            websocket = self._websocket
+            self._reader = asyncio.create_task(
+                self._read_events(websocket),
+                name="dashscope-asr",
             )
-        except asyncio.TimeoutError as error:
-            await self.close()
-            raise RuntimeError(
-                "Timed out waiting for DashScope ASR task startup.",
-            ) from error
-        try:
+            await self._send_json(self._run_task_event())
+            try:
+                await asyncio.wait_for(
+                    self._started.wait(),
+                    timeout=_CONNECT_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError as error:
+                raise RuntimeError(
+                    "Timed out waiting for DashScope ASR task startup.",
+                ) from error
             self._raise_provider_error()
-        except Exception:
+        except BaseException:
+            # Context entry can fail or be cancelled before __aexit__ runs.
             await self.close()
             raise
 

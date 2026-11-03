@@ -429,6 +429,150 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
 
         socket.close.assert_awaited_once()
 
+    async def test_cleans_up_when_initial_send_fails(self) -> None:
+        """Failed context entry releases resources and preserves the error."""
+        # pylint: disable=protected-access
+        # Each callback completes before the next subtest starts.
+        # pylint: disable=cell-var-from-loop
+        for error in (OSError("send failed"), TimeoutError("send timed out")):
+            with self.subTest(error=type(error).__name__):
+                socket = _FakeDashScopeWebSocket()
+                model = DashScopeRealtimeASRModel(
+                    credential=DashScopeCredential(api_key="test-key"),
+                )
+                reader = None
+
+                async def fail_send(_: str) -> None:
+                    """Capture the background task before failing the send."""
+                    nonlocal reader
+                    reader = model._reader
+                    raise error
+
+                self.addAsyncCleanup(model.close)
+                with (
+                    patch(
+                        "websockets.asyncio.client.connect",
+                        new=AsyncMock(return_value=socket),
+                    ),
+                    patch.object(socket, "send", side_effect=fail_send),
+                ):
+                    with self.assertRaises(type(error)) as raised:
+                        async with model:
+                            self.fail("Context entry must fail")
+
+                self.assertIs(raised.exception, error)
+                self.assertEqual(
+                    {
+                        "websocket": model._websocket,
+                        "reader": model._reader,
+                        "reader_done": reader.done(),
+                        "close_calls": socket.close.await_count,
+                    },
+                    {
+                        "websocket": None,
+                        "reader": None,
+                        "reader_done": True,
+                        "close_calls": 1,
+                    },
+                )
+
+    async def test_cleans_up_when_initialization_is_cancelled(self) -> None:
+        """Cancellation during sending or startup still releases resources."""
+        # pylint: disable=protected-access
+        # Each callback completes before the next subtest starts.
+        # pylint: disable=cell-var-from-loop
+        for phase in ("send", "startup"):
+            with self.subTest(phase=phase):
+                socket = _FakeDashScopeWebSocket()
+                model = DashScopeRealtimeASRModel(
+                    credential=DashScopeCredential(api_key="test-key"),
+                )
+                reached = asyncio.Event()
+                pending = asyncio.Event()
+
+                async def send_without_response(_: str) -> None:
+                    """Keep the provider silent until initialization ends."""
+                    if phase == "send":
+                        reached.set()
+                        await pending.wait()
+
+                async def wait_for_startup() -> None:
+                    """Signal that connection setup is waiting for startup."""
+                    reached.set()
+                    await pending.wait()
+
+                self.addAsyncCleanup(model.close)
+                with (
+                    patch(
+                        "websockets.asyncio.client.connect",
+                        new=AsyncMock(return_value=socket),
+                    ),
+                    patch.object(
+                        socket,
+                        "send",
+                        side_effect=send_without_response,
+                    ),
+                    patch.object(
+                        model._started,
+                        "wait",
+                        side_effect=wait_for_startup,
+                    ),
+                ):
+                    entering = asyncio.create_task(model.connect())
+                    try:
+                        await asyncio.wait_for(reached.wait(), timeout=5)
+                        reader = model._reader
+                        entering.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await entering
+                    finally:
+                        entering.cancel()
+                        await asyncio.gather(entering, return_exceptions=True)
+
+                self.assertEqual(
+                    {
+                        "websocket": model._websocket,
+                        "reader": model._reader,
+                        "reader_done": reader.done(),
+                        "close_calls": socket.close.await_count,
+                        "cancelled": entering.cancelled(),
+                    },
+                    {
+                        "websocket": None,
+                        "reader": None,
+                        "reader_done": True,
+                        "close_calls": 1,
+                        "cancelled": True,
+                    },
+                )
+
+    async def test_cleans_up_when_startup_times_out(self) -> None:
+        """Keep the startup timeout message while closing the connection."""
+        socket = _FakeDashScopeWebSocket()
+        model = DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(api_key="test-key"),
+        )
+        self.addAsyncCleanup(model.close)
+        with (
+            patch(
+                "websockets.asyncio.client.connect",
+                new=AsyncMock(return_value=socket),
+            ),
+            patch.object(socket, "send", new=AsyncMock()),
+            patch(
+                "agentscope.asr._dashscope._realtime_model."
+                "_CONNECT_TIMEOUT_SECONDS",
+                0,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Timed out waiting for DashScope ASR task startup",
+            ):
+                await model.connect()
+
+        socket.close.assert_awaited_once()
+
     async def test_push_after_close_reports_not_connected(self) -> None:
         """Prefer the local connection state after an intentional close."""
         socket = _FakeDashScopeWebSocket()
