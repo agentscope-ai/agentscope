@@ -196,6 +196,10 @@ class SOPStep(SOPStepBase):
     One call is one attempt — work, then judgement. Parking in either
     half ends the call; the next one picks up where it stopped, told
     apart by whether anything was handed over yet.
+
+    An interrupted reply abandons the attempt without filing a refusal.
+    The step returns to PENDING and the engine waits for an explicit new
+    request instead of retrying automatically.
     """
 
     def __init__(
@@ -251,6 +255,7 @@ class SOPStep(SOPStepBase):
             return
 
         state.phase = SOPPhase.RUNNING
+        interrupted = False
 
         if state.submission is None:
             handover = None
@@ -266,6 +271,12 @@ class SOPStep(SOPStepBase):
                     # would put a second copy of the reply on screen.
                     handover = (event.structured_output or {}).get("handover")
                     continue
+                if (
+                    isinstance(event, Msg)
+                    and event.finished_reason
+                    == ReplyFinishedReason.INTERRUPTED
+                ):
+                    interrupted = True
                 yield event
                 if isinstance(
                     event,
@@ -273,6 +284,12 @@ class SOPStep(SOPStepBase):
                 ):
                     state.phase = SOPPhase.AWAITING
                     return
+
+            if interrupted:
+                # Agent may consume cancellation and report it as a final Msg.
+                # Drain its stream, but do not charge or retry this attempt.
+                state.phase = SOPPhase.PENDING
+                return
 
             if handover is None:
                 # Structured output makes this unlikely, but a model can
@@ -305,6 +322,11 @@ class SOPStep(SOPStepBase):
                 # its message carries no content to show.
                 verdict = event.structured_output
                 continue
+            if (
+                isinstance(event, Msg)
+                and event.finished_reason == ReplyFinishedReason.INTERRUPTED
+            ):
+                interrupted = True
             yield event
             if isinstance(
                 event,
@@ -312,6 +334,11 @@ class SOPStep(SOPStepBase):
             ):
                 state.phase = SOPPhase.AWAITING
                 return
+
+        if interrupted:
+            state.submission = None
+            state.phase = SOPPhase.PENDING
+            return
 
         if verdict is None:
             self.record(
