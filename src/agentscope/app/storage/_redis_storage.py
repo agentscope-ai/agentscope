@@ -1334,7 +1334,22 @@ class RedisStorage(StorageBase):
         record: ChannelRecord,
         platform_bot_id: str,
     ) -> str:
-        """Persist a channel record and refresh its indexes."""
+        """Persist a channel record and refresh its indexes.
+
+        The bot id is globally unique — one bot drives at most one
+        channel — so writing a bot id another channel already holds
+        raises instead of moving the index to the new record.
+
+        The check and every write happen in one ``WATCH``-guarded
+        transaction. A read followed by a write would let two creates
+        racing for one bot both see an empty index and both write; the
+        SQL backend leaves that window to its UNIQUE column, and Redis
+        has no column behind it.
+
+        Raises:
+            `ValueError`:
+                If another channel already drives this bot.
+        """
         key = self._key(self.key_config.channel, channel_id=record.id)
         index_key = self._key(
             self.key_config.channel_index,
@@ -1344,11 +1359,50 @@ class RedisStorage(StorageBase):
             self.key_config.channel_botid_index,
             platform_bot_id=platform_bot_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
-        await self._client.sadd(self.key_config.channel_all_index, record.id)
-        await self._set_with_ttl(botid_key, record.id)
-        return record.id
+        async with self._client.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    await pipe.watch(botid_key)
+                    holder = await pipe.get(botid_key)
+                    if isinstance(holder, bytes):
+                        holder = holder.decode("utf-8")
+                    stale = holder is not None and holder != record.id
+                    if stale:
+                        holder_key = self._key(
+                            self.key_config.channel,
+                            channel_id=holder,
+                        )
+                        if await self._client.exists(holder_key):
+                            await pipe.unwatch()
+                            raise ValueError(
+                                f"Bot {platform_bot_id!r} already drives "
+                                f"channel {holder!r}.",
+                            )
+                        # The index outlived the record it pointed at
+                        # (expired key or a record removed without its bot
+                        # id); drop it in the same transaction.
+                    pipe.multi()
+                    if stale:
+                        pipe.delete(botid_key)
+                    pipe.set(key, record.model_dump_json())
+                    pipe.sadd(index_key, record.id)
+                    pipe.sadd(
+                        self.key_config.channel_all_index,
+                        record.id,
+                    )
+                    pipe.set(botid_key, record.id)
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                        pipe.expire(botid_key, self.key_ttl)
+                    await pipe.execute()
+                    return record.id
+                except _watch_error():
+                    # Another writer touched the bot id between WATCH and
+                    # EXEC; re-read it and decide again.
+                    continue
+        raise ValueError(
+            f"Bot {platform_bot_id!r} is being claimed concurrently.",
+        )
 
     async def get_channel(
         self,

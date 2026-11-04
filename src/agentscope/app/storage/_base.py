@@ -640,6 +640,10 @@ class StorageBase(ABC):
 
         Returns:
             `str`: The id of the stored record.
+
+        Raises:
+            `ValueError`:
+                If another channel already drives this platform bot.
         """
         raise NotImplementedError(
             "This storage backend has no channel support.",
