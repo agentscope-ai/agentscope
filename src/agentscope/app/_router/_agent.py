@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 
 from ...agent import ContextConfig, ReActConfig
+from ...agent._config import _validate_context_config_ratios
 from ..._utils._common import _flatten_json_schema
 from ..access import ResourceKind
 from ..deps import (
@@ -194,17 +195,25 @@ async def create_agent(
     Raises:
         `HTTPException`: 422 if the request body passes
             :class:`CreateAgentRequest` validation but the resulting
-            :class:`AgentData` fails its cross-field invariants (e.g.
-            ``chat_config.invite_config.invitable=True`` without a
-            non-empty ``invite_description``). Symmetrical with
-            :func:`update_agent`.
+            :class:`AgentData` fails its cross-field invariants or its
+            context ratios are invalid for the default Agent runtime.
+            Symmetrical with :func:`update_agent`.
     """
     try:
         data = AgentData.model_validate(body.model_dump(exclude_none=True))
-    except ValidationError as exc:
+        # Validate writes only, so old invalid records remain repairable.
+        _validate_context_config_ratios(
+            data.chat_config.context_config,
+            inject_runtime_state=True,
+        )
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            detail=(
+                exc.errors(include_context=False)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            ),
         ) from exc
     record = AgentRecord(user_id=user_id, data=data)
     agent_id = await storage.upsert_agent(user_id, record)
@@ -240,7 +249,8 @@ async def update_agent(
 
     Raises:
         `HTTPException`: 404 if the agent is not visible to the caller;
-            403 if visible but only readable.
+            403 if visible but only readable; 422 if the merged settings
+            violate configuration constraints.
     """
     owner_id, existing = await access.resolve_for_edit(
         user_id,
@@ -268,10 +278,18 @@ async def update_agent(
         updated_data = AgentData.model_validate(
             {**current_data, **updates},
         )
-    except ValidationError as exc:
+        _validate_context_config_ratios(
+            updated_data.chat_config.context_config,
+            inject_runtime_state=True,
+        )
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            detail=(
+                exc.errors(include_context=False)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            ),
         ) from exc
     updated_agent = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
