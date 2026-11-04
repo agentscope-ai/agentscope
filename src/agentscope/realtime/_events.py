@@ -41,6 +41,14 @@ class InputTranscriptionEvent(ModelEvent):
     text: str
 
 
+class InputTranscriptionDeltaEvent(ModelEvent):
+    """Unsettled input text, anchored before the response it prompted."""
+
+    item_id: str
+    delta: str
+    response_id: str = ""
+
+
 class InputTranscriptionFailedEvent(ModelEvent):
     """The provider could not transcribe one committed user turn."""
 
@@ -73,6 +81,8 @@ class ToolCallEvent(ModelEvent):
 
     item_id: str
     tool_call: ToolCallBlock
+    non_blocking: bool = False
+    """Run immediately while the provider continues the current response."""
 
 
 class ResponseDoneEvent(ModelEvent):

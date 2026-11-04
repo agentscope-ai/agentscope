@@ -4,6 +4,7 @@ import asyncio
 import base64
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -89,6 +90,7 @@ class _UserTurn:
     item_id: str = ""
     open: bool = True
     speech_ended: bool = False
+    partial_transcription: bool = False
 
 
 @dataclass
@@ -97,6 +99,15 @@ class _QueuedEvent:
 
     event: AgentEvent
     checkpoint: AgentState | None = None
+
+
+@dataclass
+class _BackgroundTools:
+    """Work that must settle before a logical reply can complete."""
+
+    pending: int = 0
+    model_done: bool = False
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class RealtimeAgent:
@@ -198,6 +209,8 @@ class RealtimeAgent:
         self._metrics = TurnMetrics()
         self._pending_tools: dict[str, ToolCallBlock] = {}
         self._confirmations: dict[str, asyncio.Future[ConfirmResult]] = {}
+        self._confirmation_replies: dict[str, str] = {}
+        self._background_tools: dict[str, _BackgroundTools] = {}
         self._tasks: set[asyncio.Task] = set()
         self._barge_lock = asyncio.Lock()
 
@@ -339,6 +352,7 @@ class RealtimeAgent:
             self._downlink.cancel()
             await asyncio.gather(self._downlink, return_exceptions=True)
             self._downlink = None
+        self._reset_user_turns()
         self._connected = False
         self._connected_event.clear()
         await self.model.close()
@@ -516,7 +530,14 @@ class RealtimeAgent:
             case UserConfirmResultEvent():
                 for result in inputs.confirm_results:
                     future = self._confirmations.get(result.tool_call.id)
-                    if future and not future.done():
+                    if (
+                        future
+                        and not future.done()
+                        and self._confirmation_replies.get(
+                            result.tool_call.id,
+                        )
+                        == inputs.reply_id
+                    ):
                         future.set_result(result)
 
             case str() | Msg():
@@ -603,6 +624,7 @@ class RealtimeAgent:
 
         if speech is SpeechTransition.STARTED:
             self._start_user_turn()
+            await self.model.start_turn()
             await self._barge_in()
         elif speech is SpeechTransition.ENDED:
             if self._user_turn is not None:
@@ -657,7 +679,10 @@ class RealtimeAgent:
             await self._transport.clear_audio()
             self._audio_pending = False
 
-        if active_reply is not None and self._connected:
+        if self._connected and (
+            active_reply is not None
+            or self._reply_id in self._background_tools
+        ):
             await self.model.cancel_response()
 
         if self._reply_id:
@@ -718,6 +743,9 @@ class RealtimeAgent:
             case me.InputTranscriptionEvent():
                 self._on_transcription(event)
 
+            case me.InputTranscriptionDeltaEvent():
+                self._on_transcription_delta(event)
+
             case me.InputTranscriptionFailedEvent():
                 self._finish_transcription(
                     self._find_user_turn(event.item_id),
@@ -753,6 +781,11 @@ class RealtimeAgent:
                         self._reply_id,
                         event.tool_call,
                     )
+                    if event.non_blocking:
+                        self._schedule_tools(
+                            self._reply_id,
+                            request_response=False,
+                        )
 
             case me.ResponseDoneEvent():
                 async with self._barge_lock:
@@ -775,6 +808,11 @@ class RealtimeAgent:
                         reply_id = reply.reply_id
                         self._finish_response()
                         self._schedule_tools(reply_id)
+                    elif work := self._background_tools.get(reply.reply_id):
+                        self._finish_response()
+                        work.model_done = True
+                        if not work.pending:
+                            self._finish_reply(ReplyFinishedReason.COMPLETED)
                     else:
                         self._finish_reply(ReplyFinishedReason.COMPLETED)
 
@@ -865,18 +903,31 @@ class RealtimeAgent:
         """Retire only the turn whose transcript succeeded or failed."""
         if turn is None:
             return
+        self._discard_partial_transcription(turn)
         self._end_user_turn(turn)
         self._pending_user_turns.pop(turn.reply_id, None)
         if self._user_turn is turn:
             self._user_turn = None
 
     def _reset_user_turns(self) -> None:
-        """Discard pending identities when their model session ends."""
-        for turn in list(self._pending_user_turns.values()):
+        """Discard unfinished input before closing its model session."""
+        turns = list(self._pending_user_turns.values())
+        if self._user_turn is not None and self._user_turn not in turns:
+            turns.append(self._user_turn)
+        for turn in turns:
+            self._discard_partial_transcription(turn)
+        for turn in turns:
             self._end_user_turn(turn)
-        self._end_user_turn()
         self._pending_user_turns.clear()
         self._user_turn = None
+
+    def _discard_partial_transcription(self, turn: _UserTurn) -> None:
+        """Remove a provisional message without touching accepted input."""
+        if turn.partial_transcription:
+            message = self._find_user_message(turn.reply_id)
+            if message is not None:
+                self.state.context.remove(message)
+            turn.partial_transcription = False
 
     def _retire_unbound_user_turns(self) -> None:
         """End pending user turns when their transport goes, keeping only
@@ -895,6 +946,9 @@ class RealtimeAgent:
         if self._user_turn is not None and self._user_turn not in turns:
             turns.append(self._user_turn)
         for turn in turns:
+            if not turn.item_id and not turn.speech_ended:
+                self._discard_partial_transcription(turn)
+        for turn in turns:
             self._end_user_turn(turn)
         for turn in turns:
             if not turn.item_id and not turn.speech_ended:
@@ -902,13 +956,57 @@ class RealtimeAgent:
                 if self._user_turn is turn:
                     self._user_turn = None
 
+    def _on_transcription_delta(
+        self,
+        event: me.InputTranscriptionDeltaEvent,
+    ) -> None:
+        """Keep input fragments in one message before their response."""
+        turn = self._find_user_turn(event.item_id)
+        if turn is None:
+            turn = self._new_user_turn(event.item_id)
+        turn.partial_transcription = True
+        message = self._find_user_message(turn.reply_id)
+        if message is not None:
+            text = message.get_text_content()
+            message.content = [TextBlock(text=f"{text}{event.delta}")]
+            return
+        context = self.state.context
+        position = next(
+            (
+                i
+                for i, msg in enumerate(context)
+                if msg.id == event.response_id and msg.role == "assistant"
+            ),
+            len(context),
+        )
+        context.insert(
+            position,
+            UserMsg(name="user", content=event.delta, id=turn.reply_id),
+        )
+
+    def _find_user_message(self, reply_id: str) -> Msg | None:
+        """Find an input turn already reserved by transcription fragments."""
+        return next(
+            (
+                msg
+                for msg in self.state.context
+                if msg.id == reply_id and msg.role == "user"
+            ),
+            None,
+        )
+
     def _on_transcription(self, event: me.InputTranscriptionEvent) -> None:
         """Record a settled user turn, merging a split one back together,
         and report its text on the user's reply."""
         turn = self.aggregator.take(event.text)
         user_turn = self._find_user_turn(event.item_id)
+        message = self._find_user_message(
+            user_turn.reply_id if user_turn else event.item_id,
+        )
         if turn is None:
             logger.debug("RealtimeAgent: dropping %r", event.text)
+            if message is not None:
+                self.state.context.remove(message)
             self._finish_transcription(user_turn)
             return
 
@@ -927,15 +1025,20 @@ class RealtimeAgent:
         )
         self._emit(TextBlockEndEvent(reply_id=reply_id, block_id=block_id))
 
-        if not (
-            self.aggregator.merges_with_previous() and self._merge_user(turn)
-        ):
+        merged = self.aggregator.merges_with_previous() and self._merge_user(
+            turn,
+            message,
+        )
+        if not merged and message is not None:
+            message.content = [TextBlock(id=block_id, text=turn)]
+        elif not merged:
             self.state.context.append(
                 UserMsg(name="user", content=turn, id=reply_id),
             )
+        user_turn.partial_transcription = False
         self._finish_transcription(user_turn)
 
-    def _merge_user(self, text: str) -> bool:
+    def _merge_user(self, text: str, reserved: Msg | None = None) -> bool:
         """Append *text* to the previous user turn that endpointing split.
 
         The stub assistant message between the two halves is dropped: it
@@ -943,16 +1046,25 @@ class RealtimeAgent:
         answers half a question nobody finished asking.
         """
         context = self.state.context
-        if context and context[-1].role == "assistant":
-            tail = context[-1]
+        position = (
+            context.index(reserved) if reserved is not None else len(context)
+        )
+        if position and context[position - 1].role == "assistant":
+            tail = context[position - 1]
             if not tail.get_text_content().strip() and all(
                 isinstance(b, TextBlock) for b in tail.content
             ):
-                context.pop()
-        if not context or context[-1].role != "user":
+                context.pop(position - 1)
+                position -= 1
+        if not position or context[position - 1].role != "user":
             return False
-        previous = context[-1].get_text_content()
-        context[-1].content = [TextBlock(text=f"{previous}{text}")]
+        previous_turn = self._pending_user_turns.get(context[position - 1].id)
+        if previous_turn is not None and previous_turn.partial_transcription:
+            return False
+        previous = context[position - 1].get_text_content()
+        context[position - 1].content = [TextBlock(text=f"{previous}{text}")]
+        if reserved is not None:
+            context.remove(reserved)
         return True
 
     def _start_reply(self, item_id: str) -> _Reply | None:
@@ -986,6 +1098,8 @@ class RealtimeAgent:
                 ),
             )
         self._reply = _Reply(item_id=item_id, reply_id=self._reply_id)
+        if work := self._background_tools.get(self._reply_id):
+            work.model_done = False
         self._emit(
             ModelCallStartEvent(
                 reply_id=self._reply_id,
@@ -1034,6 +1148,11 @@ class RealtimeAgent:
         self._pending_tools.clear()
         if not self._reply_id:
             return
+        self._background_tools.pop(self._reply_id, None)
+        if reason != ReplyFinishedReason.COMPLETED:
+            for call_id, future in self._confirmations.items():
+                if self._confirmation_replies.get(call_id) == self._reply_id:
+                    future.cancel()
         event = ReplyEndEvent(
             session_id=self.state.session_id,
             reply_id=self._reply_id,
@@ -1079,6 +1198,22 @@ class RealtimeAgent:
 
     def _emit_text(self, reply: _Reply, delta: str) -> None:
         """Emit a transcript delta, opening the block on first use."""
+        message = self._find_reply_message(reply.reply_id)
+        blocks = message.content if message is not None else None
+        if (
+            reply.text_started
+            and blocks
+            and not isinstance(blocks[-1], TextBlock)
+        ):
+            # Background tools can separate speech within one response.
+            self._emit(
+                TextBlockEndEvent(
+                    reply_id=reply.reply_id,
+                    block_id=reply.text_block_id,
+                ),
+            )
+            reply.text_started = False
+            reply.text_block_id = uuid.uuid4().hex
         if not reply.text_started:
             reply.text_started = True
             self._emit(
@@ -1089,8 +1224,6 @@ class RealtimeAgent:
             )
         # Grow the tail text block rather than appending one per delta,
         # or the context ends up as dozens of one-word blocks.
-        message = self._find_reply_message(reply.reply_id)
-        blocks = message.content if message is not None else None
         if (
             isinstance(blocks, list)
             and blocks
@@ -1143,6 +1276,16 @@ class RealtimeAgent:
             ),
         ):
             checkpoint = self.state.model_copy(deep=True)
+            partial_ids = {
+                turn.reply_id
+                for turn in self._pending_user_turns.values()
+                if turn.partial_transcription
+            }
+            checkpoint.context = [
+                msg
+                for msg in checkpoint.context
+                if msg.role != "user" or msg.id not in partial_ids
+            ]
         self._out.put_nowait(_QueuedEvent(event, checkpoint))
 
     def checkpoint_snapshot(self, event: AgentEvent) -> AgentState | None:
@@ -1156,14 +1299,25 @@ class RealtimeAgent:
     # Tools
     # ------------------------------------------------------------------
 
-    def _schedule_tools(self, reply_id: str) -> None:
-        """Run the tool calls of the finished reply, then ask for more."""
+    def _schedule_tools(
+        self,
+        reply_id: str,
+        *,
+        request_response: bool = True,
+    ) -> None:
+        """Run pending tools without blocking the model event stream."""
         if not reply_id or not self._pending_tools or self.toolkit is None:
             return
         calls = list(self._pending_tools.values())
         self._pending_tools.clear()
+        if not request_response:
+            work = self._background_tools.setdefault(
+                reply_id,
+                _BackgroundTools(),
+            )
+            work.pending += 1
         task = asyncio.create_task(
-            self._run_tools(reply_id, calls),
+            self._run_tools(reply_id, calls, request_response),
             name="rt-tools",
         )
         self._tasks.add(task)
@@ -1173,23 +1327,39 @@ class RealtimeAgent:
         self,
         reply_id: str,
         calls: list[ToolCallBlock],
+        request_response: bool = True,
     ) -> None:
-        """Execute *calls* in order, then trigger the follow-up response."""
+        """Execute tools serially, optionally requesting a follow-up."""
         try:
-            for call in calls:
-                async with self._barge_lock:
-                    if self._reply_id != reply_id:
-                        return
-                await self._run_tool(reply_id, call)
+            work = self._background_tools.get(reply_id)
+            lock = work.lock if work is not None else nullcontext()
+            async with lock:
+                for call in calls:
+                    async with self._barge_lock:
+                        if self._reply_id != reply_id:
+                            return
+                    await self._run_tool(reply_id, call)
             # Unless the user cut the reply short while the tools ran.
             async with self._barge_lock:
-                if self._reply_id == reply_id:
+                if request_response and self._reply_id == reply_id:
                     await self.model.request_response()
         except Exception:  # noqa: BLE001
             logger.exception("RealtimeAgent: tool execution failed")
             async with self._barge_lock:
                 if self._reply_id == reply_id:
                     self._finish_reply(ReplyFinishedReason.ERROR)
+        finally:
+            if not request_response:
+                async with self._barge_lock:
+                    work = self._background_tools.get(reply_id)
+                    if work is not None:
+                        work.pending -= 1
+                        if (
+                            not work.pending
+                            and work.model_done
+                            and self._reply_id == reply_id
+                        ):
+                            self._finish_reply(ReplyFinishedReason.COMPLETED)
 
     async def _run_tool(self, reply_id: str, call: ToolCallBlock) -> None:
         """Check permission for one call, run it, and report the result."""
@@ -1223,6 +1393,14 @@ class RealtimeAgent:
             return
 
         decision = await self._engine.check_permission(tool, tool_input)
+        if self._reply_id != reply_id:
+            await self._report_tool(
+                reply_id,
+                call,
+                "Reply interrupted before tool execution.",
+                state=ToolResultState.DENIED,
+            )
+            return
         if decision.behavior in (
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
@@ -1315,13 +1493,17 @@ class RealtimeAgent:
             ConfirmResult
         ] = asyncio.get_running_loop().create_future()
         self._confirmations[call.id] = future
+        self._confirmation_replies[call.id] = reply_id
         try:
             result = await asyncio.wait_for(future, timeout=300)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             return False
         finally:
             self._confirmations.pop(call.id, None)
+            self._confirmation_replies.pop(call.id, None)
 
+        if self._reply_id != reply_id:
+            return False
         for rule in result.rules or []:
             self._engine.add_rule(rule)
         call.state = (
@@ -1372,4 +1554,9 @@ class RealtimeAgent:
                 state=state,
             ),
         )
+        # The result starts more model work. An IDLE received before this
+        # send cannot complete the reply, and a completion received during
+        # the send must not be overwritten after it returns.
+        if work := self._background_tools.get(reply_id):
+            work.model_done = False
         await self.model.push_tool_result(block)

@@ -19,7 +19,7 @@ from aiortc.mediastreams import MediaStreamError
 from av import AudioFrame as AVAudioFrame
 from fastapi import HTTPException
 
-from agentscope.agent import RealtimeAgent
+from agentscope.agent import RealtimeAgent, TurnAggregator
 from agentscope.app._router._realtime import _create_realtime_offer
 from agentscope.app._router._schema import (
     RealtimeOfferRequest,
@@ -966,6 +966,60 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
 
 class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     """Verify that a WebRTC run keeps the normal session contract."""
+
+    async def test_final_persistence_excludes_unfinished_transcription(
+        self,
+    ) -> None:
+        """Direct state persistence after close must not save fragments."""
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            MagicMock(
+                spec=RealtimeModelBase,
+                output_sample_rate=24000,
+                input_transcription_enabled=True,
+            ),
+            aggregator=TurnAggregator(min_chars=4),
+        )
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=storage,
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        session.agent = agent
+        await agent._on_model_event(
+            me.InputTranscriptionEvent(item_id="kept", text="accepted"),
+        )
+        accepted = agent.state.context[0].model_dump(mode="json")
+        await agent._on_model_event(
+            me.InputTranscriptionDeltaEvent(item_id="u1", delta="a"),
+        )
+        agent._retire_unbound_user_turns()
+        self.assertEqual(
+            [(msg.id, msg.get_text_content()) for msg in agent.state.context],
+            [("kept", "accepted"), ("u1", "a")],
+        )
+        await agent.close()
+        await session._persist_state()
+        self.assertEqual(
+            {
+                "messages": {
+                    key: value.model_dump(mode="json")
+                    for key, value in storage.messages.items()
+                },
+                "states": [
+                    [
+                        msg.model_dump(mode="json")
+                        for msg in call["state"].context
+                    ]
+                    for call in storage.calls
+                    if call["method"] == "update_session_state"
+                ],
+            },
+            {"messages": {"kept": accepted}, "states": [[accepted]]},
+        )
 
     async def test_transcript_between_responses_preserves_full_reply(
         self,
