@@ -138,7 +138,14 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                         content_blocks.append(formatted)
 
                 elif isinstance(block, ThinkingBlock):
-                    reasoning_content_blocks.append(block.thinking)
+                    # Skip empty thinking: a redacted ThinkingBlock is
+                    # stored with ``thinking=""``, and ``[""]`` is truthy,
+                    # so appending it would force-send an empty
+                    # ``reasoning_content`` and keep an otherwise empty
+                    # assistant turn (``content=None``) alive, which the
+                    # Ark API rejects.
+                    if block.thinking:
+                        reasoning_content_blocks.append(block.thinking)
 
                 elif isinstance(block, HintBlock):
                     if (
