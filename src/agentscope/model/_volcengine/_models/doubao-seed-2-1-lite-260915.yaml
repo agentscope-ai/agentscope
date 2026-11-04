@@ -9,6 +9,11 @@ input_types:
   - application/x-thinking
   - image/*
   - video/*
+  - audio/mpeg
+  - audio/mp3
+  - audio/wav
+  - audio/aac
+  - audio/mp4
 
 output_types:
   - text/plain

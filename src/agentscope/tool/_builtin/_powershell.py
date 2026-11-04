@@ -129,7 +129,8 @@ are easier for the user to review and authorize:
                     ],
                     timeout=10.0,
                 )
-                if probe.exit_code != 127:
+                # A timed-out probe should fall through to the next shell.
+                if probe.exit_code == 0:
                     self._executable = candidate
                     break
             else:
