@@ -278,11 +278,15 @@ def run_script(
             )
             captured = ""
         else:
+            # Child output is arbitrary model text; decode it explicitly as
+            # UTF-8 so a non-UTF-8 host locale can never break the capture.
             result = subprocess.run(
                 [sys.executable, str(script_path)],
                 timeout=timeout,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
             captured = (result.stdout or "") + (result.stderr or "")
