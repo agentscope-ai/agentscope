@@ -106,6 +106,27 @@ class CancelDispatcher:
         await session_ready.wait()
         await task_ready.wait()
         await interrupt_ready.wait()
+
+        # Each loop sets its ready event in ``finally`` so a failed
+        # ``subscribe`` cannot deadlock startup. That also means an ended
+        # task is the only sign the channel was never subscribed: report
+        # it instead of entering with a dispatcher that cancels nothing.
+        try:
+            for task, channel in (
+                (self._session_task, "session-cancel"),
+                (self._task_cancel_task, "task-cancel"),
+                (self._interrupt_task, "session-interrupt"),
+            ):
+                if task.done():
+                    raise RuntimeError(
+                        "CancelDispatcher could not subscribe to the "
+                        f"{channel} channel during startup.",
+                    )
+        except BaseException:
+            # A failed ``__aenter__`` does not run ``__aexit__``; stop the
+            # loops that did start so none is left running.
+            await self.__aexit__(None, None, None)
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:
