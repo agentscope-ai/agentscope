@@ -48,7 +48,7 @@ async def list_background_tasks(
         `ListBackgroundTasksResponse`:
             Tasks and their total count.
     """
-    tasks = bg_manager.list_tasks(
+    tasks = await bg_manager.list_tasks(
         user_id=user_id,
         session_id=session_id,
     )
@@ -89,7 +89,7 @@ async def get_background_task(
         `HTTPException`:
             404 if the task is not found or not owned by the user.
     """
-    task = bg_manager.get_task(task_id, user_id=user_id)
+    task = await bg_manager.get_task(task_id, user_id=user_id)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

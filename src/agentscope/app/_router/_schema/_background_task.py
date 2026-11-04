@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from ..._manager._background_task_manager import (
-    BackgroundTask,
+    BackgroundTaskRecord,
     TaskStatus,
 )
 
@@ -44,12 +44,12 @@ class ListBackgroundTasksResponse(BaseModel):
     total: int = Field(description="Total number of tasks returned.")
 
 
-def to_info(task: BackgroundTask) -> BackgroundTaskInfo:
-    """Convert an internal :class:`BackgroundTask` to an API-facing schema.
+def to_info(task: BackgroundTaskRecord) -> BackgroundTaskInfo:
+    """Convert shared task metadata to an API-facing schema.
 
     Args:
-        task (`BackgroundTask`):
-            The internal background task dataclass instance.
+        task (`BackgroundTaskRecord`):
+            The shared background task metadata.
 
     Returns:
         `BackgroundTaskInfo`:

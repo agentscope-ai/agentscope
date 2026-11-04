@@ -1,279 +1,499 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Unit tests for the background task endpoint feature.
+"""Regression tests for shared background task lifecycle and endpoints."""
 
-Tests cover:
-- TaskStatus lifecycle transitions in BackgroundTaskManager
-- Capacity-based eviction of terminal-state tasks
-- _make_summary helper in ToolOffloadMiddleware
-- Background task REST endpoints (list + detail)
-"""
 import asyncio
 import json
-import time
+from dataclasses import fields, is_dataclass, replace
+from datetime import datetime, timezone
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from agentscope.app._manager import BackgroundTaskManager, TaskStatus
+import fakeredis.aioredis
+import httpx
+
+from agentscope.app import create_app
+from agentscope.app._manager import (
+    BackgroundTaskManager,
+    CancelDispatcher,
+    ChatRunRegistry,
+    TaskStatus,
+)
 from agentscope.app._manager._background_task_manager import (
     _MAX_RETAINED_TASKS,
+    BackgroundTask,
+    BackgroundTaskRecord,
 )
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    MessageBusKeys,
+    RedisMessageBus,
+)
 from agentscope.app.middleware._tool_offload_middleware import (
     _make_summary,
 )
 
 
-class TestTaskStatusLifecycle(IsolatedAsyncioTestCase):
-    """Test status transitions in BackgroundTaskManager._on_done."""
+class TestBackgroundTaskCompatibility(IsolatedAsyncioTestCase):
+    """Preserve the task dataclass API that existed before this feature."""
 
-    async def asyncSetUp(self) -> None:
-        """Set up a manager with a mock message bus."""
-        self.bus = MagicMock(spec=MessageBus)
-        self.bus.registry_set = AsyncMock()
-        self.bus.registry_del = AsyncMock()
-        self.mgr = BackgroundTaskManager(message_bus=self.bus)
-
-    async def test_completed_status_on_normal_finish(self) -> None:
-        """A task that completes normally transitions to COMPLETED."""
-
-        async def _work() -> str:
-            return "done"
-
-        task = asyncio.create_task(_work())
-        task_id = await self.mgr.register_task(
+    async def test_legacy_construction_and_dataclass_operations(self) -> None:
+        """Old positional and keyword construction keep their field order."""
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task
+        positional = BackgroundTask(task, "s1", "a1", "alice", "Tool", "id")
+        keyword = BackgroundTask(
             asyncio_task=task,
-            session_id="s1",
-            agent_id="a1",
-            user_id="u1",
-            tool_name="test_tool",
-            summary="test_tool()",
-        )
-        await asyncio.sleep(0.05)
-
-        bg = self.mgr.tasks[task_id]
-        self.assertEqual(bg.status, TaskStatus.COMPLETED)
-        self.assertIsNotNone(bg.completed_at)
-        self.assertIsNone(bg.error_summary)
-
-    async def test_failed_status_on_exception(self) -> None:
-        """A task that raises transitions to FAILED with error_summary."""
-
-        async def _work() -> None:
-            raise ValueError("something broke")
-
-        task = asyncio.create_task(_work())
-        task_id = await self.mgr.register_task(
-            asyncio_task=task,
-            session_id="s1",
-            agent_id="a1",
-            user_id="u1",
-            tool_name="broken_tool",
-        )
-        await asyncio.sleep(0.05)
-
-        bg = self.mgr.tasks[task_id]
-        self.assertEqual(bg.status, TaskStatus.FAILED)
-        self.assertIn("something broke", bg.error_summary or "")
-        self.assertIsNotNone(bg.completed_at)
-
-    async def test_cancelled_status_on_cancel(self) -> None:
-        """A cancelled task transitions to CANCELLED."""
-
-        async def _work() -> None:
-            await asyncio.sleep(100)
-
-        task = asyncio.create_task(_work())
-        task_id = await self.mgr.register_task(
-            asyncio_task=task,
-            session_id="s1",
-            agent_id="a1",
-            user_id="u1",
-            tool_name="long_tool",
-        )
-        task.cancel()
-        await asyncio.sleep(0.05)
-
-        bg = self.mgr.tasks[task_id]
-        self.assertEqual(bg.status, TaskStatus.CANCELLED)
-        self.assertIsNotNone(bg.completed_at)
-
-    async def test_summary_and_started_at_are_recorded(self) -> None:
-        """Registered tasks store summary and started_at."""
-
-        async def _work() -> None:
-            await asyncio.sleep(100)
-
-        before = time.time()
-        task = asyncio.create_task(_work())
-        task_id = await self.mgr.register_task(
-            asyncio_task=task,
-            session_id="s1",
-            agent_id="a1",
-            user_id="u1",
-            tool_name="my_tool",
-            summary="my_tool(x=1)",
-        )
-        after = time.time()
-
-        bg = self.mgr.tasks[task_id]
-        self.assertEqual(bg.summary, "my_tool(x=1)")
-        self.assertGreaterEqual(bg.started_at, before)
-        self.assertLessEqual(bg.started_at, after)
-
-        task.cancel()
-        await asyncio.sleep(0.05)
-
-
-class TestEviction(IsolatedAsyncioTestCase):
-    """Test capacity-based eviction of terminal-state tasks."""
-
-    async def asyncSetUp(self) -> None:
-        """Set up a manager with a mock message bus."""
-        self.bus = MagicMock(spec=MessageBus)
-        self.bus.registry_set = AsyncMock()
-        self.bus.registry_del = AsyncMock()
-        self.mgr = BackgroundTaskManager(message_bus=self.bus)
-
-    async def test_eviction_removes_oldest_completed(self) -> None:
-        """When completed tasks exceed _MAX_RETAINED_TASKS, oldest are
-        removed."""
-        tasks = []
-        for i in range(_MAX_RETAINED_TASKS + 5):
-
-            async def _work(idx: int = i) -> int:
-                return idx
-
-            t = asyncio.create_task(_work())
-            await self.mgr.register_task(
-                asyncio_task=t,
-                session_id="s",
-                agent_id="a",
-                user_id="u",
-                tool_name=f"tool_{i}",
-            )
-            tasks.append(t)
-
-        # Wait for all to complete
-        await asyncio.sleep(0.1)
-
-        completed = [
-            t
-            for t in self.mgr.tasks.values()
-            if t.status != TaskStatus.RUNNING
-        ]
-        self.assertLessEqual(len(completed), _MAX_RETAINED_TASKS)
-
-
-class TestListAndGetTasks(IsolatedAsyncioTestCase):
-    """Test list_tasks and get_task query methods."""
-
-    async def asyncSetUp(self) -> None:
-        """Set up a manager with a mock message bus."""
-        self.bus = MagicMock(spec=MessageBus)
-        self.bus.registry_set = AsyncMock()
-        self.bus.registry_del = AsyncMock()
-        self.mgr = BackgroundTaskManager(message_bus=self.bus)
-
-    async def test_list_tasks_filters_by_user(self) -> None:
-        """list_tasks only returns tasks owned by the specified user."""
-
-        async def _work() -> None:
-            await asyncio.sleep(100)
-
-        t1 = asyncio.create_task(_work())
-        t2 = asyncio.create_task(_work())
-        await self.mgr.register_task(
-            asyncio_task=t1,
             session_id="s1",
             agent_id="a1",
             user_id="alice",
-            tool_name="tool_a",
+            tool_name="Tool",
+            id="id",
+            started_at=positional.started_at,
         )
-        await self.mgr.register_task(
-            asyncio_task=t2,
-            session_id="s2",
-            agent_id="a2",
+        expected = {
+            "asyncio_task": task,
+            "session_id": "s1",
+            "agent_id": "a1",
+            "user_id": "alice",
+            "tool_name": "Tool",
+            "id": "id",
+            "summary": "",
+            "started_at": positional.started_at,
+            "completed_at": None,
+            "status": TaskStatus.RUNNING,
+            "error_summary": None,
+        }
+        self.assertTrue(is_dataclass(positional))
+        self.assertEqual(
+            [item.name for item in fields(BackgroundTask)],
+            list(expected),
+        )
+        self.assertEqual(vars(positional), expected)
+        self.assertEqual(positional, keyword)
+        self.assertEqual(
+            vars(replace(positional, tool_name="Other")),
+            {**expected, "tool_name": "Other"},
+        )
+        self.assertEqual(vars(positional), expected)
+        generated = BackgroundTask(task, "s1", "a1", "alice", "Tool")
+        self.assertIsInstance(generated.id, str)
+        self.assertNotEqual(generated.id, positional.id)
+
+    async def test_shared_record_is_an_independent_snapshot(self) -> None:
+        """Serialization excludes handles and cannot mutate the local task."""
+        task = asyncio.create_task(asyncio.sleep(0))
+        await task
+        local = BackgroundTask(
+            task,
+            "s1",
+            "a1",
+            "alice",
+            "Tool",
+            "id",
+            summary="Tool(x=1)",
+            started_at=123.0,
+        )
+        record = BackgroundTaskRecord.model_validate(local)
+        expected = {
+            "id": "id",
+            "session_id": "s1",
+            "agent_id": "a1",
+            "user_id": "alice",
+            "tool_name": "Tool",
+            "summary": "Tool(x=1)",
+            "started_at": 123.0,
+            "completed_at": None,
+            "status": "running",
+            "error_summary": None,
+        }
+        self.assertEqual(json.loads(record.model_dump_json()), expected)
+        local.status = TaskStatus.COMPLETED
+        local.completed_at = 124.0
+        self.assertEqual(json.loads(record.model_dump_json()), expected)
+        record.summary = "Changed"
+        self.assertEqual(local.summary, "Tool(x=1)")
+
+
+class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
+    """Exercise two workers sharing task metadata and cancellation signals."""
+
+    def _make_bus(self) -> MessageBus:
+        """Provide the shared backend for both managers."""
+        return InMemoryMessageBus()
+
+    async def asyncSetUp(self) -> None:
+        """Keep the bus alive until both managers have finished cleanup."""
+        self.bus = await self.enterAsyncContext(self._make_bus())
+        self.owner = await self.enterAsyncContext(
+            BackgroundTaskManager(self.bus),
+        )
+        self.reader = await self.enterAsyncContext(
+            BackgroundTaskManager(self.bus),
+        )
+
+    async def _register(
+        self,
+        manager: BackgroundTaskManager,
+        user_id: str = "alice",
+        session_id: str = "s1",
+    ) -> tuple[asyncio.Event, asyncio.Task, str]:
+        """Register a tool that finishes only when explicitly released."""
+        gate = asyncio.Event()
+        task = asyncio.create_task(gate.wait())
+        task_id = await manager.register_task(
+            task,
+            session_id,
+            "a1",
+            user_id,
+            "Tool",
+            summary="Tool(x=1)",
+        )
+        return gate, task, task_id
+
+    async def _settle(self, *tasks: asyncio.Task) -> None:
+        """Wait for execution and all metadata writes without timing sleeps."""
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for manager in (self.owner, self.reader):
+            while manager._completion_tasks:
+                await asyncio.gather(*manager._completion_tasks)
+
+    async def test_shared_lifecycle_and_isolation(self) -> None:
+        """Running and completed records are identical on either worker."""
+        gate, task, task_id = await self._register(self.owner)
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.model_dump(), expected)
+        self.assertEqual(
+            [
+                r.model_dump()
+                for r in await self.reader.list_tasks(
+                    user_id="alice",
+                    session_id="s1",
+                )
+            ],
+            [expected],
+        )
+        self.assertEqual(
+            await self.reader.list_tasks(user_id="alice", session_id="s2"),
+            [],
+        )
+        self.assertEqual(await self.reader.list_tasks(user_id="bob"), [])
+        self.assertIsNone(
+            await self.reader.get_task(task_id, user_id="bob"),
+        )
+        self.assertIsNone(
+            await self.reader.get_task("missing", user_id="alice"),
+        )
+
+        gate.set()
+        await self._settle(task)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertIsNotNone(record.completed_at)
+        expected.update(
+            status=TaskStatus.COMPLETED,
+            completed_at=record.completed_at,
+        )
+        self.assertEqual(record.model_dump(), expected)
+        self.assertEqual(self.owner.tasks, {})
+        self.assertEqual(
+            await self.bus.registry_getall(MessageBusKeys.bg_tasks("s1")),
+            {},
+        )
+
+    async def test_exception_records_failure(self) -> None:
+        """An exception preserves its bounded error summary on any worker."""
+        gate = asyncio.Event()
+
+        async def fail() -> None:
+            await gate.wait()
+            raise ValueError("x" * 600)
+
+        task = asyncio.create_task(fail())
+        task_id = await self.owner.register_task(task, "s1", "a1", "alice")
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        gate.set()
+        await self._settle(task)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        expected.update(
+            status=TaskStatus.FAILED,
+            error_summary="x" * 512,
+            completed_at=record.completed_at,
+        )
+        self.assertIsNotNone(record.completed_at)
+        self.assertEqual(record.model_dump(), expected)
+
+    async def test_local_and_remote_toolstop(self) -> None:
+        """Both cancellation paths retain status and remove live entries."""
+        registry = await self.enterAsyncContext(ChatRunRegistry())
+        await self.enterAsyncContext(
+            CancelDispatcher(self.bus, registry, self.owner),
+        )
+        for caller in (self.owner, self.reader):
+            with self.subTest(local=caller is self.owner):
+                _, task, task_id = await self._register(self.owner)
+                expected = BackgroundTaskRecord.model_validate(
+                    self.owner.tasks[task_id],
+                ).model_dump()
+                stop = (await caller.list_tools("s1"))[0]
+                await stop(task_id=task_id)
+                await asyncio.wait_for(self._settle(task), timeout=5)
+                record = await self.reader.get_task(
+                    task_id,
+                    user_id="alice",
+                )
+                self.assertTrue(task.cancelled())
+                self.assertIsNotNone(record.completed_at)
+                expected.update(
+                    status=TaskStatus.CANCELLED,
+                    completed_at=record.completed_at,
+                )
+                self.assertEqual(record.model_dump(), expected)
+                self.assertEqual(self.owner.tasks, {})
+                self.assertEqual(
+                    await self.bus.registry_getall(
+                        MessageBusKeys.bg_tasks("s1"),
+                    ),
+                    {},
+                )
+                self.assertFalse(self.owner.cancel_task(task_id))
+
+    async def test_shutdown_waits_for_shared_cleanup(self) -> None:
+        """Shutdown returns only after cancelled states and cleanup persist."""
+        _, task, task_id = await self._register(self.owner)
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        await self.owner.__aexit__()
+        record = await self.reader.get_task(task_id, user_id="alice")
+        expected.update(
+            status=TaskStatus.CANCELLED,
+            completed_at=record.completed_at,
+        )
+        self.assertTrue(task.cancelled())
+        self.assertEqual(record.model_dump(), expected)
+        self.assertEqual(self.owner.tasks, {})
+        self.assertEqual(self.owner._completion_tasks, set())
+        self.assertEqual(
+            await self.bus.registry_getall(MessageBusKeys.bg_tasks("s1")),
+            {},
+        )
+
+    async def test_retention_is_shared_and_scoped_per_user(self) -> None:
+        """Concurrent completions evict oldest outcomes, never running work."""
+        _, _, running_id = await self._register(self.owner)
+        running = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[running_id],
+        ).model_dump()
+        bob_gate, bob_task, bob_id = await self._register(
+            self.owner,
             user_id="bob",
-            tool_name="tool_b",
+        )
+        work = []
+        records = []
+        for index in range(_MAX_RETAINED_TASKS + 5):
+            manager = (self.owner, self.reader)[index % 2]
+            gate, task, task_id = await self._register(manager)
+            records.append(manager.tasks[task_id])
+            work.append((gate, task))
+        for gate, _ in work:
+            gate.set()
+        bob_gate.set()
+        await self._settle(bob_task, *(task for _, task in work))
+
+        retained = sorted(
+            records,
+            key=lambda record: (record.completed_at, record.id),
+        )[-_MAX_RETAINED_TASKS:]
+        expected = [running] + [
+            BackgroundTaskRecord.model_validate(record).model_dump()
+            for record in retained
+        ]
+        expected.sort(key=lambda record: (record["started_at"], record["id"]))
+        self.assertEqual(
+            [
+                record.model_dump()
+                for record in await self.reader.list_tasks(
+                    user_id="alice",
+                )
+            ],
+            expected,
+        )
+        bob_record = await self.reader.get_task(bob_id, user_id="bob")
+        self.assertEqual(
+            [
+                record.model_dump()
+                for record in await self.reader.list_tasks(
+                    user_id="bob",
+                )
+            ],
+            [bob_record.model_dump()],
+        )
+        self.assertEqual(bob_record.status, TaskStatus.COMPLETED)
+        self.assertEqual(set(self.owner.tasks), {running_id})
+        self.assertEqual(self.reader.tasks, {})
+
+    async def test_failed_initial_write_still_cleans_up(self) -> None:
+        """A partial registration cannot leave an untracked running task."""
+        original_set = self.bus.registry_set
+
+        async def fail_running_record(
+            namespace: str,
+            field: str,
+            value: str,
+            **kwargs: int,
+        ) -> None:
+            if (
+                namespace == MessageBusKeys.bg_task_records("alice")
+                and json.loads(value)["status"] == "running"
+            ):
+                raise ConnectionError("record write failed")
+            await original_set(namespace, field, value, **kwargs)
+
+        task = asyncio.create_task(asyncio.Event().wait())
+        with patch.object(
+            self.bus,
+            "registry_set",
+            side_effect=fail_running_record,
+        ):
+            with self.assertRaisesRegex(ConnectionError, "record write"):
+                await self.owner.register_task(task, "s1", "a1", "alice")
+            await self._settle(task)
+        self.assertTrue(task.cancelled())
+        self.assertEqual(self.owner.tasks, {})
+        self.assertEqual(
+            await self.bus.registry_getall(MessageBusKeys.bg_tasks("s1")),
+            {},
         )
 
-        alice_tasks = self.mgr.list_tasks(user_id="alice")
-        self.assertEqual(len(alice_tasks), 1)
-        self.assertEqual(alice_tasks[0].user_id, "alice")
-
-        bob_tasks = self.mgr.list_tasks(user_id="bob")
-        self.assertEqual(len(bob_tasks), 1)
-        self.assertEqual(bob_tasks[0].user_id, "bob")
-
-        t1.cancel()
-        t2.cancel()
-        await asyncio.sleep(0.05)
-
-    async def test_list_tasks_filters_by_session(self) -> None:
-        """list_tasks with session_id filter narrows results."""
-
-        async def _work() -> None:
-            await asyncio.sleep(100)
-
-        t1 = asyncio.create_task(_work())
-        t2 = asyncio.create_task(_work())
-        await self.mgr.register_task(
-            asyncio_task=t1,
-            session_id="s1",
-            agent_id="a1",
-            user_id="alice",
-            tool_name="tool_a",
+    async def test_failed_outcome_write_still_unregisters(self) -> None:
+        """Live-registry cleanup does not depend on outcome persistence."""
+        gate, task, _ = await self._register(self.owner)
+        with patch.object(
+            self.owner,
+            "_store_record",
+            new=AsyncMock(side_effect=ConnectionError("unavailable")),
+        ):
+            gate.set()
+            await self._settle(task)
+        self.assertEqual(
+            await self.bus.registry_getall(MessageBusKeys.bg_tasks("s1")),
+            {},
         )
-        await self.mgr.register_task(
-            asyncio_task=t2,
-            session_id="s2",
-            agent_id="a2",
-            user_id="alice",
-            tool_name="tool_b",
+        self.assertEqual(self.owner.tasks, {})
+
+    async def test_http_routes_read_another_workers_records(self) -> None:
+        """The actual app exposes filtered lists, details and isolated 404s."""
+        gate, task, task_id = await self._register(self.owner)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        expected = {
+            "task_id": task_id,
+            "session_id": "s1",
+            "agent_id": "a1",
+            "tool_name": "Tool",
+            "summary": "Tool(x=1)",
+            "status": "running",
+            "started_at": datetime.fromtimestamp(
+                record.started_at,
+                tz=timezone.utc,
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "completed_at": None,
+            "error_summary": None,
+        }
+        app = create_app(
+            storage=MagicMock(),
+            message_bus=self.bus,
+            workspace_manager=MagicMock(),
+        )
+        app.state.background_task_manager = self.reader
+        client = await self.enterAsyncContext(
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+            ),
+        )
+        headers = {"X-User-ID": "alice"}
+        for query, body in (
+            ("", {"tasks": [expected], "total": 1}),
+            ("?session_id=s1", {"tasks": [expected], "total": 1}),
+            ("?session_id=s2", {"tasks": [], "total": 0}),
+        ):
+            response = await client.get(
+                f"/background-tasks{query}",
+                headers=headers,
+            )
+            self.assertEqual(
+                (response.status_code, response.json()),
+                (
+                    200,
+                    body,
+                ),
+            )
+        response = await client.get(
+            f"/background-tasks/{task_id}",
+            headers=headers,
+        )
+        self.assertEqual(
+            (response.status_code, response.json()),
+            (
+                200,
+                expected,
+            ),
+        )
+        for missing_id, user in ((task_id, "bob"), ("missing", "alice")):
+            response = await client.get(
+                f"/background-tasks/{missing_id}",
+                headers={"X-User-ID": user},
+            )
+            self.assertEqual(
+                (response.status_code, response.json()),
+                (
+                    404,
+                    {"detail": f"Background task '{missing_id}' not found."},
+                ),
+            )
+        response = await client.get("/background-tasks")
+        self.assertEqual(response.status_code, 422)
+        gate.set()
+        await self._settle(task)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        expected.update(
+            status="completed",
+            completed_at=datetime.fromtimestamp(
+                record.completed_at,
+                tz=timezone.utc,
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+        response = await client.get(
+            f"/background-tasks/{task_id}",
+            headers=headers,
+        )
+        self.assertEqual(
+            (response.status_code, response.json()),
+            (
+                200,
+                expected,
+            ),
         )
 
-        filtered = self.mgr.list_tasks(
-            user_id="alice",
-            session_id="s1",
-        )
-        self.assertEqual(len(filtered), 1)
-        self.assertEqual(filtered[0].session_id, "s1")
 
-        t1.cancel()
-        t2.cancel()
-        await asyncio.sleep(0.05)
+class TestRedisBackgroundTaskRecords(TestBackgroundTaskRecords):
+    """Run the same worker and lifecycle regressions through Redis APIs."""
 
-    async def test_get_task_returns_none_for_other_user(self) -> None:
-        """get_task returns None when user_id doesn't match."""
-
-        async def _work() -> None:
-            await asyncio.sleep(100)
-
-        t = asyncio.create_task(_work())
-        task_id = await self.mgr.register_task(
-            asyncio_task=t,
-            session_id="s1",
-            agent_id="a1",
-            user_id="alice",
-            tool_name="tool_a",
-        )
-
-        self.assertIsNotNone(
-            self.mgr.get_task(task_id, user_id="alice"),
-        )
-        self.assertIsNone(
-            self.mgr.get_task(task_id, user_id="bob"),
-        )
-
-        t.cancel()
-        await asyncio.sleep(0.05)
-
-    async def test_get_task_returns_none_for_missing_id(self) -> None:
-        """get_task returns None for a non-existent task_id."""
-        self.assertIsNone(
-            self.mgr.get_task("nonexistent", user_id="anyone"),
-        )
+    def _make_bus(self) -> MessageBus:
+        """Use a fake Redis server without opening network connections."""
+        client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.addAsyncCleanup(client.aclose)
+        return RedisMessageBus(connection_pool=client.connection_pool)
 
 
 class TestMakeSummary(IsolatedAsyncioTestCase):

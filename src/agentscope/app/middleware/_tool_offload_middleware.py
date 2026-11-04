@@ -222,15 +222,24 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # ----------------------------------------------------------------
         queue: asyncio.Queue = asyncio.Queue()
 
-        async def _drain_to_queue() -> None:
-            """Drain next_handler output into *queue*."""
+        async def _drain_to_queue() -> ToolResponse | None:
+            """Drain output and return the terminal tool outcome."""
+            response = None
             try:
                 async for item in next_handler(**input_kwargs):
+                    if isinstance(item, ToolResponse):
+                        response = item
                     await queue.put(item)
             except Exception as exc:  # pylint: disable=broad-except
                 await queue.put(exc)
+                response = ToolResponse(
+                    id=tool_call.id,
+                    state=ToolResultState.ERROR,
+                    content=[TextBlock(text=str(exc))],
+                )
             finally:
                 await queue.put(_QUEUE_SENTINEL)
+            return response
 
         drain_task: asyncio.Task = asyncio.create_task(_drain_to_queue())
 
@@ -281,7 +290,6 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # ----------------------------------------------------------------
         session_id = agent.state.session_id
         tool_name = tool_call.name
-        snapshot = list(pre_collected)
 
         logger.info(
             "Tool '%s' timed out after %.1fs, offloading to background: "
@@ -301,7 +309,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             completion notification in those edge cases.
             """
             try:
-                await drain_task
+                response: ToolResponse | None = await drain_task
             except asyncio.CancelledError:
                 logger.info(
                     "Background tool '%s' cancelled, skipping delivery: "
@@ -320,20 +328,11 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 )
                 return
 
-            remaining_items: list = []
-            while not queue.empty():
-                try:
-                    item = queue.get_nowait()
-                    if isinstance(item, ToolResponse):
-                        remaining_items.append(item)
-                        break
-                except asyncio.QueueEmpty:
-                    break
-
-            all_items = snapshot + remaining_items
-            response: ToolResponse | None = next(
-                (i for i in all_items if isinstance(i, ToolResponse)),
-                None,
+            outcome = (
+                "failed"
+                if response is not None
+                and response.state == ToolResultState.ERROR
+                else "completed"
             )
 
             tool_call_id = tool_call.id
@@ -351,7 +350,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     hint=(
                         f"<system-notification>"
                         f"Tool '{tool_name}' running in background "
-                        f"(id={tool_call_id}) has completed with no output."
+                        f"(id={tool_call_id}) has {outcome} with no output."
                         f"</system-notification>"
                     ),
                     source=hint_source,
@@ -367,7 +366,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 prefix = (
                     f"<system-notification>"
                     f"Tool '{tool_name}' running in background "
-                    f"(id={tool_call_id}) has completed.\n\n"
+                    f"(id={tool_call_id}) has {outcome}.\n\n"
                     f"Result:\n\n"
                 )
 

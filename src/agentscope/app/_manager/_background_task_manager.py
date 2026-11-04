@@ -9,16 +9,16 @@ from enum import Enum
 from typing import Any, Self, TYPE_CHECKING
 
 import shortuuid
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from agentscope.message import TextBlock, ToolResultState
-from agentscope.permission import (
+from ...message import TextBlock, ToolResultState
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
 )
-from agentscope.tool import ToolBase, ToolChunk
-from agentscope._logging import logger
+from ...tool import ToolBase, ToolChunk, ToolResponse
+from ..._logging import logger
 from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ class TaskStatus(str, Enum):
 
 
 _MAX_RETAINED_TASKS = 50
-# Maximum number of terminal-state tasks to keep for frontend polling.
+# Maximum number of terminal-state tasks retained per user.
 
 
 @dataclass
@@ -102,6 +102,23 @@ class BackgroundTask:
 
     error_summary: str | None = None
     """Brief failure description (populated only for FAILED tasks)."""
+
+
+class BackgroundTaskRecord(BaseModel):
+    """Serializable task snapshot, independent of the local task handle."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    session_id: str
+    agent_id: str
+    user_id: str
+    tool_name: str
+    summary: str
+    started_at: float
+    completed_at: float | None
+    status: TaskStatus
+    error_summary: str | None
 
 
 class _ToolStopParams(BaseModel):
@@ -200,8 +217,8 @@ class ToolStop(ToolBase):
         if (
             local_task is not None
             and local_task.session_id == self._session_id
+            and not local_task.asyncio_task.done()
         ):
-            self.background_tasks.pop(task_id, None)
             local_task.asyncio_task.cancel()
             logger.info(
                 "Background task stopped via ToolStop (local): task_id=%s, "
@@ -283,6 +300,7 @@ class BackgroundTaskManager:
         """
         self._message_bus = message_bus
         self.tasks: OrderedDict[str, BackgroundTask] = OrderedDict()
+        self._completion_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Task registration
@@ -300,10 +318,9 @@ class BackgroundTaskManager:
     ) -> str:
         """Register an already-running asyncio task.
 
-        Writes to both the local handle cache and the global Redis
-        registry. On completion, updates the task status (rather than
-        removing immediately) so frontends can observe terminal states
-        via polling.
+        Tracks running handles locally and publishes metadata globally.
+        On completion, releases the handle and retains terminal metadata
+        for polling from any worker.
 
         Args:
             asyncio_task (`asyncio.Task`):
@@ -335,21 +352,33 @@ class BackgroundTaskManager:
         task_id = bg_task.id
         self.tasks[task_id] = bg_task
 
-        # Register in the global Redis registry.
-        metadata = json.dumps(
-            {
-                "tool_name": tool_name,
-                "agent_id": agent_id,
-                "started_at": bg_task.started_at,
-            },
-            ensure_ascii=False,
-        )
-        await self._message_bus.registry_set(
-            MessageBusKeys.bg_tasks(session_id),
-            task_id,
-            metadata,
-            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
-        )
+        # Install cleanup even if a registry write fails or is cancelled.
+        # The callback is attached after writes settle, so a fast task cannot
+        # publish a terminal state before its initial running state.
+        try:
+            await self._message_bus.registry_set(
+                MessageBusKeys.bg_tasks(session_id),
+                task_id,
+                json.dumps(
+                    {
+                        "tool_name": tool_name,
+                        "agent_id": agent_id,
+                        "started_at": bg_task.started_at,
+                    },
+                    ensure_ascii=False,
+                ),
+                ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+            )
+            await self._store_record(
+                BackgroundTaskRecord.model_validate(bg_task),
+            )
+        except BaseException:
+            asyncio_task.cancel()
+            raise
+        finally:
+            asyncio_task.add_done_callback(
+                lambda task: self._on_done(bg_task, task),
+            )
 
         logger.info(
             "Background task registered: task_id=%s, session_id=%s, "
@@ -359,92 +388,100 @@ class BackgroundTaskManager:
             agent_id,
             tool_name,
         )
-
-        def _on_done(_t: asyncio.Task) -> None:
-            bg = self.tasks.get(task_id)
-            if bg is None:
-                return
-
-            bg.completed_at = time.time()
-            if _t.cancelled():
-                bg.status = TaskStatus.CANCELLED
-            elif _t.exception() is not None:
-                bg.status = TaskStatus.FAILED
-                bg.error_summary = str(_t.exception())[:512]
-            else:
-                bg.status = TaskStatus.COMPLETED
-
-            # Unregister from the global Redis registry.
-            try:
-                asyncio.ensure_future(
-                    self._safe_bg_task_unregister(session_id, task_id),
-                )
-            except RuntimeError:
-                # Event loop already closed during shutdown.
-                pass
-
-            self._evict_completed()
-
-        asyncio_task.add_done_callback(_on_done)
         return task_id
 
-    async def _safe_bg_task_unregister(
+    def _on_done(
         self,
-        session_id: str,
-        task_id: str,
+        bg_task: BackgroundTask,
+        task: asyncio.Task,
     ) -> None:
-        """Unregister a finished background task, logging any failure.
+        """Record the actual outcome and schedule shared-state cleanup."""
+        bg_task.completed_at = time.time()
+        if task.cancelled():
+            bg_task.status = TaskStatus.CANCELLED
+        elif task.exception() is not None:
+            bg_task.status = TaskStatus.FAILED
+            bg_task.error_summary = str(task.exception())[:512]
+        else:
+            result = task.result()
+            bg_task.status = TaskStatus.COMPLETED
+            if isinstance(result, ToolResponse):
+                if result.state == ToolResultState.ERROR:
+                    bg_task.status = TaskStatus.FAILED
+                    bg_task.error_summary = "\n".join(
+                        block.text
+                        for block in result.content
+                        if isinstance(block, TextBlock)
+                    )[:512]
+                elif result.state == ToolResultState.INTERRUPTED:
+                    bg_task.status = TaskStatus.CANCELLED
 
-        Args:
-            session_id (`str`):
-                The session id of the finished task.
-            task_id (`str`):
-                The task id to unregister from the global registry.
-        """
+        self.tasks.pop(bg_task.id, None)
+        completion = asyncio.create_task(
+            self._finish_task(BackgroundTaskRecord.model_validate(bg_task)),
+        )
+        self._completion_tasks.add(completion)
+        completion.add_done_callback(self._completion_tasks.discard)
+
+    async def _store_record(self, record: BackgroundTaskRecord) -> None:
+        """Publish serializable metadata in the user's shared namespace."""
+        await self._message_bus.registry_set(
+            MessageBusKeys.bg_task_records(record.user_id),
+            record.id,
+            record.model_dump_json(),
+            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+        )
+
+    async def _finish_task(self, record: BackgroundTaskRecord) -> None:
+        """Persist the outcome and always attempt running-registry cleanup."""
         try:
-            await self._message_bus.registry_del(
-                MessageBusKeys.bg_tasks(session_id),
-                task_id,
-            )
-        except Exception as e:  # pylint: disable=broad-except
+            # Serialize completion and eviction across workers for this user.
+            async with self._message_bus.acquire_lock(
+                MessageBusKeys.bg_task_records_lock(record.user_id),
+            ):
+                await self._store_record(record)
+                records = await self.list_tasks(user_id=record.user_id)
+                completed = sorted(
+                    (
+                        item
+                        for item in records
+                        if item.status != TaskStatus.RUNNING
+                    ),
+                    key=lambda item: (item.completed_at, item.id),
+                )
+                for item in completed[:-_MAX_RETAINED_TASKS]:
+                    await self._message_bus.registry_del(
+                        MessageBusKeys.bg_task_records(record.user_id),
+                        item.id,
+                    )
+        except Exception:
             logger.exception(
-                "Failed to unregister background task from the global "
-                "registry: task_id=%s, session_id=%s, error=%s",
-                task_id,
-                session_id,
-                str(e),
+                "Failed to retain background task outcome: task_id=%s",
+                record.id,
             )
-
-    def _evict_completed(self) -> None:
-        """Remove the oldest terminal-state tasks when capacity is exceeded.
-
-        Keeps at most :data:`_MAX_RETAINED_TASKS` completed/failed/cancelled
-        tasks in the local registry so memory usage stays bounded while
-        still giving frontends a window to observe terminal states.
-        """
-        completed = [
-            tid
-            for tid, t in self.tasks.items()
-            if t.status != TaskStatus.RUNNING
-        ]
-        while len(completed) > _MAX_RETAINED_TASKS:
-            oldest = completed.pop(0)
-            self.tasks.pop(oldest, None)
+        finally:
+            try:
+                await self._message_bus.registry_del(
+                    MessageBusKeys.bg_tasks(record.session_id),
+                    record.id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to unregister background task: task_id=%s",
+                    record.id,
+                )
 
     # ------------------------------------------------------------------
     # Task querying (for REST endpoints)
     # ------------------------------------------------------------------
 
-    def list_tasks(
+    async def list_tasks(
         self,
         *,
         user_id: str,
         session_id: str | None = None,
-    ) -> list[BackgroundTask]:
-        """List tasks visible to a given user.
-
-        Returns both running and recently-completed tasks that are
-        still within the retention window.
+    ) -> list[BackgroundTaskRecord]:
+        """List shared running and retained terminal tasks for a user.
 
         Args:
             user_id (`str`):
@@ -453,26 +490,33 @@ class BackgroundTaskManager:
                 If provided, further filter by session.
 
         Returns:
-            `list[BackgroundTask]`:
+            `list[BackgroundTaskRecord]`:
                 Matching tasks ordered by registration time.
         """
-        return [
-            t
-            for t in self.tasks.values()
-            if t.user_id == user_id
-            and (session_id is None or t.session_id == session_id)
+        values = await self._message_bus.registry_getall(
+            MessageBusKeys.bg_task_records(user_id),
+        )
+        records = [
+            BackgroundTaskRecord.model_validate_json(value)
+            for value in values.values()
         ]
+        return sorted(
+            (
+                record
+                for record in records
+                if record.user_id == user_id
+                and (session_id is None or record.session_id == session_id)
+            ),
+            key=lambda record: (record.started_at, record.id),
+        )
 
-    def get_task(
+    async def get_task(
         self,
         task_id: str,
         *,
         user_id: str,
-    ) -> BackgroundTask | None:
-        """Get a single task by id, scoped to the requesting user.
-
-        Returns ``None`` when the task does not exist or belongs to a
-        different user (no information leakage about task existence).
+    ) -> BackgroundTaskRecord | None:
+        """Get shared task metadata, scoped to the requesting user.
 
         Args:
             task_id (`str`):
@@ -481,13 +525,17 @@ class BackgroundTaskManager:
                 The requesting user's id.
 
         Returns:
-            `BackgroundTask | None`:
-                The task if found and owned by *user_id*, else ``None``.
+            `BackgroundTaskRecord | None`:
+                The task if owned by the user, else `None`.
         """
-        t = self.tasks.get(task_id)
-        if t is None or t.user_id != user_id:
+        value = await self._message_bus.registry_get(
+            MessageBusKeys.bg_task_records(user_id),
+            task_id,
+        )
+        if value is None:
             return None
-        return t
+        record = BackgroundTaskRecord.model_validate_json(value)
+        return record if record.user_id == user_id else None
 
     # ------------------------------------------------------------------
     # Tool listing
@@ -528,7 +576,7 @@ class BackgroundTaskManager:
         """
         cancelled = 0
         for bg_task in list(self.tasks.values()):
-            if bg_task.session_id != session_id:
+            if bg_task.session_id != session_id or bg_task.asyncio_task.done():
                 continue
             logger.info(
                 "Cancelling background task for session cancel: "
@@ -561,7 +609,7 @@ class BackgroundTaskManager:
                 ``True`` if the task was found locally and cancelled.
         """
         bg_task = self.tasks.get(task_id)
-        if bg_task is None:
+        if bg_task is None or bg_task.asyncio_task.done():
             return False
         logger.info(
             "Cancelling background task via bus signal: "
@@ -592,6 +640,7 @@ class BackgroundTaskManager:
             "Shutting down BackgroundTaskManager: cancelling %d task(s).",
             count,
         )
+        tasks = [bg.asyncio_task for bg in self.tasks.values()]
         for bg_task in list(self.tasks.values()):
             logger.info(
                 "Cancelling background task on shutdown: task_id=%s, "
@@ -601,4 +650,8 @@ class BackgroundTaskManager:
                 bg_task.agent_id,
             )
             bg_task.asyncio_task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # Done callbacks run before gather resumes and register finalizers.
+        while self._completion_tasks:
+            await asyncio.gather(*self._completion_tasks)
         self.tasks.clear()

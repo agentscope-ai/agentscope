@@ -3,7 +3,7 @@
 """Unit tests for ToolOffloadMiddleware."""
 import asyncio
 import json
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,10 +13,17 @@ from pydantic import BaseModel
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent
-from agentscope.app.message_bus import MessageBus, MessageBusKeys
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    MessageBusKeys,
+)
 from agentscope.app.middleware import ToolOffloadMiddleware
-from agentscope.app._manager import BackgroundTaskManager
-from agentscope.message import TextBlock, ToolCallBlock
+from agentscope.app._manager import BackgroundTaskManager, TaskStatus
+from agentscope.app._manager._background_task_manager import (
+    BackgroundTaskRecord,
+)
+from agentscope.message import TextBlock, ToolCallBlock, ToolResultState
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -152,8 +159,8 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
         self.mock_model = MockModel()
-        self.bg_manager = BackgroundTaskManager(
-            message_bus=MagicMock(spec=MessageBus),
+        self.bg_manager = await self.enterAsyncContext(
+            BackgroundTaskManager(message_bus=InMemoryMessageBus()),
         )
 
     # ------------------------------------------------------------------
@@ -374,6 +381,58 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(payload["session_id"], agent.state.session_id)
         self.assertEqual(payload["agent_id"], "a")
 
+    async def test_background_failures_retain_error_status(self) -> None:
+        """Error responses and raised exceptions both retain failed state."""
+        for raises in (False, True):
+            with self.subTest(raises=raises):
+                agent, middleware = self._make_agent(
+                    Toolkit(tools=[SlowTool()]),
+                    timeout_secs=0.01,
+                )
+                gate = asyncio.Event()
+
+                async def handler(
+                    *,
+                    event: asyncio.Event = gate,
+                    should_raise: bool = raises,
+                    **_kwargs: Any,
+                ) -> AsyncGenerator:
+                    """Fail only after the tool has been offloaded."""
+                    await event.wait()
+                    if should_raise:
+                        raise ValueError("tool execution failed")
+                    yield ToolResponse(
+                        id="call_failure",
+                        state=ToolResultState.ERROR,
+                        content=[TextBlock(text="tool execution failed")],
+                    )
+
+                call = ToolCallBlock(
+                    id="call_failure",
+                    name="slow_tool",
+                    input="{}",
+                )
+                async for _ in middleware.on_acting(
+                    agent,
+                    {"tool_call": call},
+                    handler,
+                ):
+                    pass
+                bg = next(iter(self.bg_manager.tasks.values()))
+                expected = BackgroundTaskRecord.model_validate(bg).model_dump()
+                gate.set()
+                await bg.asyncio_task
+                await asyncio.gather(*self.bg_manager._completion_tasks)
+                record = await self.bg_manager.get_task(bg.id, user_id="u")
+                self.assertIsNotNone(record.completed_at)
+                expected.update(
+                    status=TaskStatus.FAILED,
+                    error_summary="tool execution failed",
+                    completed_at=record.completed_at,
+                )
+                self.assertEqual(record.model_dump(), expected)
+                self.assertEqual(self.bg_manager.tasks, {})
+
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""
 
@@ -408,5 +467,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         # The asyncio task should be cancelling
         self.assertTrue(asyncio_task.cancelled() or asyncio_task.cancelling())
-        # Removed from manager
+        await asyncio.gather(asyncio_task, return_exceptions=True)
+        await asyncio.gather(*self.bg_manager._completion_tasks)
+        # The handle is released, but cancelled metadata remains queryable.
         self.assertEqual(len(self.bg_manager.tasks), 0)
+        record = await self.bg_manager.get_task(task_id, user_id="u")
+        self.assertEqual(record.status, TaskStatus.CANCELLED)
