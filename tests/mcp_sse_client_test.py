@@ -182,7 +182,8 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.assertIsNotNone(final_response)
         self.assertEqual(
             final_response.content[0].text,
-            "arg1: 789, arg2: [7, 8, 9]",
+            "arg1: 789, arg2: [7, 8, 9]"
+            + '{"result": "arg1: 789, arg2: [7, 8, 9]"}',
         )
 
         self.toolkit.clear()
@@ -268,7 +269,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.assertIsNotNone(final_response)
         self.assertEqual(
             final_response.content[0].text,
-            "arg1: 56, arg2: [5, 6]",
+            "arg1: 56, arg2: [5, 6]" + '{"result": "arg1: 56, arg2: [5, 6]"}',
         )
 
         # mcp client level test

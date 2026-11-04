@@ -439,17 +439,19 @@ class MCPTool(ToolBase):
             result = await call_task
 
             content = self._convert_mcp_content_to_blocks(result.content)
-            if result.structured_content is not None and not any(
-                isinstance(block, TextBlock) for block in content
-            ):
-                content.append(
-                    TextBlock(
-                        text=json.dumps(
-                            result.structured_content,
-                            ensure_ascii=False,
-                        ),
-                    ),
+            if result.structured_content is not None:
+                structured_text = json.dumps(
+                    result.structured_content,
+                    ensure_ascii=False,
                 )
+                # shortcut: differently formatted JSON may repeat; normalize if
+                # duplicate payloads cause token-budget issues.
+                if not any(
+                    isinstance(block, TextBlock)
+                    and block.text == structured_text
+                    for block in content
+                ):
+                    content.append(TextBlock(text=structured_text))
 
             yield ToolChunk(
                 content=content,
