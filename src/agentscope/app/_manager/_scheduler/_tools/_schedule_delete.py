@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """Schedule delete tool – removes a job from the scheduler and storage."""
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from apscheduler.jobstores.base import JobLookupError
 
 from .....message import ToolResultState, TextBlock
 from .....permission import (
@@ -12,8 +11,9 @@ from .....permission import (
     PermissionBehavior,
 )
 from .....tool import ToolBase, ToolChunk
-from ....message_bus import MessageBus
-from ....storage._base import StorageBase
+
+if TYPE_CHECKING:
+    from .._scheduler_manager import SchedulerManager
 
 
 class _ScheduleDeleteParams(BaseModel):
@@ -52,33 +52,17 @@ class ScheduleDelete(ToolBase):
     def __init__(
         self,
         user_id: str,
-        scheduler: Any,
-        storage: StorageBase,
-        message_bus: MessageBus,
-        scheduler_manager: Any,
+        scheduler_manager: "SchedulerManager",
     ) -> None:
         """Initialize the schedule delete tool.
 
         Args:
             user_id (`str`):
                 The authenticated user; used to scope the storage deletion.
-            scheduler (`Any`):
-                The ``AsyncIOScheduler`` instance whose job will be removed.
-            storage (`StorageBase`):
-                The storage backend used to delete the persisted record.
-            message_bus (`MessageBus`):
-                The message bus used to cancel in-flight chat runs for
-                any execution session spawned by this schedule and to
-                purge their per-session bus state.
-            scheduler_manager (`Any`):
-                The scheduler manager, used to tell the timer-owning node
-                that a schedule changed. Must expose a
-                ``notify_changed(schedule_id)`` coroutine.
+            scheduler_manager (`SchedulerManager`):
+                Coordinates the timer and session cleanup.
         """
         self._user_id = user_id
-        self._scheduler = scheduler
-        self._storage = storage
-        self._message_bus = message_bus
         self._scheduler_manager = scheduler_manager
 
     async def check_permissions(
@@ -114,15 +98,7 @@ class ScheduleDelete(ToolBase):
                 A chunk describing the result of the delete operation.
         """
 
-        # Local import to avoid a circular dependency between
-        # ``_manager`` and ``_service`` at module load.
-        from ...._service import SessionService  # noqa: PLC0415
-
-        session_service = SessionService(
-            storage=self._storage,
-            message_bus=self._message_bus,
-        )
-        deleted = await session_service.delete_schedule(
+        deleted = await self._scheduler_manager.delete_schedule(
             self._user_id,
             schedule_id,
         )
@@ -139,16 +115,6 @@ class ScheduleDelete(ToolBase):
                 ],
                 state=ToolResultState.ERROR,
             )
-
-        # Remove from the in-memory scheduler only after the user-scoped
-        # storage delete succeeds. Otherwise a caller could remove another
-        # user's local timer even though their storage delete was rejected.
-        try:
-            self._scheduler.remove_job(schedule_id)
-        except JobLookupError:
-            pass
-
-        await self._scheduler_manager.notify_changed(schedule_id)
 
         return ToolChunk(
             content=[

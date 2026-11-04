@@ -33,6 +33,7 @@ from utils import AnyString, FakeWorkspaceManager
 
 from agentscope.app import create_app
 from agentscope.app._manager import SchedulerManager
+from agentscope.app._manager._scheduler._tools import ScheduleDelete
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     ChatModelConfig,
@@ -40,6 +41,7 @@ from agentscope.app.storage import (
     ScheduleData,
     ScheduleRecord,
     ScheduleOrigin,
+    SessionRecord,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
@@ -545,14 +547,19 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
             workspace_manager=FakeWorkspaceManager(),
             enabled=False,
         )
-        self.delete_tool = next(
+        self.delete_tool = await self._delete_tool(self.writer)
+        self.owner_delete_tool = await self._delete_tool(self.manager)
+
+    async def _delete_tool(self, manager: SchedulerManager) -> ScheduleDelete:
+        """Get the delete tool for user u on the given node."""
+        return next(
             tool
-            for tool in await self.writer.list_tools(
+            for tool in await manager.list_tools(
                 user_id="u",
                 agent_id="a",
                 chat_model_config=_make_record().data.chat_model_config,
             )
-            if tool.name == "ScheduleDelete"
+            if isinstance(tool, ScheduleDelete)
         )
 
     async def test_non_owner_delete_removes_owner_job(self) -> None:
@@ -577,15 +584,6 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
         """A failed user-scoped delete must not remove another user's timer."""
         record = _make_record(user_id="owner")
         await self.storage.upsert_schedule("owner", record)
-        delete_tool = next(
-            tool
-            for tool in await self.manager.list_tools(
-                user_id="u",
-                agent_id="a",
-                chat_model_config=_make_record().data.chat_model_config,
-            )
-            if tool.name == "ScheduleDelete"
-        )
 
         async with self.manager:
             self.assertListEqual(self.job_ids(), [record.id])
@@ -594,7 +592,7 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
                 "publish",
                 wraps=self.bus.publish,
             ) as publish:
-                result = await delete_tool(schedule_id=record.id)
+                result = await self.owner_delete_tool(schedule_id=record.id)
 
             self.assertEqual(result.state, ToolResultState.ERROR)
             self.assertIsNotNone(
@@ -602,6 +600,73 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
             )
             self.assertListEqual(self.job_ids(), [record.id])
             publish.assert_not_awaited()
+
+    async def test_owner_stops_job_before_cascade(self) -> None:
+        """Reconcile cannot restore the timer during session cleanup."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        list_sessions = self.storage.list_sessions_by_schedule
+        reconciles = []
+
+        async def during_cleanup(
+            user_id: str,
+            schedule_id: str,
+        ) -> list[SessionRecord]:
+            if not reconciles:
+                reconciles.append(
+                    asyncio.create_task(self.manager.reconcile()),
+                )
+                # Give the competing reconcile a turn to acquire the lock.
+                await asyncio.sleep(0)
+                list_all.assert_not_awaited()
+            self.assertEqual(self.job_ids(), [])
+            return await list_sessions(user_id, schedule_id)
+
+        async with self.manager:
+            self.assertEqual(self.job_ids(), [record.id])
+            with (
+                patch.object(
+                    self.storage,
+                    "list_all_schedules",
+                    wraps=self.storage.list_all_schedules,
+                ) as list_all,
+                patch.object(
+                    self.storage,
+                    "list_sessions_by_schedule",
+                    during_cleanup,
+                ),
+            ):
+                try:
+                    result = await self.owner_delete_tool(
+                        schedule_id=record.id,
+                    )
+                finally:
+                    await asyncio.gather(*reconciles)
+
+            self.assertEqual(result.state, ToolResultState.SUCCESS)
+            self.assertIsNone(await self.storage.get_schedule("u", record.id))
+            self.assertEqual(self.job_ids(), [])
+
+    async def test_failed_delete_restores_enabled_job(self) -> None:
+        """A storage error after stopping the timer must restore it."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+
+        async def fail_delete(user_id: str, schedule_id: str) -> bool:
+            self.assertEqual((user_id, schedule_id), ("u", record.id))
+            self.assertEqual(self.job_ids(), [])
+            raise RuntimeError("storage unavailable")
+
+        async with self.manager:
+            with patch.object(self.storage, "delete_schedule", fail_delete):
+                with self.assertRaisesRegex(RuntimeError, "storage"):
+                    await self.owner_delete_tool(schedule_id=record.id)
+
+            self.assertEqual(self.job_ids(), [record.id])
+            self.assertEqual(
+                self.manager._versions,
+                {record.id: record.updated_at},
+            )
 
     async def test_missing_delete_does_not_notify(self) -> None:
         """A missing record returns an error without a lifecycle event."""

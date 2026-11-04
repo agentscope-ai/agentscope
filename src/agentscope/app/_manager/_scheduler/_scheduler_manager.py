@@ -440,6 +440,33 @@ class SchedulerManager:
             return OrTrigger([trigger, weekday_trigger])
         return trigger
 
+    async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
+        """Stop the user's local timer before deleting its sessions."""
+        # The service package also imports the manager at module load.
+        from ..._service import SessionService
+
+        service = SessionService(
+            storage=self._storage,
+            message_bus=self._message_bus,
+        )
+        async with self._reconcile_lock:
+            if await self._storage.get_schedule(user_id, schedule_id) is None:
+                return False
+
+            if self._enabled:
+                self._remove_job(schedule_id)
+            deleted = False
+            try:
+                deleted = await service.delete_schedule(user_id, schedule_id)
+            finally:
+                # A failed cascade may have left the schedule enabled.
+                if self._enabled and not deleted:
+                    await self._reconcile_locked()
+
+        if deleted:
+            await self.notify_changed(schedule_id)
+        return deleted
+
     async def notify_changed(self, schedule_id: str) -> None:
         """Tell the timer-owning node that a schedule was written.
 
@@ -651,9 +678,6 @@ class SchedulerManager:
             ),
             ScheduleDelete(
                 user_id=user_id,
-                scheduler=self._scheduler,
-                storage=self._storage,
-                message_bus=self._message_bus,
                 scheduler_manager=self,
             ),
             ScheduleList(
