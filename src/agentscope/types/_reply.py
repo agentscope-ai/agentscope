@@ -14,6 +14,9 @@ class ReplyFinishedReason(StrEnum):
     INTERRUPTED = "interrupted"
     EXCEED_MAX_ITERS = "exceed_max_iters"
     ERROR = "error"
+    TOOL_REJECTED = "tool_rejected"
+    """A tool call was denied while ``stop_on_reject`` is enabled, so the
+    reply stopped instead of reasoning on the denial."""
 
 
 class ErrorType(StrEnum):

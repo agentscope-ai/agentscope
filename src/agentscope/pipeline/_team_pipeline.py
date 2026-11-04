@@ -105,6 +105,7 @@ _RESULT_STATES = {
     ReplyFinishedReason.EXCEED_MAX_ITERS: ToolResultState.SUCCESS,
     ReplyFinishedReason.INTERRUPTED: ToolResultState.INTERRUPTED,
     ReplyFinishedReason.ERROR: ToolResultState.ERROR,
+    ReplyFinishedReason.TOOL_REJECTED: ToolResultState.DENIED,
 }
 
 
