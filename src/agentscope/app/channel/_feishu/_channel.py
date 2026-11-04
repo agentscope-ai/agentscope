@@ -4,7 +4,7 @@
 Translates the Feishu platform to/from normalised events and emits them
 via the injected gateway callback. On a card click the channel freezes
 its own card and emits a ``ChannelConfirmationResultEvent`` (same entry
-as messages) carrying the tool call's id. No in-process approval futures
+as messages) carrying an opaque approval id. No in-process approval futures
 or attachment buffers — the awaiting confirmation lives in session state.
 
 The WebSocket runs in a background thread (the lark SDK owns its own
@@ -14,6 +14,7 @@ SDK's public ``start()`` — the one place to adapt if the SDK changes.
 """
 import asyncio
 import base64
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
 import threading
 import time
@@ -24,9 +25,12 @@ from pydantic import BaseModel, Field
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
 from ....message import Base64Source, DataBlock, Msg, TextBlock
+from .._approval import approval_id_for
 from .._base import (
     ChannelBase,
+    ChannelAuthConfirmationResultEvent,
     ChannelCapability,
+    ChannelDecisionStatus,
     ChannelEvent,
     ChannelConfirmationResultEvent,
     ChannelStatus,
@@ -37,6 +41,7 @@ from ._credential_binding import FeishuCredentialBinding
 from ._card_templates import (
     _build_action_response,
     _build_approval_card,
+    _build_notice_toast,
     _build_toast,
     _parse_action,
 )
@@ -57,6 +62,8 @@ _MEDIA_TYPES = frozenset({"image", "audio", "media", "file"})
 _STREAM_ELEMENT_ID = "md"
 # Minimum seconds between live streaming-card updates (throttle).
 _STREAM_MIN_INTERVAL = 0.7
+# Leave one second of Feishu's three-second callback window for transport.
+_AUTHORIZATION_TIMEOUT_SECS = 2.0
 
 
 class _ThreadLoopProxy:
@@ -184,7 +191,7 @@ class FeishuChannel(ChannelBase):
         self,
         emit: Callable[
             [ChannelEvent | ChannelConfirmationResultEvent],
-            Awaitable[None],
+            Awaitable[ChannelDecisionStatus | None],
         ],
     ) -> None:
         """Open the HTTP client, run the WS client (reconnecting with
@@ -627,24 +634,81 @@ class FeishuChannel(ChannelBase):
         parsed = _parse_action(action)
         if parsed is None:
             return _build_toast(False)
-        tool_call_id, chat_id, approved, agent_id, session_id = parsed
+        chat_id, approved, approval_id = parsed
         operator = getattr(data.event, "operator", None)
         user_id = getattr(operator, "open_id", "") or ""
         if self._emit:
-            asyncio.run_coroutine_threadsafe(
-                self._emit(
-                    ChannelConfirmationResultEvent(
-                        channel_id=self._channel_id,
-                        chat_id=chat_id,
-                        channel_user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        tool_call_id=tool_call_id,
-                        approved=approved,
-                    ),
-                ),
+            try:
+                # Step 1: synchronously perform read-only authorization.
+                # Feishu requires this callback to respond within three
+                # seconds, so this phase only verifies the approval origin
+                # and requester. It must not claim the approval, enqueue a
+                # resume, or otherwise leave partial state if it times out.
+                authorization_event = ChannelAuthConfirmationResultEvent(
+                    channel_id=self._channel_id,
+                    chat_id=chat_id,
+                    channel_user_id=user_id,
+                    approved=approved,
+                    actor=user_id,
+                    approval_id=approval_id,
+                )
+                authorization = asyncio.run_coroutine_threadsafe(
+                    self._emit(authorization_event),
+                    loop,
+                )
+                status = authorization.result(
+                    timeout=_AUTHORIZATION_TIMEOUT_SECS,
+                )
+            except FutureTimeoutError:
+                status = ChannelDecisionStatus.ERROR
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Feishu approval callback failed")
+                status = ChannelDecisionStatus.ERROR
+            if status is ChannelDecisionStatus.UNAUTHORIZED:
+                return _build_notice_toast(
+                    "Only the requester can approve or deny this tool call.",
+                )
+            if status is ChannelDecisionStatus.STALE:
+                return _build_notice_toast(
+                    "This approval request is no longer pending.",
+                )
+            if status is ChannelDecisionStatus.ERROR:
+                return _build_notice_toast(
+                    "Your approval permission could not be verified. Please "
+                    "try again later.",
+                )
+            if status is not ChannelDecisionStatus.AUTHORIZED:
+                return _build_notice_toast(
+                    "This approval request is no longer pending.",
+                )
+
+            # Step 2: after authorization succeeds, schedule the real
+            # decision without blocking Feishu's callback. The gateway
+            # validates the approval again, atomically claims it, and
+            # enqueues the resumed run. We deliberately do not wait for or
+            # cancel this future: cancellation after side effects begin can
+            # leave the card response and the server-side claim inconsistent.
+            event = ChannelConfirmationResultEvent.model_validate(
+                authorization_event.model_dump(),
+            )
+            decision = asyncio.run_coroutine_threadsafe(
+                self._emit(event),
                 loop,
             )
+
+            def _log_decision_result(done: Any) -> None:
+                try:
+                    result = done.result()
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("Feishu approval resume failed")
+                else:
+                    if result is not ChannelDecisionStatus.ACCEPTED:
+                        logger.warning(
+                            "Feishu approval resume finished with status %s",
+                            result,
+                        )
+
+            decision.add_done_callback(_log_decision_result)
         # Update the clicked card in place via the callback response —
         # reliable even while the approved run floods the card API.
         return _build_action_response(approved)
@@ -847,25 +911,31 @@ class FeishuChannel(ChannelBase):
         event: ChannelEvent,
         req: RequireUserConfirmEvent,
     ) -> None:
-        """Post one approval card per tool call; each button carries its
-        ``tool_call_id`` and the ``chat_id`` for click routing.
+        """Post one approval card per tool call; each button carries an
+        opaque approval id and the chat id for origin validation.
 
         Args:
             event (`ChannelEvent`): The send target (chat id).
             req (`RequireUserConfirmEvent`): The approval request to show.
         """
         for tool in req.tool_calls:
+            approval_id = approval_id_for(req, tool.id)
+            if not approval_id:
+                logger.warning(
+                    "Feishu approval card skipped: tool '%s' has no "
+                    "approval id",
+                    tool.id,
+                )
+                continue
             await self._send(
                 event.channel_message_id,
                 event.chat_id,
                 "interactive",
                 _build_approval_card(
-                    tool.id,
                     event.chat_id,
                     tool.name,
                     str(tool.input)[:800],
-                    event.metadata.get("agent_id", ""),
-                    event.metadata.get("session_id", ""),
+                    approval_id,
                 ),
             )
 

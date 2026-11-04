@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Stateless tool-approval resume.
+"""Validate and atomically resume a tool approval.
 
-The awaiting confirmation is read straight from the session state (the
-single source of truth) and the run is resumed with the decision — no
-server-side pending record. A decision that no longer matches an
-ASKING tool call (stale click, double click) is ignored, giving
-idempotency for free.
+The awaiting confirmation is always read from session state. A server-side
+approval record pins the expected reply, but never replaces the session as
+the source of truth for the tool call itself.
 """
+import asyncio
+
 from ...event import ConfirmResult, UserConfirmResultEvent
 from ...message import ToolCallBlock, ToolCallState
 from .._bus_ops import enqueue_run_trigger
@@ -58,6 +58,8 @@ async def resume_after_decision(
     session_id: str,
     tool_call_id: str,
     approved: bool,
+    expected_reply_id: str = "",
+    approval_id: str = "",
 ) -> bool:
     """Resume the run with a decision on ``tool_call_id``.
 
@@ -73,6 +75,8 @@ async def resume_after_decision(
         session_id (`str`): The derived session.
         tool_call_id (`str`): The awaiting tool call to answer.
         approved (`bool`): The user's decision.
+        expected_reply_id (`str`): Reply pinned by the approval record.
+        approval_id (`str`): Approval round used to make the claim one-shot.
 
     Returns:
         `bool`: Whether a resume was enqueued.
@@ -83,20 +87,41 @@ async def resume_after_decision(
         agent_id=agent_id,
         session_id=session_id,
     )
+    if expected_reply_id and reply_id != expected_reply_id:
+        return False
     tool_call = next((t for t in asking if t.id == tool_call_id), None)
     if tool_call is None:
         return False
-    await enqueue_run_trigger(
-        bus,
-        user_id=user_id,
-        session_id=session_id,
-        agent_id=agent_id,
-        kind=MessageBusKeys.WAKEUP_KIND_RESUME,
-        inputs=UserConfirmResultEvent(
-            reply_id=reply_id,
-            confirm_results=[
-                ConfirmResult(confirmed=approved, tool_call=tool_call),
-            ],
-        ),
+    claim_key = MessageBusKeys.channel_approval_claim(
+        approval_id,
     )
-    return True
+    if not await bus.try_lock(
+        claim_key,
+        ttl_secs=MessageBusKeys.CHANNEL_APPROVAL_CLAIM_TTL_SECS,
+    ):
+        return False
+    try:
+        await enqueue_run_trigger(
+            bus,
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+            inputs=UserConfirmResultEvent(
+                reply_id=reply_id,
+                confirm_results=[
+                    ConfirmResult(confirmed=approved, tool_call=tool_call),
+                ],
+            ),
+        )
+        return True
+    except asyncio.CancelledError:
+        # The claim was introduced by the channel approval flow, so task
+        # cancellation must not strand it until its lease expires. Shield
+        # the cleanup from the cancellation already being propagated, then
+        # preserve the caller's cancellation semantics.
+        await asyncio.shield(bus.unlock(claim_key))
+        raise
+    except Exception:
+        await bus.unlock(claim_key)
+        raise
