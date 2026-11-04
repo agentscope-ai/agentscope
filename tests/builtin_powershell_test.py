@@ -96,6 +96,65 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].content[0].text, "ok\n")
         self.assertEqual(chunks[0].state, "running")
 
+    async def test_clixml_stderr_is_decoded(self) -> None:
+        """Turn PowerShell's CLIXML error stream back into readable text."""
+        clixml = (
+            "#< CLIXML\r\n"
+            '<Objs Version="1.1.0.1" '
+            'xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+            '<S S="Error">_x001B_[31;1mWrite-Error: _x001B_[0m'
+            "_x000D__x000A_</S>"
+            '<S S="Error">boom_x000D__x000A_</S>'
+            "</Objs>"
+        ).encode("utf-8")
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            ExecResult(0, b"", b""),
+            ExecResult(1, b"", clixml),
+        ]
+        tool = PowerShell(backend=backend)
+
+        chunks = [
+            chunk async for chunk in await tool(command="Write-Error 'boom'")
+        ]
+
+        text = chunks[0].content[0].text
+        self.assertNotIn("#< CLIXML", text)
+        self.assertNotIn("\x1b", text)
+        self.assertNotIn("_x00", text)
+        self.assertIn("Write-Error:", text)
+        self.assertIn("boom", text)
+
+    async def test_plain_stderr_is_kept(self) -> None:
+        """Leave a native command's stderr untouched."""
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            ExecResult(0, b"", b""),
+            ExecResult(1, b"", b"plain error\r\n"),
+        ]
+        tool = PowerShell(backend=backend)
+
+        chunks = [chunk async for chunk in await tool(command="failing")]
+
+        self.assertIn("plain error", chunks[0].content[0].text)
+
+    async def test_malformed_clixml_falls_back_to_raw_text(self) -> None:
+        """Keep the raw text when the CLIXML payload cannot be parsed."""
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            ExecResult(0, b"", b""),
+            ExecResult(
+                1,
+                b"",
+                b'#< CLIXML\r\n<Objs><S S="Error">unterminated',
+            ),
+        ]
+        tool = PowerShell(backend=backend)
+
+        chunks = [chunk async for chunk in await tool(command="broken")]
+
+        self.assertIn("unterminated", chunks[0].content[0].text)
+
     async def test_prefers_pwsh_and_caches_resolution(self) -> None:
         """Probe modern PowerShell once and reuse it for later calls."""
         backend = AsyncMock()
