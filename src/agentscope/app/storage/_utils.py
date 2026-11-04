@@ -8,6 +8,7 @@ from pydantic import BaseModel, SecretStr
 from ._model import TeamMember
 
 if TYPE_CHECKING:
+    from .._service._access import ResourceAccessService
     from ._base import StorageBase
     from ._model import AgentRecord, TeamRecord
 
@@ -129,6 +130,7 @@ async def _resolve_team_leader(
     storage: "StorageBase",
     user_id: str,
     team: "TeamRecord",
+    access: "ResourceAccessService | None" = None,
 ) -> "_TeamLeader | None":
     """Resolve *team*'s leader.
 
@@ -141,19 +143,35 @@ async def _resolve_team_leader(
     read fresh — an agent can be renamed at any time and ``TeamSay``
     routes by name.
 
+    The leader's agent may be owned by a different user than the team
+    owner: a session can be created on an agent shared through the
+    resource access policy, and ``TeamCreate`` legitimately leads a team
+    from that session. When *access* is supplied the agent record is
+    resolved through it — owner-scoped read first, then the team owner's
+    current access grants — so a shared leader keeps resolving for as
+    long as the grant is live and degrades to ``None`` the moment it is
+    revoked. Without *access* the resolution stays owner-scoped,
+    preserving the historical behavior for direct integrations.
+
     Args:
         storage (`StorageBase`):
             Storage backend for the lookups.
         user_id (`str`):
-            The team owner (also the leader agent's owner).
+            The team owner. Usually also the leader agent's owner; a
+            cross-owner shared leader resolves through *access*.
         team (`TeamRecord`):
             The team whose leader to resolve.
+        access (`ResourceAccessService | None`, optional):
+            Policy-aware resolver for the leader's agent record.
+            ``None`` keeps the owner-scoped lookup only.
 
     Returns:
         `_TeamLeader | None`:
             The leader's session id and agent record, or ``None`` when
-            either is missing — an inconsistent state, since deleting a
-            leader session or agent dissolves the team.
+            either is missing — an inconsistent state when the leader is
+            owned by *user_id* (deleting a leader session or agent
+            dissolves the team), or a cross-owner leader the team owner
+            can no longer see.
     """
     agent_id = team.leader_agent_id
     if agent_id is None:
@@ -162,7 +180,10 @@ async def _resolve_team_leader(
             return None
         agent_id = session.agent_id
 
-    agent = await storage.get_agent(user_id, agent_id)
+    if access is not None:
+        agent = await access.try_resolve_agent(user_id, agent_id)
+    else:
+        agent = await storage.get_agent(user_id, agent_id)
     if agent is None:
         return None
     return _TeamLeader(session_id=team.session_id, agent=agent)
