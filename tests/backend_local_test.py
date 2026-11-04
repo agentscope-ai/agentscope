@@ -14,6 +14,7 @@ module runs on Windows too.  Only the handful of cases that genuinely
 rely on a POSIX shell / POSIX-only utilities are skipped on Windows.
 """
 
+import asyncio
 import os
 import sys
 import tempfile
@@ -435,6 +436,40 @@ class TestLocalBackendShellWrapping(IsolatedAsyncioTestCase):
         )
         self.assertTrue(result.ok())
         self.assertEqual(result.stdout.decode().strip(), "chained")
+
+    async def test_timeout_returns_while_a_child_still_runs(self) -> None:
+        """A timeout returns on time even when the shell forked a child.
+
+        ``sh -c "sleep 8; true"`` forks ``sleep``, which keeps stdout open.
+        If only the shell is killed, the call waits for ``sleep`` to finish.
+        """
+        result = await asyncio.wait_for(
+            self.backend.exec_shell(
+                ["/bin/sh", "-c", "sleep 8; true"],
+                timeout=0.3,
+            ),
+            timeout=4,
+        )
+        self.assertEqual(
+            (result.exit_code, result.stdout, result.stderr),
+            (-1, b"", b"timed out"),
+        )
+
+    async def test_cancel_stops_the_command(self) -> None:
+        """Cancelling the call stops the command it started."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mark = os.path.join(tmp, "mark")
+            task = asyncio.create_task(
+                self.backend.exec_shell(
+                    ["/bin/sh", "-c", f"sleep 1; touch {mark}"],
+                ),
+            )
+            await asyncio.sleep(0.2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await asyncio.sleep(1.5)
+            self.assertFalse(os.path.exists(mark))
 
 
 if __name__ == "__main__":
