@@ -347,6 +347,32 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             self.assertTrue(await self.bus.is_locked("k"))
         self.assertFalse(await self.bus.is_locked("k"))
 
+    async def test_heartbeat_survives_transient_renew_error(self) -> None:
+        """One failed renewal must not end the heartbeat for good.
+
+        If the heartbeat task dies, the lease expires while the body still
+        runs and a second holder can enter the same critical section.
+        """
+        original = self.fr.eval
+        failed = False
+
+        async def flaky_eval(*args: Any, **kwargs: Any) -> Any:
+            nonlocal failed
+            # Renewal passes the TTL as a fifth argument; release does not.
+            if len(args) == 5 and not failed:
+                failed = True
+                raise ConnectionError("redis blip")
+            return await original(*args, **kwargs)
+
+        with patch.object(self.fr, "eval", flaky_eval):
+            async with self.bus.acquire_lock("hb", ttl_secs=2):
+                await asyncio.sleep(1.2)
+                self.assertTrue(failed)
+                self.assertIn(
+                    "lock-heartbeat:hb",
+                    {task.get_name() for task in asyncio.all_tasks()},
+                )
+
     async def test_second_acquirer_waits_until_release(self) -> None:
         """A second ``acquire_lock`` on the same key blocks until the
         first releases."""
