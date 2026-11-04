@@ -3,6 +3,7 @@
 import base64
 import io
 import wave
+from contextlib import asynccontextmanager, aclosing
 from datetime import datetime
 from typing import (
     Any,
@@ -21,6 +22,7 @@ from ...credential import GeminiCredential
 from ...message import DataBlock, Base64Source
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from google.genai.types import GenerateContentResponse
 
 
@@ -135,18 +137,12 @@ class GeminiTTSModel(TTSModelBase):
                 A single ``TTSResponse`` when ``stream=False``, or an async
                 generator yielding incremental ``TTSResponse`` chunks when
                 ``stream=True``.
+
+        The streaming request starts when iteration begins. Consumers that
+        stop early should close the returned generator to release its client.
         """
         if not text:
             return TTSResponse(content=None)
-
-        from google import genai
-
-        client = genai.Client(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                **self.client_kwargs,
-            },
-        )
 
         config: dict[str, Any] = {
             "response_modalities": ["AUDIO"],
@@ -161,22 +157,54 @@ class GeminiTTSModel(TTSModelBase):
         }
 
         if self.stream:
+            return self._stream(text, config)
+
+        async with self._client() as client:
+            start_datetime = datetime.now()
+            response = await client.aio.models.generate_content(
+                model=self.model,
+                contents=text,
+                config=config,
+            )
+            elapsed = (datetime.now() - start_datetime).total_seconds()
+            return self._parse_response(response, elapsed)
+
+    @asynccontextmanager
+    async def _client(self) -> AsyncIterator["Client"]:
+        """Own both SDK transports for the duration of one synthesis."""
+        from google import genai
+
+        client = genai.Client(
+            **{
+                "api_key": self.credential.api_key.get_secret_value(),
+                **self.client_kwargs,
+            },
+        )
+        try:
+            yield client
+        finally:
+            try:
+                await client.aio.aclose()
+            finally:
+                client.close()
+
+    async def _stream(
+        self,
+        text: str,
+        config: dict[str, Any],
+    ) -> AsyncGenerator[TTSResponse, None]:
+        """Create the client lazily and release it when consumption ends."""
+        async with self._client() as client:
             stream = await client.aio.models.generate_content_stream(
                 model=self.model,
                 contents=text,
                 config=config,
             )
-            return self._parse_stream_into_async_generator(stream)
-
-        start_datetime = datetime.now()
-        response = await client.aio.models.generate_content(
-            model=self.model,
-            contents=text,
-            config=config,
-        )
-        elapsed = (datetime.now() - start_datetime).total_seconds()
-
-        return self._parse_response(response, elapsed)
+            async with aclosing(
+                self._parse_stream_into_async_generator(stream),
+            ) as responses:
+                async for response in responses:
+                    yield response
 
     @staticmethod
     def _parse_response(
