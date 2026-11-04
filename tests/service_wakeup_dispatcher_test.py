@@ -1470,6 +1470,33 @@ class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
         self.assertIsNone(dispatcher._task)
         self.assertIsNone(dispatcher._fallback_task)
 
+    async def test_startup_fails_when_subscription_raises_before_ready(
+        self,
+    ) -> None:
+        """A subscribe failure before ``on_ready`` must not hang startup."""
+
+        async def subscribe(
+            _key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            raise ConnectionError("broker down")
+            yield {}  # pylint: disable=unreachable
+
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        with patch.object(bus, "subscribe", subscribe):
+            with self.assertRaisesRegex(RuntimeError, "subscription"):
+                # pylint: disable=unnecessary-dunder-call
+                await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
     async def test_initial_publish_failure_cleans_up_started_tasks(
         self,
     ) -> None:
