@@ -14,6 +14,7 @@ from typing import (
 
 from pydantic import BaseModel, Field
 
+from ._endpoints import _qwen_http_url
 from .._tts_base import TTSModelBase
 from .._tts_response import TTSResponse, TTSUsage
 from ..._utils._audio import _build_streaming_wav_header
@@ -84,6 +85,8 @@ class DashScopeTTSModel(TTSModelBase):
         Args:
             credential (`DashScopeCredential`):
                 The DashScope credential used to authenticate the API call.
+                An explicit ``base_url`` selects the HTTP endpoint; otherwise
+                the SDK global HTTP setting is used, as in voice enrollment.
             model (`str`, defaults to ``"qwen3-tts-flash"``):
                 The TTS model name. Supported models include
                 ``qwen3-tts-flash``, ``qwen-tts``, etc.
@@ -116,6 +119,7 @@ class DashScopeTTSModel(TTSModelBase):
                 The text to be synthesized.
             **kwargs (`Any`):
                 Additional keyword arguments to pass to the TTS API call.
+                ``base_address`` explicitly overrides the credential endpoint.
 
         Returns:
             `TTSResponse | AsyncGenerator[TTSResponse, None]`:
@@ -127,14 +131,20 @@ class DashScopeTTSModel(TTSModelBase):
 
         import dashscope
 
-        response = dashscope.MultiModalConversation.call(
-            model=self.model,
-            api_key=self.credential.api_key.get_secret_value(),
-            text=text,
-            voice=self.parameters.voice,
-            stream=True,
-            **kwargs,
-        )
+        request_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "text": text,
+            "voice": self.parameters.voice,
+            "base_address": _qwen_http_url(
+                self.credential,
+                "/api/v1",
+            ),
+        }
+        request_kwargs.update(kwargs)
+        request_kwargs["api_key"] = self.credential.api_key.get_secret_value()
+        request_kwargs["stream"] = True
+
+        response = dashscope.MultiModalConversation.call(**request_kwargs)
 
         if self.stream:
             return self._parse_into_async_generator(response)
@@ -150,6 +160,8 @@ class DashScopeTTSModel(TTSModelBase):
         audio_bytes = bytearray()
         usage = None
         for chunk in response:
+            if chunk.status_code != 200:
+                raise RuntimeError(f"DashScope TTS API error: {chunk}")
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.output is not None:
@@ -205,6 +217,8 @@ class DashScopeTTSModel(TTSModelBase):
             chunk = next(it, _SENTINEL)
             if chunk is _SENTINEL:
                 break
+            if chunk.status_code != 200:
+                raise RuntimeError(f"DashScope TTS API error: {chunk}")
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.output is None:

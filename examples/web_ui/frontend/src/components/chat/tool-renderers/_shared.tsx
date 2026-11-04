@@ -79,12 +79,13 @@ export function ToolCallRow({
 	// header's own leaf spans — not on a wrapper (a wrapper only makes descendant
 	// text transparent). We target the direct span children of this flex row
 	// instead of wrapping ``header``, which also keeps their ``gap-x-2`` spacing.
+	const isRunning = !pair.result || pair.result.state === 'running';
 	const row = (
 		<div
 			className={cn(
 				'group flex flex-row gap-x-2 items-center w-full',
 				expandable && 'cursor-pointer',
-				!pair.result || pair.result.state === 'running' ? 'shimmer' : '',
+				isRunning && 'shimmer',
 			)}
 		>
 			{header}

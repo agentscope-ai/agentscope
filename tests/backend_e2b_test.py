@@ -18,7 +18,8 @@ avoids duplicating the sandbox bring-up logic here.
 
 import os
 import unittest
-from unittest.async_case import IsolatedAsyncioTestCase
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import E2BWorkspace
@@ -33,12 +34,14 @@ _SKIP_REASON = "E2B_API_KEY environment variable is not set"
 
 
 @unittest.skipUnless(_E2B_API_KEY, _SKIP_REASON)
-class TestE2BBackend(IsolatedAsyncioTestCase):
+class TestE2BBackend(CheckoutWheelTestCase):
     """Test cases for ``E2BBackend`` against a live sandbox.
 
     Each test creates a real E2B cloud sandbox via ``E2BWorkspace`` and
     tears it down (``close`` → sandbox pause) afterwards.
     """
+
+    workspace_type = E2BWorkspace
 
     async def asyncSetUp(self) -> None:
         """Start a workspace and reuse its wired backend."""

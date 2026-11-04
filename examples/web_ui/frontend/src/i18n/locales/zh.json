@@ -17,6 +17,7 @@
 		"error": "出错了",
 		"information": "信息",
 		"knowledge": "知识库",
+		"voiceProfile": "语音配置",
 		"loading": "加载中...",
 		"shownCount": "已显示 {{count}} 个",
 		"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
@@ -99,8 +100,41 @@
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
-		"stop": "停止生成",
-		"stopping": "停止中 ..."
+		"queue": "加入队列",
+		"queued_one": "{{count}} 条消息正在排队",
+		"queued_other": "{{count}} 条消息正在排队",
+		"stop": "停止当前回复",
+		"stopping": "正在停止当前回复 ...",
+		"startRecording": "开始语音输入",
+		"stopRecording": "停止并转写",
+		"requestingMicrophone": "正在请求麦克风权限…",
+		"transcribing": "正在转写…",
+		"asrUnavailable": "语音识别未开启。请在顶部聊天模型旁的「模型设置」→「语音识别」中选择模型。",
+		"recordingUnsupported": "当前浏览器无法录制受支持的音频格式",
+		"microphonePermissionDenied": "麦克风权限已被拒绝",
+		"transcriptionFailed": "语音转写失败",
+		"transcriptionEmpty": "未检测到语音"
+	},
+	"chatQueue": {
+		"title_one": "待发送消息（{{count}} 条）",
+		"title_other": "待发送消息（{{count}} 条）",
+		"attachmentOnly": "附件消息",
+		"drag": "拖动调整顺序",
+		"moveUp": "上移",
+		"moveDown": "下移",
+		"edit": "编辑",
+		"delete": "删除",
+		"steer": "引导当前回复",
+		"save": "保存",
+		"cancel": "取消",
+		"stateQueued": "排队中",
+		"stateSteering": "引导中",
+		"stateSteered": "已引导",
+		"stateFailed": "失败",
+		"injected": "排队消息已注入当前回复。",
+		"steerFailed": "排队消息未能引导当前回复。",
+		"processFailed": "排队消息处理失败。",
+		"processingCancelled": "排队消息处理已中断。"
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
@@ -119,7 +153,8 @@
 			"team_message": "团队消息",
 			"schedule": "定时任务",
 			"system": "系统消息",
-			"channel": "频道"
+			"channel": "频道",
+			"runtime_state": "运行状态"
 		},
 		"error": {
 			"title": "回复失败",
@@ -132,9 +167,11 @@
 			"internal": "发生了未预期的内部错误。",
 			"setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
-		}
+		},
+		"copy": "复制"
 	},
 	"chat": {
+		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
@@ -194,6 +231,9 @@
 			},
 			"summary-template": {
 				"label": "摘要模板"
+			},
+			"max-image-num": {
+				"label": "最大图片数"
 			}
 		},
 		"react-config": {
@@ -204,6 +244,18 @@
 			},
 			"stop-on-reject": {
 				"label": "拒绝时停止"
+			},
+			"structured-output-grace-iters": {
+				"label": "结构化输出宽限轮数",
+				"description": "超过最大迭代次数后额外允许的轮数，让已经到达上限的回复仍能产出要求的结构化输出。"
+			},
+			"interruption-message": {
+				"label": "中断回复",
+				"description": "用户中断回复时，智能体给出的回复内容。"
+			},
+			"interruption-raise-cancelled-error": {
+				"label": "抛出 CancelledError",
+				"description": "处理完中断后重新抛出 asyncio.CancelledError，而不是将其吞掉。"
 			}
 		},
 		"invite-config": {
@@ -433,6 +485,15 @@
 		"clear": "清除选择",
 		"noFallback": "无兜底模型"
 	},
+	"realtime": {
+		"selectModel": "语音模型",
+		"parameters": "实时语音参数",
+		"noModels": "暂无可用的实时语音模型。",
+		"disable": "停用语音模型",
+		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
+		"start": "开始语音对话",
+		"stop": "结束语音对话"
+	},
 	"embedding-select": {
 		"placeholder": "选择 Embedding 模型",
 		"loading": "加载中…",
@@ -481,6 +542,7 @@
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
 		"parseError": "JSON 配置无效：{{message}}",
+		"invalidStreamProgress": "{{name}}.stream_progress 必须为布尔值（true 或 false）。",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
 	},
@@ -536,7 +598,11 @@
 		"wednesday": "周三"
 	},
 	"model-parameters": {
+		"settings": "模型设置",
 		"title": "模型参数",
+		"booleanDefault": "默认",
+		"booleanEnabled": "开启",
+		"booleanDisabled": "关闭",
 		"description": "调整所选模型的推理参数。",
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
@@ -546,7 +612,14 @@
 		"ttsEmpty": "暂无可用的语音合成模型。",
 		"ttsParameters": "参数",
 		"ttsParametersDescription": "调整所选语音合成模型的参数。",
-		"noTts": "不使用语音合成"
+		"voiceProfiles": "语音配置",
+		"voiceProfileUnavailable": "绑定的凭证或模型不可用。",
+		"noTts": "不使用语音合成",
+		"asrLabel": "语音识别",
+		"asrEmpty": "暂无可用的语音识别模型。",
+		"asrParameters": "参数",
+		"asrParametersDescription": "调整所选语音识别模型的参数，数组和对象请使用 JSON。",
+		"noAsr": "不使用语音识别"
 	},
 	"setup": {
 		"title": "连接到服务器",
@@ -674,6 +747,15 @@
 		}
 	},
 	"channel": {
+		"credentialBinding": {
+			"tab": "扫码授权",
+			"manualTab": "手动填写",
+			"scanHint": "用平台 App 扫码并确认，凭据将自动生成。",
+			"authorized": "已确认，凭据已就绪。",
+			"failed": "授权未能完成。",
+			"unsafeUrl": "平台返回的链接无法安全展示。",
+			"retry": "重新生成"
+		},
 		"title": "频道",
 		"subtitle": "接入飞书、Discord 等外部平台，让智能体在群聊里工作",
 		"status": "状态",
@@ -847,5 +929,50 @@
 		"empty": "此文件夹为空",
 		"pressEnter": "先按回车校验该路径",
 		"gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
+	},
+	"voiceProfile": {
+		"title": "语音配置",
+		"subtitle": "管理 Agent 使用的语音配置",
+		"newProfile": "新建配置",
+		"noProfiles": "暂无语音配置",
+		"noProfilesDescription": "创建语音配置以为您的 Agent 设置 TTS 语音参数。",
+		"createTitle": "创建语音配置",
+		"editTitle": "编辑语音配置",
+		"name": "名称",
+		"namePlaceholder": "我的语音配置",
+		"engine": "引擎",
+		"enginePlaceholder": "选择引擎",
+		"model": "语音合成模型",
+		"modelPlaceholder": "选择语音合成模型",
+		"customModel": "自定义模型",
+		"customModelPlaceholder": "输入模型或部署名称",
+		"unavailableCredential": "凭据不可用：{{id}}",
+		"credential": "凭据",
+		"credentialPlaceholder": "选择凭据",
+		"loadingModels": "加载模型列表...",
+		"voice": "音色",
+		"voicePlaceholderPreset": "预设音色名",
+		"voicePlaceholderClone": "预设音色名或克隆音色 ID",
+		"cloneVoice": "声音克隆",
+		"enrollmentModel": "音色复刻模型（自动匹配）",
+		"enrollmentModelHint": "复刻模型用于创建音色，合成模型用于生成语音。复刻模型根据所选合成模型自动匹配。",
+		"cloning": "克隆中...",
+		"clone": "克隆",
+		"uploadAudio": "上传音频克隆",
+		"cloneUrlPlaceholder": "https://公开可访问的音频文件URL",
+		"consentPlaceholder": "OpenAI Consent ID (cons_xxx)",
+		"consentRequired": "请先填写 OpenAI Consent ID",
+		"uploadConsent": "上传同意录音",
+		"consentLanguage": "同意录音语言",
+		"consentRecordingHint": "请按所选语言逐字朗读以下声明，并上传录音。",
+		"consentRequirements": "查看 OpenAI 官方录音要求",
+		"openaiCloneHint": "OpenAI 克隆需要两步：1) 上传声优朗读同意声明的录音获取 Consent ID；2) 上传音频样本创建音色。",
+		"fileTooLarge": "文件过大，最大支持 {{max}}MB",
+		"deleteTitle": "删除语音配置",
+		"deleteDescription": "确定要删除「{{name}}」吗？此操作无法撤销。",
+		"noEngines": "尚未配置 TTS 凭据，请先添加凭据。",
+		"saving": "保存中...",
+		"save": "保存",
+		"cancel": "取消"
 	}
 }

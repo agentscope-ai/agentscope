@@ -22,6 +22,14 @@ else:
     GenerateContentResponse = Any
 
 
+def _is_null_schema(schema: Any) -> bool:
+    """Return whether a schema represents only JSON null."""
+    return isinstance(schema, dict) and schema.get("type") in (
+        "null",
+        ["null"],
+    )
+
+
 def _sanitize_schema_for_gemini(schema: Any) -> Any:
     """Sanitize a JSON schema to be compatible with the Gemini API.
 
@@ -32,6 +40,11 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``type`` arrays containing ``"null"``: simplified to the single
+      non-null type or converted to ``anyOf`` for multiple non-null
+      types, matching nullable JSON Schema emitted by Pydantic and
+      OpenAPI 3.1. Multi-type arrays with an existing ``anyOf`` raise
+      ``ValueError`` rather than dropping conjunctive constraints.
     - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
       the single non-null type. If there is exactly one non-null
       alternative it is inlined directly; otherwise the ``anyOf`` is
@@ -63,8 +76,22 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # functionDeclaration property type. Some MCP servers emit
     # {"type": "null"} directly (not wrapped in anyOf) for parameters that
     # accept None — rewrite it to "object" so it round-trips through the API.
-    if schema.get("type") == "null":
+    if _is_null_schema(schema):
         schema["type"] = "object"
+    elif isinstance(schema.get("type"), list):
+        non_null_types = [v for v in schema["type"] if v != "null"]
+        if len(non_null_types) == 1:
+            schema["type"] = non_null_types[0]
+        elif non_null_types:
+            if "anyOf" in schema:
+                raise ValueError(
+                    "Cannot safely sanitize Gemini schema with both a "
+                    "multi-type nullable type array and anyOf.",
+                )
+            schema.pop("type")
+            schema["anyOf"] = [{"type": type_} for type_ in non_null_types]
+        else:
+            schema["type"] = "object"
 
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
@@ -78,7 +105,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
         any_of = schema["anyOf"]
-        non_null = [v for v in any_of if v != {"type": "null"}]
+        non_null = [v for v in any_of if not _is_null_schema(v)]
         if len(non_null) < len(any_of):  # at least one null entry removed
             if len(non_null) == 1:
                 # Inline the single non-null type, preserving outer keys
@@ -126,10 +153,12 @@ class GeminiChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="Whether to enable thinking output.",
+            description="Whether to enable thinking output."
+            " When None, no ``thinking_config`` is sent and the"
+            " model's default behavior applies.",
         )
 
         thinking_budget: int | None = Field(
@@ -258,7 +287,7 @@ class GeminiChatModel(ChatModelBase):
         """
         formatted_messages = await self.formatter.format(messages)
 
-        config: dict[str, Any] = {**config_kwargs}
+        config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
             config["max_output_tokens"] = self.parameters.max_tokens
@@ -269,16 +298,20 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable:
-            config["thinking_config"] = {
-                "include_thoughts": True,
-                "thinking_budget": self.parameters.thinking_budget or 1024,
-            }
-        else:
-            config["thinking_config"] = {
-                "include_thoughts": False,
-                "thinking_budget": 0,
-            }
+        if self.parameters.thinking_enable is not None:
+            if self.parameters.thinking_enable:
+                config["thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_budget": self.parameters.thinking_budget or 1024,
+                }
+            else:
+                config["thinking_config"] = {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                }
+
+        # Per-call config takes precedence over model-level defaults.
+        config.update(config_kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -368,7 +401,8 @@ class GeminiChatModel(ChatModelBase):
                     # Tool call
                     if part.function_call:
                         if part.thought_signature:
-                            call_id = base64.b64encode(
+                            # Mark signature IDs for the history formatter.
+                            call_id = "gemini_ts:" + base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
@@ -425,7 +459,8 @@ class GeminiChatModel(ChatModelBase):
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
                     if part.thought_signature:
-                        call_id = base64.b64encode(
+                        # Mark signature IDs for the history formatter.
+                        call_id = "gemini_ts:" + base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
                     else:
@@ -499,7 +534,8 @@ class GeminiChatModel(ChatModelBase):
                     usage_metadata,
                     "cached_content_token_count",
                     0,
-                ),
+                )
+                or 0,
             )
         return None
 

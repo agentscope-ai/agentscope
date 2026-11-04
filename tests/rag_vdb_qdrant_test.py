@@ -1,17 +1,45 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the QdrantStore class."""
 from contextlib import AsyncExitStack
+from importlib.util import find_spec
+from types import SimpleNamespace
+from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
 from agentscope.message import TextBlock
 from agentscope.rag import (
     Chunk,
+    KnowledgeBase,
     QdrantStore,
     VectorRecord,
     VectorSearchResult,
 )
+
+
+def _knowledge_base(
+    store: QdrantStore,
+    metadata_filter: dict | None,
+) -> KnowledgeBase:
+    """Bind a handle without needing an embedding request for deletion."""
+    return KnowledgeBase(
+        name="test",
+        description="Test knowledge base",
+        embedding_model=SimpleNamespace(dimensions=3),
+        vector_store=store,
+        collection="shared",
+        metadata_filter=metadata_filter,
+    )
+
+
+class _LegacyStore(QdrantStore):
+    """Custom backend using the original, unscoped delete signature."""
+
+    async def delete(self, collection: str, document_id: str) -> None:
+        """Record deletions so a rejected scoped call cannot mutate data."""
+        await self.get_client().delete(collection, document_id)
 
 
 def _dump_results(results: list[VectorSearchResult]) -> list[dict]:
@@ -157,6 +185,67 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
                         "source": "doc-1.txt",
                         "chunk_index": 1,
                         "total_chunks": 2,
+                        "metadata": {},
+                    },
+                },
+            ],
+        )
+
+    async def test_search_negates_distance_metric_scores(self) -> None:
+        """A distance metric yields higher-is-better scores too."""
+        store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:", distance="Euclid"),
+        )
+        await store.create_collection("kb-1", dimensions=3)
+        await store.insert(
+            "kb-1",
+            [
+                _make_record("Near!", [1.0, 0.0, 0.0], document_id="doc-1"),
+                _make_record("Far!", [10.0, 0.0, 0.0], document_id="doc-2"),
+            ],
+        )
+
+        results = await store.search(
+            "kb-1",
+            query_vector=[0.0, 0.0, 0.0],
+            top_k=2,
+        )
+
+        # Negated distances, so the nearest record still ranks first
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": -1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Near!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+                {
+                    "score": -10.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Far!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
                         "metadata": {},
                     },
                 },
@@ -383,6 +472,103 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual([r.document_id for r in results], ["doc-2"])
 
+    async def test_float_metadata_filters(self) -> None:
+        """Every read operation matches finite floats without rounding."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        values = [-0.75, 0.0, 0.75]
+        records = []
+        for index, value in enumerate(values):
+            record = _make_record(
+                f"note-{index}",
+                [1.0, 0.0, 0.0],
+                "doc-1",
+                chunk_index=index,
+                total_chunks=len(values),
+            )
+            record.chunk.metadata["confidence"] = value
+            records.append(record)
+        await self.store.insert("kb-1", records)
+
+        for index, value in enumerate(values):
+            metadata_filter = {"confidence": value}
+            with self.subTest(operation="search", value=value):
+                results = await self.store.search(
+                    "kb-1",
+                    [1.0, 0.0, 0.0],
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [result.chunk.chunk_index for result in results],
+                    [index],
+                )
+            with self.subTest(operation="list_documents", value=value):
+                documents = await self.store.list_documents(
+                    "kb-1",
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [(doc.document_id, doc.chunk_count) for doc in documents],
+                    [("doc-1", 1)],
+                )
+                self.assertEqual(documents[0].metadata, metadata_filter)
+            with self.subTest(operation="list_chunks", value=value):
+                chunks = await self.store.list_chunks(
+                    "kb-1",
+                    "doc-1",
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [chunk.chunk_index for chunk in chunks],
+                    [index],
+                )
+
+    async def test_mixed_scalar_metadata_filter(self) -> None:
+        """Combine float equality with the existing scalar match types."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        metadata_filter = {
+            "confidence": 0.75,
+            "category": "notes",
+            "version": 2,
+            "active": True,
+        }
+        records = []
+        for index, metadata in enumerate(
+            [
+                metadata_filter,
+                {**metadata_filter, "confidence": 0.5},
+                {**metadata_filter, "category": "other"},
+                {**metadata_filter, "version": 3},
+                {**metadata_filter, "active": False},
+            ],
+        ):
+            record = _make_record(
+                f"note-{index}",
+                [1.0, 0.0, 0.0],
+                f"doc-{index}",
+            )
+            record.chunk.metadata.update(metadata)
+            records.append(record)
+        await self.store.insert("kb-1", records)
+
+        results = await self.store.search(
+            "kb-1",
+            [1.0, 0.0, 0.0],
+            metadata_filter=metadata_filter,
+        )
+        self.assertEqual([result.document_id for result in results], ["doc-0"])
+
+    async def test_nonfinite_metadata_filter(self) -> None:
+        """Reject non-finite floats instead of widening a query."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        for value in [float("nan"), float("inf"), float("-inf")]:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "finite"):
+                    await self.store.search(
+                        "kb-1",
+                        [1.0, 0.0, 0.0],
+                        metadata_filter={"confidence": value},
+                    )
+
     async def test_list_chunks_pagination_and_isolation(self) -> None:
         """list_chunks pages by chunk_index and isolates documents."""
         await self.store.create_collection("kb-1", dimensions=3)
@@ -540,3 +726,115 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             [c.content.text for c in chunks],
             ["v2-chunk0", "v2-chunk1"],
         )
+
+
+class LegacyDeleteTest(IsolatedAsyncioTestCase):
+    """Old custom backends still work without a scope and fail closed."""
+
+    async def test_legacy_backend_without_scope(self) -> None:
+        """No metadata keyword is sent when the handle has no scope."""
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                store = _LegacyStore()
+                client = SimpleNamespace(delete=AsyncMock())
+                with (
+                    patch.object(store, "has_collection", return_value=True),
+                    patch.object(store, "get_client", return_value=client),
+                ):
+                    await _knowledge_base(store, scope).delete_document("doc")
+                client.delete.assert_awaited_once_with("shared", "doc")
+
+    async def test_legacy_backend_with_scope(self) -> None:
+        """An unsupported scope is rejected before deleting anything."""
+        store = _LegacyStore()
+        client = SimpleNamespace(delete=AsyncMock())
+        with (
+            patch.object(store, "has_collection", return_value=True),
+            patch.object(store, "get_client", return_value=client),
+        ):
+            with self.assertRaises(TypeError):
+                await _knowledge_base(
+                    store,
+                    {"tenant": "alpha"},
+                ).delete_document("doc")
+        client.delete.assert_not_awaited()
+
+
+@skipUnless(find_spec("qdrant_client"), "qdrant-client is required")
+class QdrantScopedDeleteTest(IsolatedAsyncioTestCase):
+    """Verify isolation against the real, in-memory Qdrant backend."""
+
+    async def asyncSetUp(self) -> None:
+        """Insert chunks spanning documents and two independent scope keys."""
+        self._exit_stack = AsyncExitStack()
+        self.store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:"),
+        )
+        await self.store.create_collection("shared", dimensions=3)
+        self.scope = {"tenant": "alpha", "project": 2}
+        records = []
+        for document_id, index, metadata in (
+            ("shared-doc", 0, self.scope),
+            ("shared-doc", 1, {"tenant": "beta", "project": 2}),
+            ("shared-doc", 2, {"tenant": "alpha", "project": 3}),
+            ("alpha-doc", 0, self.scope),
+            ("beta-doc", 0, {"tenant": "beta", "project": 2}),
+        ):
+            records.append(
+                VectorRecord(
+                    vector=[1.0, 0.0, 0.0],
+                    document_id=document_id,
+                    chunk=Chunk(
+                        content=TextBlock(text=f"{document_id}-{index}"),
+                        source=f"{document_id}.txt",
+                        chunk_index=index,
+                        total_chunks=3,
+                        metadata=metadata,
+                    ),
+                ),
+            )
+        await self.store.insert("shared", records)
+
+    async def asyncTearDown(self) -> None:
+        """Release the ephemeral client."""
+        await self._exit_stack.aclose()
+
+    async def test_foreign_document_is_unchanged(self) -> None:
+        """A scoped handle cannot remove an invisible foreign document."""
+        before = await self.store.list_chunks("shared", "beta-doc")
+        await _knowledge_base(self.store, self.scope).delete_document(
+            "beta-doc",
+        )
+        after = await self.store.list_chunks("shared", "beta-doc")
+        self.assertEqual(before, after)
+        self.assertEqual(len(after), 1)
+
+    async def test_delete_requires_document_and_every_scope_field(
+        self,
+    ) -> None:
+        """Delete only chunks matching both the document and all scope keys."""
+        await _knowledge_base(self.store, self.scope).delete_document(
+            "shared-doc",
+        )
+        chunks = await self.store.list_chunks("shared", "shared-doc")
+        self.assertEqual([chunk.chunk_index for chunk in chunks], [1, 2])
+        self.assertEqual(
+            len(await self.store.list_chunks("shared", "alpha-doc")),
+            1,
+        )
+        await _knowledge_base(self.store, self.scope).delete_document(
+            "alpha-doc",
+        )
+        self.assertEqual(
+            await self.store.list_chunks("shared", "alpha-doc"),
+            [],
+        )
+
+    async def test_unscoped_handle_deletes_all_document_chunks(self) -> None:
+        """The default handle deletes documents across the whole collection."""
+        await _knowledge_base(self.store, None).delete_document("shared-doc")
+        self.assertEqual(
+            await self.store.list_chunks("shared", "shared-doc"),
+            [],
+        )
+        self.assertEqual(len(await self.store.list_documents("shared")), 2)

@@ -11,8 +11,10 @@ No external dependencies (no Redis, no fakeredis) — just asyncio.
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.app.message_bus import _in_memory_message_bus as _bus
 
 
 class TestQueuePrimitive(IsolatedAsyncioTestCase):
@@ -70,6 +72,40 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         """Deleting a non-existent queue does not raise."""
         await self.bus.queue_delete("never-existed")
 
+    async def test_queue_read_is_non_destructive(self) -> None:
+        """Queue management can inspect entries without consuming them."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2})
+        first = await self.bus.queue_read("k", max_count=10)
+        second = await self.bus.queue_read("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in first],
+            [{"i": 1}, {"i": 2}],
+        )
+        self.assertEqual(first, second)
+
+    async def test_queue_read_returns_deep_copies(self) -> None:
+        """Mutating a read snapshot cannot corrupt the stored queue."""
+        original = {"nested": {"value": 1}}
+        await self.bus.queue_push("k", original)
+        original["nested"]["value"] = 2
+
+        first = await self.bus.queue_read("k", max_count=1)
+        first[0][1]["nested"]["value"] = 3
+        second = await self.bus.queue_read("k", max_count=1)
+
+        self.assertEqual(second[0][1]["nested"]["value"], 1)
+
+    async def test_queue_replace_preserves_new_order(self) -> None:
+        """An editable queue can be atomically replaced and reordered."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_replace("k", [{"i": 3}, {"i": 2}])
+        entries = await self.bus.queue_drain("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in entries],
+            [{"i": 3}, {"i": 2}],
+        )
+
     async def test_queue_isolation_between_keys(self) -> None:
         """Pushes to different keys are independent."""
         await self.bus.queue_push("a", {"x": 1})
@@ -78,6 +114,12 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         b = await self.bus.queue_drain("b", max_count=10)
         self.assertEqual([p for _id, p in a], [{"x": 1}])
         self.assertEqual([p for _id, p in b], [{"x": 2}])
+
+    async def test_zero_ttl_expires_immediately(self) -> None:
+        """A zero TTL expires the entry instead of disabling expiry."""
+        await self.bus.queue_push("k", {"x": 1}, ttl_secs=0)
+
+        self.assertEqual(await self.bus.queue_drain("k"), [])
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
@@ -285,6 +327,42 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             ["first-in", "first-out", "second-in"],
         )
 
+    async def test_try_lock_is_exclusive_until_unlocked(self) -> None:
+        """A second claim on a held key is refused; ``unlock`` frees it."""
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+        self.assertFalse(await self.bus.try_lock("k", ttl_secs=10))
+        self.assertTrue(await self.bus.is_locked("k"))
+
+        await self.bus.unlock("k")
+
+        self.assertFalse(await self.bus.is_locked("k"))
+        self.assertTrue(await self.bus.try_lock("k", ttl_secs=10))
+
+    async def test_try_lock_lease_expires_for_a_holder_that_crashed(
+        self,
+    ) -> None:
+        """A claim whose lease expired is claimable again."""
+        with patch.object(_bus.time, "monotonic") as monotonic:
+            monotonic.return_value = 1_000.0
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+            self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+
+            # The holder is gone; ``unlock`` is never called.
+            monotonic.return_value = 1_000.0 + 600
+
+            self.assertFalse(await self.bus.is_locked("k"))
+            self.assertTrue(await self.bus.try_lock("k", ttl_secs=600))
+
+    async def test_acquire_lock_ignores_ttl_secs(self) -> None:
+        """``acquire_lock`` documents that it holds until the body ends."""
+        with patch.object(_bus.time, "monotonic") as monotonic:
+            monotonic.return_value = 1_000.0
+            async with self.bus.acquire_lock("k", ttl_secs=1):
+                monotonic.return_value = 1_000.0 + 3_600
+                self.assertTrue(await self.bus.is_locked("k"))
+                self.assertFalse(await self.bus.try_lock("k", ttl_secs=600))
+            self.assertFalse(await self.bus.is_locked("k"))
+
 
 class TestRegistryPrimitive(IsolatedAsyncioTestCase):
     """Mode F — ``registry_*`` hash-keyed namespace operations."""
@@ -470,7 +548,21 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
         sid = "s-purge"
         await self.bus.session_publish_event(sid, {"e": 1})
         await self.bus.inbox_push(sid, {"m": 1})
+        await self.bus.queue_push(
+            MessageBusKeys.chat_inputs(sid),
+            {"input": {"id": "queued"}},
+        )
         await self.bus.bg_task_register(sid, "t1", "{}")
+        await self.bus.registry_set(
+            MessageBusKeys.chat_input_pending_registry(),
+            sid,
+            '{"user_id":"u","agent_id":"a"}',
+        )
+        await self.bus.registry_set(
+            MessageBusKeys.chat_input_inflight_registry(),
+            sid,
+            '{"state":"claimed","payload":{"id":"queued"}}',
+        )
 
         await self.bus.session_purge(sid)
 
@@ -479,7 +571,26 @@ class TestDomainHelpers(IsolatedAsyncioTestCase):
             await self.bus.inbox_drain(sid, max_count=10),
             [],
         )
+        self.assertEqual(
+            await self.bus.queue_drain(
+                MessageBusKeys.chat_inputs(sid),
+                max_count=10,
+            ),
+            [],
+        )
         self.assertEqual(await self.bus.bg_task_list(sid), {})
+        self.assertFalse(
+            await self.bus.registry_exists(
+                MessageBusKeys.chat_input_pending_registry(),
+                sid,
+            ),
+        )
+        self.assertFalse(
+            await self.bus.registry_exists(
+                MessageBusKeys.chat_input_inflight_registry(),
+                sid,
+            ),
+        )
 
     async def test_task_cancel_pub_sub(self) -> None:
         """``task_publish_cancel`` → ``task_subscribe_cancel``

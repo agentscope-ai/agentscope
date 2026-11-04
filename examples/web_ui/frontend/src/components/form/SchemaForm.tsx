@@ -141,6 +141,11 @@ export function SchemaForm({
 					);
 
 				if (isBoolean) {
+					const boxLabel = (
+						<FieldLabel htmlFor={fieldId} className="font-normal">
+							{label}
+						</FieldLabel>
+					);
 					return (
 						<Field key={key} orientation="horizontal">
 							<Checkbox
@@ -148,10 +153,18 @@ export function SchemaForm({
 								checked={!!current}
 								onCheckedChange={(checked) => onChange(key, !!checked)}
 							/>
-							<FieldLabel htmlFor={fieldId} className="font-normal">
-								{label}
-							</FieldLabel>
-							{description && <FieldDescription>{description}</FieldDescription>}
+							{/* A described checkbox stacks its label and helper
+							    text in a column beside the box; without one the
+							    label stays inline, so a plain toggle keeps the
+							    single centred row it has always had. */}
+							{descriptionNode ? (
+								<FieldContent>
+									{boxLabel}
+									{descriptionNode}
+								</FieldContent>
+							) : (
+								boxLabel
+							)}
 						</Field>
 					);
 				}

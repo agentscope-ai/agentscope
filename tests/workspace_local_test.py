@@ -8,6 +8,7 @@ import hashlib
 import tempfile
 from types import SimpleNamespace
 from typing import Any
+from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 from dataclasses import asdict
@@ -39,6 +40,7 @@ from agentscope.message import (
     UserMsg,
     AssistantMsg,
     DataBlock,
+    HintBlock,
     Base64Source,
     URLSource,
     TextBlock,
@@ -46,6 +48,9 @@ from agentscope.message import (
     ToolResultState,
     ToolCallBlock,
 )
+
+# Probe the temp filesystem rather than assuming case rules from the OS.
+_CASE_INSENSITIVE_FS = os.path.exists(tempfile.gettempdir().swapcase())
 
 
 class _LongResultTool(ToolBase):
@@ -262,6 +267,27 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             msg = Msg.model_validate_json(line)
             self.assertIsNotNone(msg)
 
+    async def test_offload_context_empty_msgs_appends_nothing(self) -> None:
+        """Offloading an empty batch must not append a blank JSONL line.
+
+        The empty join used to be written as a standalone ``\\n``, which
+        is not a JSON record and broke every line-oriented consumer of
+        ``context.jsonl``.
+        """
+        session_id = "test_session_empty_batch"
+        msgs1 = [UserMsg(name="user", content="First message")]
+        file_path = await self.workspace.offload_context(session_id, msgs1)
+        await self.workspace.offload_context(session_id, [])
+
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
+
+        self.assertFalse(content.endswith(b"\n\n"))
+        for line in content.decode("utf-8").splitlines():
+            self.assertTrue(line.strip())
+            Msg.model_validate_json(line)
+            json.loads(line)
+
     async def test_offload_context_with_datablock(self) -> None:
         """Test offloading messages with DataBlock content.
 
@@ -344,6 +370,62 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             loaded_msg.model_dump_json(),
             expected_msg.model_dump_json(),
         )
+
+    async def test_offload_context_nested_media(self) -> None:
+        """Offload nested media without changing the caller's message."""
+        data = base64.b64encode(b"nested media").decode()
+        media = DataBlock(
+            id="media",
+            source=Base64Source(data=data, media_type="image/png"),
+            created_at="2026-01-01T00:00:00",
+        )
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolResultBlock(
+                    id="tool-call",
+                    name="get_media",
+                    output=[media],
+                    state=ToolResultState.SUCCESS,
+                    created_at="2026-01-01T00:00:00",
+                ),
+                HintBlock(
+                    id="hint",
+                    hint=[media],
+                    created_at="2026-01-01T00:00:00",
+                ),
+            ],
+            id="message",
+            created_at="2026-01-01T00:00:00",
+        )
+        original = msg.model_dump(mode="json")
+
+        path = await self.workspace.offload_context("nested-media", [msg])
+        saved = Msg.model_validate_json(
+            await self.workspace.get_backend().read_file(path),
+        )
+
+        url = (
+            "workspace:///data/"
+            f"{hashlib.sha256(data.encode()).hexdigest()}.png"
+        )
+        expected = msg.model_dump(mode="json")
+        for index, field in ((0, "output"), (1, "hint")):
+            expected["content"][index][field][0] = {
+                "type": "data",
+                "id": "media",
+                "source": {
+                    "type": "url",
+                    "url": url,
+                    "media_type": "image/png",
+                },
+                "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
+            }
+
+        self.assertEqual(saved.model_dump(mode="json"), expected)
+        self.assertEqual(msg.model_dump(mode="json"), original)
 
     async def test_offload_data_block_deduplication(self) -> None:
         """Test that duplicate DataBlocks are deduplicated.
@@ -985,6 +1067,136 @@ This skill is added through a tilde path.
         # Verify empty list is returned
         self.assertListEqual(skills, [])
 
+    async def test_add_skill_with_utf8_bom(self) -> None:
+        """Test installing and listing a skill with a UTF-8 BOM."""
+        skill_dir = self._create_test_skill(
+            "bom_skill",
+            "Installed despite the BOM",
+        )
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(skill_md_path, "rb") as f:
+            content = f.read()
+        with open(skill_md_path, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + content)
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+        await workspace.add_skill(skill_dir)
+
+        installed_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "bom_skill",
+        )
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Installed despite the BOM",
+                    "dir": installed_dir,
+                    "markdown": "# bom_skill\n\nInstalled despite the BOM",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(installed_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+    async def test_list_skills_reconciles_utf8_bom_skill(self) -> None:
+        """Test indexing a manually added skill with a UTF-8 BOM."""
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        skill_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "dropped_skill",
+        )
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+            f.write(
+                b"\xef\xbb\xbf---\n"
+                b"name: dropped_skill\n"
+                b"description: Dropped with a BOM\n"
+                b"---\n\nBody.\n",
+            )
+
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "dropped_skill",
+                    "description": "Dropped with a BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(skill_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+
+class _UnindexedWorkspace(WorkspaceBase):  # pylint: disable=abstract-method
+    """Use a local backend to test the base skill listing implementation."""
+
+    def __init__(self, workdir: str) -> None:
+        """Bind a local backend over ``workdir``."""
+        super().__init__()
+        self.workdir = workdir
+        self._backend = LocalBackend()
+
+    async def initialize(self) -> None:
+        """Nothing to provision for this workspace."""
+
+    async def close(self) -> None:
+        """Nothing to release for this workspace."""
+
+    async def _equip_partition(self, agent_id: str | None) -> str:
+        """Return the partition without copying the seed template."""
+        partition = self._skill_partition(agent_id)
+        os.makedirs(partition, exist_ok=True)
+        return partition
+
+
+class TestWorkspaceBaseListSkills(IsolatedAsyncioTestCase):
+    """Front-matter parsing in the default ``WorkspaceBase.list_skills``."""
+
+    async def test_list_skills_with_utf8_bom(self) -> None:
+        """A BOM-prefixed SKILL.md is listed, not silently dropped."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = _UnindexedWorkspace(workdir)
+            partition = await workspace._equip_partition(None)
+            skill_dir = os.path.join(partition, "bom_skill")
+            os.makedirs(skill_dir)
+            with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+                f.write(
+                    b"\xef\xbb\xbf---\n"
+                    b"name: bom_skill\n"
+                    b"description: Listed despite the BOM\n"
+                    b"---\n\nBody.\n",
+                )
+
+            skills = await workspace.list_skills()
+
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Listed despite the BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": 0.0,
+                },
+            ],
+        )
+
 
 class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
     """Test the local workspace class offloading with the agent."""
@@ -1624,13 +1836,15 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
     async def test_add_and_remove_are_scoped(self) -> None:
         """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""
         ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        extra = self._make_mcp("extra")
 
-        await ws.add_mcp(
-            self._make_mcp("extra"),
+        registered = await ws.add_mcp(
+            extra,
             agent_id="agent-A",
             session_id="sess-1",
         )
 
+        self.assertIs(registered, extra)
         self.assertEqual(
             [
                 m.name
@@ -1732,6 +1946,38 @@ class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
                 )
             ],
             ["seed"],
+        )
+
+    async def test_mcp_file_with_utf8_bom_is_restored(self) -> None:
+        """A BOM-prefixed .mcp still restores the persisted declarations.
+
+        The file is ordinary JSON in the workspace; a Windows editor may
+        re-save it with a byte order mark. Plain UTF-8 used to fail to
+        parse, silently dropping every declaration and falling back to
+        ``default_mcps``.
+        """
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with open(self.mcp_file, "rb") as f:
+            payload = f.read()
+        with open(self.mcp_file, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + payload)
+        await ws.close()
+
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
         )
 
     async def test_reset_returns_to_factory_defaults(self) -> None:
@@ -1899,6 +2145,43 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
         self.assertTrue(
             os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
         )
+
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
+    async def test_add_skill_case_only_directory_collision(self) -> None:
+        """Case-only names get distinct paths without renaming the skills."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("source-a", "Example"))
+        await ws.add_skill(self._make_skill("source-b", "example"))
+
+        self.assertDictEqual(
+            {
+                s.name: (os.path.basename(s.dir), s.markdown)
+                for s in await ws.list_skills()
+            },
+            {"Example": ("Example", "body"), "example": ("example_1", "body")},
+        )
+
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
+    async def test_seed_skill_case_only_directory_collision(self) -> None:
+        """Seed population keeps both skills on insensitive filesystems."""
+        ws = await self._workspace(
+            skill_paths=[
+                self._make_skill("source-a", "Example"),
+                self._make_skill("source-b", "example"),
+            ],
+        )
+
+        for agent_id in ("A", "B"):
+            self.assertDictEqual(
+                {
+                    s.name: (os.path.basename(s.dir), s.markdown)
+                    for s in await ws.list_skills(agent_id=agent_id)
+                },
+                {
+                    "Example": ("Example", "body"),
+                    "example": ("example_1", "body"),
+                },
+            )
 
     async def test_seeds_equip_each_agent_with_its_own_copy(self) -> None:
         """``skill_paths`` reach every agent, but as separate copies."""

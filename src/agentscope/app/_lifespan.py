@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The lifespan of the agent service."""
+import asyncio
 import socket
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -14,13 +15,16 @@ from ._manager import (
 )
 from ._service import (
     ChannelService,
+    CredentialBindingService,
     ChatService,
     IndexSweeper,
     IndexTaskConsumer,
     IndexWorker,
     KnowledgeBaseService,
+    RealtimeService,
     ResourceAccessService,
     SessionService,
+    SOPService,
     WorkspaceService,
 )
 
@@ -50,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     blob_store = app.state.blob_store
     enable_index_worker = app.state.enable_index_worker
     enable_channel_worker = app.state.enable_channel_worker
+    enable_scheduler = app.state.enable_scheduler
     resource_access_policy = app.state.resource_access_policy
 
     async with AsyncExitStack() as stack:
@@ -91,6 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 storage=storage,
                 message_bus=message_bus,
                 workspace_manager=workspace_manager,
+                enabled=enable_scheduler,
             ),
         )
         app.state.scheduler_manager = scheduler
@@ -135,6 +141,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 message_bus=message_bus,
                 type_registry=channel_type_registry,
             )
+            # Binding sessions live in the bus and hold no connection,
+            # so this is available wherever the channel API is.
+            app.state.credential_binding_service = CredentialBindingService(
+                message_bus=message_bus,
+                type_registry=channel_type_registry,
+            )
             # The dispatcher is what holds the long connections, so a
             # deployment that runs dedicated channel workers turns it
             # off here and every replica stays connection-free.
@@ -164,15 +176,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
+            tool_offload_timeout_secs=app.state.tool_offload_timeout_secs,
             channel_clients=channel_clients,
         )
         app.state.chat_service = chat_service
+
+        app.state.realtime_service = RealtimeService(
+            storage=storage,
+            workspace_manager=workspace_manager,
+            scheduler_manager=scheduler,
+            background_task_manager=bg_manager,
+            message_bus=message_bus,
+            resource_access_service=resource_access_service,
+            extra_agent_tools=app.state.extra_agent_tools,
+            custom_subagent_templates=app.state.custom_subagent_templates,
+            channel_clients=channel_clients,
+        )
 
         app.state.session_service = SessionService(
             storage=storage,
             message_bus=message_bus,
             workspace_manager=workspace_manager,
         )
+
+        # On the stack so its detached advances stop before storage closes.
+        sop_service = await stack.enter_async_context(
+            SOPService(
+                storage=storage,
+                workspace_manager=workspace_manager,
+                message_bus=message_bus,
+                chat=chat_service,
+                session_service=app.state.session_service,
+            ),
+        )
+        app.state.sop_service = sop_service
+        # So a turn resuming a step carries its run on.
+        chat_service.sop_service = sop_service
 
         app.state.workspace_service = WorkspaceService(
             storage=storage,
@@ -256,6 +295,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 message_bus=message_bus,
                 registry=chat_run_registry,
                 bg_manager=bg_manager,
+                realtime_connections=app.state.realtime_connections,
             ),
         )
 
@@ -264,5 +304,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # when the channel subsystem is enabled.
         if channel_dispatcher is not None:
             await stack.enter_async_context(channel_dispatcher.lifespan())
+
+        async def _close_realtime_connections() -> None:
+            connections = list(app.state.realtime_connections.values())
+            app.state.realtime_connections.clear()
+            if connections:
+                await asyncio.gather(
+                    *(connection.close() for connection in connections),
+                    return_exceptions=True,
+                )
+
+        stack.push_async_callback(_close_realtime_connections)
 
         yield

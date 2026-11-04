@@ -1,0 +1,16 @@
+name: phi4-mini
+label: Phi-4 Mini
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+
+context_size: 131072
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192

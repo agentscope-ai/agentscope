@@ -10,11 +10,18 @@ that are layered on top.
 """
 import asyncio
 from contextlib import AsyncExitStack
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
+from utils import AnyString
 
-from agentscope.app.message_bus import MessageBus, RedisMessageBus
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    RedisMessageBus,
+)
 
 
 def _make_bus(
@@ -38,12 +45,17 @@ def _make_bus(
         """Bus subclass that returns the supplied fakeredis client on
         context entry instead of building a real one."""
 
+        def __init__(self) -> None:
+            """Initialize the bus and declare the test-owned client."""
+            super().__init__()
+            self._client: fakeredis.aioredis.FakeRedis | None = None
+
         async def __aenter__(self) -> "RedisMessageBus":
             self._client = fake_redis
             return self
 
         async def aclose(self) -> None:
-            # The fakeredis client is owned by the test, not the bus.
+            """Detach the client without closing the test-owned connection."""
             self._client = None
 
     return _FakeBus()
@@ -83,6 +95,119 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         self.assertEqual([p["i"] for _id, p in first], [0, 1, 2])
         self.assertEqual([p["i"] for _id, p in rest], [3, 4])
 
+    async def test_queue_read_is_non_destructive(self) -> None:
+        """Queue management can inspect entries without consuming them."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_push("k", {"i": 2})
+        first = await self.bus.queue_read("k", max_count=10)
+        second = await self.bus.queue_read("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in first],
+            [{"i": 1}, {"i": 2}],
+        )
+        self.assertEqual(first, second)
+
+    async def test_queue_replace_preserves_new_order(self) -> None:
+        """An editable Redis queue is transactionally replaced."""
+        await self.bus.queue_push("k", {"i": 1})
+        await self.bus.queue_replace("k", [{"i": 3}, {"i": 2}])
+        entries = await self.bus.queue_drain("k", max_count=10)
+        self.assertEqual(
+            [payload for _entry_id, payload in entries],
+            [{"i": 3}, {"i": 2}],
+        )
+
+    async def test_drain_reads_and_deletes_in_one_command(self) -> None:
+        """Reading and deleting as two commands lets a competing
+        consumer land in between, read the same entry and dispatch it a
+        second time (#1868)."""
+        await self.bus.queue_push("k", {"x": 1})
+
+        execute_command = self.fr.execute_command
+        issued: list[str] = []
+
+        async def recording_execute_command(*args: Any, **kwargs: Any) -> Any:
+            issued.append(args[0])
+            return await execute_command(*args, **kwargs)
+
+        self.fr.execute_command = recording_execute_command
+
+        self.assertListEqual(
+            await self.bus.queue_drain("k"),
+            [(AnyString(), {"x": 1})],
+        )
+        # One command, whatever it is — the contract is that the read
+        # and the delete cannot be observed apart.
+        self.assertEqual(len(issued), 1)
+
+
+class TestRegistryConditionalPrimitives(IsolatedAsyncioTestCase):
+    """Mode F — the compare-and-set and take-once registry ops."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_set_if_writes_only_on_the_expected_value(self) -> None:
+        """A caller whose read is stale loses, and changes nothing."""
+        await self.bus.registry_set("ns", "f", "v1")
+
+        self.assertFalse(
+            await self.bus.registry_set_if(
+                "ns",
+                "f",
+                "v2",
+                expected="stale",
+            ),
+        )
+        self.assertEqual(await self.bus.registry_get("ns", "f"), "v1")
+
+        self.assertTrue(
+            await self.bus.registry_set_if("ns", "f", "v2", expected="v1"),
+        )
+        self.assertEqual(await self.bus.registry_get("ns", "f"), "v2")
+
+    async def test_set_if_refreshes_the_expiry_only_when_it_writes(
+        self,
+    ) -> None:
+        """A losing caller must not extend someone else's lifetime."""
+        await self.bus.registry_set("ns", "f", "v1", ttl_secs=1000)
+
+        await self.bus.registry_set_if(
+            "ns",
+            "f",
+            "v2",
+            expected="stale",
+            ttl_secs=5000,
+        )
+        self.assertLessEqual(await self.fr.ttl("ns"), 1000)
+
+        await self.bus.registry_set_if(
+            "ns",
+            "f",
+            "v2",
+            expected="v1",
+            ttl_secs=5000,
+        )
+        self.assertGreater(await self.fr.ttl("ns"), 1000)
+
+    async def test_pop_hands_the_value_to_exactly_one_caller(self) -> None:
+        """Whatever races for it, only the first take succeeds."""
+        await self.bus.registry_set("ns", "f", "v1")
+
+        self.assertEqual(await self.bus.registry_pop("ns", "f"), "v1")
+        self.assertIsNone(await self.bus.registry_pop("ns", "f"))
+        self.assertIsNone(await self.bus.registry_get("ns", "f"))
+
+    async def test_pop_of_an_absent_field_is_not_an_error(self) -> None:
+        """An expired session reads as gone, not as a failure."""
+        self.assertIsNone(await self.bus.registry_pop("missing", "f"))
+
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
     """Mode C — replay log: append / read with cursor / trim."""
@@ -119,6 +244,17 @@ class TestLogPrimitive(IsolatedAsyncioTestCase):
         await self.bus.log_append("k", {"i": 2})
         await self.bus.log_trim("k")
         self.assertEqual(await self.bus.log_read("k"), [])
+
+    async def test_trim_with_before_id_keeps_newer(self) -> None:
+        """Trimming keeps the cursor entry and all newer entries."""
+        await self.bus.log_append("k", {"i": 1})
+        id2 = await self.bus.log_append("k", {"i": 2})
+        await self.bus.log_append("k", {"i": 3})
+        with patch.object(self.fr, "xtrim", wraps=self.fr.xtrim) as xtrim:
+            await self.bus.log_trim("k", before_id=id2)
+        xtrim.assert_called_once_with("k", minid=id2, approximate=False)
+        entries = await self.bus.log_read("k")
+        self.assertEqual([p["i"] for _id, p in entries], [2, 3])
 
 
 class TestPubSubPrimitive(IsolatedAsyncioTestCase):
@@ -158,6 +294,37 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await self.bus.publish("ch", {"i": 2})
         await asyncio.wait_for(task, timeout=2.0)
         self.assertEqual([p["i"] for p in received], [1, 2])
+
+    async def test_subscribe_cleanup_survives_cancellation(self) -> None:
+        """A consumer cancelled again while closing the pubsub must not
+        abort the close, otherwise the connection leaks from the pool."""
+        ready, closing = asyncio.Event(), asyncio.Event()
+        finish, released = asyncio.Event(), asyncio.Event()
+        pubsub = self.fr.pubsub()
+        original_aclose = pubsub.aclose
+
+        async def _slow_aclose() -> None:
+            closing.set()
+            await finish.wait()
+            await original_aclose()
+            released.set()
+
+        async def _consumer() -> None:
+            async for _ in self.bus.subscribe("ch", on_ready=ready.set):
+                pass
+
+        pubsub.aclose = _slow_aclose
+        with patch.object(self.fr, "pubsub", return_value=pubsub):
+            task = asyncio.create_task(_consumer())
+            await asyncio.wait_for(ready.wait(), timeout=2.0)
+            task.cancel()
+            await asyncio.wait_for(closing.wait(), timeout=2.0)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        finish.set()
+        await asyncio.wait_for(released.wait(), timeout=2.0)
 
 
 class TestLockPrimitive(IsolatedAsyncioTestCase):
@@ -202,6 +369,161 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             order,
             ["first-in", "first-out", "second-in"],
         )
+
+    async def test_timeout_resolves_committed_set_before_returning(
+        self,
+    ) -> None:
+        """An acquisition timeout cannot leave an unrenewed committed lock."""
+        committed = asyncio.Event()
+        release_response = asyncio.Event()
+        original = self.fr.set
+
+        async def delayed_set(*args: Any, **kwargs: Any) -> object:
+            result = await original(*args, **kwargs)
+            committed.set()
+            await release_response.wait()
+            return result
+
+        async def acquire() -> None:
+            async with self.bus.acquire_lock_bounded(
+                "delayed",
+                ttl_secs=10,
+                timeout_secs=0.01,
+            ):
+                self.fail("Timed-out acquisition entered the body.")
+
+        with patch.object(self.fr, "set", delayed_set):
+            task = asyncio.create_task(acquire())
+            await asyncio.wait_for(committed.wait(), 1)
+            await asyncio.sleep(0.03)
+            self.assertFalse(task.done())
+            release_response.set()
+            with self.assertRaises(TimeoutError):
+                await asyncio.wait_for(task, 1)
+        self.assertEqual(await self.fr.get("delayed"), None)
+
+    async def test_repeated_cancel_does_not_release_new_owner(self) -> None:
+        """Late SET cleanup is shielded and checks its ownership token."""
+        committed = asyncio.Event()
+        release_response = asyncio.Event()
+        original = self.fr.set
+
+        async def delayed_set(*args: Any, **kwargs: Any) -> object:
+            result = await original(*args, **kwargs)
+            committed.set()
+            await release_response.wait()
+            return result
+
+        async def acquire() -> None:
+            async with self.bus.acquire_lock("cancelled", ttl_secs=10):
+                self.fail("Cancelled acquisition entered the body.")
+
+        with patch.object(self.fr, "set", delayed_set):
+            task = asyncio.create_task(acquire())
+            await asyncio.wait_for(committed.wait(), 1)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            await original("cancelled", "new-owner", ex=10)
+            release_response.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+        self.assertEqual(await self.fr.get("cancelled"), "new-owner")
+
+    async def test_stalled_set_cleanup_has_absolute_deadline(self) -> None:
+        """Repeated cancellation cannot extend cleanup of a stuck SET."""
+        committed, release = asyncio.Event(), asyncio.Event()
+        original = self.fr.set
+
+        async def blocked_set(*args: Any, **kwargs: Any) -> object:
+            result = await original(*args, **kwargs)
+            committed.set()
+            await release.wait()
+            return result
+
+        async def acquire() -> None:
+            async with self.bus.acquire_lock("stalled", ttl_secs=10):
+                self.fail("Cancelled acquisition entered its body.")
+
+        self.bus._lock_cleanup_timeout_secs = 0.03
+        with patch.object(self.fr, "set", blocked_set):
+            task = asyncio.create_task(acquire())
+            try:
+                await asyncio.wait_for(committed.wait(), 1)
+                task.cancel()
+                for _ in range(5):
+                    await asyncio.sleep(0.01)
+                    task.cancel()
+                done, _ = await asyncio.wait({task}, timeout=0.3)
+                self.assertEqual(done, {task})
+                self.assertTrue(task.cancelled())
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                self.assertEqual(self.bus._lock_cleanup_tasks, set())
+                self.assertGreater(await self.fr.ttl("stalled"), 0)
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_stalled_release_does_not_block_acquisition_cancellation(
+        self,
+    ) -> None:
+        """The deadline also covers release Lua, not only the SET response."""
+        committed, response, releasing, release = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        original_set = self.fr.set
+
+        async def delayed_set(*args: Any, **kwargs: Any) -> object:
+            result = await original_set(*args, **kwargs)
+            committed.set()
+            await response.wait()
+            return result
+
+        async def blocked_eval(*_args: Any, **_kwargs: Any) -> None:
+            releasing.set()
+            await release.wait()
+
+        async def acquire() -> None:
+            async with self.bus.acquire_lock("stalled-release", ttl_secs=10):
+                self.fail("Cancelled acquisition entered its body.")
+
+        self.bus._lock_cleanup_timeout_secs = 0.03
+        with patch.object(self.fr, "set", delayed_set), patch.object(
+            self.fr,
+            "eval",
+            blocked_eval,
+        ):
+            task = asyncio.create_task(acquire())
+            try:
+                await asyncio.wait_for(committed.wait(), 1)
+                task.cancel()
+                response.set()
+                await asyncio.wait_for(releasing.wait(), 1)
+                done, _ = await asyncio.wait({task}, timeout=0.3)
+                self.assertEqual(done, {task})
+                self.assertTrue(task.cancelled())
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                self.assertEqual(self.bus._lock_cleanup_tasks, set())
+            finally:
+                response.set()
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_heartbeat_does_not_renew_another_owner(self) -> None:
+        """A stale holder cannot extend or delete a replacement lease."""
+        async with self.bus.acquire_lock("ownership", ttl_secs=2):
+            await self.fr.set("ownership", "replacement", ex=20)
+            await asyncio.sleep(1.05)
+            self.assertGreater(await self.fr.ttl("ownership"), 10)
+        self.assertEqual(await self.fr.get("ownership"), "replacement")
 
 
 class TestSessionRunAutoTrimsLog(IsolatedAsyncioTestCase):
@@ -383,6 +705,35 @@ class TestRegistryPrimitive(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self._stack.aclose()
         await self.fr.aclose()
+
+    async def test_batch_read_preserves_order_missing_and_custom_bus_fallback(
+        self,
+    ) -> None:
+        """The optional primitive has compatible semantics on every backend."""
+        memory_bus = await self._stack.enter_async_context(
+            InMemoryMessageBus(),
+        )
+        for bus in (memory_bus, self.bus):
+            await bus.registry_set("test-batch", "one", "1")
+            await bus.registry_set("test-batch", "two", "2")
+            fields = ["two", "absent", "one", "two"]
+            self.assertEqual(
+                await bus.registry_get_many("test-batch", fields),
+                ["2", None, "1", "2"],
+            )
+            self.assertEqual(
+                await MessageBus.registry_get_many(
+                    bus,
+                    "test-batch",
+                    fields,
+                ),
+                ["2", None, "1", "2"],
+            )
+            self.assertEqual(
+                await bus.registry_get_many("test-batch", []),
+                [],
+            )
+        self.assertNotIn("registry_get_many", MessageBus.__abstractmethods__)
 
     async def test_set_then_exists_and_getall(self) -> None:
         """``registry_set`` stores a field under a namespace; ``exists``
@@ -589,3 +940,15 @@ class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             # pylint: disable=abstract-class-instantiated
             MessageBus()  # type: ignore[abstract]
+
+    async def test_historical_bus_remains_instantiable(self) -> None:
+        """Optional editable-queue methods do not add abstract requirements."""
+        self.assertFalse(
+            {"queue_read", "queue_replace", "acquire_lock_bounded"}
+            & MessageBus.__abstractmethods__,
+        )
+        bus = InMemoryMessageBus()
+        with self.assertRaises(NotImplementedError):
+            await MessageBus.queue_read(bus, "unsupported")
+        with self.assertRaises(NotImplementedError):
+            await MessageBus.queue_replace(bus, "unsupported", [])

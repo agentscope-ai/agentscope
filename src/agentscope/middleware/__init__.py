@@ -11,6 +11,14 @@ from ._longterm_memory import (
 )
 from ._tracing import TracingMiddleware
 from ._tts_middleware import TTSMiddleware
+from ._model_router import ChatModelCandidate, ModelRouterMiddleware
+from ._steering import SteeringMiddleware
+from ._steering_queue import (
+    SteeringInput,
+    SteeringQueue,
+    SteeringReceipt,
+    SteeringSource,
+)
 
 __all__ = [
     "MiddlewareBase",
@@ -21,4 +29,11 @@ __all__ = [
     "TracingMiddleware",
     "ReplyBudgetControlMiddleware",
     "TTSMiddleware",
+    "ChatModelCandidate",
+    "ModelRouterMiddleware",
+    "SteeringInput",
+    "SteeringMiddleware",
+    "SteeringQueue",
+    "SteeringReceipt",
+    "SteeringSource",
 ]

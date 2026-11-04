@@ -17,25 +17,28 @@ dependency.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import Callable, Self
 
 from ._base import MessageBus
 
 
-class InMemoryMessageBus(MessageBus):
+class InMemoryMessageBus(
+    MessageBus,
+):  # pylint: disable=too-many-public-methods
     """In-memory implementation of :class:`MessageBus`.
 
     Mapping of bus modes to in-memory structures:
 
-    - **Mode A (drain queue)** — each key maps to a
-      :class:`list[tuple[str, dict]]` of ``(entry_id, payload)`` pairs.
-      ``queue_push`` appends; ``queue_drain`` pops from the front (FIFO)
-      and deletes the returned entries.
+    - **Mode A (drain queue)** — each key maps to
+      ``(entry_id, payload, expire_at)`` tuples. ``queue_push`` appends;
+      ``queue_drain`` pops from the front (FIFO) and deletes the returned
+      entries.
     - **Mode C (replay log)** — same underlying list structure, but
       ``log_read`` is non-destructive.  ``log_trim`` removes entries
       in-place.
@@ -77,7 +80,9 @@ class InMemoryMessageBus(MessageBus):
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        self._lock_holders: dict[str, str] = {}
+        # key -> monotonic expiry deadline; ``acquire_lock`` has no
+        # lease, so it stores infinity.
+        self._lock_holders: dict[str, float] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -152,8 +157,8 @@ class InMemoryMessageBus(MessageBus):
         queue = self._queues[key]
         now = time.monotonic()
         queue[:] = [e for e in queue if e[2] is None or e[2] > now]
-        expire_at = now + ttl_secs if ttl_secs else None
-        queue.append((entry_id, payload, expire_at))
+        expire_at = now + ttl_secs if ttl_secs is not None else None
+        queue.append((entry_id, deepcopy(payload), expire_at))
         return entry_id
 
     async def queue_drain(
@@ -182,7 +187,64 @@ class InMemoryMessageBus(MessageBus):
         alive = [e for e in q if e[2] is None or e[2] > now]
         drained = alive[:max_count]
         self._queues[key] = alive[max_count:]
-        return [(entry_id, payload) for entry_id, payload, _ in drained]
+        return deepcopy(
+            [(entry_id, payload) for entry_id, payload, _ in drained],
+        )
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Return queue entries without removing them.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of oldest-first entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                Deep-copied ``(entry_id, payload)`` pairs.
+        """
+        q = self._queues.get(key, [])
+        now = time.monotonic()
+        alive = [entry for entry in q if entry[2] is None or entry[2] > now]
+        if q:
+            self._queues[key] = alive
+        return deepcopy(
+            [
+                (entry_id, payload)
+                for entry_id, payload, _expire_at in alive[:max_count]
+            ],
+        )
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Replace a queue while preserving the supplied payload order.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete replacement contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Fresh transport-level ids assigned to the new entries.
+        """
+        entries = [
+            (self._next_id(), deepcopy(payload), None) for payload in payloads
+        ]
+        if entries:
+            self._queues[key] = entries
+        else:
+            self._queues.pop(key, None)
+        return [entry_id for entry_id, _payload, _expire_at in entries]
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -377,9 +439,8 @@ class InMemoryMessageBus(MessageBus):
             `None`: while the lock is held.
         """
         lock = self._locks[key]
-        token = uuid.uuid4().hex
         async with lock:
-            self._lock_holders[key] = token
+            self._lock_holders[key] = math.inf
             try:
                 yield
             finally:
@@ -396,13 +457,15 @@ class InMemoryMessageBus(MessageBus):
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return key in self._lock_holders
+        return self._lock_holders.get(key, 0.0) > time.monotonic()
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if key in self._lock_holders:
+        if self._lock_holders.get(key, 0.0) > time.monotonic():
             return False
-        self._lock_holders[key] = "1"
+        # The lease keeps a crashed holder from blocking the key
+        # forever, the contract the Redis bus gets from SET NX EX.
+        self._lock_holders[key] = time.monotonic() + ttl_secs
         return True
 
     async def unlock(self, key: str) -> None:
@@ -436,6 +499,26 @@ class InMemoryMessageBus(MessageBus):
                 Ignored (no TTL support).
         """
         self._registries[namespace][field] = value
+
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
+        _ = ttl_secs
+        if self._registries.get(namespace, {}).get(field) != expected:
+            return False
+        self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        """Read and remove one field. See base."""
+        return self._registries.get(namespace, {}).pop(field, None)
 
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the registry at ``namespace``.
@@ -502,6 +585,15 @@ class InMemoryMessageBus(MessageBus):
                 The stored value, or ``None`` if missing.
         """
         return self._registries.get(namespace, {}).get(field)
+
+    async def registry_get_many(
+        self,
+        namespace: str,
+        fields: list[str],
+    ) -> list[str | None]:
+        """Read only the requested registry fields in their supplied order."""
+        registry = self._registries.get(namespace, {})
+        return [registry.get(field) for field in fields]
 
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire registry at ``namespace``.

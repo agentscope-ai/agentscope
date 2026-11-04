@@ -776,6 +776,65 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             False,
         )
 
+    async def test_cancelled_upload_waiting_for_kb_lock_cleans_blob(
+        self,
+    ) -> None:
+        """Lock contention must preserve main's cancellation cleanup."""
+        blob_written = asyncio.Event()
+        blob_uris: list[str] = []
+        original_write = self._service._blob_store.write_stream
+
+        async def track_blob_write(**kwargs: Any) -> str:
+            blob_uri = await original_write(**kwargs)
+            blob_uris.append(blob_uri)
+            blob_written.set()
+            return blob_uri
+
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                "user-1",
+                self._knowledge_base_id,
+            ),
+        ):
+            with patch.object(
+                self._service._blob_store,
+                "write_stream",
+                new=track_blob_write,
+            ):
+                upload = asyncio.create_task(
+                    self._service.register_document(
+                        "user-1",
+                        self._knowledge_base_id,
+                        "cancel.txt",
+                        BytesIO(b"content"),
+                        7,
+                        "text/plain",
+                    ),
+                )
+                try:
+                    await asyncio.wait_for(blob_written.wait(), 1)
+                    self.assertFalse(upload.done())
+                    upload.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await asyncio.wait_for(upload, 1)
+                finally:
+                    upload.cancel()
+                    await asyncio.gather(upload, return_exceptions=True)
+
+        self.assertEqual(
+            (
+                await self._storage.list_knowledge_documents(
+                    "user-1",
+                    self._knowledge_base_id,
+                ),
+                await self._service._blob_store.exists(blob_uris[0]),
+                await self._bus.queue_drain(
+                    MessageBusKeys.index_tasks_queue(),
+                ),
+            ),
+            ([], False, []),
+        )
+
     async def test_in_flight_document_rejects_changed_chunker(self) -> None:
         """A concurrent index pass blocks configuration replacement."""
         await self._store_document("doc-pending", "pending")

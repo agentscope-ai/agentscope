@@ -405,14 +405,23 @@ class DiscordChannel(ChannelBase):
 
     async def chat_kind(self, chat_id: str) -> ChatKind | None:
         """Private for a DM channel, group otherwise; ``None`` if the
-        channel id can't be resolved.
+        channel id can't be resolved or the lookup fails (deleted or
+        inaccessible channel), matching the ``ChannelBase`` contract.
 
         Args:
             chat_id (`str`): The Discord channel id as a string.
         """
         import discord
 
-        channel = await self._channel(chat_id)
+        try:
+            channel = await self._channel(chat_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug(
+                "Discord '%s' chat lookup failed for '%s'",
+                self._channel_id,
+                chat_id,
+            )
+            return None
         if channel is None:
             return None
         return (
@@ -422,12 +431,22 @@ class DiscordChannel(ChannelBase):
         )
 
     async def chat_name(self, chat_id: str) -> str:
-        """The channel's name; ``""`` for DMs or an unresolvable id.
+        """The channel's name; ``""`` for DMs or an unresolvable id, and
+        also when the lookup fails (deleted or inaccessible channel),
+        matching the ``ChannelBase`` contract.
 
         Args:
             chat_id (`str`): The Discord channel id as a string.
         """
-        channel = await self._channel(chat_id)
+        try:
+            channel = await self._channel(chat_id)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug(
+                "Discord '%s' chat lookup failed for '%s'",
+                self._channel_id,
+                chat_id,
+            )
+            return ""
         return getattr(channel, "name", "") or "" if channel else ""
 
     # -- Helpers --

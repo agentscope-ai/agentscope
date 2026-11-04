@@ -11,6 +11,7 @@ import base64
 import binascii
 import json
 import mimetypes
+import re
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
 from urllib.parse import quote_plus
@@ -35,6 +36,10 @@ from .._base import (
     ChannelEvent,
     ChannelStatus,
     ChatKind,
+    WikiDocument,
+    WikiNode,
+    WikiPage,
+    WikiSpace,
     _EVENT_ADAPTER,
 )
 from ._card import (
@@ -49,6 +54,10 @@ if TYPE_CHECKING:
     from ....tool import ToolBase
     from ....workspace import WorkspaceBase
 
+# One tool result should stay readable to the model; a longer document is
+# read across several calls instead.
+_MAX_DOCUMENT_CHARS = 20_000
+_LAST_BLOCK_INDEX = 2**31 - 1
 _CHATBOT_TOPIC = "/v1.0/im/bot/messages/get"
 _CARD_CALLBACK_TOPIC = "/v1.0/card/instances/callback"
 _GROUP_CONVERSATION = "2"
@@ -151,6 +160,7 @@ class DingTalkChannel(ChannelBase):
         interactive=True,
         streaming=False,
         max_message_length=_MAX_LEN,
+        wiki=True,
     )
 
     def __init__(
@@ -510,12 +520,15 @@ class DingTalkChannel(ChannelBase):
     async def list_tools(
         self,
         workspace: "WorkspaceBase",
+        channel_user_id: str | None = None,
     ) -> list["ToolBase"]:
-        """Expose DingTalk discovery and target-send tools to the agent.
+        """Expose DingTalk tools to the agent.
 
         Args:
             workspace (`WorkspaceBase`): Calling session workspace whose
                 backend is used for file reads.
+            channel_user_id (`str | None`, optional): The DingTalk user the
+                session acts as, passed through to the inherited wiki tools.
 
         Returns:
             `list[ToolBase]`: DingTalk agent tools.
@@ -535,7 +548,7 @@ class DingTalkChannel(ChannelBase):
             SendMessage(self, backend),
             SendFile(self, backend),
             SendImage(self, backend),
-        ]
+        ] + await super().list_tools(workspace, channel_user_id)
 
     async def search_users(
         self,
@@ -552,6 +565,124 @@ class DingTalkChannel(ChannelBase):
             `list[dict[str, Any]]`: Basic visible user profiles.
         """
         return await self._api().search_users(query, limit)
+
+    async def list_wiki_spaces(
+        self,
+        channel_user_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> WikiPage[WikiSpace]:
+        """List the DingTalk knowledge bases one user can read.
+
+        Args:
+            channel_user_id (`str`): Staff id from the inbound event.
+            limit (`int`): Maximum spaces to return.
+            next_token (`str | None`, optional): Token from a previous page.
+
+        Returns:
+            `WikiPage[WikiSpace]`: One page of knowledge bases.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._api().list_wiki_workspaces(
+            channel_user_id,
+            limit,
+            next_token,
+        )
+        return WikiPage(
+            items=[
+                WikiSpace(
+                    space_id=item["workspaceId"],
+                    name=item.get("name") or "",
+                    root_node_id=item.get("rootNodeId") or "",
+                    description=item.get("description") or None,
+                    url=item.get("url") or None,
+                )
+                for item in payload.get("workspaces") or []
+                if isinstance(item, dict) and item.get("workspaceId")
+            ],
+            next_token=payload.get("nextToken") or None,
+        )
+
+    async def list_wiki_nodes(
+        self,
+        channel_user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> WikiPage[WikiNode]:
+        """List the children of one DingTalk knowledge node.
+
+        Args:
+            channel_user_id (`str`): Staff id from the inbound event.
+            parent_node_id (`str`): Knowledge-base root or folder node id.
+            limit (`int`): Maximum children to return.
+            next_token (`str | None`, optional): Token from a previous page.
+
+        Returns:
+            `WikiPage[WikiNode]`: One page of child entries.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        payload = await self._api().list_wiki_nodes(
+            channel_user_id,
+            parent_node_id,
+            limit,
+            next_token,
+        )
+        return WikiPage(
+            items=[
+                _wiki_node(item)
+                for item in payload.get("nodes") or []
+                if isinstance(item, dict) and item.get("nodeId")
+            ],
+            next_token=payload.get("nextToken") or None,
+        )
+
+    async def read_wiki_document(
+        self,
+        channel_user_id: str,
+        node_id: str,
+        start_index: int,
+        max_blocks: int,
+    ) -> WikiDocument | None:
+        """Read a bounded block range of one DingTalk document.
+
+        Args:
+            channel_user_id (`str`): Staff id from the inbound event.
+            node_id (`str`): Wiki node id, which is also the document key.
+            start_index (`int`): First block index to read.
+            max_blocks (`int`): Maximum blocks to read.
+
+        Returns:
+            `WikiDocument | None`: The range read, or ``None`` when the
+            node is not an ``ALIDOC`` document.
+
+        Raises:
+            `RuntimeError`: If DingTalk rejects the lookup.
+        """
+        node = await self._api().get_wiki_node(channel_user_id, node_id)
+        if not _wiki_node(node).is_document:
+            return None
+        blocks = await self._api().read_document_blocks(
+            channel_user_id,
+            node_id,
+            start_index,
+            start_index + max_blocks - 1,
+        )
+        markdown, next_start_index = _render_blocks(
+            blocks,
+            start_index,
+            max_blocks,
+        )
+        return WikiDocument(
+            node_id=node.get("nodeId") or node_id,
+            name=node.get("name") or "",
+            content=[TextBlock(type="text", text=markdown)],
+            next_start_index=next_start_index,
+        )
 
     async def send_message_to(self, target: str, text: str) -> bool:
         """Send Markdown text to an encoded DingTalk target.
@@ -1104,3 +1235,121 @@ class DingTalkChannel(ChannelBase):
     def _safe_file_name(file_name: str) -> str:
         """Strip directory components from a platform filename."""
         return file_name.replace("\\", "/").rsplit("/", 1)[-1] or "file"
+
+
+def _wiki_node(node: dict[str, Any]) -> WikiNode:
+    """Map one DingTalk wiki node onto the platform-neutral model.
+
+    Args:
+        node (`dict[str, Any]`): Raw node from the DingTalk wiki API.
+
+    Returns:
+        `WikiNode`: The neutral entry. ``ALIDOC`` is the only document
+        type the block reader below understands.
+    """
+    return WikiNode(
+        node_id=node.get("nodeId") or "",
+        name=node.get("name") or "",
+        has_children=bool(node.get("hasChildren")),
+        is_document=(
+            str(node.get("type") or "").upper() == "FILE"
+            and str(node.get("category") or "ALIDOC").upper() == "ALIDOC"
+        ),
+        url=node.get("url") or None,
+        updated_at=node.get("modifiedTime") or None,
+    )
+
+
+def _render_blocks(
+    blocks: list[dict[str, Any]],
+    start_index: int,
+    max_blocks: int,
+) -> tuple[str, int | None]:
+    """Render DingTalk document blocks as Markdown within a budget.
+
+    Args:
+        blocks (`list[dict[str, Any]]`): Raw blocks in document order.
+        start_index (`int`): The index the read started at.
+        max_blocks (`int`): The number of blocks that were requested.
+
+    Returns:
+        `tuple[str, int | None]`: The Markdown, and where a follow-up read
+        resumes — ``None`` once the document is exhausted.
+    """
+    parts: list[str] = []
+    total = 0
+    last_index = start_index - 1
+    for block in sorted(blocks, key=_block_index):
+        rendered = _render_block(block)
+        added = len(rendered) + (2 if parts else 0)
+        # Stop before the block that would overflow, never inside one: the
+        # resume index counts whole blocks, so a split tail is unreachable.
+        if parts and total + added > _MAX_DOCUMENT_CHARS:
+            return "\n\n".join(parts), last_index + 1
+        parts.append(rendered)
+        last_index = _block_index(block)
+        total += added
+    exhausted = len(blocks) < max_blocks
+    return "\n\n".join(parts), None if exhausted else last_index + 1
+
+
+def _render_block(block: dict[str, Any]) -> str:
+    """Render one DingTalk block, naming the ones Markdown cannot carry."""
+    block_type = str(block.get("blockType") or "unknown")
+    detail = block.get(block_type)
+    detail = detail if isinstance(detail, dict) else {}
+    text = str(detail.get("text") or block.get("text") or "")
+    if block_type == "heading":
+        match = re.search(r"([1-6])$", str(detail.get("level") or "1"))
+        return f"{'#' * int(match.group(1) if match else 1)} {text}".rstrip()
+    if block_type in ("paragraph", "callout"):
+        return text
+    if block_type == "unorderedList":
+        return f"- {text}".rstrip()
+    if block_type == "orderedList":
+        return f"1. {text}".rstrip()
+    if block_type == "blockquote":
+        return f"> {text}".rstrip()
+    if block_type == "table":
+        return _render_table(detail)
+    return f"[Unsupported block: {block_type}]"
+
+
+def _render_table(detail: dict[str, Any]) -> str:
+    """Render a DingTalk table block as a Markdown table.
+
+    DingTalk carries the cell text inside the block as a 2-D array, so a
+    table reaches the agent whole rather than as a placeholder, and counts
+    as the single block its index refers to.
+    """
+    rows = [
+        [
+            str(cell)
+            .replace("\\", "\\\\")
+            .replace("|", "\\|")
+            .replace("\r", " ")
+            .replace("\n", " ")
+            for cell in row
+        ]
+        for row in detail.get("cells") or []
+        if isinstance(row, list)
+    ]
+    if not rows:
+        size = f"{detail.get('rowSize', '?')}x{detail.get('colSize', '?')}"
+        return f"[Table: {size}, no cell content]"
+    width = max(len(row) for row in rows)
+    header, *body = [row + [""] * (width - len(row)) for row in rows]
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(["---"] * width) + " |",
+        *("| " + " | ".join(row) + " |" for row in body),
+    ]
+    return "\n".join(lines)
+
+
+def _block_index(block: dict[str, Any]) -> int:
+    """Return a sortable block index, putting malformed values last."""
+    try:
+        return int(block.get("index", _LAST_BLOCK_INDEX))
+    except (TypeError, ValueError):
+        return _LAST_BLOCK_INDEX

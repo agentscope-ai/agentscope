@@ -7,7 +7,10 @@ dicts), a lightweight xai_sdk stub is built at module load so that tests run
 without the real package.  The stub objects support __eq__ and __repr__ so
 full assertListEqual comparisons work.
 """
+import base64
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
@@ -21,6 +24,7 @@ from agentscope.message import (
     TextBlock,
     DataBlock,
     Base64Source,
+    URLSource,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
@@ -66,17 +70,18 @@ class _StubMessage:
 class _StubImage:
     """Comparable stub for xai_sdk.chat.image()."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, detail: str = "auto") -> None:
         self.type = "image"
         self.url = url
+        self.detail = detail
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, _StubImage):
             return NotImplemented
-        return self.url == other.url
+        return self.url == other.url and self.detail == other.detail
 
     def __repr__(self) -> str:
-        return f"_StubImage(url={self.url!r})"
+        return f"_StubImage(url={self.url!r}, detail={self.detail!r})"
 
 
 def user(*args: Any) -> _StubMessage:
@@ -99,9 +104,9 @@ def tool_result(*args: Any, **kwargs: Any) -> _StubMessage:
     return _StubMessage(role="tool", args=args, kwargs=kwargs)
 
 
-def image(url: str) -> _StubImage:
+def image(url: str, *, detail: str = "auto") -> _StubImage:
     """Create a comparable stub image object."""
-    return _StubImage(url=url)
+    return _StubImage(url=url, detail=detail)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +186,9 @@ def _build_xai_sdk_stub() -> None:
 _build_xai_sdk_stub()
 
 
-class TestXAIFormatter(IsolatedAsyncioTestCase):
+class TestXAIFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for XAI Chat and MultiAgent formatters.
 
     The stub objects support __eq__, so full assertListEqual works for
@@ -250,6 +257,39 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
     # XAIChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """DataBlock detail extra param is forwarded to xAI image()."""
+        fmt = XAIChatFormatter()
+        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=image_b64,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    "Inspect this image.",
+                    image(
+                        f"data:image/png;base64,{image_b64}",
+                        detail="high",
+                    ),
+                ),
+            ],
+            res,
+        )
+
     async def test_chat_formatter_system_message(self) -> None:
         """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
@@ -270,6 +310,44 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                 user("What is the capital of Germany?"),
                 assistant("The capital of Germany is Berlin."),
                 user("What is the capital of Japan?"),
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = XAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                                detail="high",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                user(
+                    "What's in this image?",
+                    image(
+                        f"data:image/png;base64,{expected_b64}",
+                        detail="high",
+                    ),
+                ),
             ],
             res,
         )
@@ -311,6 +389,238 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_chat_formatter_tool_result_with_url_media(self) -> None:
+        """URL media in a tool result is promoted as a real image part."""
+        fmt = XAIChatFormatter()
+        picture = DataBlock(
+            source=URLSource(
+                url="https://example.com/a.png",
+                media_type="image/png",
+            ),
+        )
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="screenshot",
+                            output=[TextBlock(text="done"), picture],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "done\n<system-reminder>A(n) image file is returned "
+                    "and will be presented to you with the identifier "
+                    f"[{picture.id}].</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    f"- {picture.id} (image file): ",
+                    image("https://example.com/a.png"),
+                    "</system-reminder>",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_tool_result_with_base64_media(
+        self,
+    ) -> None:
+        """Base64 media in a tool result is promoted as a data URI."""
+        fmt = XAIChatFormatter()
+        picture = DataBlock(
+            source=Base64Source(
+                data="iVBORw0KGgo=",
+                media_type="image/png",
+            ),
+        )
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="screenshot",
+                            output=[picture],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "<system-reminder>A(n) image file is returned and "
+                    "will be presented to you with the identifier "
+                    f"[{picture.id}].</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    f"- {picture.id} (image file): ",
+                    image("data:image/png;base64,iVBORw0KGgo="),
+                    "</system-reminder>",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_tool_result_unsupported_media(
+        self,
+    ) -> None:
+        """Media the formatter cannot promote keeps the textual fallback."""
+        fmt = XAIChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="recording",
+                            output=[
+                                DataBlock(
+                                    source=URLSource(
+                                        url="https://example.com/a.wav",
+                                        media_type="audio/wav",
+                                    ),
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            res,
+            [
+                tool_result(
+                    "<system-reminder>A(n) audio file is returned and "
+                    "can be accessed at the URL: "
+                    "https://example.com/a.wav.</system-reminder>",
+                    tool_call_id="call_1",
+                ),
+            ],
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Promoted media does not split parallel tool-result messages."""
+        fmt = XAIChatFormatter()
+        picture = DataBlock(
+            id="image_1",
+            source=URLSource(
+                url="https://example.com/shot.png",
+                media_type="image/png",
+            ),
+        )
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_shot",
+                            name="screenshot",
+                            input="{}",
+                        ),
+                        ToolCallBlock(
+                            id="call_title",
+                            name="get_title",
+                            input="{}",
+                        ),
+                        ToolResultBlock(
+                            id="call_shot",
+                            name="screenshot",
+                            output=[
+                                TextBlock(text="Screenshot taken."),
+                                picture,
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                        ToolResultBlock(
+                            id="call_title",
+                            name="get_title",
+                            output=[TextBlock(text="Example Domain")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        normalized_res = [
+            (
+                res[0].role,
+                [part.text for part in res[0].content],
+                [
+                    (
+                        tool_call.id,
+                        tool_call.type,
+                        tool_call.function.name,
+                        tool_call.function.arguments,
+                    )
+                    for tool_call in res[0].tool_calls
+                ],
+            ),
+            *res[1:],
+        ]
+        self.assertListEqual(
+            normalized_res,
+            [
+                (
+                    2,
+                    [],
+                    [
+                        (
+                            "call_shot",
+                            1,
+                            "screenshot",
+                            "{}",
+                        ),
+                        (
+                            "call_title",
+                            1,
+                            "get_title",
+                            "{}",
+                        ),
+                    ],
+                ),
+                tool_result(
+                    "Screenshot taken.\n"
+                    "<system-reminder>A(n) image file is returned and "
+                    "will be presented to you with the identifier "
+                    "[image_1].</system-reminder>",
+                    tool_call_id="call_shot",
+                ),
+                tool_result(
+                    "Example Domain",
+                    tool_call_id="call_title",
+                ),
+                user(
+                    "<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                    "- image_1 (image file): ",
+                    image("https://example.com/shot.png"),
+                    "</system-reminder>",
+                ),
+            ],
+        )
+
     async def test_chat_formatter_thinking_dropped(self) -> None:
         """ThinkingBlock is silently ignored in user/assistant xAI
         messages."""
@@ -333,9 +643,38 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_respects_image_input_types(self) -> None:
+        """Only image media types declared in input_types are forwarded."""
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data="R0lGODlh",
+                        media_type="image/gif",
+                    ),
+                ),
+            ],
+        )
+
+        self.assertListEqual([], await XAIChatFormatter().format([msg]))
+        self.assertListEqual(
+            [user(image("data:image/gif;base64,R0lGODlh"))],
+            await XAIChatFormatter(
+                input_types=["text/plain", "image/*"],
+            ).format([msg]),
+        )
+
     # -------------------------------------------------------------------
     # XAIMultiAgentFormatter tests
     # -------------------------------------------------------------------
+
+    async def test_multiagent_formatter_textless_system_message(self) -> None:
+        """A system message without text blocks passes an empty string."""
+        res = await XAIMultiAgentFormatter().format(
+            [SystemMsg(name="system", content=[])],
+        )
+        self.assertEqual(res, [system("")])
 
     async def test_multiagent_formatter_system_message(self) -> None:
         """System message is passed through as a system() stub."""
@@ -360,6 +699,59 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                     "assistant: The capital of Germany is Berlin.\n"
                     "user: What is the capital of Japan?\n"
                     "</history>",
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_hint_only_message_precedes_history(self) -> None:
+        """A hint-only message is emitted before following history."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            AssistantMsg(
+                name="memory",
+                content=[HintBlock(hint="Remember the user's preference.")],
+            ),
+            UserMsg(name="alice", content="What should I remember?"),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                user("Remember the user's preference."),
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nalice: What should I remember?\n</history>",
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_hint_splits_mixed_history_in_order(self) -> None:
+        """A hint embedded in a message separates ordered history segments."""
+        fmt = XAIMultiAgentFormatter()
+        msg = AssistantMsg(
+            name="memory",
+            content=[
+                TextBlock(text="Context before the hint."),
+                HintBlock(hint="Keep this instruction."),
+                TextBlock(text="Context after the hint."),
+            ],
+        )
+
+        res = await fmt.format([msg])
+
+        self.assertListEqual(
+            [
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nmemory: Context before the hint.\n"
+                    + "</history>",
+                ),
+                user("Keep this instruction."),
+                user(
+                    "<history>\nmemory: Context after the hint.\n</history>",
                 ),
             ],
             res,
@@ -415,6 +807,83 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_multiagent_formatter_history_keeps_images(self) -> None:
+        """Images of the collapsed messages ride along with the history
+        text, in message order."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Compare these two charts."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="Zmlyc3Q=",
+                            media_type="image/jpeg",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="agent",
+                content=[
+                    TextBlock(text="The second one differs."),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/second.png",
+                            media_type="image/png",
+                        ),
+                        detail="low",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    self._hist_prompt + "<history>\n"
+                    "user: Compare these two charts.\n"
+                    "agent: The second one differs.\n"
+                    "</history>",
+                    image("data:image/jpeg;base64,Zmlyc3Q=", detail="high"),
+                    image("https://example.com/second.png", detail="low"),
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_history_respects_image_input_types(self) -> None:
+        """Collapsed history does not forward undeclared image types."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this animation."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="R0lGODlh",
+                            media_type="image/gif",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    self._hist_prompt + "<history>\n"
+                    "user: Inspect this animation.\n"
+                    "</history>",
+                ),
+            ],
+            res,
+        )
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
@@ -578,6 +1047,7 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                                     data=image_b64,
                                     media_type="image/png",
                                 ),
+                                detail="high",
                             ),
                         ],
                     ),
@@ -589,7 +1059,10 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
             [
                 user(
                     "Inspect this screenshot:",
-                    image(f"data:image/png;base64,{image_b64}"),
+                    image(
+                        f"data:image/png;base64,{image_b64}",
+                        detail="high",
+                    ),
                 ),
             ],
             res,

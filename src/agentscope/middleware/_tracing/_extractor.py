@@ -12,7 +12,7 @@ from ._attributes import (
 )
 from ._converter import _convert_block_to_part
 from ._utils import _serialize_to_str
-from ...model import ChatResponse, ChatModelBase
+from ...model import ChatResponse, ChatModelBase, FinishedReason
 from ...event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
@@ -31,6 +31,8 @@ _CLASS_NAME_MAP = {
     "deepseek": ProviderNameValues.DEEPSEEK,
     "xai": ProviderNameValues.XAI,
     "moonshot": ProviderNameValues.MOONSHOT,
+    "minimax": ProviderNameValues.MINIMAX,
+    "volcengine": ProviderNameValues.VOLCENGINE,
 }
 
 # Map base URL fragments to provider names for OpenAI-compatible APIs
@@ -39,6 +41,7 @@ _BASE_URL_PROVIDER_MAP = [
     ("dashscope", ProviderNameValues.DASHSCOPE),
     ("deepseek", ProviderNameValues.DEEPSEEK),
     ("moonshot", ProviderNameValues.MOONSHOT),
+    ("volces.com", ProviderNameValues.VOLCENGINE),
     ("generativelanguage.googleapis.com", ProviderNameValues.GCP_GEMINI),
     ("openai.azure.com", ProviderNameValues.AZURE_AI_OPENAI),
     ("amazonaws.com", ProviderNameValues.AWS_BEDROCK),
@@ -199,8 +202,13 @@ def _get_llm_request_attributes(
         SpanAttributes.GEN_AI_REQUEST_MODEL: instance.model,
         # recommended attributes
         SpanAttributes.GEN_AI_REQUEST_TEMPERATURE: kwargs.get("temperature"),
-        SpanAttributes.GEN_AI_REQUEST_TOP_P: kwargs.get("p")
-        or kwargs.get("top_p"),
+        # ``or`` would drop a falsy-but-valid value such as ``p=0``
+        # (greedy decoding), so fall back on None instead.
+        SpanAttributes.GEN_AI_REQUEST_TOP_P: (
+            kwargs.get("p")
+            if kwargs.get("p") is not None
+            else kwargs.get("top_p")
+        ),
         SpanAttributes.GEN_AI_REQUEST_TOP_K: kwargs.get("top_k"),
         SpanAttributes.GEN_AI_REQUEST_MAX_TOKENS: kwargs.get("max_tokens"),
         SpanAttributes.GEN_AI_REQUEST_PRESENCE_PENALTY: kwargs.get(
@@ -289,7 +297,7 @@ def _get_llm_output_messages(
             ]
 
         parts = []
-        finish_reason = "stop"  # Default finish reason
+        finish_reason = _get_chat_response_finish_reason(chat_response)
 
         for block in chat_response.content:
             part = _convert_block_to_part(block)
@@ -319,6 +327,19 @@ def _get_llm_output_messages(
         ]
 
 
+def _get_chat_response_finish_reason(
+    chat_response: ChatResponse | None,
+) -> str:
+    """Get the finish reason to record for a chat response."""
+    if not isinstance(chat_response, ChatResponse):
+        return "unknown"
+
+    if chat_response.finished_reason == FinishedReason.INTERRUPTED:
+        return "interrupted"
+
+    return "stop"
+
+
 def _get_llm_response_attributes(
     chat_response: ChatResponse | None,
 ) -> Dict[str, Any]:
@@ -344,8 +365,9 @@ def _get_llm_response_attributes(
             "id",
             "unknown_id",
         ),
-        # FIXME: finish reason should be capture in chat response
-        SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS: '["stop"]',
+        SpanAttributes.GEN_AI_RESPONSE_FINISH_REASONS: _serialize_to_str(
+            [_get_chat_response_finish_reason(chat_response)],
+        ),
     }
     if hasattr(chat_response, "usage") and chat_response.usage:
         usage = chat_response.usage

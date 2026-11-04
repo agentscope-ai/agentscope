@@ -5,7 +5,9 @@ import unittest
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import Mock, patch
 
 from utils import AnyString
 
@@ -151,6 +153,70 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
                         "source": "doc-1.txt",
                         "chunk_index": 1,
                         "total_chunks": 2,
+                        "metadata": {},
+                    },
+                },
+            ],
+        )
+
+    async def test_search_negates_l2_distance_scores(self) -> None:
+        """The L2 metric yields higher-is-better scores too."""
+        store = await self._exit_stack.enter_async_context(
+            MilvusLiteStore(
+                uri=str(self._tmpdir / "l2.db"),
+                metric_type="L2",
+            ),
+        )
+        await store.create_collection("kb_2", dimensions=3)
+        await store.insert(
+            "kb_2",
+            [
+                _make_record("Near!", [1.0, 0.0, 0.0], document_id="doc-1"),
+                _make_record("Far!", [10.0, 0.0, 0.0], document_id="doc-2"),
+            ],
+        )
+
+        results = await store.search(
+            "kb_2",
+            query_vector=[0.0, 0.0, 0.0],
+            top_k=2,
+        )
+
+        # Negated squared distances, so the nearest record ranks first
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": -1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Near!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+                {
+                    "score": -100.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Far!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
                         "metadata": {},
                     },
                 },
@@ -518,3 +584,34 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             [c.content.text for c in chunks],
             ["v2-chunk0", "v2-chunk1"],
         )
+
+
+class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
+    """Check delete predicates without starting a Milvus service."""
+
+    async def test_milvus_delete_filter(self) -> None:
+        """Milvus keeps document escaping and ANDs both metadata fields."""
+        store = MilvusLiteStore()
+        client = SimpleNamespace(delete=Mock())
+        with patch.object(store, "get_client", return_value=client):
+            await store.delete(
+                "shared",
+                'doc"id',
+                metadata_filter={"tenant": "alpha", "project": 2},
+            )
+        client.delete.assert_called_once_with(
+            collection_name="shared",
+            filter=(
+                'document_id == "doc\\"id" and '
+                'metadata["tenant"] == "alpha" and metadata["project"] == 2'
+            ),
+        )
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                client.delete.reset_mock()
+                with patch.object(store, "get_client", return_value=client):
+                    await store.delete("shared", "doc", metadata_filter=scope)
+                client.delete.assert_called_once_with(
+                    collection_name="shared",
+                    filter='document_id == "doc"',
+                )

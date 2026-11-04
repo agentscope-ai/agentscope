@@ -2,8 +2,10 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+import base64
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
@@ -16,6 +18,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -297,13 +300,99 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
+    async def test_formatters_read_percent_encoded_file_urls(self) -> None:
+        """Local file URLs are decoded before their paths are opened."""
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "image #1.png"
+            image_path.write_bytes(base64.b64decode(self.image_b64))
+            msgs = [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        DataBlock(
+                            source=URLSource(
+                                url=image_path.as_uri(),
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            ]
+
+            chat_result = await OllamaChatFormatter().format(msgs)
+            multiagent_result = await OllamaMultiAgentFormatter().format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [self.image_b64],
+                },
+            ],
+            chat_result,
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\nWhat is this?\n</history>"
+                    ),
+                    "images": [self.image_b64],
+                },
+            ],
+            multiagent_result,
+        )
+
+    async def test_formatters_preserve_local_file_uri_characters(self) -> None:
+        """Decode Unicode and literal percent escapes once, preserving '+'."""
+        with TemporaryDirectory() as directory:
+            for filename in ("caf\u00e9.png", "image%20.png", "image+1.png"):
+                path = Path(directory) / filename
+                path.write_bytes(base64.b64decode(self.image_b64))
+                # URI paths allow a literal '+'; form decoding would lose it.
+                url = path.as_uri().replace("%2B", "+")
+                source = URLSource(url=url, media_type="image/png")
+                self.assertEqual(str(source.url), url)
+                msgs = [
+                    UserMsg(
+                        name="user",
+                        content=[DataBlock(source=source)],
+                    ),
+                ]
+                for formatter, expected_content in (
+                    (OllamaChatFormatter(), ""),
+                    (
+                        OllamaMultiAgentFormatter(),
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\n</history>",
+                    ),
+                ):
+                    with self.subTest(
+                        filename=filename,
+                        formatter=type(formatter).__name__,
+                    ):
+                        result = await formatter.format(msgs)
+                        self.assertEqual(
+                            result,
+                            [
+                                {
+                                    "role": "user",
+                                    "content": expected_content,
+                                    "images": [self.image_b64],
+                                },
+                            ],
+                        )
+
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """Base64 images in tool results are promoted to a follow-up user
         message with images list."""
@@ -323,6 +412,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=Base64Source(
                                     data=self.image_b64,
                                     media_type="image/png",
@@ -375,6 +465,103 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": "Here is the map of Tokyo.",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "screenshot", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "get_title", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "screenshot",
+                    "content": (
+                        "Screenshot taken.\n"
+                        "<system-reminder>A(n) image file is returned and "
+                        "will be presented to you with the identifier "
+                        f"[{_FIXED_ID}].</system-reminder>"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_title",
+                    "content": "Example Domain",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "<system-reminder>The multimodal data "
+                        "and their identifiers are listed as follows:\n"
+                        f"- {_FIXED_ID} (image file): \n"
+                        "</system-reminder>"
+                    ),
+                    "images": [self.image_b64],
+                },
+                {
+                    "role": "assistant",
+                    "content": "The page is Example Domain.",
                 },
             ],
             res,

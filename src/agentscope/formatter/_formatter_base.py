@@ -5,14 +5,14 @@ import mimetypes
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
-from typing import Any, List, AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable, List
 
-import shortuuid
 from pydantic import BaseModel, Field
 
 from ..message import (
     Msg,
     DataBlock,
+    HintBlock,
     TextBlock,
     URLSource,
 )
@@ -145,9 +145,11 @@ class FormatterBase(BaseModel):
                 ):
                     # If supported, promote the block
 
-                    # Create an identifier for such multimodal data for
-                    # accurate reference (in terms of order, position, etc.)
-                    identifier = shortuuid.uuid()
+                    # Reuse the block's own stable id as the identifier so
+                    # repeated formatting of the same unchanged Msg history
+                    # (e.g. on every LLM call) produces the same text, rather
+                    # than a fresh random id each time.
+                    identifier = block.id
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
@@ -228,3 +230,131 @@ class FormatterBase(BaseModel):
 
         if group_type:
             yield group_type, group
+
+    @staticmethod
+    def _split_agent_messages_at_hints(
+        msgs: list[Msg],
+    ) -> list[tuple[bool, list[Msg]]]:
+        """Split agent messages around hints while preserving message order.
+
+        Args:
+            msgs (`list[Msg]`):
+                The non-tool messages in one agent-message group.
+
+        Returns:
+            `list[tuple[bool, list[Msg]]]`:
+                Ordered segments. The boolean is ``True`` for a segment that
+                contains a single ``HintBlock`` and ``False`` for history
+                segments. Messages without hints are returned unchanged as a
+                single history segment.
+        """
+        if not any(
+            isinstance(block, HintBlock)
+            for msg in msgs
+            for block in msg.get_content_blocks()
+        ):
+            return [(False, msgs)] if msgs else []
+
+        segments: list[tuple[bool, list[Msg]]] = []
+        history_messages: list[Msg] = []
+
+        for msg in msgs:
+            history_blocks = []
+            for block in msg.get_content_blocks():
+                if isinstance(block, HintBlock):
+                    if history_blocks:
+                        history_messages.append(
+                            msg.model_copy(update={"content": history_blocks}),
+                        )
+                        history_blocks = []
+
+                    if history_messages:
+                        segments.append((False, history_messages))
+                        history_messages = []
+
+                    segments.append(
+                        (
+                            True,
+                            [msg.model_copy(update={"content": [block]})],
+                        ),
+                    )
+                else:
+                    history_blocks.append(block)
+
+            if history_blocks:
+                history_messages.append(
+                    msg.model_copy(update={"content": history_blocks}),
+                )
+
+        if history_messages:
+            segments.append((False, history_messages))
+
+        return segments
+
+    async def _format_agent_message_with_hints(
+        self,
+        msgs: list[Msg],
+        is_first: bool,
+        format_agent_message: Callable[
+            [list[Msg], bool],
+            Awaitable[list[Any]],
+        ],
+        *,
+        prompt_requires_text: bool = False,
+    ) -> tuple[list[Any], bool]:
+        """Format history and route each hint through its chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                The non-tool messages in one agent-message group.
+            is_first (`bool`):
+                Whether the first history segment should include its prompt.
+            format_agent_message (`Callable`):
+                The provider-specific history formatter.
+            prompt_requires_text (`bool`):
+                Whether media-only history omits the history prompt.
+
+        Returns:
+            `tuple[list[Any], bool]`:
+                The formatted messages and whether a history segment was
+                eligible for the prompt.
+        """
+        formatted_messages: list[Any] = []
+        has_prompt_segment = False
+
+        for is_hint, segment in self._split_agent_messages_at_hints(msgs):
+            if is_hint:
+                formatted_messages.extend(
+                    await self._format_hint_message(segment),
+                )
+                continue
+
+            formatted_history = await format_agent_message(segment, is_first)
+            formatted_messages.extend(formatted_history)
+            if formatted_history and (
+                not prompt_requires_text
+                or any(msg.has_content_blocks("text") for msg in segment)
+            ):
+                is_first = False
+                has_prompt_segment = True
+
+        return formatted_messages, has_prompt_segment
+
+    async def _format_hint_message(self, msgs: list[Msg]) -> list[Any]:
+        """Format a HintBlock message through the provider's chat formatter.
+
+        Multi-agent formatters that delegate tool sequences to a chat
+        formatter can reuse that path. Providers with a different delegation
+        override this method.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[Any]`:
+                The provider-specific user-message representation.
+        """
+        raise RuntimeError(
+            "A provider chat formatter is required for HintBlock messages.",
+        )

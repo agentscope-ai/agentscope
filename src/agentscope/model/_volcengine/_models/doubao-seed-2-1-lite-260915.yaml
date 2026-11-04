@@ -1,0 +1,24 @@
+# Source: https://www.volcengine.com/docs/82379/1330310
+name: doubao-seed-2-1-lite-260915
+label: Doubao Seed 2.1 Lite (260915)
+status: active
+
+# Only modalities implemented by the current Ark formatter are listed.
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/*
+  - video/*
+  - audio/mpeg
+  - audio/mp3
+  - audio/wav
+  - audio/aac
+  - audio/mp4
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+# Use the same decimal k convention as the existing Ark cards.
+context_size: 1024000
+output_size: 256000
