@@ -33,13 +33,19 @@ class _TeamToolBase(ToolBase):
     which tools get attached is already role-gated in
     :func:`get_toolkit`, and the leader-side ones re-check their
     precondition at call time via :meth:`_require_leader_team`.
+
+    They are not read-only: creating, dissolving or inviting into a team
+    writes storage, and ``EXPLORE`` mode denies every invocation whose
+    :meth:`ToolBase.check_read_only` is ``False``. ``TeamSay`` overrides
+    :attr:`is_read_only` back to ``True`` so a read-only worker can still
+    report.
     """
 
     name: str
     description: str
     input_schema: dict[str, Any]
     is_concurrency_safe: bool = False
-    is_read_only: bool = True
+    is_read_only: bool = False
     is_state_injected: bool = False
     is_external_tool: bool = False
     is_mcp: bool = False
