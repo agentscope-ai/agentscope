@@ -525,12 +525,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                     "content": "",
                     "tool_calls": [
                         {"function": {"name": "screenshot", "arguments": {}}},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {"function": {"name": "get_title", "arguments": {}}},
                     ],
                 },
@@ -697,12 +691,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                                 "arguments": {"arg": "value1"},
                             },
                         },
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {
                             "function": {
                                 "name": "func_2",
