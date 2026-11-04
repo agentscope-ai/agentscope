@@ -268,6 +268,7 @@ async def _create_realtime_offer(
             agent_id=body.agent_id,
             session_id=session_id,
             on_closed=_remove_closed,
+            workspace_manager=realtime_service.workspace_manager,
         )
         transport.on_disconnect = runner.request_close
         connections[connection_key] = runner
