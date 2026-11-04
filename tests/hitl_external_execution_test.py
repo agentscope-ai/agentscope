@@ -1672,7 +1672,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         results = [
             block
             for msg in agent.state.context
-            for block in msg.get_content_blocks("tool_result")
+            for block in msg.get_content_blocks("tool_result") or []
             if block.id == self.tool_call_id_1
         ]
         self.assertEqual(len(results), 1)
