@@ -36,6 +36,10 @@ class TaskStatus(str, Enum):
 
 _MAX_RETAINED_TASKS = 50
 # Maximum number of terminal-state tasks retained per user.
+_RECORD_LEASE_SECS = 120
+_IO_TIMEOUT_SECS = 2.0
+_RETRY_DELAY_SECS = 1.0
+_SHUTDOWN_TIMEOUT_SECS = 5.0
 
 
 @dataclass
@@ -301,6 +305,8 @@ class BackgroundTaskManager:
         self._message_bus = message_bus
         self.tasks: OrderedDict[str, BackgroundTask] = OrderedDict()
         self._completion_tasks: set[asyncio.Task] = set()
+        self._renewal_task: asyncio.Task | None = None
+        self._closed = False
 
     # ------------------------------------------------------------------
     # Task registration
@@ -372,6 +378,14 @@ class BackgroundTaskManager:
             await self._store_record(
                 BackgroundTaskRecord.model_validate(bg_task),
             )
+            if (
+                self._renewal_task is None
+                or self._renewal_task.done()
+                or self._renewal_task.cancelling()
+            ):
+                self._renewal_task = asyncio.create_task(
+                    self._renew_running_records(),
+                )
         except BaseException:
             asyncio_task.cancel()
             raise
@@ -417,6 +431,10 @@ class BackgroundTaskManager:
                     bg_task.status = TaskStatus.CANCELLED
 
         self.tasks.pop(bg_task.id, None)
+        if not self.tasks and self._renewal_task is not None:
+            self._renewal_task.cancel()
+        if self._closed:
+            return
         completion = asyncio.create_task(
             self._finish_task(BackgroundTaskRecord.model_validate(bg_task)),
         )
@@ -424,52 +442,122 @@ class BackgroundTaskManager:
         completion.add_done_callback(self._completion_tasks.discard)
 
     async def _store_record(self, record: BackgroundTaskRecord) -> None:
-        """Publish serializable metadata in the user's shared namespace."""
+        """Publish a snapshot with an expiry independent of the user hash."""
+        payload = record.model_dump(mode="json")
+        if record.status == TaskStatus.RUNNING:
+            payload["_expires_at"] = time.time() + _RECORD_LEASE_SECS
+        else:
+            assert record.completed_at is not None
+            payload["_expires_at"] = (
+                record.completed_at + MessageBusKeys.BG_TASKS_TTL_SECS
+            )
         await self._message_bus.registry_set(
             MessageBusKeys.bg_task_records(record.user_id),
             record.id,
-            record.model_dump_json(),
+            json.dumps(payload, ensure_ascii=False),
             ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
         )
 
-    async def _finish_task(self, record: BackgroundTaskRecord) -> None:
-        """Persist the outcome and always attempt running-registry cleanup."""
-        try:
-            # Serialize completion and eviction across workers for this user.
-            async with self._message_bus.acquire_lock(
-                MessageBusKeys.bg_task_records_lock(record.user_id),
-            ):
-                await self._store_record(record)
-                records = await self.list_tasks(user_id=record.user_id)
-                completed = sorted(
-                    (
-                        item
-                        for item in records
-                        if item.status != TaskStatus.RUNNING
-                    ),
-                    key=lambda item: (item.completed_at, item.id),
-                )
-                for item in completed[:-_MAX_RETAINED_TASKS]:
-                    await self._message_bus.registry_del(
-                        MessageBusKeys.bg_task_records(record.user_id),
-                        item.id,
+    async def _renew_running_records(self) -> None:
+        """Renew only locally running tasks without overwriting outcomes."""
+        while self.tasks and not self._closed:
+            # Renew early enough to allow retries before expiry.
+            await asyncio.sleep(_RECORD_LEASE_SECS / 4)
+            for task in list(self.tasks.values()):
+                if task.asyncio_task.done():
+                    continue
+                try:
+                    async with asyncio.timeout(_IO_TIMEOUT_SECS):
+                        namespace = MessageBusKeys.bg_task_records(
+                            task.user_id,
+                        )
+                        value = await self._message_bus.registry_get(
+                            namespace,
+                            task.id,
+                        )
+                        if value is None:
+                            continue
+                        payload = json.loads(value)
+                        if payload["status"] != TaskStatus.RUNNING:
+                            continue
+                        payload["_expires_at"] = (
+                            time.time() + _RECORD_LEASE_SECS
+                        )
+                        # A concurrent completion must win over this lease.
+                        await self._message_bus.registry_set_if(
+                            namespace,
+                            task.id,
+                            json.dumps(payload, ensure_ascii=False),
+                            expected=value,
+                            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Failed to renew background task lease: task_id=%s",
+                        task.id,
                     )
-        except Exception:
-            logger.exception(
-                "Failed to retain background task outcome: task_id=%s",
+
+    async def _finish_task(self, record: BackgroundTaskRecord) -> None:
+        """Retry pending outcomes and cleanup until success or shutdown."""
+        stored = False
+        unregistered = False
+        while not self._closed:
+            try:
+                # Outcome persistence never waits for the retention lock.
+                async with asyncio.timeout(_IO_TIMEOUT_SECS):
+                    if not stored:
+                        await self._store_record(record)
+                        stored = True
+                    if not unregistered:
+                        await self._message_bus.registry_del(
+                            MessageBusKeys.bg_tasks(record.session_id),
+                            record.id,
+                        )
+                        unregistered = True
+                async with asyncio.timeout(_IO_TIMEOUT_SECS):
+                    async with self._message_bus.acquire_lock(
+                        MessageBusKeys.bg_task_records_lock(record.user_id),
+                        ttl_secs=30,
+                    ):
+                        await self._evict_completed(record.user_id)
+                return
+            except Exception:
+                logger.warning(
+                    "Retrying background task finalization: task_id=%s",
+                    record.id,
+                    exc_info=True,
+                )
+            await asyncio.sleep(_RETRY_DELAY_SECS)
+
+    async def _evict_completed(self, user_id: str) -> None:
+        """Bound terminal history, including records past their read expiry."""
+        values = await self._message_bus.registry_getall(
+            MessageBusKeys.bg_task_records(user_id),
+        )
+        completed = []
+        for value in values.values():
+            record = BackgroundTaskRecord.model_validate_json(value)
+            if record.status != TaskStatus.RUNNING:
+                completed.append(record)
+        completed.sort(key=lambda record: (record.completed_at, record.id))
+        for record in completed[:-_MAX_RETAINED_TASKS]:
+            await self._message_bus.registry_del(
+                MessageBusKeys.bg_task_records(user_id),
                 record.id,
             )
-        finally:
-            try:
-                await self._message_bus.registry_del(
-                    MessageBusKeys.bg_tasks(record.session_id),
-                    record.id,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to unregister background task: task_id=%s",
-                    record.id,
-                )
+
+    @staticmethod
+    def _read_record(value: str) -> BackgroundTaskRecord | None:
+        """Hide expired snapshots even if unrelated tasks renew the hash."""
+        payload = json.loads(value)
+        # Older snapshots have no per-record lease. Bound their lifetime too.
+        expires_at = payload.get(
+            "_expires_at",
+            payload["started_at"] + MessageBusKeys.BG_TASKS_TTL_SECS,
+        )
+        if expires_at <= time.time():
+            return None
+        return BackgroundTaskRecord.model_validate(payload)
 
     # ------------------------------------------------------------------
     # Task querying (for REST endpoints)
@@ -497,8 +585,9 @@ class BackgroundTaskManager:
             MessageBusKeys.bg_task_records(user_id),
         )
         records = [
-            BackgroundTaskRecord.model_validate_json(value)
+            record
             for value in values.values()
+            if (record := self._read_record(value)) is not None
         ]
         return sorted(
             (
@@ -534,8 +623,12 @@ class BackgroundTaskManager:
         )
         if value is None:
             return None
-        record = BackgroundTaskRecord.model_validate_json(value)
-        return record if record.user_id == user_id else None
+        record = self._read_record(value)
+        return (
+            record
+            if record is not None and record.user_id == user_id
+            else None
+        )
 
     # ------------------------------------------------------------------
     # Tool listing
@@ -634,13 +727,18 @@ class BackgroundTaskManager:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Cancel all running background tasks on context exit."""
+        """Cancel work and flush outcomes within a bounded shutdown budget."""
         count = len(self.tasks)
         logger.info(
             "Shutting down BackgroundTaskManager: cancelling %d task(s).",
             count,
         )
         tasks = [bg.asyncio_task for bg in self.tasks.values()]
+        if self._renewal_task is not None:
+            self._renewal_task.cancel()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _SHUTDOWN_TIMEOUT_SECS
+        # Reserve the last 10% of the budget for cancellation cleanup.
         for bg_task in list(self.tasks.values()):
             logger.info(
                 "Cancelling background task on shutdown: task_id=%s, "
@@ -650,8 +748,46 @@ class BackgroundTaskManager:
                 bg_task.agent_id,
             )
             bg_task.asyncio_task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        # Done callbacks run before gather resumes and register finalizers.
-        while self._completion_tasks:
-            await asyncio.gather(*self._completion_tasks)
-        self.tasks.clear()
+        try:
+            if tasks:
+                await asyncio.wait(
+                    tasks,
+                    timeout=max(
+                        0,
+                        deadline - loop.time() - _SHUTDOWN_TIMEOUT_SECS / 10,
+                    ),
+                )
+            if self._completion_tasks:
+                await asyncio.wait(
+                    self._completion_tasks,
+                    timeout=max(
+                        0,
+                        deadline - loop.time() - _SHUTDOWN_TIMEOUT_SECS / 10,
+                    ),
+                )
+        finally:
+            # Late execution callbacks must not start I/O after the bus closes.
+            self._closed = True
+            pending = {
+                task
+                for task in [
+                    *tasks,
+                    *self._completion_tasks,
+                    self._renewal_task,
+                ]
+                if task is not None and not task.done()
+            }
+            for task in pending:
+                task.cancel()
+            if pending:
+                _, unfinished = await asyncio.wait(
+                    pending,
+                    timeout=max(0, deadline - loop.time()),
+                )
+                logger.warning(
+                    "Background task shutdown budget exhausted: "
+                    "cancelled=%d, unfinished=%d",
+                    len(pending),
+                    len(unfinished),
+                )
+            self.tasks.clear()

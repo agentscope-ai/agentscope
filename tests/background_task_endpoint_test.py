@@ -7,7 +7,7 @@ import json
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import fakeredis.aioredis
 import httpx
@@ -33,6 +33,8 @@ from agentscope.app.message_bus import (
 from agentscope.app.middleware._tool_offload_middleware import (
     _make_summary,
 )
+
+_MANAGER_MODULE = BackgroundTaskManager.__module__
 
 
 class TestBackgroundTaskCompatibility(IsolatedAsyncioTestCase):
@@ -371,21 +373,240 @@ class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
             {},
         )
 
-    async def test_failed_outcome_write_still_unregisters(self) -> None:
-        """Live-registry cleanup does not depend on outcome persistence."""
-        gate, task, _ = await self._register(self.owner)
+    async def test_failed_outcome_write_recovers_shared_status(self) -> None:
+        """A failed write remains pending and is retried after recovery."""
+        gate, task, task_id = await self._register(self.owner)
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        failed = asyncio.Event()
+
+        async def unavailable(_record: BackgroundTaskRecord) -> None:
+            failed.set()
+            raise ConnectionError("unavailable")
+
         with patch.object(
             self.owner,
             "_store_record",
-            new=AsyncMock(side_effect=ConnectionError("unavailable")),
+            side_effect=unavailable,
         ):
             gate.set()
-            await self._settle(task)
+            await asyncio.wait_for(failed.wait(), timeout=1)
+            self.assertEqual(self.owner.tasks, {})
+            self.assertTrue(self.owner._completion_tasks)
+            record = await self.reader.get_task(task_id, user_id="alice")
+            self.assertEqual(record.model_dump(), expected)
+        await asyncio.wait_for(self._settle(task), timeout=2)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertIsNotNone(record.completed_at)
+        expected.update(
+            status=TaskStatus.COMPLETED,
+            completed_at=record.completed_at,
+        )
+        self.assertEqual(record.model_dump(), expected)
         self.assertEqual(
             await self.bus.registry_getall(MessageBusKeys.bg_tasks("s1")),
             {},
         )
-        self.assertEqual(self.owner.tasks, {})
+        self.assertEqual(self.owner._completion_tasks, set())
+
+    async def test_failed_shutdown_record_expires_despite_new_tasks(
+        self,
+    ) -> None:
+        """A lost outcome cannot remain running through user-hash renewal."""
+        gate, task, task_id = await self._register(self.owner)
+        namespace = MessageBusKeys.bg_task_records("alice")
+        value = await self.bus.registry_get(namespace, task_id)
+        expires_at = json.loads(value)["_expires_at"]
+        failed = asyncio.Event()
+
+        async def unavailable(_record: BackgroundTaskRecord) -> None:
+            failed.set()
+            raise ConnectionError("unavailable")
+
+        with (
+            patch.object(self.owner, "_store_record", side_effect=unavailable),
+            patch(f"{_MANAGER_MODULE}._SHUTDOWN_TIMEOUT_SECS", 0.1),
+        ):
+            gate.set()
+            await asyncio.wait_for(failed.wait(), timeout=1)
+            await asyncio.wait_for(self.owner.__aexit__(), timeout=0.5)
+        self.assertTrue(task.done())
+        self.assertEqual(self.owner._completion_tasks, set())
+        self.assertEqual(
+            await self.bus.registry_get(namespace, task_id),
+            value,
+        )
+
+        with patch(
+            f"{_MANAGER_MODULE}.time.time",
+            return_value=expires_at + 1,
+        ):
+            _, _, new_id = await self._register(self.reader)
+            expected = BackgroundTaskRecord.model_validate(
+                self.reader.tasks[new_id],
+            ).model_dump()
+            self.assertIsNone(
+                await self.reader.get_task(task_id, user_id="alice"),
+            )
+            self.assertEqual(
+                [
+                    record.model_dump()
+                    for record in await self.reader.list_tasks(
+                        user_id="alice",
+                    )
+                ],
+                [expected],
+            )
+            # Creating another task does not change the old record's lease.
+            self.assertEqual(
+                await self.bus.registry_get(namespace, task_id),
+                value,
+            )
+
+    async def test_retention_lock_does_not_block_outcome_or_shutdown(
+        self,
+    ) -> None:
+        """A held retention lock cannot delay state writes or exhaust exit."""
+        gate, task, task_id = await self._register(self.owner)
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        cleaned = asyncio.Event()
+        original_del = self.bus.registry_del
+
+        async def observe_cleanup(namespace: str, field: str) -> None:
+            await original_del(namespace, field)
+            if namespace == MessageBusKeys.bg_tasks("s1"):
+                cleaned.set()
+
+        async with self.bus.acquire_lock(
+            MessageBusKeys.bg_task_records_lock("alice"),
+            ttl_secs=600,
+        ):
+            with (
+                patch.object(
+                    self.bus,
+                    "registry_del",
+                    side_effect=observe_cleanup,
+                ),
+                patch(f"{_MANAGER_MODULE}._SHUTDOWN_TIMEOUT_SECS", 0.1),
+                patch(f"{_MANAGER_MODULE}._IO_TIMEOUT_SECS", 0.02),
+            ):
+                gate.set()
+                await asyncio.wait_for(cleaned.wait(), timeout=1)
+                self.assertTrue(task.done())
+                self.assertEqual(self.owner.tasks, {})
+                record = await self.reader.get_task(task_id, user_id="alice")
+                expected.update(
+                    status=TaskStatus.COMPLETED,
+                    completed_at=record.completed_at,
+                )
+                self.assertEqual(record.model_dump(), expected)
+                await asyncio.wait_for(self.owner.__aexit__(), timeout=0.5)
+                self.assertEqual(self.owner._completion_tasks, set())
+
+    async def test_stalled_outcome_io_times_out_and_retries(self) -> None:
+        """A nonresponsive write gets a deadline and can recover on retry."""
+        gate, task, task_id = await self._register(self.owner)
+        stalled = asyncio.Event()
+        original_store = self.owner._store_record
+
+        async def stall_once(record: BackgroundTaskRecord) -> None:
+            if not stalled.is_set():
+                stalled.set()
+                await asyncio.Event().wait()
+            await original_store(record)
+
+        with (
+            patch.object(self.owner, "_store_record", side_effect=stall_once),
+            patch(f"{_MANAGER_MODULE}._IO_TIMEOUT_SECS", 0.02),
+        ):
+            gate.set()
+            await asyncio.wait_for(stalled.wait(), timeout=1)
+            await asyncio.wait_for(self._settle(task), timeout=2)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.status, TaskStatus.COMPLETED)
+        self.assertEqual(
+            await self.bus.registry_getall(MessageBusKeys.bg_tasks("s1")),
+            {},
+        )
+
+    async def test_shutdown_cancels_stalled_cleanup_io(self) -> None:
+        """Shutdown is bounded even if a registry operation never responds."""
+        gate, task, task_id = await self._register(self.owner)
+        blocked = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def stall_delete(_namespace: str, _field: str) -> None:
+            blocked.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        with (
+            patch.object(self.bus, "registry_del", side_effect=stall_delete),
+            patch(f"{_MANAGER_MODULE}._SHUTDOWN_TIMEOUT_SECS", 0.1),
+        ):
+            gate.set()
+            await asyncio.wait_for(blocked.wait(), timeout=1)
+            self.assertTrue(task.done())
+            await asyncio.wait_for(self.owner.__aexit__(), timeout=0.5)
+            self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.owner._completion_tasks, set())
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.status, TaskStatus.COMPLETED)
+
+    async def test_running_task_renews_its_own_lease(self) -> None:
+        """Long-running tasks stay visible beyond their initial lease."""
+        renewed = asyncio.Event()
+        original_set_if = self.bus.registry_set_if
+
+        async def observe_renewal(
+            namespace: str,
+            field: str,
+            value: str,
+            *,
+            expected: str,
+            ttl_secs: int | None = None,
+        ) -> bool:
+            result = await original_set_if(
+                namespace,
+                field,
+                value,
+                expected=expected,
+                ttl_secs=ttl_secs,
+            )
+            renewed.set()
+            return result
+
+        with patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.04):
+            gate, task, task_id = await self._register(self.owner)
+            value = await self.bus.registry_get(
+                MessageBusKeys.bg_task_records("alice"),
+                task_id,
+            )
+            future_time = json.loads(value)["_expires_at"] + 1
+            with (
+                patch(
+                    f"{_MANAGER_MODULE}.time.time",
+                    return_value=future_time,
+                ),
+                patch.object(
+                    self.bus,
+                    "registry_set_if",
+                    side_effect=observe_renewal,
+                ),
+            ):
+                await asyncio.wait_for(renewed.wait(), timeout=1)
+                expected = BackgroundTaskRecord.model_validate(
+                    self.owner.tasks[task_id],
+                ).model_dump()
+                record = await self.reader.get_task(task_id, user_id="alice")
+                self.assertEqual(record.model_dump(), expected)
+            gate.set()
+            await self._settle(task)
 
     async def test_http_routes_read_another_workers_records(self) -> None:
         """The actual app exposes filtered lists, details and isolated 404s."""
