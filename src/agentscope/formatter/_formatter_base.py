@@ -299,6 +299,8 @@ class FormatterBase(BaseModel):
             [list[Msg], bool],
             Awaitable[list[Any]],
         ],
+        *,
+        prompt_requires_text: bool = False,
     ) -> tuple[list[Any], bool]:
         """Format history and route each hint through its chat formatter.
 
@@ -309,14 +311,16 @@ class FormatterBase(BaseModel):
                 Whether the first history segment should include its prompt.
             format_agent_message (`Callable`):
                 The provider-specific history formatter.
+            prompt_requires_text (`bool`):
+                Whether media-only history omits the history prompt.
 
         Returns:
             `tuple[list[Any], bool]`:
-                The formatted messages and whether any history was emitted.
-                Hints do not consume the first-history prompt.
+                The formatted messages and whether a history segment was
+                eligible for the prompt.
         """
         formatted_messages: list[Any] = []
-        has_history = False
+        has_prompt_segment = False
 
         for is_hint, segment in self._split_agent_messages_at_hints(msgs):
             if is_hint:
@@ -327,11 +331,14 @@ class FormatterBase(BaseModel):
 
             formatted_history = await format_agent_message(segment, is_first)
             formatted_messages.extend(formatted_history)
-            if formatted_history:
+            if formatted_history and (
+                not prompt_requires_text
+                or any(msg.has_content_blocks("text") for msg in segment)
+            ):
                 is_first = False
-                has_history = True
+                has_prompt_segment = True
 
-        return formatted_messages, has_history
+        return formatted_messages, has_prompt_segment
 
     async def _format_hint_message(self, msgs: list[Msg]) -> list[Any]:
         """Format a HintBlock message through the provider's chat formatter.

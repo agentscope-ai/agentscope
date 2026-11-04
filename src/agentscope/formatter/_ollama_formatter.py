@@ -459,20 +459,18 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                 {"text": "\n".join(accumulated_text)},
             )
 
-        if conversation_blocks and is_first:
+        if conversation_blocks:
+            prompt = self.conversation_history_prompt if is_first else ""
             if conversation_blocks[0].get("text"):
                 conversation_blocks[0]["text"] = (
-                    self.conversation_history_prompt
-                    + "<history>\n"
-                    + conversation_blocks[0]["text"]
+                    prompt + "<history>\n" + conversation_blocks[0]["text"]
                 )
 
             else:
                 conversation_blocks.insert(
                     0,
                     {
-                        "text": self.conversation_history_prompt
-                        + "<history>\n",
+                        "text": prompt + "<history>\n",
                     },
                 )
 

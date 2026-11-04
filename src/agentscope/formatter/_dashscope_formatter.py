@@ -484,6 +484,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                         group,
                         is_first_agent_message,
                         self._format_agent_message,
+                        prompt_requires_text=True,
                     )
                     formatted_msgs.extend(formatted_group)
                     if has_history:
