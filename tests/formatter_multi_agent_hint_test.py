@@ -141,31 +141,44 @@ class TestMultiAgentHintFormatting(IsolatedAsyncioTestCase):
                 self.assertEqual(await formatter.format(messages), expected)
 
     async def test_hint_inside_message_preserves_history_order(self) -> None:
-        """Text on both sides of a hint remains in order."""
+        """A standalone hint separates two tagged history messages."""
         mixed_msg = AssistantMsg(
             name="memory",
             content=[
-                TextBlock(text="Context before the hint."),
+                TextBlock(text="Before"),
                 HintBlock(hint="Keep this instruction."),
-                TextBlock(text="Context after the hint."),
+                TextBlock(text="After"),
             ],
         )
-        before_hint = mixed_msg.model_copy(
-            update={"content": [mixed_msg.content[0]]},
-        )
-        hint_only = mixed_msg.model_copy(
-            update={"content": [mixed_msg.content[1]]},
-        )
-        after_hint = mixed_msg.model_copy(
-            update={"content": [mixed_msg.content[2]]},
-        )
-
-        for multi_agent_cls, _chat_cls in FORMATTER_PAIRS:
-            with self.subTest(formatter=multi_agent_cls.__name__):
-                multi_agent_formatter = multi_agent_cls()
-                expected = await multi_agent_formatter.format(
-                    [before_hint, hint_only, after_hint],
-                )
-
-                actual = await multi_agent_formatter.format([mixed_msg])
-                self.assertListEqual(expected, actual)
+        for cls, _ in FORMATTER_PAIRS:
+            with self.subTest(formatter=cls.__name__):
+                formatter = cls(conversation_history_prompt="Custom\n")
+                separator = "\n" if cls is OllamaMultiAgentFormatter else " "
+                texts = [
+                    f"Custom\n<history>\nmemory:{separator}Before\n</history>",
+                    "Keep this instruction.",
+                    f"<history>\nmemory:{separator}After\n</history>",
+                ]
+                if cls is GeminiMultiAgentFormatter:
+                    expected = [
+                        {"role": "user", "parts": [{"text": t}]} for t in texts
+                    ]
+                elif cls in (
+                    DeepSeekMultiAgentFormatter,
+                    OllamaMultiAgentFormatter,
+                ):
+                    expected = [{"role": "user", "content": t} for t in texts]
+                else:
+                    kind = (
+                        "input_text"
+                        if cls is OpenAIResponseMultiAgentFormatter
+                        else "text"
+                    )
+                    expected = [
+                        {
+                            "role": "user",
+                            "content": [{"type": kind, "text": t}],
+                        }
+                        for t in texts
+                    ]
+                self.assertEqual(await formatter.format([mixed_msg]), expected)
