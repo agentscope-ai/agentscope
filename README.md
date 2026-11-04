@@ -184,7 +184,7 @@ AgentScope ships a batteries-included **agent service** — a FastAPI backend wi
 |---|---|
 | [**Serving**](https://docs.agentscope.io/latest/en/deploy/agent-service) | Multi-tenancy, multi-session isolation, FastAPI backend, pre-built Web UI |
 | [**Agent Team**](https://docs.agentscope.io/latest/en/deploy/agent-team) | Leader–worker orchestration, built-in team tools, task planning |
-| [**Channels**](https://docs.agentscope.io/latest/en/deploy/channel/overview) | Connect agents to IM platforms — Feishu (Lark), Discord, custom channels, message routing |
+| [**Channels**](https://docs.agentscope.io/latest/en/deploy/channel/overview) | Connect agents to IM platforms — Feishu (Lark), Discord, Telegram, custom channels, message routing |
 | [**RAG Service**](https://docs.agentscope.io/latest/en/deploy/rag) | Blob storage, index worker, multi-tenant retrieval |
 | [**MCP & Skill Hub**](https://docs.agentscope.io/latest/en/deploy/hub/overview) | Browse hubs (GitHub MCP Registry, ClawHub), install into your library, add to a workspace |
 | [**Resource Sharing**](https://docs.agentscope.io/latest/en/deploy/sharing) | Group- and org-level management for sharing models, MCP servers, skills, and workspaces |

@@ -142,6 +142,7 @@ class ChannelClients:
                 credentials=record.credentials,
                 config=record.platform_config,
             )
+            channel.bind_message_bus(self._bus)
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "channel client '%s' could not be built",
