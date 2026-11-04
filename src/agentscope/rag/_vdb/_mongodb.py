@@ -21,6 +21,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _scope_digest,
 )
 from .._document import Chunk
 
@@ -276,9 +277,9 @@ class MongoDBStore(VectorStoreBase):
         col = self._col(collection)
         operations = [
             ReplaceOne(
-                {"_id": f"{record.document_id}_{record.chunk.chunk_index}"},
+                {"_id": self._record_id(record)},
                 {
-                    "_id": f"{record.document_id}_{record.chunk.chunk_index}",
+                    "_id": self._record_id(record),
                     "document_id": record.document_id,
                     "vector": record.vector,
                     "chunk": record.chunk.model_dump(mode="json"),
@@ -288,6 +289,29 @@ class MongoDBStore(VectorStoreBase):
             for record in records
         ]
         await col.bulk_write(operations, ordered=False)
+
+    @staticmethod
+    def _record_id(record: VectorRecord) -> str:
+        """Deterministic ``_id`` for ``(document_id, chunk_index)``.
+
+        Stable IDs let a retried insert replace the same chunk. A scoped
+        record appends the digest of :attr:`VectorRecord.scope`, so
+        another scope reusing the document ID gets distinct documents.
+
+        Args:
+            record (`VectorRecord`):
+                The record to derive an ID for.
+
+        Returns:
+            `str`:
+                ``"{document_id}_{chunk_index}"``, followed by
+                ``"_{scope digest}"`` for a scoped record.
+        """
+        record_id = f"{record.document_id}_{record.chunk.chunk_index}"
+        digest = _scope_digest(record.scope)
+        if digest is not None:
+            record_id = f"{record_id}_{digest}"
+        return record_id
 
     async def delete(
         self,

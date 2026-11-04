@@ -313,6 +313,15 @@ class KnowledgeBase:
         Metadata is merged into per-insertion copies; the caller's
         chunks are left unchanged.
 
+        Each record also carries :attr:`metadata_filter` as its scope, so
+        built-in vector stores give it an identity distinct from other
+        scopes sharing the collection: inserting a document ID that
+        another scope already uses does not replace that scope's chunks,
+        while re-inserting within the same scope still replaces chunks in
+        place.  Scoped records written before scopes were part of the
+        identity are not replaced this way; call :meth:`delete_document`
+        before re-inserting such a document.
+
         Args:
             chunks (`list[Chunk]`):
                 The pre-chunked document content (already produced by
@@ -372,6 +381,7 @@ class KnowledgeBase:
                 vector=vector,
                 document_id=document_id,
                 chunk=chunk,
+                scope=self._metadata_filter or None,
             )
             for vector, chunk in zip(response.embeddings, chunks)
         ]
