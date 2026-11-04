@@ -188,7 +188,18 @@ class AnthropicChatModel(ChatModelBase):
         return "enabled" if self.parameters.thinking_enable else None
 
     def _set_thinking_config(self, kwargs: dict[str, Any]) -> None:
-        """Apply thinking defaults using the limits the SDK will send."""
+        """Apply thinking defaults unless the caller supplied ``thinking``.
+
+        Only manual (``enabled``) thinking needs a budget. If the caller
+        omits it, use half the effective output limit, rounded down, with
+        a minimum of 1024 tokens. Raise ``ValueError`` if the resulting
+        budget would reach or exceed the limit.
+
+        Forward an explicit budget and any explicit output limit as given
+        for the provider to validate. If the caller omitted the limit and
+        the budget reaches or exceeds the 8192-token default, set the limit
+        to the budget plus 1024 to leave room for the answer.
+        """
         extra_body = kwargs.get("extra_body") or {}
         if "thinking" in kwargs or "thinking" in extra_body:
             return
@@ -262,6 +273,9 @@ class AnthropicChatModel(ChatModelBase):
             "stream": self.stream,
             **generate_kwargs,
         }
+        # Resolve max_tokens in SDK precedence order: extra_body, per-call
+        # argument, then model parameters. Leave it unset if none applies so
+        # the thinking policy can distinguish the default from an explicit cap.
         if self.parameters.max_tokens is not None:
             kwargs.setdefault("max_tokens", self.parameters.max_tokens)
         extra_body = kwargs.get("extra_body") or {}
