@@ -2,6 +2,7 @@
 # pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
 
+import asyncio
 from datetime import datetime as DateTime
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
@@ -385,6 +386,67 @@ class TestMessage(IsolatedAsyncioTestCase):
             [m.model_dump() for m in messages],
             [msg.model_dump()],
         )
+
+    async def test_concurrent_upserts_store_the_message_once(self) -> None:
+        """Two writers of the same message must not both append it."""
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            UserMsg(name="alice", content="first"),
+        )
+        msg = UserMsg(name="alice", content="hello")
+
+        # Let both writers pass the existence check before either writes,
+        # the interleaving two concurrent callers (two workers storing the
+        # same message, a retried request) can produce.
+        both_read = asyncio.Event()
+        arrived = 0
+        gate_lock = asyncio.Lock()
+        original_pipeline = self.storage._client.pipeline
+
+        class _GatedPipeline:
+            """A read pipeline whose execution waits for its peer."""
+
+            def __init__(self, inner: object) -> None:
+                self._inner = inner
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._inner, name)
+
+            async def __aenter__(self) -> "_GatedPipeline":
+                await self._inner.__aenter__()
+                return self
+
+            async def __aexit__(self, *exc_info: object) -> object:
+                return await self._inner.__aexit__(*exc_info)
+
+            async def execute(self) -> list:
+                nonlocal arrived
+                async with gate_lock:
+                    arrived += 1
+                    if arrived == 2:
+                        both_read.set()
+                await asyncio.wait_for(both_read.wait(), timeout=5.0)
+                return await self._inner.execute()
+
+        def _gated_pipeline(*args: object, **kwargs: object) -> object:
+            inner = original_pipeline(*args, **kwargs)
+            if kwargs.get("transaction", True):
+                return inner
+            return _GatedPipeline(inner)
+
+        self.storage._client.pipeline = _gated_pipeline
+
+        await asyncio.gather(
+            self.storage.upsert_message(self.user_id, self.session_id, msg),
+            self.storage.upsert_message(self.user_id, self.session_id, msg),
+        )
+
+        messages, _ = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        self.assertEqual([m.id for m in messages].count(msg.id), 1)
 
     async def test_upsert_refreshes_message_keys_ttl(self) -> None:
         """Message list and index expire with the session storage TTL."""
