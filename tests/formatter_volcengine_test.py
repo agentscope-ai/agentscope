@@ -984,7 +984,7 @@ class TestVolcengineAudio(IsolatedAsyncioTestCase):
                 )
 
     async def test_hint_audio_and_text(self) -> None:
-        """Hints retain their text and audio in both conversation styles."""
+        """Hints remain standalone user messages with text and audio."""
         msg = AssistantMsg(
             name="assistant",
             content=[
@@ -1006,42 +1006,25 @@ class TestVolcengineAudio(IsolatedAsyncioTestCase):
             "type": "input_audio",
             "input_audio": {"data": "YXVkaW8=", "format": "aac"},
         }
-        self.assertEqual(
-            await VolcengineChatFormatter().format([msg]),
-            [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "Listen carefully."}],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Transcribe this."},
-                        audio,
-                    ],
-                },
-            ],
-        )
-        formatter = VolcengineMultiAgentFormatter()
-        self.assertEqual(
-            await formatter.format([msg]),
-            [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                formatter.conversation_history_prompt
-                                + "<history>\nassistant: Listen carefully.\n"
-                                "assistant: Transcribe this.\n</history>"
-                            ),
-                        },
-                        audio,
-                    ],
-                },
-            ],
-        )
+        expected = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Listen carefully."}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Transcribe this."},
+                    audio,
+                ],
+            },
+        ]
+        for formatter in (
+            VolcengineChatFormatter(),
+            VolcengineMultiAgentFormatter(),
+        ):
+            with self.subTest(formatter=type(formatter).__name__):
+                self.assertEqual(await formatter.format([msg]), expected)
 
     async def test_tool_audio(self) -> None:
         """Both formatters promote tool audio after the tool response."""

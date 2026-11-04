@@ -454,17 +454,7 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
         media_blocks: list[dict[str, Any]] = []
 
         for msg in msgs:
-            blocks = []
             for block in msg.get_content_blocks():
-                if isinstance(block, HintBlock):
-                    if isinstance(block.hint, str):
-                        blocks.append(TextBlock(text=block.hint))
-                    else:
-                        blocks.extend(block.hint)
-                else:
-                    blocks.append(block)
-
-            for block in blocks:
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
