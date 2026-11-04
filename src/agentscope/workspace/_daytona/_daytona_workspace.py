@@ -96,6 +96,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         os_user: str | None = None,
+        auto_stop_interval: int | None = None,
     ) -> None:
         """Construct a :class:`DaytonaWorkspace`.
 
@@ -139,7 +140,21 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             os_user (`str | None`, optional):
                 Optional Daytona OS user. ``None`` means AgentScope
                 lets Daytona and the selected snapshot decide.
+            auto_stop_interval (`int | None`, optional):
+                Minutes of inactivity before Daytona automatically stops
+                the sandbox. ``None`` preserves the provider's policy;
+                ``0`` disables auto-stop and a positive integer sets the
+                interval. Applies to newly created and reattached
+                sandboxes, independently of the manager's cache TTL.
+
+        Raises:
+            TypeError:
+                If ``auto_stop_interval`` is not ``None`` or an integer
+                (booleans are not accepted).
+            ValueError:
+                If ``auto_stop_interval`` is negative.
         """
+        _validate_auto_stop_interval(auto_stop_interval)
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
@@ -158,6 +173,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         self.extra_pip: list[str] = list(extra_pip or [])
         self.instructions = instructions
         self.os_user = os_user
+        self.auto_stop_interval = auto_stop_interval
 
         # ── SDK-derived paths ───────────────────────────────────
         self._user_home: str
@@ -278,6 +294,10 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         if existing is not None:
             self._sandbox = existing
             await self._ensure_existing_sandbox_ready()
+            if self.auto_stop_interval is not None:
+                await self._sandbox.set_autostop_interval(
+                    self.auto_stop_interval,
+                )
             return
 
         self._sandbox = await client.create(
@@ -386,10 +406,10 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
     def _create_params(self) -> Any:
         """Build Daytona create params from initialized workspace config.
 
-        The first release keeps the config surface intentionally
-        minimal and aligned with E2B. Snapshot/image/language/TTL are
-        not exposed here; Daytona defaults apply. AgentScope sets
-        ``public=False`` explicitly and uses its own manager TTL.
+        Snapshot/image/language/TTL are not exposed here; Daytona
+        defaults apply. Auto-stop is forwarded only when explicitly
+        configured. AgentScope sets ``public=False`` explicitly and
+        uses its own manager TTL.
         """
         from daytona import CreateSandboxFromSnapshotParams
 
@@ -405,6 +425,8 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             kwargs["env_vars"] = self.env
         if self.os_user is not None:
             kwargs["os_user"] = self.os_user
+        if self.auto_stop_interval is not None:
+            kwargs["auto_stop_interval"] = self.auto_stop_interval
         return CreateSandboxFromSnapshotParams(**kwargs)
 
     # ── internals: SDK paths / bootstrap ────────────────────────
@@ -480,6 +502,16 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
 
 
 # ── SDK response helpers ──────────────────────────────────────────
+
+
+def _validate_auto_stop_interval(interval: int | None) -> None:
+    """Validate the provider policy before provisioning a sandbox."""
+    if interval is None:
+        return
+    if isinstance(interval, bool) or not isinstance(interval, int):
+        raise TypeError("auto_stop_interval must be None or an integer.")
+    if interval < 0:
+        raise ValueError("auto_stop_interval must be non-negative.")
 
 
 def _state_value(state: Any) -> str:
