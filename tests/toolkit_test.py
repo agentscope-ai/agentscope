@@ -1775,6 +1775,59 @@ The tool instructions are a collection of suggestions, rules and notifications a
             },
         )
 
+    async def test_meta_tool_with_reserved_field_names(self) -> None:
+        """Group names that pydantic rejects as field names (a leading
+        underscore, a ``BaseModel`` member) still work through the meta
+        tool."""
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(name="_scratch", description="Scratch group."),
+                ToolGroup(name="model_config", description="Config group."),
+            ],
+        )
+
+        schemas = await toolkit.get_tool_schemas()
+        self.assertEqual(len(schemas), 1)
+        self.assertDictEqual(
+            schemas[0]["function"]["parameters"],
+            {
+                "properties": {
+                    "_scratch": {
+                        "default": False,
+                        "description": "Scratch group.",
+                        "type": "boolean",
+                    },
+                    "model_config": {
+                        "default": False,
+                        "description": "Config group.",
+                        "type": "boolean",
+                    },
+                },
+                "type": "object",
+            },
+        )
+
+        state = AgentState()
+        last_chunk = None
+        async for chunk in toolkit.call_tool(
+            ToolCallBlock(
+                id="xxx",
+                name="reset_tools",
+                input=json.dumps({"_scratch": True}),
+            ),
+            state,
+        ):
+            last_chunk = chunk
+
+        self.assertEqual(
+            last_chunk.content[0].text,
+            "The currently activated tool group(s): _scratch.",
+        )
+        self.assertListEqual(
+            state.tool_context.activated_groups,
+            ["_scratch"],
+        )
+
     async def test_broken_mcp_is_skipped_not_fatal(self) -> None:
         """One unreachable MCP must not take the whole reply down with
         it: an expired token or a server that is simply down would

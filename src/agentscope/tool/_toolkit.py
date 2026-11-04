@@ -14,11 +14,11 @@ import mcp
 from jinja2 import Template
 from pydantic import (
     BaseModel,
-    Field,
     create_model,
 )
 
 from ._builtin import ResetTools, SkillViewer
+from ._builtin._meta import _group_toggle_fields
 from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
@@ -620,18 +620,10 @@ class Toolkit:
 
     def _get_meta_tool_schema(self) -> Type[BaseModel]:
         """Get the meta tool schema based on the current tool groups."""
-        fields = {}
-        for group in self.tool_groups:
-            if group.name == "basic":
-                continue
-            fields[group.name] = (
-                bool,
-                Field(
-                    default=False,
-                    description=group.description,
-                ),
-            )
-        return create_model("_DynamicModel", **fields)
+        return create_model(
+            "_DynamicModel",
+            **_group_toggle_fields(self.tool_groups),
+        )
 
     def clear(self) -> None:
         """Clear the registered tools, skills and MCPs."""
