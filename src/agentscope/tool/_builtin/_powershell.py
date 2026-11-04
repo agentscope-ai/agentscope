@@ -129,7 +129,13 @@ are easier for the user to review and authorize:
                     ],
                     timeout=10.0,
                 )
-                if probe.exit_code != 127:
+                # The probe runs ``exit 0``, so only a zero exit proves the
+                # candidate can be started and used.  ``127`` is "not
+                # found" and ``-1`` means the probe was killed, e.g. a
+                # ``pwsh`` that hangs while starting: both have to fall
+                # through to the next candidate instead of being cached
+                # as the shell every later command will use.
+                if probe.exit_code == 0:
                     self._executable = candidate
                     break
             else:

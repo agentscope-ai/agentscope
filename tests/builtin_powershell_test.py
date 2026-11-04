@@ -378,5 +378,33 @@ class PowerShellWindowsIntegrationTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].content[0].text.strip(), "2")
 
 
+class PowerShellExecutableResolutionTest(IsolatedAsyncioTestCase):
+    """Pick a shell that the probe proved it can actually start."""
+
+    async def test_probe_that_cannot_run_falls_back_to_the_next_shell(
+        self,
+    ) -> None:
+        """A probe killed before answering is not a usable shell."""
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            # ``pwsh`` exists on PATH but hangs on startup, so the probe
+            # is killed and reports the conventional -1 exit code.
+            ExecResult(-1, b"", b"timed out"),
+            ExecResult(0, b"", b""),
+        ]
+        tool = PowerShell(backend=backend)
+
+        self.assertEqual(
+            await tool._resolve_executable(),
+            "powershell.exe",
+        )
+        # The resolved shell is cached, so the next call probes nothing
+        self.assertEqual(
+            await tool._resolve_executable(),
+            "powershell.exe",
+        )
+        self.assertEqual(backend.exec_shell.await_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
