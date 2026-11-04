@@ -398,6 +398,99 @@ class TestSchedulerReconcile(_SchedulerOwnershipTestBase):
 
         self.assertListEqual(self.job_ids(), [good.id])
 
+    async def _race_stale_and_fresh_reconcile(
+        self,
+        change: str,
+    ) -> ScheduleRecord:
+        """Pause the first read, apply *change*, then start a second run.
+
+        The first reconcile captures the old records and waits; the second
+        one sees the new storage state. The returned record is the one
+        storage now holds.
+        """
+        record = _make_record()
+        await self.storage.upsert_schedule(record.user_id, record)
+        # ``_add_job`` needs a started scheduler to compute next_run_time.
+        self.manager._scheduler.start(paused=True)
+        self.addCleanup(
+            self.manager._scheduler.shutdown,
+            wait=False,
+        )
+        self.manager._add_job(record)
+
+        original_list = self.storage.list_all_schedules
+        first_read_captured = asyncio.Event()
+        release_first_read = asyncio.Event()
+        second_read_returned = asyncio.Event()
+        calls = 0
+
+        async def controlled_list() -> list[ScheduleRecord]:
+            nonlocal calls
+            calls += 1
+            snapshot = await original_list()
+            if calls == 1:
+                first_read_captured.set()
+                await release_first_read.wait()
+            else:
+                second_read_returned.set()
+            return snapshot
+
+        with patch.object(
+            self.storage,
+            "list_all_schedules",
+            controlled_list,
+        ):
+            stale = asyncio.create_task(self.manager.reconcile())
+            await first_read_captured.wait()
+
+            if change == "disable":
+                record.data.enabled = False
+            else:
+                record.data.cron_expression = "30 3 * * *"
+            record.updated_at = datetime(2025, 6, 1)
+            await self.storage.upsert_schedule(record.user_id, record)
+
+            fresh = asyncio.create_task(self.manager.reconcile())
+            try:
+                # A serialised reconcile blocks the second read behind the
+                # first one, so this wait times out. Without that ordering
+                # the second read returns and applies immediately.
+                await asyncio.wait_for(
+                    second_read_returned.wait(),
+                    timeout=0.2,
+                )
+            except asyncio.TimeoutError:
+                pass
+            else:
+                # Let the fresh reconcile apply the new snapshot before the
+                # stale one resumes.
+                await asyncio.wait({fresh}, timeout=0.2)
+            finally:
+                release_first_read.set()
+                await asyncio.gather(stale, fresh)
+
+        return record
+
+    async def test_a_stale_reconcile_cannot_restore_a_disabled_job(
+        self,
+    ) -> None:
+        """A slow read that captured an enabled record must not re-add it."""
+        await self._race_stale_and_fresh_reconcile("disable")
+
+        self.assertListEqual(self.job_ids(), [])
+
+    async def test_a_stale_reconcile_cannot_rewrite_an_edited_job(
+        self,
+    ) -> None:
+        """A slow read must not restore the previous cron configuration."""
+        record = await self._race_stale_and_fresh_reconcile("edit")
+
+        self.assertListEqual(self.job_ids(), [record.id])
+        self.assertEqual(
+            self.manager._versions[record.id],
+            record.updated_at,
+        )
+
 
 class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
     """Only the enabled node holds timers; every node can notify."""

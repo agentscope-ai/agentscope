@@ -28,7 +28,7 @@ from agentscope.app.message_bus import MessageBus
 from agentscope.message import ToolResultState
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus with just enough behaviour for the dispatcher.
 
     Only the cancel-broadcast channel is exercised here; the other
@@ -58,6 +58,20 @@ class _FakeBus(MessageBus):
         key: str,
         max_count: int = 100,
     ) -> list[tuple[str, dict]]:
+        return []
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return []
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
         return []
 
     async def queue_delete(self, key: str) -> None:

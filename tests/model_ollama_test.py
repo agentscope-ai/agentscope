@@ -608,3 +608,65 @@ class TestOllamaRepeatedToolCall(IsolatedAsyncioTestCase):
             [_.id for _ in results],
             [_.id for _ in calls],
         )
+
+
+# ---------------------------------------------------------------------------
+# Structured-output no_think fallback
+# ---------------------------------------------------------------------------
+
+
+class OllamaNoThinkFallbackTest(IsolatedAsyncioTestCase):
+    """The structured-output fallback ladder must include a no_think
+    attempt for Ollama."""
+
+    def test_disable_thinking_kwargs_is_think_false(self) -> None:
+        """The provider-specific thinking toggle is a top-level option."""
+        self.assertEqual(
+            _make_model()._get_disable_thinking_kwargs(),
+            {"think": False},
+        )
+
+    async def test_fallback_ladder_sends_think_false_and_parses(
+        self,
+    ) -> None:
+        """The no_think attempt sends ``think=False`` to the client, and
+        its tool arguments are parsed and validated."""
+        from pydantic import BaseModel
+
+        class _Schema(BaseModel):
+            answer: str
+
+        model = OllamaChatModel(
+            model="qwen3:8b",
+            stream=False,
+            context_size=40_960,
+            parameters=OllamaChatModel.Parameters(
+                thinking_enable=True,
+            ),
+        )
+        model.client.chat = AsyncMock(
+            side_effect=[
+                _mock_completion(content="I will answer in text."),
+                _mock_completion(content="Still text."),
+                _mock_completion(
+                    tool_calls=[
+                        {
+                            "name": "generate_structured_output",
+                            "args": {"answer": "Paris"},
+                        },
+                    ],
+                ),
+            ],
+        )
+
+        result = await model.generate_structured_output(
+            [UserMsg(name="user", content="What is the capital of France?")],
+            _Schema,
+        )
+
+        self.assertEqual(result.content, {"answer": "Paris"})
+        calls = model.client.chat.call_args_list
+        self.assertEqual(
+            [call.kwargs["think"] for call in calls],
+            [True, True, False],
+        )

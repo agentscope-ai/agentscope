@@ -17,6 +17,7 @@ with service-mode listing would leave records out of sync, and the
 project's stance is that a knowledge base is managed end-to-end in one
 mode.
 """
+import asyncio
 import uuid
 from collections import Counter
 from typing import IO, TYPE_CHECKING, AsyncIterator
@@ -332,18 +333,15 @@ class KnowledgeBaseService:
         """Delete a knowledge base, raising 404 if absent.
 
         Documents under the KB are cascade-deleted at the storage
-        layer; blob files referenced by those records are released
-        best-effort here so disk space is reclaimed even though the
-        manager + storage cascade would otherwise orphan them.
+        layer. Release their blobs only after the manager successfully
+        deletes the collection and record, so a failed deletion leaves
+        the original files available for retry or recovery.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
         documents = await self._storage.list_knowledge_documents(
             owner_id,
             knowledge_base_id,
         )
-        for document in documents:
-            await self._delete_blob_quietly(document.data.blob_uri)
-
         deleted = await self._manager.delete_knowledge_base(
             owner_id,
             knowledge_base_id,
@@ -353,6 +351,8 @@ class KnowledgeBaseService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Knowledge base {knowledge_base_id!r} not found.",
             )
+        for document in documents:
+            await self._delete_blob_quietly(document.data.blob_uri)
 
     # ------------------------------------------------------------------
     # Document management
@@ -429,10 +429,15 @@ class KnowledgeBaseService:
                 owner_id,
                 record,
             )
-        except Exception:
-            # Storage write failed — drop the blob so the orphan
-            # sweeper doesn't later see a referenced-by-nobody file.
-            await self._delete_blob_quietly(blob_uri)
+        except (Exception, asyncio.CancelledError):
+            # Storage write failed or cancelled — drop the blob only if
+            # the record was not persisted, keeping it if already committed.
+            await self._cleanup_unpersisted_blob(
+                owner_id,
+                knowledge_base_id,
+                document_id,
+                blob_uri,
+            )
             raise
 
         await enqueue_index_task(
@@ -886,6 +891,46 @@ class KnowledgeBaseService:
                 detail=str(exc),
             ) from exc
 
+    async def _cleanup_unpersisted_blob(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        blob_uri: str,
+    ) -> None:
+        """Clean up the blob only if storage persistence did not commit.
+
+        Preserve the source file if a persisted record references it.
+        If the lookup fails, log the error and keep the file.
+        """
+
+        async def _check_and_delete() -> None:
+            try:
+                persisted = await self._storage.get_knowledge_document(
+                    user_id,
+                    knowledge_base_id,
+                    document_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to verify document %s persistence; keeping blob "
+                    "%s",
+                    document_id,
+                    blob_uri,
+                )
+                return
+
+            if persisted is None:
+                try:
+                    await self._blob_store.delete(blob_uri)
+                except Exception:
+                    logger.exception(
+                        "Failed to delete blob %s",
+                        blob_uri,
+                    )
+
+        await asyncio.shield(_check_and_delete())
+
     async def _delete_blob_quietly(self, blob_uri: str) -> None:
         """Best-effort blob delete — swallow backend errors.
 
@@ -893,10 +938,14 @@ class KnowledgeBaseService:
         record/vector-store state is still consistent and a future
         sweep can reclaim the disk space.  Surface only via logs.
         """
-        try:
-            await self._blob_store.delete(blob_uri)
-        except Exception:  # noqa: BLE001 — cleanup only
-            logger.exception(
-                "Failed to delete blob %s",
-                blob_uri,
-            )
+
+        async def _delete() -> None:
+            try:
+                await self._blob_store.delete(blob_uri)
+            except Exception:
+                logger.exception(
+                    "Failed to delete blob %s",
+                    blob_uri,
+                )
+
+        await asyncio.shield(_delete())
