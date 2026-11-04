@@ -12,10 +12,14 @@ lifecycle (write-back, dream consolidation and search) plus only the
 indexing/file jobs required by those paths.
 
 ReMe records memory by **listening to the conversation through the
-``on_reply`` hook** — after every reply the new exchange is written back
-via ReMe's ``auto_memory`` job, in *all* modes. The agent never writes
-memory itself; there is no manual add tool. The ``mode`` parameter only
-controls **retrieval**:
+``on_reply`` hook**. Automatic write-back uses ReMe's ``auto_memory`` job
+in *all* modes. It requires an original input with nonempty user text,
+a session ID, unseen content and nonempty assistant text in the logical
+exchange. A pause/resume keeps the original exchange: normal completion
+writes the full exchange if no prefix was acknowledged, or only unseen
+content after an acknowledged prefix. The agent never writes memory
+itself; there is no manual add tool. The ``mode`` parameter only controls
+**retrieval**:
 
 - ``"static_control"`` — search ReMe when a reply starts and inject the
   retrieved memories into context before a later reasoning step (plus the
@@ -25,14 +29,15 @@ controls **retrieval**:
   on demand (plus the automatic write-back); no auto-retrieval.
 - ``"both"`` — auto-retrieve/inject *and* expose ``memory_search``.
 
-ReMe scopes writes by ``session_id``, which is read from
-``agent.state.session_id`` at hook time (not configured on the
-middleware), so it always matches the agent's own session; search runs
-over the whole workspace.
+ReMe reads ``session_id`` from ``agent.state.session_id`` and captures it
+for a pending logical reply. Resume checkpoints are isolated by live
+agent, session and reply ID; they do not survive rebuilding the agent or
+middleware. Search runs over the whole workspace.
 """
 from __future__ import annotations
 
 import asyncio
+from weakref import WeakKeyDictionary
 from typing import (
     Any,
     AsyncGenerator,
@@ -46,11 +51,19 @@ from pydantic import BaseModel, Field
 from ..._base import MiddlewareBase
 from ...._logging import logger
 from ....embedding import EmbeddingModelBase
+from ....event import (
+    ExternalExecutionResultEvent,
+    ReplyEndEvent,
+    ReplyStartEvent,
+    UserConfirmResultEvent,
+)
 from ....message import AssistantMsg, HintBlock, Msg
 from ....model import ChatModelBase
+from ....types import ReplyFinishedReason
 from ._config import _build_reme_app_config
 from ._tools import _build_memory_tools
 from ._utils import _extract_memory_texts, _extract_query_text
+from ._writeback import _ReplyWriteback
 
 if TYPE_CHECKING:
     from ....agent import Agent
@@ -103,10 +116,12 @@ class ReMeMiddleware(MiddlewareBase):
     embedded app's single LLM is well-defined even when one middleware
     instance is shared across several agents. Per-conversation state — the
     ReMe ``session_id`` — is instead read live from each agent at hook
-    time and never stored, keeping shared use isolated. Background
-    retrieval tasks are likewise tracked per ``session_id`` so concurrent
-    replies in different sessions never clobber each other's in-flight
-    search.
+    time. Background retrieval and pending write-back checkpoints are
+    isolated by agent identity and session; checkpoints also match the
+    logical reply ID. A pause/resume keeps its original context boundary
+    and does not start retrieval again. An acknowledged partial prefix is
+    followed only by unseen content when the reply completes. Checkpoints
+    are in-process and do not survive rebuilding the agent or middleware.
 
     AgentScope middleware has no framework-managed lifecycle, so the app
     is built once and started lazily on first use (idempotent). Call
@@ -214,12 +229,14 @@ class ReMeMiddleware(MiddlewareBase):
         self._started = False
         self._workspace_dir = workspace_dir
         self._parameters = parameters or self.Parameters()
-        # In-flight background retrieval per session (started in ``on_reply``,
+        # In-flight retrieval per agent/session (started in on_reply,
         # consumed/injected in ``on_reasoning``, cleaned up in ``on_reply``'s
-        # finally). Keyed by ``session_id`` so one middleware shared across
-        # agents keeps each session's retrieval isolated — a concurrent reply
-        # in another session never clobbers this one's task.
+        # finally). Agent identity also isolates agents sharing a session ID.
         self._retrieval_tasks: dict[Any, asyncio.Task] = {}
+        self._pending_replies: WeakKeyDictionary[
+            Agent,
+            _ReplyWriteback,
+        ] = WeakKeyDictionary()
 
     # ==================================================================
     # Embedded ReMe application lifecycle
@@ -298,11 +315,10 @@ class ReMeMiddleware(MiddlewareBase):
         """Read the ReMe ``session_id`` live from the agent.
 
         ReMe scopes write-back memory cards by ``session_id``. It is read
-        from ``agent.state.session_id`` at hook time and threaded through
-        per call — **never** stored on the middleware — so a single
-        instance shared across agents keeps each conversation's writes
-        isolated. Mirrors how :class:`TracingMiddleware` sources the
-        session from the agent rather than from middleware config.
+        from ``agent.state.session_id`` and threaded through each call.
+        A pending reply captures its scope rather than using a shared
+        middleware-wide session setting. Mirrors how
+        :class:`TracingMiddleware` sources the session from the agent.
         """
         return getattr(getattr(agent, "state", None), "session_id", None)
 
@@ -315,7 +331,15 @@ class ReMeMiddleware(MiddlewareBase):
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
+        """Retrieve original inputs and write acknowledged reply increments.
+
+        The original invocation retains its partial-write policy. Resumes
+        that pause again do not submit another prefix; normal completion
+        submits only unseen content. Invalid events and interrupted resumes
+        retain their existing no-write behavior.
+        """
         session_id = self._session_id_of(agent)
+        task_key = (agent, session_id)
 
         # Kick off retrieval (static_control / both only) concurrently with
         # the reply. It runs in the background while the agent ingests input
@@ -323,37 +347,55 @@ class ReMeMiddleware(MiddlewareBase):
         # task finishes. Write the new exchange back afterwards in every mode.
         inputs = input_kwargs.get("inputs")
         query_text = _extract_query_text(inputs)
+        is_resume = isinstance(
+            inputs,
+            (UserConfirmResultEvent, ExternalExecutionResultEvent),
+        )
+        pending = self._pending_replies.get(agent) if is_resume else None
+        if pending is not None and (
+            pending.session_id != session_id
+            or pending.reply_id != agent.state.reply_id
+        ):
+            self._pending_replies.pop(agent, None)
+            pending = None
+        if query_text:
+            pending = _ReplyWriteback(
+                session_id=session_id,
+                pre_ids={
+                    m.id for m in agent.state.context if isinstance(m, Msg)
+                },
+            )
 
         # Discard any stale task left for this session (a previous turn that
         # never reached its finally is unexpected, but never leak one).
-        stale = self._retrieval_tasks.pop(session_id, None)
+        stale = self._retrieval_tasks.pop(task_key, None)
         if stale is not None and not stale.done():
             stale.cancel()
         if self._parameters.mode != "agent_control" and query_text:
-            self._retrieval_tasks[session_id] = asyncio.create_task(
+            self._retrieval_tasks[task_key] = asyncio.create_task(
                 self._search(query_text),
             )
 
-        # Snapshot the context BEFORE the turn so the write-back persists
-        # only this turn's *increment*. ReMe's ``auto_memory`` consumes the
-        # incremental exchange, whereas ``agent.state.context`` is the full
-        # accumulated history — so we diff by message id (below) rather than
-        # sending the whole context, which would re-feed every prior turn.
-        # Taking the increment (not just the final message) still captures
-        # every step of the turn — user input, each assistant step, and
-        # every tool call / tool result — which the agent records on
-        # ``state.context`` via ``_save_to_context`` but does not all yield
-        # on the stream (only the final answer is yielded).
-        pre_ids = {m.id for m in agent.state.context if isinstance(m, Msg)}
-
+        started = False
+        completed = False
+        returned = False
         try:
             async for item in next_handler(**input_kwargs):
+                if query_text and isinstance(item, ReplyStartEvent):
+                    assert pending is not None
+                    pending.reply_id = item.reply_id
+                    started = True
+                if isinstance(item, ReplyEndEvent):
+                    completed = (
+                        item.finished_reason == ReplyFinishedReason.COMPLETED
+                    )
                 yield item
+            returned = True
         finally:
             # Retrieval may still be running (or its hint may never have been
             # injected — e.g. a single-shot reply that finished before the
             # task did). Consume this session's task so none is orphaned.
-            task = self._retrieval_tasks.pop(session_id, None)
+            task = self._retrieval_tasks.pop(task_key, None)
             if task is not None and not task.done():
                 task.cancel()
             if task is not None:
@@ -361,23 +403,47 @@ class ReMeMiddleware(MiddlewareBase):
                     await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-            # This turn's new messages only: everything now present that
-            # was not before, minus any memory hint we injected (matched by
-            # its reserved name, since injection happens in ``on_reasoning``).
-            increment = [
-                m
-                for m in agent.state.context
-                if isinstance(m, Msg)
-                and m.id not in pre_ids
-                and getattr(m, "name", None) != _MEMORY_MSG_NAME
-            ]
-            # Only persist a real exchange: a genuine user turn plus at
-            # least one non-empty assistant message produced this turn.
-            if query_text and any(
-                m.role == "assistant" and m.get_text_content()
-                for m in increment
-            ):
-                await self._write_back(increment, session_id)
+            awaiting = agent.state.has_awaiting_tool_calls(agent.name)
+            try:
+                completed_resume = (
+                    is_resume and returned and completed and not awaiting
+                )
+                scope_matches = (
+                    pending is not None
+                    and pending.session_id == self._session_id_of(agent)
+                    and pending.reply_id == agent.state.reply_id
+                )
+                if pending is not None and (
+                    query_text or (completed_resume and scope_matches)
+                ):
+                    snapshot = pending.snapshot(
+                        agent.state.context,
+                        _MEMORY_MSG_NAME,
+                    )
+                    increment = pending.increment(snapshot)
+                    # Apply the assistant-text gate to the logical exchange.
+                    # An acknowledged prefix can already contain that text.
+                    if (
+                        increment
+                        and any(
+                            m.role == "assistant" and m.get_text_content()
+                            for m in snapshot
+                        )
+                        and await self._write_back(increment, session_id)
+                    ):
+                        pending.acknowledged = snapshot
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "ReMe write preparation failed for session_id=%s: %s",
+                    session_id,
+                    e,
+                )
+            finally:
+                if query_text and started and returned and awaiting:
+                    assert pending is not None
+                    self._pending_replies[agent] = pending
+                elif not awaiting:
+                    self._pending_replies.pop(agent, None)
 
     # ------------------------------------------------------------------
     # Hook: on_reasoning (inject retrieved memories once ready)
@@ -398,10 +464,10 @@ class ReMeMiddleware(MiddlewareBase):
         skipped for that turn — the same trade-off as
         :class:`AgenticMemoryMiddleware`.
         """
-        session_id = self._session_id_of(agent)
-        task = self._retrieval_tasks.get(session_id)
+        task_key = (agent, self._session_id_of(agent))
+        task = self._retrieval_tasks.get(task_key)
         if task is not None and task.done():
-            self._retrieval_tasks.pop(session_id, None)
+            self._retrieval_tasks.pop(task_key, None)
             try:
                 memories = task.result()
             except (asyncio.CancelledError, Exception) as e:  # noqa: BLE001
@@ -490,37 +556,44 @@ class ReMeMiddleware(MiddlewareBase):
         self,
         messages: list[Msg],
         session_id: str | None,
-    ) -> None:
-        """Persist a completed conversation increment to ReMe.
+    ) -> bool:
+        """Persist a conversation increment and report backend acknowledgment.
 
-        ``messages`` is the full slice this turn appended to the agent's
-        context — the user input, every assistant step, and every tool
-        call / tool result — so ReMe's ``auto_memory`` extraction sees the
-        whole exchange, not just the final answer.
+        Without an acknowledged prefix, ``messages`` contains the user
+        input and every assistant/tool step in the logical reply. After
+        an acknowledged prefix, it contains only unseen content, including
+        text suffixes on existing blocks, rather than replaying that prefix.
 
-        ``session_id`` is passed in per call (read live from the agent),
-        never stored, so a shared middleware keeps conversations isolated.
+        ``session_id`` is passed in per call from the logical reply's
+        captured scope, so a shared middleware keeps conversations isolated.
         Skipped (with a warning) when no ``session_id`` is available;
         failures are logged rather than propagated so a write never blocks
         the reply.
+
+        Returns:
+            `bool`:
+                Whether the job succeeded. Failed/skipped writes do not
+                advance a pending reply's checkpoint. No retry is added.
         """
         if not session_id:
             logger.warning(
                 "ReMe write skipped: no session_id captured from the agent.",
             )
-            return
+            return False
         try:
             await self._run_job(
                 _AUTO_MEMORY_JOB,
                 messages=[m.model_dump(mode="json") for m in messages],
                 session_id=session_id,
             )
+            return True
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "ReMe auto_memory failed for session_id=%s: %s",
                 session_id,
                 e,
             )
+            return False
 
     # ==================================================================
     # Helpers
