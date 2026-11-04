@@ -516,6 +516,20 @@ class InMemoryMessageBus(
         self._registries.setdefault(namespace, {})[field] = value
         return True
 
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete without yielding between the two operations."""
+        registry = self._registries.get(namespace, {})
+        if registry.get(field) != expected:
+            return False
+        del registry[field]
+        return True
+
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """Read and remove one field. See base."""
         return self._registries.get(namespace, {}).pop(field, None)

@@ -542,6 +542,29 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` when the value was written.
         """
 
+    async def registry_del_if(  # pylint: disable=unused-argument
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Delete a field atomically only if its value still matches.
+
+        Backends may override this optional operation. The default leaves
+        data intact so existing adapters remain usable without an unsafe
+        read-then-delete fallback.
+
+        Args:
+            namespace (`str`): The registry key.
+            field (`str`): The field to remove.
+            expected (`str`): The previously observed value.
+
+        Returns:
+            `bool`: True if deleted; False if absent, changed, or unsupported.
+        """
+        return False
+
     @abstractmethod
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """Read ``field`` and remove it in one step.

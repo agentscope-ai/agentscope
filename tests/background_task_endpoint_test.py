@@ -458,11 +458,148 @@ class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
                 ],
                 [expected],
             )
-            # Creating another task does not change the old record's lease.
-            self.assertEqual(
+            # Querying removes the expired field despite hash TTL renewal.
+            self.assertIsNone(
                 await self.bus.registry_get(namespace, task_id),
-                value,
             )
+
+    async def test_lists_remove_expired_records_as_user_activity_continues(
+        self,
+    ) -> None:
+        """Repeated user activity cannot accumulate invisible running rows."""
+        namespace = MessageBusKeys.bg_task_records("alice")
+        expected = {}
+        for batch in range(3):
+            _, _, task_id = await self._register(self.owner)
+            value = await self.bus.registry_get(namespace, task_id)
+            expected[task_id] = value
+            for index in range(5):
+                stale_id = f"stale-{batch}-{index}"
+                payload = json.loads(value)
+                payload.update(id=stale_id, _expires_at=0)
+                await self.bus.registry_set(
+                    namespace,
+                    stale_id,
+                    json.dumps(payload),
+                    ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+                )
+            records = await self.reader.list_tasks(user_id="alice")
+            self.assertEqual(
+                {record.id: record.model_dump() for record in records},
+                {
+                    task_id: BackgroundTaskRecord.model_validate_json(
+                        value,
+                    ).model_dump()
+                    for task_id, value in expected.items()
+                },
+            )
+            self.assertEqual(
+                await self.bus.registry_getall(namespace),
+                expected,
+            )
+
+    async def test_completion_evicts_expired_running_and_terminal_records(
+        self,
+    ) -> None:
+        """Finalization physically clears expired records of every status."""
+        gate, task, task_id = await self._register(self.owner)
+        namespace = MessageBusKeys.bg_task_records("alice")
+        value = await self.bus.registry_get(namespace, task_id)
+        for status in TaskStatus:
+            stale_id = f"expired-{status.value}"
+            payload = json.loads(value)
+            payload.update(
+                id=stale_id,
+                status=status.value,
+                _expires_at=0,
+                completed_at=None if status == TaskStatus.RUNNING else 1.0,
+            )
+            await self.bus.registry_set(
+                namespace,
+                stale_id,
+                json.dumps(payload),
+            )
+        gate.set()
+        await self._settle(task)
+        self.assertEqual(
+            await self.bus.registry_getall(namespace),
+            {task_id: await self.bus.registry_get(namespace, task_id)},
+        )
+
+    async def test_expiry_cleanup_preserves_concurrent_updates(self) -> None:
+        """Queries and eviction cannot delete renewed or completed records."""
+        namespace = MessageBusKeys.bg_task_records("alice")
+        original_delete = self.bus.registry_del_if
+        original_set = self.bus.registry_set
+        for operation in ("list", "detail", "eviction"):
+            for status in (TaskStatus.RUNNING, TaskStatus.COMPLETED):
+                with self.subTest(operation=operation, status=status):
+                    task_id = f"race-{operation}-{status.value}"
+                    payload = {
+                        "id": task_id,
+                        "session_id": "s1",
+                        "agent_id": "a1",
+                        "user_id": "alice",
+                        "tool_name": "Tool",
+                        "summary": "Tool(x=1)",
+                        "started_at": 0,
+                        "completed_at": None,
+                        "status": "running",
+                        "error_summary": None,
+                        "_expires_at": 0,
+                    }
+                    await original_set(namespace, task_id, json.dumps(payload))
+                    payload.update(
+                        status=status.value,
+                        completed_at=1.0
+                        if status == TaskStatus.COMPLETED
+                        else None,
+                        _expires_at=32503680000,
+                    )
+                    updated = json.dumps(payload)
+
+                    async def concurrent_update(
+                        ns: str,
+                        field: str,
+                        *,
+                        expected: str,
+                        new_value: str = updated,
+                    ) -> bool:
+                        await original_set(ns, field, new_value)
+                        return await original_delete(
+                            ns,
+                            field,
+                            expected=expected,
+                        )
+
+                    with patch.object(
+                        self.bus,
+                        "registry_del_if",
+                        side_effect=concurrent_update,
+                    ):
+                        if operation == "list":
+                            await self.reader.list_tasks(user_id="alice")
+                        elif operation == "detail":
+                            await self.reader.get_task(
+                                task_id,
+                                user_id="alice",
+                            )
+                        else:
+                            await self.reader._evict_completed("alice")
+                    self.assertEqual(
+                        await self.bus.registry_get(namespace, task_id),
+                        updated,
+                    )
+                    record = await self.reader.get_task(
+                        task_id,
+                        user_id="alice",
+                    )
+                    self.assertEqual(
+                        record.model_dump(),
+                        BackgroundTaskRecord.model_validate(
+                            payload,
+                        ).model_dump(),
+                    )
 
     async def test_retention_lock_does_not_block_outcome_or_shutdown(
         self,

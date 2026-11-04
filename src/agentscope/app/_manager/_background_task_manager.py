@@ -530,14 +530,13 @@ class BackgroundTaskManager:
             await asyncio.sleep(_RETRY_DELAY_SECS)
 
     async def _evict_completed(self, user_id: str) -> None:
-        """Bound terminal history, including records past their read expiry."""
-        values = await self._message_bus.registry_getall(
-            MessageBusKeys.bg_task_records(user_id),
-        )
+        """Delete expired snapshots and bound terminal history."""
+        namespace = MessageBusKeys.bg_task_records(user_id)
+        values = await self._message_bus.registry_getall(namespace)
         completed = []
-        for value in values.values():
-            record = BackgroundTaskRecord.model_validate_json(value)
-            if record.status != TaskStatus.RUNNING:
+        for task_id, value in values.items():
+            record = await self._read_record(namespace, task_id, value)
+            if record is not None and record.status != TaskStatus.RUNNING:
                 completed.append(record)
         completed.sort(key=lambda record: (record.completed_at, record.id))
         for record in completed[:-_MAX_RETAINED_TASKS]:
@@ -546,9 +545,13 @@ class BackgroundTaskManager:
                 record.id,
             )
 
-    @staticmethod
-    def _read_record(value: str) -> BackgroundTaskRecord | None:
-        """Hide expired snapshots even if unrelated tasks renew the hash."""
+    async def _read_record(
+        self,
+        namespace: str,
+        task_id: str,
+        value: str,
+    ) -> BackgroundTaskRecord | None:
+        """Remove an expired snapshot only if its value is unchanged."""
         payload = json.loads(value)
         # Older snapshots have no per-record lease. Bound their lifetime too.
         expires_at = payload.get(
@@ -556,6 +559,11 @@ class BackgroundTaskManager:
             payload["started_at"] + MessageBusKeys.BG_TASKS_TTL_SECS,
         )
         if expires_at <= time.time():
+            await self._message_bus.registry_del_if(
+                namespace,
+                task_id,
+                expected=value,
+            )
             return None
         return BackgroundTaskRecord.model_validate(payload)
 
@@ -581,14 +589,13 @@ class BackgroundTaskManager:
             `list[BackgroundTaskRecord]`:
                 Matching tasks ordered by registration time.
         """
-        values = await self._message_bus.registry_getall(
-            MessageBusKeys.bg_task_records(user_id),
-        )
-        records = [
-            record
-            for value in values.values()
-            if (record := self._read_record(value)) is not None
-        ]
+        namespace = MessageBusKeys.bg_task_records(user_id)
+        values = await self._message_bus.registry_getall(namespace)
+        records = []
+        for task_id, value in values.items():
+            record = await self._read_record(namespace, task_id, value)
+            if record is not None:
+                records.append(record)
         return sorted(
             (
                 record
@@ -617,13 +624,11 @@ class BackgroundTaskManager:
             `BackgroundTaskRecord | None`:
                 The task if owned by the user, else `None`.
         """
-        value = await self._message_bus.registry_get(
-            MessageBusKeys.bg_task_records(user_id),
-            task_id,
-        )
+        namespace = MessageBusKeys.bg_task_records(user_id)
+        value = await self._message_bus.registry_get(namespace, task_id)
         if value is None:
             return None
-        record = self._read_record(value)
+        record = await self._read_record(namespace, task_id, value)
         return (
             record
             if record is not None and record.user_id == user_id

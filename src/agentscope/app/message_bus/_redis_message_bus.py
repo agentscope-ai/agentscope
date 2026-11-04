@@ -45,6 +45,11 @@ if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return value
 """
 
+_REGISTRY_DEL_IF_LUA = """
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+"""
+
 _LOCK_RELEASE_LUA = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
@@ -531,6 +536,23 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             ttl_secs or 0,
         )
         return bool(written)
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete one Hash field in a single Lua operation."""
+        deleted = await self._client.eval(
+            _REGISTRY_DEL_IF_LUA,
+            1,
+            namespace,
+            field,
+            expected,
+        )
+        return bool(deleted)
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """``HGET`` + ``HDEL`` as one Lua step. See base."""

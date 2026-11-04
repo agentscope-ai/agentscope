@@ -208,6 +208,48 @@ class TestRegistryConditionalPrimitives(IsolatedAsyncioTestCase):
         """An expired session reads as gone, not as a failure."""
         self.assertIsNone(await self.bus.registry_pop("missing", "f"))
 
+    async def test_conditional_delete_preserves_newer_values(self) -> None:
+        """Both backends delete exactly one unchanged field, atomically."""
+        for bus in (self.bus, InMemoryMessageBus()):
+            with self.subTest(backend=type(bus).__name__):
+                await bus.registry_set("ns", "f", "new")
+                await bus.registry_set("ns", "keep", "value")
+                self.assertFalse(
+                    await bus.registry_del_if("ns", "f", expected="old"),
+                )
+                self.assertEqual(
+                    await bus.registry_getall("ns"),
+                    {"f": "new", "keep": "value"},
+                )
+                results = await asyncio.gather(
+                    bus.registry_del_if("ns", "f", expected="new"),
+                    bus.registry_del_if("ns", "f", expected="new"),
+                )
+                self.assertEqual(sorted(results), [False, True])
+                self.assertEqual(
+                    await bus.registry_getall("ns"),
+                    {"keep": "value"},
+                )
+                self.assertFalse(
+                    await bus.registry_del_if("missing", "f", expected=""),
+                )
+
+    async def test_default_conditional_delete_leaves_data_intact(self) -> None:
+        """Existing adapters inherit a safe no-op for conditional deletion."""
+        await self.bus.registry_set("ns", "f", "value")
+        self.assertFalse(
+            await MessageBus.registry_del_if(
+                self.bus,
+                "ns",
+                "f",
+                expected="value",
+            ),
+        )
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"f": "value"},
+        )
+
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
     """Mode C — replay log: append / read with cursor / trim."""
