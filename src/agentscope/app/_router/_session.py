@@ -328,7 +328,8 @@ async def create_session(
 
     Raises:
         `HTTPException`: 404 if the agent / credential / knowledge base
-            is not visible to the caller.
+            is not visible to the caller, or if an explicit
+            ``workspace_id`` belongs to none of the caller's sessions.
     """
     # Agent must be visible to the caller (own or shared).
     await access.resolve_agent(user_id, body.agent_id)
@@ -356,6 +357,23 @@ async def create_session(
         user_id,
         body.knowledge_config,
     )
+
+    # An explicit binding names an existing workspace — its host
+    # directory and container are bind-mounted into the run, so it is
+    # only valid when one of the caller's own sessions already holds it.
+    # Team invite / borrow flows bind workspaces on the server side and
+    # never go through this endpoint.
+    if body.workspace_id is not None and (
+        await storage.find_session_by_workspace_id(
+            user_id,
+            body.workspace_id,
+        )
+        is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace '{body.workspace_id}' not found.",
+        )
 
     # Resolve the workspace binding for this session. Explicit
     # ``body.workspace_id`` always wins (used by team invite / borrow
