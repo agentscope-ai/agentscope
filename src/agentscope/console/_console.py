@@ -3,6 +3,15 @@
 import asyncio
 import signal
 
+try:
+    # Enable line editing for ``input`` so that pressing backspace on a
+    # multi-byte character (e.g. CJK) deletes the whole character instead
+    # of a single byte, which would corrupt both the terminal echo and
+    # the returned line. Not available on some platforms (e.g. Windows).
+    import readline  # noqa: F401  # pylint: disable=unused-import
+except ImportError:  # pragma: no cover
+    pass
+
 from ._renderer import ConsoleRenderer, Verbosity
 from ..agent import Agent
 from ..pipeline import PipelineProtocol
