@@ -9,7 +9,7 @@ import warnings
 
 from asyncio import Queue
 from copy import deepcopy
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
@@ -1212,22 +1212,23 @@ class Agent:
 
                         # Perform reasoning
                         interrupted = False
-                        async for evt in self._reasoning(
-                            tool_choice=tool_choice,
-                        ):
-                            if isinstance(evt, Msg):
-                                # Candidate final message; ``_next_action``
-                                # decides whether it ends the reply
-                                final_msg = evt
-                                continue
+                        async with aclosing(
+                            self._reasoning(tool_choice=tool_choice),
+                        ) as stream:
+                            async for evt in stream:
+                                if isinstance(evt, Msg):
+                                    # Candidate final message; ``_next_action``
+                                    # decides whether it ends the reply
+                                    final_msg = evt
+                                    continue
 
-                            if isinstance(evt, ModelCallEndEvent):
-                                interrupted = (
-                                    evt.finished_reason
-                                    == FinishedReason.INTERRUPTED
-                                )
+                                if isinstance(evt, ModelCallEndEvent):
+                                    interrupted = (
+                                        evt.finished_reason
+                                        == FinishedReason.INTERRUPTED
+                                    )
 
-                            yield evt
+                                yield evt
 
                         if interrupted:
                             # Handled by the CancelledError branch below
@@ -1682,9 +1683,10 @@ class Agent:
         None,
     ]:
         """Reasoning entry point (maybe wrapped by middleware)."""
+        streams = AsyncExitStack()
         if not self._reasoning_middlewares:
-            async for item in self._reasoning_impl(tool_choice=tool_choice):
-                yield item
+            agen = self._reasoning_impl(tool_choice=tool_choice)
+            streams.push_async_callback(agen.aclose)
         else:
 
             async def execute_chain(
@@ -1692,29 +1694,40 @@ class Agent:
                 tool_choice: ToolChoice = tool_choice,
             ) -> AsyncGenerator:
                 if index >= len(self._reasoning_middlewares):
-                    async for item in self._reasoning_impl(
+                    stream = self._reasoning_impl(
                         tool_choice=tool_choice,
-                    ):
+                    )
+                    streams.push_async_callback(stream.aclose)
+                    async for item in stream:
                         yield item
                 else:
                     mw = self._reasoning_middlewares[index]
                     input_kwargs = {"tool_choice": tool_choice}
 
-                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(
+                    def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        stream = execute_chain(
                             index + 1,
                             **{**input_kwargs, **kwargs},
-                        ):
-                            yield item
+                        )
+                        streams.push_async_callback(stream.aclose)
+                        return stream
 
-                    async for item in mw.on_reasoning(
+                    stream = mw.on_reasoning(
                         agent=self,
                         input_kwargs=input_kwargs,
                         next_handler=next_handler,
-                    ):
+                    )
+                    streams.push_async_callback(stream.aclose)
+                    async for item in stream:
                         yield item
 
-            async for item in execute_chain():
+            agen = execute_chain()
+            streams.push_async_callback(agen.aclose)
+
+        # Middleware may forward a handler's events without closing it.
+        # Own every delegated stream until this reasoning step exits.
+        async with streams:
+            async for item in agen:
                 yield item
 
     async def _reasoning_impl(
@@ -1765,18 +1778,19 @@ class Agent:
 
         # Check if res is an async generator (streaming response)
         if inspect.isasyncgen(res):
-            async for chunk in res:
-                # Save the last chunk with completed response
-                if chunk.is_last:
-                    completed_response = chunk
+            async with aclosing(res):
+                async for chunk in res:
+                    # Save the last chunk with completed response
+                    if chunk.is_last:
+                        completed_response = chunk
 
-                else:
-                    # Convert the chunk into events
-                    async for evt in self._convert_chat_response_to_event(
-                        block_ids,
-                        chunk,
-                    ):
-                        yield evt
+                    else:
+                        # Convert the chunk into events
+                        async for evt in self._convert_chat_response_to_event(
+                            block_ids,
+                            chunk,
+                        ):
+                            yield evt
 
         elif isinstance(res, ChatResponse):
             completed_response = res
