@@ -221,7 +221,25 @@ class MCPClient(BaseModel):
         return SDKClient(
             transport,
             mode="auto",
+            message_handler=self._on_server_message,
         )
+
+    async def _on_server_message(self, message: Any) -> None:
+        """Drop the cached tool list when the server announces a change.
+
+        The SDK's response cache already evicts its own ``tools/list`` entry
+        on ``notifications/tools/list_changed``; ``_cached_tools`` is the
+        second layer on top of it. Without this handler only AgentScope code
+        could invalidate it, so a stateful connection served a tool view
+        frozen at the first listing for its whole lifetime.
+        """
+        if isinstance(message, mcp.types.ToolListChangedNotification):
+            self._cached_tools = None
+            logger.debug(
+                "MCP '%s': tool list changed notification received, "
+                "cached tools invalidated",
+                self.name,
+            )
 
     def _create_http_client(
         self,

@@ -42,9 +42,11 @@ class _FakeClient:
         transport: _OneShotTransport,
         *,
         mode: str,
+        message_handler: Any = None,
     ) -> None:
         self.transport = transport
         self.mode = mode
+        self.message_handler = message_handler
         self.exit_count = 0
         self._entered = False
 
@@ -88,8 +90,9 @@ class _TaskBoundClient(_FakeClient):
         transport: _OneShotTransport,
         *,
         mode: str,
+        message_handler: Any = None,
     ) -> None:
-        super().__init__(transport, mode=mode)
+        super().__init__(transport, mode=mode, message_handler=message_handler)
         self.enter_task: asyncio.Task[Any] | None = None
         self.exit_task: asyncio.Task[Any] | None = None
         _TaskBoundClient.instance = self
