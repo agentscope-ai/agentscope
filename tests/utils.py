@@ -62,6 +62,7 @@ class MockModel(ChatModelBase):
         mock_chat_responses: list | None = None,
         mock_structured_response: Any = None,
         formatter: FormatterBase | None = None,
+        use_fallback_token_estimate: bool = False,
     ) -> None:
         """Initialize the mock model."""
         super().__init__(
@@ -76,7 +77,14 @@ class MockModel(ChatModelBase):
         self.formatter = formatter or OpenAIChatFormatter()
         self.mock_chat_responses = mock_chat_responses or []
         self.mock_structured_response = mock_structured_response
+        self.use_fallback_token_estimate = use_fallback_token_estimate
         self.cnt = 0
+
+    def _estimate_text_tokens(self, text: str) -> int:
+        """Keep context-size fixtures independent of fallback tuning."""
+        if self.use_fallback_token_estimate:
+            return super()._estimate_text_tokens(text)
+        return int(len(text.encode("utf-8")) / 4 + 0.5)
 
     def set_responses(
         self,
