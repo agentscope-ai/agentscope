@@ -372,6 +372,12 @@ def _flatten_json_schema(schema: dict) -> dict:
     if not defs:
         return schema
 
+    def _ref_name(ref_path: str) -> str:
+        """Decode the last JSON Pointer token in RFC 6901 order."""
+        return (
+            ref_path.rsplit("/", 1)[-1].replace("~1", "/").replace("~0", "~")
+        )
+
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
             return [_resolve_ref(item, visited) for item in obj]
@@ -386,9 +392,7 @@ def _flatten_json_schema(schema: dict) -> dict:
             ):
                 return obj
 
-            def_name = ref_path.split("/")[-1]
-            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
-            def_name = def_name.replace("~1", "/").replace("~0", "~")
+            def_name = _ref_name(ref_path)
             if def_name in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
@@ -414,7 +418,7 @@ def _flatten_json_schema(schema: dict) -> dict:
                 if isinstance(mapping, dict) and any(
                     isinstance(ref, str)
                     and ref.startswith(("#/$defs/", "#/definitions/"))
-                    and ref.rsplit("/", 1)[-1] in defs
+                    and _ref_name(ref) in defs
                     for ref in mapping.values()
                 ):
                     continue
