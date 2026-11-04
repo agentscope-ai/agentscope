@@ -364,8 +364,8 @@ class DashScopeRealtimeModel(RealtimeModelBase):
                 usage = response.get("usage") or {}
                 event = me.ResponseDoneEvent(
                     item_id=response.get("id") or self._item_id,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
+                    input_tokens=usage.get("input_tokens"),
+                    output_tokens=usage.get("output_tokens"),
                 )
                 self._item_id = ""
                 return event
