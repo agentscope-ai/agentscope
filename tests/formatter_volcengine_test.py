@@ -659,6 +659,56 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             await fmt.format(msgs),
         )
 
+    async def test_chat_formatter_media_extra_params(self) -> None:
+        """Extra DataBlock fields are kept in the image and video objects."""
+        fmt = VolcengineChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/first.png",
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                    DataBlock(
+                        source=URLSource(
+                            url="https://example.com/video.mp4",
+                            media_type="video/mp4",
+                        ),
+                        fps=2,
+                    ),
+                ],
+            ),
+        ]
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/first.png",
+                                "detail": "high",
+                            },
+                        },
+                        {
+                            "type": "video_url",
+                            "video_url": {
+                                "url": "https://example.com/video.mp4",
+                                "fps": 2,
+                            },
+                        },
+                    ],
+                },
+            ],
+            await fmt.format(msgs),
+        )
+
     async def test_multiagent_formatter_preserves_images(self) -> None:
         """Multi-agent history should retain supported image blocks."""
         fmt = VolcengineMultiAgentFormatter()
