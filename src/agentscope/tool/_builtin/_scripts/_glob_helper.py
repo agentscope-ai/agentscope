@@ -31,14 +31,15 @@ def _glob_part_to_regex(part: str) -> re.Pattern[str]:
 
     Translates glob wildcards (``*`` → ``.*``, ``?`` → ``.``) and
     escapes regex meta-characters so that a segment like ``*.py``
-    becomes the anchored pattern ``^.*\\.py$``.
+    becomes the anchored pattern ``^.*\\.py\\Z``. Wildcards also match
+    newlines, which are valid within POSIX filenames.
 
     Args:
         part: One path segment of a glob pattern (e.g. ``*.py``
             or ``test_*``).
 
     Returns:
-        A compiled :class:`re.Pattern` anchored with ``^…$``.
+        A compiled :class:`re.Pattern` anchored with ``^…\\Z``.
     """
     regex_str = ""
     for c in part:
@@ -50,7 +51,7 @@ def _glob_part_to_regex(part: str) -> re.Pattern[str]:
             regex_str += "\\" + c
         else:
             regex_str += c
-    return re.compile(f"^{regex_str}$")
+    return re.compile(f"^{regex_str}\\Z", re.DOTALL)
 
 
 def _collect_all(current_dir: str, results: list[str]) -> None:
