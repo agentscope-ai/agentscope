@@ -374,6 +374,43 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(payload["session_id"], agent.state.session_id)
         self.assertEqual(payload["agent_id"], "a")
 
+    async def test_delivery_failure_is_logged_not_lost(self) -> None:
+        """A delivery error is logged instead of vanishing with the
+        fire-and-forget delivery task, and the delivery task is
+        anchored on the middleware until it completes."""
+
+        toolkit = Toolkit(tools=[SlowTool()])
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+        # The first inbox push fails, as if the message bus were down.
+        middleware._message_bus.queue_push.side_effect = RuntimeError(
+            "bus down",
+        )
+
+        tool_call = ToolCallBlock(
+            id="call_fail",
+            name="slow_tool",
+            input=json.dumps({"delay": 0.2}),
+        )
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            # Trigger offload
+            # pylint: disable=protected-access
+            async for _ in agent._acting(tool_call):
+                pass
+            # Wait long enough for the background tool (0.2s) and its
+            # delivery attempt
+            await asyncio.sleep(0.4)
+
+        self.assertTrue(
+            any(
+                "Failed to deliver the completion of background tool" in line
+                for line in captured.output
+            ),
+            captured.output,
+        )
+        # The anchored delivery task is drained once it completes
+        self.assertEqual(len(middleware._delivery_tasks), 0)
+
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""
 
