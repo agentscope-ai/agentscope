@@ -4,6 +4,7 @@
 import base64
 from fnmatch import fnmatch
 from typing import Any
+from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
@@ -25,6 +26,7 @@ from ..message import (
 
 def _moonshot_format_media_source(
     source: URLSource | Base64Source,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert an image or video source to Moonshot ``image_url`` or
     ``video_url`` format.
@@ -32,7 +34,20 @@ def _moonshot_format_media_source(
     Moonshot's vision API only accepts base64 data URIs or file IDs — raw
     remote URLs are rejected. This helper downloads remote ``http(s)://``
     URLs and converts them to base64 data URIs, while ``file://`` URLs and
-    ``Base64Source`` go through the same conversion as the OpenAI base.
+    ``Base64Source`` go through the same conversion as the OpenAI base. Extra
+    fields are merged into the nested ``image_url`` or ``video_url``
+    object.
+
+    Args:
+        source (`URLSource | Base64Source`):
+            The image or video source to convert.
+        extra (`dict[str, Any] | None`, optional):
+            Provider-specific media parameters to merge into the nested
+            ``image_url`` or ``video_url`` object.
+
+    Returns:
+        `dict[str, Any]`:
+            A Moonshot image or video content item.
     """
     if isinstance(source, Base64Source):
         url = f"data:{source.media_type};base64,{source.data}"
@@ -40,7 +55,7 @@ def _moonshot_format_media_source(
     elif isinstance(source, URLSource):
         url_str = str(source.url)
         if url_str.startswith("file://"):
-            local_path = url_str.removeprefix("file://")
+            local_path = url2pathname(url_str.removeprefix("file://"))
             with open(local_path, "rb") as f:
                 encoded = base64.b64encode(f.read()).decode("utf-8")
             url = f"data:{source.media_type};base64,{encoded}"
@@ -56,7 +71,10 @@ def _moonshot_format_media_source(
     key = (
         "video_url" if source.media_type.startswith("video/") else "image_url"
     )
-    return {"type": key, key: {"url": url}}
+    payload: dict[str, Any] = {"url": url}
+    if extra:
+        payload.update(extra)
+    return {"type": key, key: payload}
 
 
 class MoonshotChatFormatter(_OpenAIFormatterBase):
@@ -85,8 +103,9 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
     def _format_image_source(
         self,
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return _moonshot_format_media_source(source)
+        return _moonshot_format_media_source(source, extra)
 
     def _format_openai_data_block(
         self,
@@ -97,7 +116,10 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
             fnmatch(media_type, pattern)
             for pattern in self.supported_input_media_types
         ):
-            return _moonshot_format_media_source(block.source)
+            return _moonshot_format_media_source(
+                block.source,
+                block.model_extra,
+            )
         return super()._format_openai_data_block(block)
 
     # pylint: disable=too-many-branches
@@ -139,8 +161,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
                 if isinstance(block, ThinkingBlock):
                     # Preserve reasoning_content for multi-turn
-                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
-                    reasoning_parts.append(block.thinking)
+                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking).
+                    # Skip empty thinking: a redacted ThinkingBlock is
+                    # stored with ``thinking=""``, and emitting it
+                    # alone yields an assistant turn whose content is
+                    # null and which the API rejects.
+                    if block.thinking:
+                        reasoning_parts.append(block.thinking)
 
                 elif isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
@@ -342,8 +369,9 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
     def _format_image_source(
         self,
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return _moonshot_format_media_source(source)
+        return _moonshot_format_media_source(source, extra)
 
     def _format_openai_data_block(
         self,
@@ -354,7 +382,10 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
             fnmatch(media_type, pattern)
             for pattern in self.supported_input_media_types
         ):
-            return _moonshot_format_media_source(block.source)
+            return _moonshot_format_media_source(
+                block.source,
+                block.model_extra,
+            )
         return super()._format_openai_data_block(block)
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:

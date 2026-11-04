@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The lifespan of the agent service."""
+import asyncio
 import socket
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -20,6 +21,7 @@ from ._service import (
     IndexTaskConsumer,
     IndexWorker,
     KnowledgeBaseService,
+    RealtimeService,
     ResourceAccessService,
     SessionService,
     SOPService,
@@ -174,9 +176,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
+            tool_offload_timeout_secs=app.state.tool_offload_timeout_secs,
             channel_clients=channel_clients,
         )
         app.state.chat_service = chat_service
+
+        app.state.realtime_service = RealtimeService(
+            storage=storage,
+            workspace_manager=workspace_manager,
+            scheduler_manager=scheduler,
+            background_task_manager=bg_manager,
+            message_bus=message_bus,
+            resource_access_service=resource_access_service,
+            extra_agent_tools=app.state.extra_agent_tools,
+            custom_subagent_templates=app.state.custom_subagent_templates,
+            channel_clients=channel_clients,
+        )
 
         app.state.session_service = SessionService(
             storage=storage,
@@ -280,6 +295,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 message_bus=message_bus,
                 registry=chat_run_registry,
                 bg_manager=bg_manager,
+                realtime_connections=app.state.realtime_connections,
             ),
         )
 
@@ -288,5 +304,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # when the channel subsystem is enabled.
         if channel_dispatcher is not None:
             await stack.enter_async_context(channel_dispatcher.lifespan())
+
+        async def _close_realtime_connections() -> None:
+            connections = list(app.state.realtime_connections.values())
+            app.state.realtime_connections.clear()
+            if connections:
+                await asyncio.gather(
+                    *(connection.close() for connection in connections),
+                    return_exceptions=True,
+                )
+
+        stack.push_async_callback(_close_realtime_connections)
 
         yield

@@ -18,6 +18,42 @@ from agentscope.model import MiniMaxChatModel
 class MiniMaxTest(IsolatedAsyncioTestCase):
     """Tests for the MiniMax-specific behavior."""
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """Null omits thinking, while booleans send explicit modes."""
+        self.assertIsNone(MiniMaxChatModel.Parameters().thinking_enable)
+        model = MiniMaxChatModel(
+            credential=MiniMaxCredential(api_key="test"),
+            model="MiniMax-M3",
+            stream=False,
+        )
+        response = MagicMock(id="msg-1", content=[])
+        response.usage = MagicMock(input_tokens=1, output_tokens=1)
+        model.client = MagicMock()
+        mock_create = AsyncMock(return_value=response)
+        model.client.messages.create = mock_create
+
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            with self.subTest(params=params):
+                model.parameters = MiniMaxChatModel.Parameters(**params)
+                await model([])
+
+                expected = {
+                    "model": "MiniMax-M3",
+                    "messages": [],
+                    "stream": False,
+                    "max_tokens": 8192,
+                }
+                if params.get("thinking_enable") is False:
+                    expected["thinking"] = {"type": "disabled"}
+                elif params.get("thinking_enable"):
+                    expected["thinking"] = {"type": "adaptive"}
+                self.assertEqual(mock_create.call_args.kwargs, expected)
+
     async def test_request_kwargs(self) -> None:
         """Thinking is sent as adaptive without budget or output config."""
         model = MiniMaxChatModel(

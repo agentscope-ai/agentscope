@@ -53,11 +53,13 @@ def _make_cosyvoice_callback_class() -> type["ResultCallback"]:
             self.finish_event = threading.Event()
             self._pcm_bytes: bytearray = bytearray()
             self._consumed: int = 0
+            self._error: RuntimeError | None = None
 
         def on_open(self) -> None:
             """Handle WebSocket open by resetting audio state."""
             self._pcm_bytes = bytearray()
             self._consumed = 0
+            self._error = None
             self.finish_event.clear()
             self.chunk_event.clear()
 
@@ -81,6 +83,7 @@ def _make_cosyvoice_callback_class() -> type["ResultCallback"]:
         def on_error(self, message: Any) -> None:
             """Handle synthesis error."""
             logger.error("CosyVoice TTS error: %s", message)
+            self._error = RuntimeError(f"CosyVoice TTS error: {message}")
             self.finish_event.set()
             self.chunk_event.set()
 
@@ -102,6 +105,8 @@ def _make_cosyvoice_callback_class() -> type["ResultCallback"]:
             """Return incremental audio delta."""
             if block:
                 self.finish_event.wait()
+            if self._error is not None:
+                raise self._error
             delta = self._take_delta(header=self._consumed == 0)
             if delta:
                 return _build_audio_response(delta, _MEDIA_TYPE)
@@ -113,6 +118,8 @@ def _make_cosyvoice_callback_class() -> type["ResultCallback"]:
             """Yield incremental audio chunks as they arrive."""
             header_sent = self._consumed > 0
             while True:
+                if self._error is not None:
+                    raise self._error
                 if self.finish_event.is_set():
                     delta = self._take_delta(header=not header_sent)
                     if delta:
@@ -149,6 +156,7 @@ def _make_cosyvoice_callback_class() -> type["ResultCallback"]:
             self.chunk_event.clear()
             self._pcm_bytes = bytearray()
             self._consumed = 0
+            self._error = None
 
         def has_audio_data(self) -> bool:
             """Return whether any audio data has been received."""

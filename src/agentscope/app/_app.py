@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
+import json
+import os
 import secrets
+from weakref import WeakValueDictionary
 from typing import Type, TYPE_CHECKING, Any
+
+from pydantic import TypeAdapter
 
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
@@ -10,6 +15,7 @@ from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
+    asr_router,
     agent_router,
     channel_router,
     chat_router,
@@ -20,14 +26,21 @@ from ._router import (
     embedding_model_router,
     mcp_router,
     model_router,
+    realtime_router,
     tts_model_router,
+    voice_profile_router,
     schedule_router,
     session_router,
     skill_router,
     sop_router,
     workspace_router,
 )
-from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
+from ._types import (
+    AgentMiddlewareFactory,
+    AgentToolFactory,
+    RealtimeIceServer,
+    SubAgentTemplate,
+)
 from .channel import ChannelBase, ChannelTypeRegistry
 from .message_bus import MessageBus
 from .storage import StorageBase
@@ -76,6 +89,29 @@ def _index_hubs(hubs: list | None, kind: str) -> dict:
     return indexed
 
 
+def _load_realtime_ice_servers(
+    configured: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Load and validate browser-compatible ICE server dictionaries."""
+    servers: Any = configured
+    if servers is None:
+        raw = os.getenv("AGENTSCOPE_REALTIME_ICE_SERVERS")
+        if not raw:
+            return []
+        try:
+            servers = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "AGENTSCOPE_REALTIME_ICE_SERVERS must be valid JSON.",
+            ) from exc
+
+    validated = TypeAdapter(list[RealtimeIceServer]).validate_python(servers)
+    return [
+        server.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for server in validated
+    ]
+
+
 def create_app(
     storage: StorageBase,
     message_bus: MessageBus,
@@ -94,11 +130,13 @@ def create_app(
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
     extra_agent_tools: AgentToolFactory | None = None,
+    tool_offload_timeout_secs: float | None = 10.0,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
     resource_access_policy: ResourceAccessPolicyBase | None = None,
     channels: list[Type[ChannelBase]] | None = None,
     download_secret: str | None = None,
+    realtime_ice_servers: list[dict[str, Any]] | None = None,
     title: str = "AgentScope",
     version: str = __version__,
     **kwargs: Any,
@@ -274,6 +312,12 @@ def create_app(
             be set explicitly behind a load balancer** — otherwise a
             token minted by one replica is rejected by the next, and
             downloads fail at random.
+        realtime_ice_servers (`list[dict[str, Any]] | None`, optional):
+            STUN and TURN servers exposed to browser WebRTC clients. When
+            omitted, the JSON array in
+            ``AGENTSCOPE_REALTIME_ICE_SERVERS`` is used. The default is an
+            empty list, which permits host candidates without silently
+            sending network metadata to a public STUN service.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to the package version):
@@ -299,6 +343,7 @@ def create_app(
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
+    app.state.tool_offload_timeout_secs = tool_offload_timeout_secs
     app.state.custom_agent_cls = custom_agent_cls
     app.state.resource_access_policy = (
         resource_access_policy or DenyAllResourceAccessPolicy()
@@ -312,6 +357,11 @@ def create_app(
     app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
     app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
     app.state.download_secret = download_secret or secrets.token_urlsafe(32)
+    app.state.realtime_ice_servers = _load_realtime_ice_servers(
+        realtime_ice_servers,
+    )
+    app.state.realtime_connections = {}
+    app.state.realtime_offer_locks = WeakValueDictionary()
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is
@@ -387,6 +437,7 @@ def create_app(
 
     # Built-in routers
     for router in (
+        asr_router,
         agent_router,
         chat_router,
         credential_router,
@@ -400,7 +451,9 @@ def create_app(
         sop_router,
         workspace_router,
         model_router,
+        realtime_router,
         tts_model_router,
+        voice_profile_router,
         embedding_model_router,
         channel_router,
     ):

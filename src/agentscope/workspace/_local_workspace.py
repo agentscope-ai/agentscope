@@ -223,7 +223,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 
@@ -356,7 +358,8 @@ class LocalWorkspace(WorkspaceBase):
 
             # Read and parse SKILL.md
             raw = await self._backend.read_file(skill_md_path)
-            content_str = raw.decode("utf-8")
+            # Strip an optional UTF-8 BOM before parsing front matter.
+            content_str = raw.decode("utf-8-sig")
 
             # Parse frontmatter
             content = frontmatter.loads(content_str)
@@ -650,7 +653,8 @@ class LocalWorkspace(WorkspaceBase):
                 updated_at = 0.0
 
             raw = await self._backend.read_file(skill_md_path)
-            content_str = raw.decode("utf-8")
+            # Strip an optional UTF-8 BOM before parsing front matter.
+            content_str = raw.decode("utf-8-sig")
             content = frontmatter.loads(content_str)
 
             description = content.get("description")
@@ -834,7 +838,9 @@ class LocalWorkspace(WorkspaceBase):
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
-            while dir_name in existing_dir_names:
+            while dir_name in existing_dir_names or os.path.exists(
+                os.path.join(skills_dir, dir_name),
+            ):
                 dir_name = f"{base_dir}_{counter}"
                 counter += 1
 

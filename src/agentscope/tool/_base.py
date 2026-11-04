@@ -319,6 +319,19 @@ class ToolBase(ABC):
         """
         return self.is_read_only
 
+    def get_permission_inputs(
+        self,
+        tool_input: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return the inputs that must each be covered by permission rules.
+
+        Compound tools may split an invocation into individual operations.
+        Deny and ask rules apply when any operation matches; allow rules
+        must cover every operation. Safety checks still receive the
+        original input. The returned list must not be empty.
+        """
+        return [tool_input]
+
     async def match_rule(
         self,
         rule_content: str | None,
@@ -467,8 +480,8 @@ class ToolBase(ABC):
             False
         """
 
-        # Normalize path
-        abs_path = os.path.abspath(os.path.expanduser(file_path))
+        # Resolve symlinks so an alias is judged by its target
+        abs_path = os.path.realpath(os.path.expanduser(file_path))
 
         # Split path into segments
         path_parts = Path(abs_path).parts

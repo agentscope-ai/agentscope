@@ -8,6 +8,81 @@ from agentscope.tool._builtin._bash_parser import BashCommandParser
 from agentscope.tool import Bash
 
 
+class BashPermissionSplitTest(unittest.TestCase):
+    """Verify lossless permission boundaries without executing a shell."""
+
+    def test_subshell_redirection_keeps_scope(self) -> None:
+        """Keep a redirected subshell intact as a single operation."""
+        command = "(cat public.txt && cat public.txt) > private.txt"
+        parser = BashCommandParser()
+        self.assertEqual(parser.split_into_subcommands(command), [command])
+        self.assertEqual(
+            parser.split_into_subcommands(
+                "git status && "
+                "(cat public.txt && cat public.txt) > private.txt",
+            ),
+            ["git status", command],
+        )
+
+    def test_split_preserves_shell_operations(self) -> None:
+        """Keep Unicode, redirects, assignments, and quoted operators."""
+        cases = [
+            ("", [""]),
+            ("   ", ["   "]),
+            (
+                "git add '中文.txt' && git commit -m update",
+                ["git add '中文.txt'", "git commit -m update"],
+            ),
+            (
+                "git add 'ééééé' && curl git -o output.txt",
+                ["git add 'ééééé'", "curl git -o output.txt"],
+            ),
+            (
+                "cat public.txt && cat public.txt > private.txt",
+                ["cat public.txt", "cat public.txt > private.txt"],
+            ),
+            (
+                "git status && > output.txt",
+                ["git status", "> output.txt"],
+            ),
+            (
+                "cat a | cat b > output.txt",
+                ["cat a", "cat b > output.txt"],
+            ),
+            (
+                "git status && X=hello",
+                ["git status", "X=hello"],
+            ),
+            (
+                "git commit -m 'a && b | c' && git status",
+                ["git commit -m 'a && b | c'", "git status"],
+            ),
+            ("git status # comment", ["git status"]),
+            ("git status &&", ["git status &&"]),
+            (
+                "cat <<EOF\nhello\nEOF\ngit status",
+                ["cat <<EOF\nhello\nEOF", "git status"],
+            ),
+        ]
+        parser = BashCommandParser()
+        self.assertEqual(
+            [parser.split_into_subcommands(command) for command, _ in cases],
+            [expected for _, expected in cases],
+        )
+
+    def test_all_command_separators(self) -> None:
+        """Recognize every list and pipeline separator."""
+        parser = BashCommandParser()
+        for separator in (" && ", " || ", "; ", " | ", " |& ", "\n", " & "):
+            command = separator.join(["git status", "curl example.com"])
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    parser.split_into_subcommands(command),
+                    ["git status", "curl example.com"],
+                )
+                self.assertEqual(parser.is_read_only_command(command), False)
+
+
 @unittest.skipIf(
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
@@ -390,6 +465,74 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be non-read-only "
                     f"(contains non-read-only subcommand)",
+                )
+
+    async def test_separator_hidden_commands_not_read_only(self) -> None:
+        """Test newline and ``&`` separators cannot hide mutations."""
+        hidden_commands = [
+            "cat file.txt\nrm -rf /tmp/victim",
+            "cat file.txt\nmkdir new_dir",
+            "cat file.txt & rm -rf /tmp/victim",
+            "cat file.txt & touch file.txt",
+            "ls\nshutdown now",
+            "ls\r\nshutdown now",
+            "cat \u20ac\u20ac\u20ac\nrm -f ls",
+            "cat \u20ac\u20ac\u20ac & rm -f ls",
+        ]
+        for cmd in hidden_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be non-read-only "
+                    f"(contains non-read-only subcommand)",
+                )
+
+    async def test_separator_compound_all_read_only(self) -> None:
+        """Test newline- and ``&``-separated all-read-only compounds."""
+        read_only_commands = [
+            "git status\ngit diff",
+            "cat file1.txt\ncat file2.txt",
+            "git status & git log",
+            "cat file.txt &",
+            "cat caf\u00e9.txt\npwd",
+            "cat caf\u00e9.txt & pwd",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only "
+                    f"(all subcommands are read-only)",
+                )
+
+    async def test_split_compound_command_unicode(self) -> None:
+        """Test compound splitting preserves Unicode command text."""
+        for separator in ["\n", " & "]:
+            for commands in [
+                ["cat \u20ac\u20ac\u20ac", "rm -f ls"],
+                ["cat caf\u00e9.txt", "pwd"],
+            ]:
+                command = separator.join(commands)
+                with self.subTest(command=command):
+                    root = self.parser.parser.parse(
+                        command.encode("utf8"),
+                    ).root_node
+                    self.assertEqual(
+                        self.parser.split_compound_command(root, command),
+                        commands,
+                    )
+
+    async def test_separator_lookalikes_stay_read_only(self) -> None:
+        """Test quoted ``&`` and heredoc newlines are not separators."""
+        read_only_commands = [
+            'grep "a&b" file.txt',
+            "cat <<EOF\nhello world\nEOF",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only",
                 )
 
     async def test_commands_with_output_redirection(self) -> None:
@@ -1040,6 +1183,45 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     self.parser.check_sed_constraints(
                         attached,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_separated_backup_suffix(self) -> None:
+        """A separated dotted -i suffix is a backup suffix, not a script."""
+        cases = [
+            (
+                "sed -i .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .orig 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed --in-place .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -i bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                # A dot inside a script keeps the token unconsumed.
+                "sed -i '/example.com/d' notes.txt",
+                "sed expression '/example.com/d' not in allowlist",
+            ),
+        ]
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        cmd,
                         self.dangerous_files,
                     ),
                     expected,

@@ -2,6 +2,7 @@
 """Budget control middleware for AgentScope agents."""
 from typing import AsyncGenerator, Callable, TYPE_CHECKING
 
+from ..agent._structured_output_tool import _GenerateStructuredOutput
 from ..event import ModelCallEndEvent, ReplyStartEvent
 from ..message import AssistantMsg, HintBlock
 from ..tool import ToolChoice
@@ -17,6 +18,50 @@ _DEFAULT_HINT_MESSAGE = (
     "</system-reminder>"
 )
 
+_STRUCTURED_OUTPUT_HINT_MESSAGE = (
+    "<system-reminder>You have reached the maximum token budget set by the "
+    "user. Now you MUST wrap up immediately by calling the '{tool_name}' "
+    "tool with the final structured output, without invoking any other "
+    "tools.</system-reminder>"
+)
+
+# Marks the wrap-up hints this middleware injects. They live in the persisted
+# context, so a new reply -- which starts with a fresh budget and no forced
+# tool_choice -- has to be able to find and retire the previous reply's hints.
+_BUDGET_HINT_SOURCE = (
+    '{"label": "System", "sublabel": "Reply Budget Exhausted"}'
+)
+
+
+def _retire_budget_hints(agent: "Agent") -> None:
+    """Remove wrap-up hints this middleware injected for an earlier reply.
+
+    Only hints carrying :data:`_BUDGET_HINT_SOURCE` are removed, so hints from
+    other middleware, and every message that still has real content, stay put.
+    A message left with no content at all was created solely to carry the hint
+    and is dropped with it.
+    """
+    context = agent.state.context
+    kept = []
+    for message in context:
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            remaining = [
+                block
+                for block in content
+                if not (
+                    isinstance(block, HintBlock)
+                    and block.source == _BUDGET_HINT_SOURCE
+                )
+            ]
+            if len(remaining) != len(content):
+                if not remaining:
+                    continue
+                message.content = remaining
+        kept.append(message)
+    if len(kept) != len(context):
+        context[:] = kept
+
 
 class ReplyBudgetControlMiddleware(MiddlewareBase):
     """Middleware that enforces a weighted token budget per reply.
@@ -30,7 +75,8 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
     Once the accumulated cost reaches ``token_budget``, a hint message is
     injected into the agent's context before the next reasoning step, and
     ``tool_choice`` is forced to ``"none"`` so the agent wraps up without
-    invoking any further tools.
+    invoking any further tools. A reply that still owes a structured output
+    is offered only the structured output tool instead.
 
     Budget state is stored in
     :attr:`~agentscope.agent.AgentState.middle_context`
@@ -123,6 +169,9 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
         async for event in next_handler(**input_kwargs):
             if isinstance(event, ReplyStartEvent):
+                # A new reply starts with a fresh budget, so the previous
+                # reply's wrap-up instruction must not leak into it.
+                _retire_budget_hints(agent)
                 # Start counting for this reply, dropping the previous one.
                 # Not cleaned on ReplyEndEvent: an outer middleware may
                 # swallow it and the same reply then keeps spending tokens
@@ -153,7 +202,9 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
         :class:`~agentscope.message.HintBlock` to the last assistant message
         in context (or creates a new
         :class:`~agentscope.message.AssistantMsg`) and overrides
-        ``tool_choice`` to ``ToolChoice(mode="none")``.
+        ``tool_choice`` to ``ToolChoice(mode="none")``, or, while a
+        structured output is still owed, restricts it to the structured
+        output tool.
 
         Args:
             agent (`Agent`):
@@ -177,7 +228,21 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
 
         # Insert hint block if exceeded budget
         if used >= self.token_budget:
-            hint_block = HintBlock(hint=self.hint_message)
+            # A structured reply can only end by calling this tool
+            tool_name = _GenerateStructuredOutput.name
+            reply_context = agent.state.reply_context
+            structured_output_pending = (
+                reply_context.structured_schema is not None
+                and reply_context.structured_output is None
+            )
+            hint_block = HintBlock(
+                hint=(
+                    _STRUCTURED_OUTPUT_HINT_MESSAGE.format(tool_name=tool_name)
+                    if structured_output_pending
+                    else self.hint_message
+                ),
+                source=_BUDGET_HINT_SOURCE,
+            )
             if (
                 len(agent.state.context) > 0
                 and agent.state.context[-1].role == "assistant"
@@ -193,7 +258,17 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
                         content=[hint_block],
                     ),
                 )
-            input_kwargs["tool_choice"] = ToolChoice(mode="none")
+            if structured_output_pending:
+                # Don't force it unless the agent did: providers reject a
+                # forced tool_choice in thinking mode
+                tool_choice = input_kwargs.get("tool_choice")
+                forced = getattr(tool_choice, "mode", None) == tool_name
+                input_kwargs["tool_choice"] = ToolChoice(
+                    mode=tool_name if forced else "auto",
+                    tools=[tool_name],
+                )
+            else:
+                input_kwargs["tool_choice"] = ToolChoice(mode="none")
 
         async for event in next_handler(**input_kwargs):
             yield event
