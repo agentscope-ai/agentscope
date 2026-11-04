@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 import unittest
+from typing import AsyncIterator
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -192,6 +193,119 @@ class TestLocalBackendFileIO(IsolatedAsyncioTestCase):
         payload = b"a\r\nb\x00\xffc"
         await self.backend.write_file(path, payload)
         self.assertEqual(await self.backend.read_file(path), payload)
+
+    async def test_write_stream_writes_chunks_in_order(self) -> None:
+        """Streamed chunks land in the destination in order."""
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield b"hello\n"
+            yield b"world\n"
+
+        path = os.path.join(self.temp_dir.name, "stream.txt")
+        await self.backend.write_stream(path, chunks())
+        self.assertEqual(await self.backend.read_file(path), b"hello\nworld\n")
+
+    async def test_failed_write_stream_preserves_existing_file(self) -> None:
+        """A stream that fails mid-way must not touch the old bytes."""
+
+        async def failing() -> AsyncIterator[bytes]:
+            yield b"partial replacement"
+            raise OSError("upload source failed")
+
+        path = os.path.join(self.temp_dir.name, "doc.txt")
+        await self.backend.write_file(path, b"original complete document")
+
+        with self.assertRaisesRegex(OSError, "upload source failed"):
+            await self.backend.write_stream(path, failing())
+
+        self.assertEqual(
+            await self.backend.read_file(path),
+            b"original complete document",
+        )
+        self.assertEqual(os.listdir(self.temp_dir.name), ["doc.txt"])
+
+    async def test_failed_write_stream_leaves_no_new_file(self) -> None:
+        """A failed first write must not publish a partial file."""
+
+        async def failing() -> AsyncIterator[bytes]:
+            yield b"partial replacement"
+            raise OSError("upload source failed")
+
+        path = os.path.join(self.temp_dir.name, "new.txt")
+        with self.assertRaisesRegex(OSError, "upload source failed"):
+            await self.backend.write_stream(path, failing())
+
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(os.listdir(self.temp_dir.name), [])
+
+    async def test_failed_publication_preserves_existing_file(self) -> None:
+        """A failure while publishing leaves the destination alone."""
+        path = os.path.join(self.temp_dir.name, "doc.txt")
+        await self.backend.write_file(path, b"original complete document")
+
+        with mock.patch(
+            "agentscope.tool._builtin._backend.os.replace",
+            side_effect=OSError("disk full"),
+        ):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                await self.backend.write_file(path, b"new content")
+
+        self.assertEqual(
+            await self.backend.read_file(path),
+            b"original complete document",
+        )
+        self.assertEqual(os.listdir(self.temp_dir.name), ["doc.txt"])
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX permissions only")
+    async def test_write_keeps_existing_file_mode(self) -> None:
+        """Publishing does not silently widen an existing file's mode."""
+        path = os.path.join(self.temp_dir.name, "secret.txt")
+        await self.backend.write_file(path, b"one")
+        os.chmod(path, 0o640)
+
+        await self.backend.write_file(path, b"two")
+
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o640)
+
+    @unittest.skipIf(sys.platform == "win32", "symlinks need extra privileges")
+    async def test_write_follows_symlinked_destination(self) -> None:
+        """Writing through a symlink updates the target, not the link."""
+        target = os.path.join(self.temp_dir.name, "target.txt")
+        link = os.path.join(self.temp_dir.name, "link.txt")
+        await self.backend.write_file(target, b"one")
+        os.symlink(target, link)
+
+        await self.backend.write_file(link, b"two")
+
+        self.assertTrue(os.path.islink(link))
+        self.assertEqual(await self.backend.read_file(target), b"two")
+
+    @unittest.skipUnless(
+        sys.platform == "win32",
+        "Windows refuses to replace an open file",
+    )
+    async def test_write_retries_a_transient_permission_error(self) -> None:
+        """A reader holding the file open does not fail the write."""
+        path = os.path.join(self.temp_dir.name, "retry.txt")
+        await self.backend.write_file(path, b"one")
+
+        real_replace = os.replace
+        calls = {"count": 0}
+
+        def flaky_replace(src: str, dst: str) -> None:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise PermissionError("file is open")
+            real_replace(src, dst)
+
+        with mock.patch(
+            "agentscope.tool._builtin._backend.os.replace",
+            side_effect=flaky_replace,
+        ):
+            await self.backend.write_file(path, b"two")
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(await self.backend.read_file(path), b"two")
 
     async def test_read_missing_file_raises(self) -> None:
         """Reading a non-existent file raises ``FileNotFoundError``."""

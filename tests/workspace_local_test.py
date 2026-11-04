@@ -1051,6 +1051,40 @@ This skill is added through a tilde path.
         actual_skills = [asdict(skill) for skill in skills_sorted]
         self.assertListEqual(actual_skills, expected_skills)
 
+    async def test_list_skills_leaves_index_untouched(self) -> None:
+        """Listing skills repeatedly must not rewrite the .index file.
+
+        The partition directory's mtime is the index's own validity
+        fingerprint, so a save that bumps it makes every ``list_skills``
+        call reconcile and rewrite the index again.
+        """
+        skill_dir = self._create_test_skill(
+            "stable_skill",
+            "A skill listed more than once",
+        )
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill_dir],
+        )
+        await workspace.initialize()
+
+        # The first listing equips the partition; the second settles the
+        # index after its own creation.
+        await workspace.list_skills()
+        self.assertEqual(len(await workspace.list_skills()), 1)
+
+        partition = os.path.join(self.temp_dir.name, "skills", "default")
+        index_path = os.path.join(partition, ".index")
+        self.assertTrue(os.path.exists(index_path))
+        index_mtime = os.stat(index_path).st_mtime_ns
+        partition_mtime = os.stat(partition).st_mtime_ns
+
+        for _ in range(3):
+            self.assertEqual(len(await workspace.list_skills()), 1)
+
+        self.assertEqual(os.stat(index_path).st_mtime_ns, index_mtime)
+        self.assertEqual(os.stat(partition).st_mtime_ns, partition_mtime)
+
     async def test_list_skills_empty(self) -> None:
         """Test listing skills when no skills exist.
 
