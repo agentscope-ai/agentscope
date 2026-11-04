@@ -294,7 +294,9 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         sop = SOP(
             name="demo",
             description="d",
-            steps=[SOPStep("A", "do a", executor, verifier)],
+            steps=[
+                SOPStep("A", "do a", executor, verifier, max_attempts=2),
+            ],
         )
         engine = SOPEngine(sop)
 
@@ -302,7 +304,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(engine.phase, SOPPhase.COMPLETED)
         self.assertIn("amount wrong", str(executor.asked[1]))
-        self.assertIn("attempt 2 of 3", str(executor.asked[1]))
+        self.assertIn("attempt 2 of 2", str(executor.asked[1]))
         self.assertListEqual(
             [_.model_dump() for _ in engine.state.steps[0].verifications],
             [
@@ -350,14 +352,65 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
         )
         engine = SOPEngine(sop)
 
-        await self._drive(engine, UserMsg(name="user", content="go"))
+        events = await self._drive(engine, UserMsg(name="user", content="go"))
 
         self.assertEqual(engine.phase, SOPPhase.FAILED)
+        self.assertListEqual(
+            [
+                event.value
+                for event in events
+                if isinstance(event, CustomEvent)
+                and event.name == "SOP_STEP_ENDED"
+            ],
+            [
+                {"step": "A", "phase": "pending"},
+                {"step": "A", "phase": "failed"},
+            ],
+        )
         # The step behind a failure was never reached.
         self.assertListEqual(
             [_.phase for _ in engine.state.steps],
             [SOPPhase.FAILED, SOPPhase.PENDING],
         )
+
+    async def test_exhausted_attempt_is_settled_at_the_ending_event(
+        self,
+    ) -> None:
+        """An ending-event checkpoint cannot restart an exhausted step."""
+        executor = _Scripted("ex", [[_finished("ex", {"handover": "draft"})]])
+        verifier = _Scripted("ve", [[_finished("ve", {"passed": False})]])
+        sop = SOP(
+            name="demo",
+            steps=[
+                SOPStep("A", "do a", executor, verifier, max_attempts=1),
+            ],
+        )
+        engine = SOPEngine(sop)
+        checkpoint = ""
+        stream = engine.reply_stream(UserMsg(name="user", content="go"))
+        try:
+            async for event in stream:
+                if (
+                    isinstance(event, CustomEvent)
+                    and event.name == "SOP_STEP_ENDED"
+                ):
+                    self.assertDictEqual(
+                        event.value,
+                        {"step": "A", "phase": "failed"},
+                    )
+                    self.assertEqual(engine.phase, SOPPhase.FAILED)
+                    checkpoint = engine.state.model_dump_json()
+                    break
+        finally:
+            await stream.aclose()
+
+        self.assertTrue(checkpoint)
+        restored = SOPEngine(sop, SOPRunState.model_validate_json(checkpoint))
+        self.assertListEqual(await self._drive(restored), [])
+        self.assertEqual(restored.phase, SOPPhase.FAILED)
+        self.assertEqual(len(restored.state.steps[0].verifications), 1)
+        self.assertEqual(len(executor.asked), 1)
+        self.assertEqual(len(verifier.asked), 1)
 
     async def test_parking_in_the_executor_ends_the_stream(self) -> None:
         """A parked run lets go, and picks up where it stopped."""
