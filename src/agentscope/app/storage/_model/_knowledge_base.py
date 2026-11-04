@@ -84,6 +84,12 @@ class KnowledgeBaseData(BaseModel):
     )
     """The vector store collection name (e.g. ``kb_<uuid_hex>``)."""
 
+    reindex_id: str | None = None
+    """Latest chunker-change batch, shared with its document records."""
+
+    reindex_pending: bool = False
+    """Whether documents still need to be dispatched for this batch."""
+
 
 class KnowledgeBaseRecord(_RecordBase):
     """A persisted knowledge base record.

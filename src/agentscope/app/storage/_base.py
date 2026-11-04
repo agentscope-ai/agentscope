@@ -951,6 +951,16 @@ class StorageBase(ABC):
                 All knowledge base records belonging to the user.
         """
 
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Return knowledge bases with unfinished reindex dispatch.
+
+        Backends supporting chunker updates must implement this scan
+        so the index sweeper can resume dispatch after a process crash.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def delete_knowledge_base(
         self,

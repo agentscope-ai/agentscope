@@ -43,6 +43,7 @@ from ._access import (
     KnowledgeBaseView,
     ResourceAccessService,
 )
+from ._knowledge_reindex import resume_knowledge_base_reindex
 
 
 _IN_FLIGHT_DOCUMENT_STATUSES = {
@@ -346,6 +347,13 @@ class KnowledgeBaseService:
                 chunker_config,
             )
             if chunker_changed:
+                if current.data.reindex_pending:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "The previous reindex is still being dispatched."
+                        ),
+                    )
                 documents = await self._storage.list_knowledge_documents(
                     owner_id,
                     knowledge_base_id,
@@ -370,6 +378,7 @@ class KnowledgeBaseService:
             name=name,
             description=description,
             chunker_config=chunker_config,
+            reindex_id=uuid.uuid4().hex if chunker_changed else None,
         )
         if record is None:
             raise HTTPException(
@@ -377,24 +386,11 @@ class KnowledgeBaseService:
                 detail=f"Knowledge base {knowledge_base_id!r} not found.",
             )
 
-        if chunker_changed:
-            for document in documents:
-                document.status = "pending"
-                document.processing_node = None
-                document.lease_expires_at = None
-                document.data.error = None
-                document.data.chunk_count = 0
-                await self._storage.upsert_knowledge_document(
-                    owner_id,
-                    document,
-                )
-                await enqueue_index_task(
-                    self._bus,
-                    user_id=owner_id,
-                    knowledge_base_id=knowledge_base_id,
-                    document_id=document.id,
-                )
-        return record
+        return await resume_knowledge_base_reindex(
+            self._storage,
+            self._bus,
+            record,
+        )
 
     def _validate_chunker_config(
         self,
@@ -425,7 +421,7 @@ class KnowledgeBaseService:
     ) -> bool:
         """Compare effective parameters, including schema defaults."""
         if current is None:
-            current = self._default_chunker_config()
+            current = ChunkerConfig(type=ApproxTokenChunker.chunker_type)
         if current.type != requested.type:
             return False
         chunker_cls = self._chunkers_by_type.get(current.type)
@@ -460,6 +456,23 @@ class KnowledgeBaseService:
         manager + storage cascade would otherwise orphan them.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                owner_id,
+                knowledge_base_id,
+            ),
+        ):
+            await self._delete_knowledge_base_locked(
+                owner_id,
+                knowledge_base_id,
+            )
+
+    async def _delete_knowledge_base_locked(
+        self,
+        owner_id: str,
+        knowledge_base_id: str,
+    ) -> None:
+        """Delete the KB while excluding configuration and upload writes."""
         documents = await self._storage.list_knowledge_documents(
             owner_id,
             knowledge_base_id,
@@ -554,6 +567,16 @@ class KnowledgeBaseService:
             ),
         ):
             try:
+                knowledge_base = await self._manager.get_knowledge_base(
+                    owner_id,
+                    knowledge_base_id,
+                )
+                if knowledge_base is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="The knowledge base no longer exists.",
+                    )
+                record.data.reindex_id = knowledge_base.data.reindex_id
                 stored = await self._storage.upsert_knowledge_document(
                     owner_id,
                     record,
@@ -910,6 +933,25 @@ class KnowledgeBaseService:
                 caller; ``403`` if visible but not editable.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                owner_id,
+                knowledge_base_id,
+            ),
+        ):
+            await self._delete_document_locked(
+                owner_id,
+                knowledge_base_id,
+                document_id,
+            )
+
+    async def _delete_document_locked(
+        self,
+        owner_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
+        """Delete a document while excluding reindex resets."""
         record = await self._storage.get_knowledge_document(
             owner_id,
             knowledge_base_id,
@@ -920,7 +962,10 @@ class KnowledgeBaseService:
             # document is already gone.
             return
 
-        knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
+        knowledge = await self._manager.get_knowledge(
+            owner_id,
+            knowledge_base_id,
+        )
         await knowledge.delete_document(document_id)
         await self._storage.delete_knowledge_document(
             owner_id,

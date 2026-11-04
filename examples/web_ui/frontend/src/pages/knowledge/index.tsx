@@ -45,11 +45,12 @@ import { useKnowledgeBases } from '@/hooks/useKnowledgeBases.ts';
 
 interface DetailPanelProps {
 	knowledgeBase?: KnowledgeBaseView;
+	documentRefreshKey: number;
 	onTest?: () => void;
 	onEdit?: () => void;
 }
 
-function DetailPanel({ knowledgeBase, onTest, onEdit }: DetailPanelProps) {
+function DetailPanel({ knowledgeBase, documentRefreshKey, onTest, onEdit }: DetailPanelProps) {
 	const { t } = useTranslation();
 
 	if (!knowledgeBase) {
@@ -98,7 +99,10 @@ function DetailPanel({ knowledgeBase, onTest, onEdit }: DetailPanelProps) {
 			<div className="min-h-0 flex-1 overflow-y-auto p-[20px_18px_24px]">
 				<div className="flex flex-col gap-y-6">
 					<ConfigCard knowledgeBase={knowledgeBase} onEdit={onEdit} />
-					<KnowledgeDocumentsPanel knowledgeBaseId={knowledgeBase.id} />
+					<KnowledgeDocumentsPanel
+						key={`${knowledgeBase.id}:${documentRefreshKey}`}
+						knowledgeBaseId={knowledgeBase.id}
+					/>
 				</div>
 			</div>
 		</div>
@@ -209,6 +213,7 @@ export const KnowledgePage = () => {
 	const [editTarget, setEditTarget] = useState<KnowledgeBaseView | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<KnowledgeBaseView | null>(null);
 	const [testOpen, setTestOpen] = useState(false);
+	const [documentRefreshKey, setDocumentRefreshKey] = useState(0);
 
 	const selectedKb = knowledgeBases.find((kb) => kb.id === selectedKbId);
 
@@ -353,6 +358,7 @@ export const KnowledgePage = () => {
 			<main className="flex-1 min-h-0 overflow-hidden rounded-[22px] bg-card shadow-panel">
 				<DetailPanel
 					knowledgeBase={selectedKb}
+					documentRefreshKey={documentRefreshKey}
 					onTest={() => setTestOpen(true)}
 					onEdit={selectedKb ? () => setEditTarget(selectedKb) : undefined}
 				/>
@@ -375,7 +381,10 @@ export const KnowledgePage = () => {
 					if (!open) setEditTarget(null);
 				}}
 				knowledgeBase={editTarget}
-				onUpdated={() => refetch()}
+				onUpdated={() => {
+					setDocumentRefreshKey((key) => key + 1);
+					void refetch();
+				}}
 			/>
 			<DeleteDialog
 				open={deleteTarget !== null}

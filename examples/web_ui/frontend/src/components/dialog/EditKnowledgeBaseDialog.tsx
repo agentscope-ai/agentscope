@@ -119,7 +119,7 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 				...formValues(current.parameters),
 			});
 		} else if (chunkers.length > 0) {
-			handleSelectChunker(chunkers[0].type);
+			handleSelectChunker('approx_token');
 		} else {
 			setSelectedChunkerType('');
 			setChunkerParams({});
@@ -171,7 +171,7 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 			const view = await update(knowledgeBase.id, {
 				name: trimmedName,
 				description: description.trim(),
-				...(selectedChunkerType
+				...(chunkerChanged
 					? {
 							chunker_config: {
 								type: selectedChunkerType,

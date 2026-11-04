@@ -209,6 +209,7 @@ class KnowledgeBaseManagerBase(ABC):
         name: str | None = None,
         description: str | None = None,
         chunker_config: "ChunkerConfig | None" = None,
+        reindex_id: str | None = None,
     ) -> "KnowledgeBaseRecord | None":
         """Update mutable fields on an existing knowledge base record.
 
@@ -229,6 +230,8 @@ class KnowledgeBaseManagerBase(ABC):
                 unchanged.
             chunker_config (`ChunkerConfig | None`, optional):
                 New chunker configuration; ``None`` leaves it unchanged.
+            reindex_id (`str | None`, optional):
+                New batch to persist atomically with its configuration.
 
         Returns:
             `KnowledgeBaseRecord | None`:
@@ -247,6 +250,9 @@ class KnowledgeBaseManagerBase(ABC):
             record.data.description = description
         if chunker_config is not None:
             record.data.chunker_config = chunker_config
+        if reindex_id is not None:
+            record.data.reindex_id = reindex_id
+            record.data.reindex_pending = True
         return await self._storage.upsert_knowledge_base(user_id, record)
 
     @abstractmethod

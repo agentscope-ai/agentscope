@@ -3,6 +3,7 @@
 """Unit tests for knowledge-base chunker configuration updates."""
 import asyncio
 import tempfile
+from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -19,6 +20,7 @@ from service_knowledge_base_upload_test import (
 
 from agentscope.app._service._access import ResourceAccessService
 from agentscope.app._service._knowledge_base import KnowledgeBaseService
+from agentscope.app._service._index_sweeper import IndexSweeper
 from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.rag.blob_store import LocalBlobStore
@@ -100,6 +102,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         """Persist one document with deliberately stale result metadata."""
         record = KnowledgeDocumentRecord(
             id=document_id,
+            created_at=datetime.now() - timedelta(days=1),
             user_id="user-1",
             knowledge_base_id=self._knowledge_base_id,
             status=document_status,
@@ -389,8 +392,8 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(queued, [])
 
-    async def test_default_chunker_follows_configured_order(self) -> None:
-        """Legacy records use the same default as the create path."""
+    async def test_legacy_chunker_matches_worker_default(self) -> None:
+        """Legacy defaults do not change with the registration order."""
         service = KnowledgeBaseService(
             storage=self._storage,
             knowledge_base_manager=self._manager,
@@ -403,15 +406,375 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             chunkers=[_AlternateApproxTokenChunker, ApproxTokenChunker],
         )
 
-        matches = service._chunker_configs_match(
-            None,
-            ChunkerConfig(
-                type="alternate_approx_token",
-                parameters={},
+        self.assertEqual(
+            (
+                service._chunker_configs_match(
+                    None,
+                    ChunkerConfig(type="alternate_approx_token"),
+                ),
+                service._chunker_configs_match(
+                    None,
+                    ChunkerConfig(type="approx_token"),
+                ),
+                service._default_chunker_config(),
             ),
+            (False, True, ChunkerConfig(type="alternate_approx_token")),
         )
 
-        self.assertEqual(matches, True)
+        record = await self._storage.get_knowledge_base(
+            "user-1",
+            self._knowledge_base_id,
+        )
+        record.data.chunker_config = None
+        await self._storage.upsert_knowledge_base("user-1", record)
+        await self._store_document("doc-legacy", "ready")
+        await service.update_knowledge_base(
+            "user-1",
+            self._knowledge_base_id,
+            chunker_config=ChunkerConfig(type="alternate_approx_token"),
+        )
+        await self._assert_dispatched(["doc-legacy"])
+
+    async def _assert_dispatched(self, document_ids: list[str]) -> None:
+        """Assert the complete dispatch payload and recovery marker."""
+        queued = await self._bus.queue_drain(
+            MessageBusKeys.index_tasks_queue(),
+        )
+        self.assertEqual(
+            sorted((payload for _, payload in queued), key=str),
+            sorted(
+                [
+                    {
+                        "user_id": "user-1",
+                        "knowledge_base_id": self._knowledge_base_id,
+                        "document_id": document_id,
+                    }
+                    for document_id in document_ids
+                ],
+                key=str,
+            ),
+        )
+        self.assertEqual(
+            await self._storage.list_pending_knowledge_base_reindexes(),
+            [],
+        )
+
+    async def test_retry_recovers_enqueue_failure(self) -> None:
+        """The same PATCH resumes even after its config was persisted."""
+        await self._store_document("doc-a", "ready")
+        await self._store_document("doc-b", "ready")
+        requested = ChunkerConfig(type="alternate_approx_token")
+        with patch.object(
+            self._bus,
+            "queue_push",
+            side_effect=RuntimeError("queue unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "queue unavailable"):
+                await self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=requested,
+                )
+
+        stored = await self._storage.get_knowledge_base(
+            "user-1",
+            self._knowledge_base_id,
+        )
+        self.assertEqual(
+            (stored.data.chunker_config, stored.data.reindex_pending),
+            (requested, True),
+        )
+        await self._service.update_knowledge_base(
+            "user-1",
+            self._knowledge_base_id,
+            chunker_config=requested,
+        )
+        await self._assert_dispatched(["doc-a", "doc-b"])
+        documents = await self._storage.list_knowledge_documents(
+            "user-1",
+            self._knowledge_base_id,
+        )
+        self.assertEqual(
+            sorted(
+                (doc.id, doc.status, doc.data.reindex_id) for doc in documents
+            ),
+            [
+                ("doc-a", "pending", stored.data.reindex_id),
+                ("doc-b", "pending", stored.data.reindex_id),
+            ],
+        )
+
+    async def test_sweeper_recovers_write_failure_without_repeating_work(
+        self,
+    ) -> None:
+        """A completed document survives recovery of a partial batch."""
+        await self._store_document("doc-a", "ready")
+        await self._store_document("doc-b", "ready")
+        original_upsert = self._storage.upsert_knowledge_document
+        writes = 0
+
+        async def fail_second_write(
+            user_id: str,
+            record: KnowledgeDocumentRecord,
+        ) -> KnowledgeDocumentRecord:
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise RuntimeError("storage unavailable")
+            return await original_upsert(user_id, record)
+
+        with patch.object(
+            self._storage,
+            "upsert_knowledge_document",
+            new=fail_second_write,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "storage unavailable"):
+                await self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=ChunkerConfig(
+                        type="alternate_approx_token",
+                    ),
+                )
+
+        queued = await self._bus.queue_drain(
+            MessageBusKeys.index_tasks_queue(),
+        )
+        self.assertEqual(len(queued), 1)
+        completed_id = queued[0][1]["document_id"]
+        remaining_id = ({"doc-a", "doc-b"} - {completed_id}).pop()
+        await self._storage.update_knowledge_document_status(
+            "user-1",
+            self._knowledge_base_id,
+            completed_id,
+            "ready",
+            chunk_count=9,
+        )
+        completed = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            completed_id,
+        )
+        sweeper = IndexSweeper(self._storage, self._bus)
+        await sweeper._sweep_once()
+        await self._assert_dispatched([remaining_id])
+        self.assertEqual(
+            await self._storage.get_knowledge_document(
+                "user-1",
+                self._knowledge_base_id,
+                completed_id,
+            ),
+            completed,
+        )
+
+    async def test_delete_waits_for_reindex_and_is_not_resurrected(
+        self,
+    ) -> None:
+        """Deleting a document cannot interleave with batch resets."""
+        await self._store_document("doc-delete", "ready")
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original = self._manager.update_knowledge_base
+
+        async def blocking_update(**kwargs: Any) -> KnowledgeBaseRecord:
+            entered.set()
+            await release.wait()
+            return await original(**kwargs)
+
+        with patch.object(
+            self._manager,
+            "update_knowledge_base",
+            new=blocking_update,
+        ):
+            update = asyncio.create_task(
+                self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=ChunkerConfig(
+                        type="alternate_approx_token",
+                    ),
+                ),
+            )
+            await asyncio.wait_for(entered.wait(), 1)
+            deletion = asyncio.create_task(
+                self._service.delete_document(
+                    "user-1",
+                    self._knowledge_base_id,
+                    "doc-delete",
+                ),
+            )
+            await asyncio.sleep(0)
+            self.assertFalse(deletion.done())
+            release.set()
+            await asyncio.wait_for(asyncio.gather(update, deletion), 1)
+
+        await IndexSweeper(self._storage, self._bus)._sweep_once()
+        self.assertEqual(
+            await self._storage.list_knowledge_documents(
+                "user-1",
+                self._knowledge_base_id,
+            ),
+            [],
+        )
+
+    async def test_deleted_document_is_skipped_by_recovery(self) -> None:
+        """Recovery reads live documents, not a stored stale snapshot."""
+        await self._store_document("doc-delete", "ready")
+        with patch.object(
+            self._bus,
+            "queue_push",
+            side_effect=RuntimeError("queue unavailable"),
+        ):
+            with self.assertRaises(RuntimeError):
+                await self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=ChunkerConfig(
+                        type="alternate_approx_token",
+                    ),
+                )
+        await self._service.delete_document(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-delete",
+        )
+        await IndexSweeper(self._storage, self._bus)._sweep_once()
+        await self._assert_dispatched([])
+        self.assertEqual(
+            await self._storage.list_knowledge_documents(
+                "user-1",
+                self._knowledge_base_id,
+            ),
+            [],
+        )
+
+    async def test_completed_batch_recovers_failed_final_commit(self) -> None:
+        """A lost completion write does not redo already indexed work."""
+        await self._store_document("doc-ready", "ready")
+        original_upsert = self._storage.upsert_knowledge_base
+
+        async def fail_completion(
+            user_id: str,
+            record: KnowledgeBaseRecord,
+        ) -> KnowledgeBaseRecord:
+            if not record.data.reindex_pending:
+                raise RuntimeError("completion write failed")
+            return await original_upsert(user_id, record)
+
+        with patch.object(
+            self._storage,
+            "upsert_knowledge_base",
+            new=fail_completion,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "completion write"):
+                await self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=ChunkerConfig(
+                        type="alternate_approx_token",
+                    ),
+                )
+        await self._bus.queue_drain(MessageBusKeys.index_tasks_queue())
+        await self._storage.update_knowledge_document_status(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-ready",
+            "ready",
+            chunk_count=7,
+        )
+        completed = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-ready",
+        )
+        await IndexSweeper(self._storage, self._bus)._sweep_once()
+        await self._assert_dispatched([])
+        self.assertEqual(
+            await self._storage.get_knowledge_document(
+                "user-1",
+                self._knowledge_base_id,
+                "doc-ready",
+            ),
+            completed,
+        )
+
+    async def test_deleted_knowledge_base_is_not_recovered(self) -> None:
+        """A sweeper's stale scan cannot recreate a deleted KB."""
+        await self._store_document("doc-ready", "ready")
+        with patch.object(
+            self._bus,
+            "queue_push",
+            side_effect=RuntimeError("queue unavailable"),
+        ):
+            with self.assertRaises(RuntimeError):
+                await self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=ChunkerConfig(
+                        type="alternate_approx_token",
+                    ),
+                )
+        scanned = await self._storage.list_pending_knowledge_base_reindexes()
+        self.assertEqual(len(scanned), 1)
+        await self._service.delete_knowledge_base(
+            "user-1",
+            self._knowledge_base_id,
+        )
+        with patch.object(
+            self._storage,
+            "list_pending_knowledge_base_reindexes",
+            return_value=scanned,
+        ):
+            await IndexSweeper(self._storage, self._bus)._sweep_once()
+        await self._assert_dispatched([])
+        self.assertEqual(
+            await self._storage.get_knowledge_base(
+                "user-1",
+                self._knowledge_base_id,
+            ),
+            None,
+        )
+
+    async def test_upload_rechecks_deleted_knowledge_base(self) -> None:
+        """An upload waiting for the lock cannot create orphan records."""
+        original_write = self._service._blob_store.write_stream
+        blob_uris: list[str] = []
+
+        async def delete_after_blob_write(**kwargs: Any) -> str:
+            blob_uri = await original_write(**kwargs)
+            blob_uris.append(blob_uri)
+            await self._service.delete_knowledge_base(
+                "user-1",
+                self._knowledge_base_id,
+            )
+            return blob_uri
+
+        with patch.object(
+            self._service._blob_store,
+            "write_stream",
+            new=delete_after_blob_write,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await self._service.register_document(
+                    "user-1",
+                    self._knowledge_base_id,
+                    "upload.txt",
+                    BytesIO(b"content"),
+                    7,
+                    "text/plain",
+                )
+        self.assertEqual(raised.exception.status_code, 404)
+        self.assertEqual(
+            await self._storage.list_knowledge_documents(
+                "user-1",
+                self._knowledge_base_id,
+            ),
+            [],
+        )
+        self.assertEqual(
+            await self._service._blob_store.exists(blob_uris[0]),
+            False,
+        )
 
     async def test_in_flight_document_rejects_changed_chunker(self) -> None:
         """A concurrent index pass blocks configuration replacement."""

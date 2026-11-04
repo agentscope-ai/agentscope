@@ -19,6 +19,8 @@ need no dialect-specific timezone handling.
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
+import sqlalchemy
+
 from .._base import StorageBase
 from .._model import (
     AgentRecord,
@@ -1752,6 +1754,26 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .all()
             )
         return [_to_record(r, KnowledgeBaseRecord) for r in rows]
+
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Return unfinished batches stored in the KB JSON payload."""
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        sqlalchemy.select(KnowledgeBaseRow).where(
+                            KnowledgeBaseRow.payload["data"]["reindex_pending"]
+                            .as_boolean()
+                            .is_(True),
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(row, KnowledgeBaseRecord) for row in rows]
 
     async def delete_knowledge_base(
         self,

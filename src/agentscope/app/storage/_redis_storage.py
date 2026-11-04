@@ -118,6 +118,7 @@ class RedisStorage(StorageBase):
             "agentscope:user:{user_id}:knowledge_base:{knowledge_base_id}"
         )
         knowledge_base_index: str = "agentscope:user:{user_id}:knowledge_bases"
+        knowledge_base_reindex_index: str = "agentscope:kb_reindexes"
 
         # Knowledge document keys
         knowledge_document: str = (
@@ -1810,8 +1811,14 @@ class RedisStorage(StorageBase):
             self.key_config.knowledge_base_index,
             user_id=user_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
+            pipe.sadd(index_key, record.id)
+            if record.data.reindex_pending:
+                pipe.sadd(self.key_config.knowledge_base_reindex_index, key)
+            else:
+                pipe.srem(self.key_config.knowledge_base_reindex_index, key)
+            await pipe.execute()
         return record
 
     async def get_knowledge_base(
@@ -1877,6 +1884,22 @@ class RedisStorage(StorageBase):
                 )
         return records
 
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Read the batch index committed atomically with KB records."""
+        index = self.key_config.knowledge_base_reindex_index
+        records = []
+        for key in await self._client.smembers(index):
+            raw = await self._client.get(key)
+            if raw:
+                record = KnowledgeBaseRecord.model_validate_json(raw)
+                if record.data.reindex_pending:
+                    records.append(record)
+            else:
+                await self._client.srem(index, key)
+        return records
+
     async def delete_knowledge_base(
         self,
         user_id: str,
@@ -1926,6 +1949,10 @@ class RedisStorage(StorageBase):
         )
         deleted = await self._client.delete(key)
         await self._client.srem(index_key, knowledge_base_id)
+        await self._client.srem(
+            self.key_config.knowledge_base_reindex_index,
+            key,
+        )
         return deleted > 0
 
     # ------------------------------------------------------------------
