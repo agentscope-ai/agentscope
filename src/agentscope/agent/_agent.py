@@ -2021,7 +2021,10 @@ class Agent:
                     confirmed_tool_calls.pop(tool_call.id)
 
         elif isinstance(event, ExternalExecutionResultEvent):
-            # Directly append the execution results into context
+            # Append the execution results into context, truncated and
+            # offloaded exactly like a locally executed tool result: the
+            # executor decides how much to return, and the context budget
+            # must not depend on that choice.
             for tool_result in event.execution_results:
                 # Whoever executed this promised a shape; a result that
                 # breaks it is their bug to fix, and the reply stays
@@ -2043,7 +2046,7 @@ class Agent:
                     metadata=tool_result.metadata,
                 )
 
-                self._save_to_context([tool_result])
+                await self._save_tool_result_to_context(tool_result)
 
                 # Update the state according to the execution result state
                 self._update_tool_call_state(
@@ -2659,59 +2662,9 @@ class Agent:
                     # ========================================================
                     # Step 5: Truncate the tool result if exceed
                     # ========================================================
-                    (
-                        reserved_tool_result_block,
-                        offload_tool_result_block,
-                    ) = await self._split_tool_result_for_compression(
+                    await self._save_tool_result_to_context(
                         tool_result_block,
                     )
-
-                    # If offload result is not empty, attach reminder to the
-                    # reserved context
-                    if offload_tool_result_block is not None:
-                        reminder = (
-                            "\n<<<TRUNCATED>>>\n<system-reminder>The "
-                            "remaining content has been omitted for "
-                            "limited context.{offload_reminder}"
-                            "</system-reminder>"
-                        )
-
-                        offload_reminder = ""
-                        if self.offloader:
-                            path = await self.offloader.offload_tool_result(
-                                self.state.session_id,
-                                offload_tool_result_block,
-                            )
-
-                            offload_reminder = (
-                                f" You can refer to the file in '{path}' "
-                                f"for the truncated content if needed."
-                            )
-
-                        reminder = reminder.format(
-                            offload_reminder=offload_reminder,
-                        )
-
-                        # Insert the reminder to the tool result output
-                        if isinstance(reserved_tool_result_block.output, str):
-                            reserved_tool_result_block.output += reminder
-
-                        elif len(
-                            reserved_tool_result_block.output,
-                        ) > 0 and isinstance(
-                            reserved_tool_result_block.output[-1],
-                            TextBlock,
-                        ):
-                            reserved_tool_result_block.output[
-                                -1
-                            ].text += reminder
-
-                        else:
-                            reserved_tool_result_block.output += [
-                                TextBlock(text=reminder),
-                            ]
-
-                    self._save_to_context([reserved_tool_result_block])
                     # Ends the tool call lifecycle.
                     self._update_tool_call_state(
                         tool_call.id,
@@ -3089,6 +3042,71 @@ class Agent:
             reserved_file_paths=reserved_paths,
         )
 
+    async def _save_tool_result_to_context(
+        self,
+        tool_result: ToolResultBlock,
+    ) -> None:
+        """Truncate an oversized tool result and save it to the context.
+
+        Every tool result the model is going to read goes through here,
+        whether it came back from a locally executed tool or was supplied
+        through an ``ExternalExecutionResultEvent``, so
+        :attr:`ContextConfig.tool_result_limit` applies to both.
+
+        A result above the limit is split into the part that stays in the
+        context and the part that is offloaded, and a ``<<<TRUNCATED>>>``
+        reminder is appended to the reserved part.
+
+        Args:
+            tool_result (`ToolResultBlock`):
+                The tool result to be saved.
+        """
+        (
+            reserved_tool_result,
+            offload_tool_result,
+        ) = await self._split_tool_result_for_compression(tool_result)
+
+        # If offload result is not empty, attach reminder to the
+        # reserved context
+        if offload_tool_result is not None:
+            reminder = (
+                "\n<<<TRUNCATED>>>\n<system-reminder>The "
+                "remaining content has been omitted for "
+                "limited context.{offload_reminder}"
+                "</system-reminder>"
+            )
+
+            offload_reminder = ""
+            if self.offloader:
+                path = await self.offloader.offload_tool_result(
+                    self.state.session_id,
+                    offload_tool_result,
+                )
+
+                offload_reminder = (
+                    f" You can refer to the file in '{path}' "
+                    f"for the truncated content if needed."
+                )
+
+            reminder = reminder.format(
+                offload_reminder=offload_reminder,
+            )
+
+            # Insert the reminder to the tool result output
+            if isinstance(reserved_tool_result.output, str):
+                reserved_tool_result.output += reminder
+
+            elif len(reserved_tool_result.output) > 0 and isinstance(
+                reserved_tool_result.output[-1],
+                TextBlock,
+            ):
+                reserved_tool_result.output[-1].text += reminder
+
+            else:
+                reserved_tool_result.output += [TextBlock(text=reminder)]
+
+        self._save_to_context([reserved_tool_result])
+
     async def _split_tool_result_for_compression(
         self,
         tool_result: ToolResultBlock,
@@ -3116,16 +3134,20 @@ class Agent:
         # Use a copied block for token counting
         copied_tool_result = deepcopy(tool_result)
 
-        # Normalized into content blocks
+        # Normalized into content blocks.  Everything below works on these
+        # blocks, never on the original output: a string output is a single
+        # text block, so slicing it as ``output[:i]`` would yield characters
+        # instead of blocks.
         if isinstance(copied_tool_result.output, str):
             copied_tool_result.output = [
                 TextBlock(text=copied_tool_result.output),
             ]
+        output_blocks = copied_tool_result.output
 
         # Find the index of the block that will exceed the limit
         boundary_index = 0
-        for i in range(len(copied_tool_result.output) - 1, 0, -1):
-            copied_tool_result.output = tool_result.output[:i]
+        for i in range(len(output_blocks) - 1, 0, -1):
+            copied_tool_result.output = output_blocks[:i]
             cur_tokens = await self.model.count_tokens(
                 [
                     AssistantMsg(
@@ -3142,14 +3164,14 @@ class Agent:
         # The blocks to reserve and offload (deep copy to avoid
         # modifying original)
         reserved_blocks: list = [
-            deepcopy(b) for b in tool_result.output[:boundary_index]
+            deepcopy(b) for b in output_blocks[:boundary_index]
         ]
         offload_blocks: list = [
-            deepcopy(b) for b in tool_result.output[boundary_index + 1 :]
+            deepcopy(b) for b in output_blocks[boundary_index + 1 :]
         ]
 
         # Get the boundary block, if text block, we can truncate it
-        boundary_block = tool_result.output[boundary_index]
+        boundary_block = output_blocks[boundary_index]
         if isinstance(boundary_block, TextBlock):
             # Truncate it
             truncated_text = boundary_block.text
