@@ -80,14 +80,11 @@ class ScheduleDelete(ToolBase):
         self,
         schedule_id: str,
     ) -> ToolChunk:  # type: ignore[override]
-        """Permanently delete the scheduled task with the given ID.
+        """Permanently delete a schedule owned by the authenticated user.
 
-        Delegates the storage + bus cascade to
-        :meth:`SessionService.delete_schedule`, which cancels in-flight
-        runs for any session this schedule spawned and purges their
-        bus state before dropping the schedule record. The APScheduler
-        job is removed separately because it lives in-process and the
-        service layer is bus/storage-only.
+        :meth:`SchedulerManager.delete_schedule` checks ownership and
+        stops the timer if this node owns it, then deletes the schedule
+        and its execution sessions.
 
         Args:
             schedule_id (`str`):
@@ -95,7 +92,8 @@ class ScheduleDelete(ToolBase):
 
         Returns:
             `ToolChunk`:
-                A chunk describing the result of the delete operation.
+                A success chunk on deletion, or an error chunk if the
+                schedule was not found for this user.
         """
 
         deleted = await self._scheduler_manager.delete_schedule(
