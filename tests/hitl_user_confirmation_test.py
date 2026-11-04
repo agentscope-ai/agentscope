@@ -189,6 +189,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "type": "TOOL_RESULT_TEXT_DELTA",
                 "tool_call_id": id,
+                "block_id": AnyString(),
                 "delta": result,
             },
             {

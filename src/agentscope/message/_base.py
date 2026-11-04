@@ -436,11 +436,39 @@ class Msg(BaseModel):
                     assert isinstance(block, ToolResultBlock)
                     if isinstance(block.output, str):
                         block.output = [TextBlock(text=block.output)]
-                    # Append the text
-                    if not block.output or block.output[-1].type != "text":
-                        block.output.append(TextBlock(text=event.delta))
+                    # Mirror ToolResponse.append_chunk: a delta extends
+                    # the text block sharing its id (even after a data
+                    # block), otherwise consecutive text is coalesced into
+                    # the trailing text block, and a new block is started
+                    # only after a data block.
+                    text_target: TextBlock | None = None
+                    if event.block_id is not None:
+                        for output_block in block.output:
+                            if (
+                                isinstance(output_block, TextBlock)
+                                and output_block.id == event.block_id
+                            ):
+                                text_target = output_block
+                                break
+                    if text_target is None and (
+                        block.output and block.output[-1].type == "text"
+                    ):
+                        text_target = block.output[-1]
+                    if text_target is not None:
+                        text_target.text += event.delta
                     else:
-                        block.output[-1].text += event.delta
+                        taken = {_.id for _ in block.output}
+                        block.output.append(
+                            TextBlock(
+                                id=(
+                                    event.block_id
+                                    if event.block_id is not None
+                                    and event.block_id not in taken
+                                    else _generate_id()
+                                ),
+                                text=event.delta,
+                            ),
+                        )
                 elif event.type == EventType.TOOL_RESULT_DATA_DELTA:
                     assert isinstance(block, ToolResultBlock)
                     if isinstance(block.output, str):

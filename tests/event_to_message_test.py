@@ -1238,3 +1238,121 @@ class ToolResultDataDeltaMergeTest(TestCase):
                 },
             ],
         )
+
+
+class ToolResultTextDeltaMergeTest(TestCase):
+    """Msg.append_event groups tool-result text deltas like
+    ToolResponse.append_chunk does."""
+
+    def _start(self) -> AssistantMsg:
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="search",
+            ),
+        )
+        return msg
+
+    def _text(self, msg: AssistantMsg, block_id: str, delta: str) -> None:
+        msg.append_event(
+            ToolResultTextDeltaEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                block_id=block_id,
+                delta=delta,
+            ),
+        )
+
+    def _data(self, msg: AssistantMsg, block_id: str) -> None:
+        msg.append_event(
+            ToolResultDataDeltaEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                block_id=block_id,
+                media_type="image/png",
+                data=base64.b64encode(b"img").decode("ascii"),
+            ),
+        )
+
+    @staticmethod
+    def _text_dict(block_id: Any, text: str) -> dict:
+        return {
+            "type": "text",
+            "id": block_id,
+            "text": text,
+            "created_at": AnyString(),
+            "finished_at": None,
+        }
+
+    _IMG_DICT = {
+        "type": "data",
+        "id": "img-1",
+        "source": {
+            "type": "base64",
+            "data": "aW1n",
+            "media_type": "image/png",
+        },
+        "name": None,
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+    def test_same_block_id_resumes_after_data_block(self) -> None:
+        """A text block interrupted by a data block is not split in two."""
+        msg = self._start()
+        self._text(msg, "text-1", "hello")
+        self._data(msg, "img-1")
+        self._text(msg, "text-1", " world")
+
+        self.assertListEqual(
+            [block.model_dump() for block in msg.content[0].output],
+            [self._text_dict("text-1", "hello world"), self._IMG_DICT],
+        )
+
+    def test_different_block_ids_stay_separate_across_data(self) -> None:
+        """Text blocks with different ids on both sides of a data block are
+        kept separate."""
+        msg = self._start()
+        self._text(msg, "text-1", "before")
+        self._data(msg, "img-1")
+        self._text(msg, "text-2", "after")
+
+        self.assertListEqual(
+            [block.model_dump() for block in msg.content[0].output],
+            [
+                self._text_dict("text-1", "before"),
+                self._IMG_DICT,
+                self._text_dict("text-2", "after"),
+            ],
+        )
+
+    def test_adjacent_text_blocks_coalesce(self) -> None:
+        """Consecutive text deltas with different ids merge into the
+        trailing text block, as ``ToolResponse.append_chunk`` does."""
+        msg = self._start()
+        self._text(msg, "text-1", "stdout")
+        self._text(msg, "text-2", "stderr")
+
+        self.assertListEqual(
+            [block.model_dump() for block in msg.content[0].output],
+            [self._text_dict("text-1", "stdoutstderr")],
+        )
+
+    def test_deltas_without_block_id_extend_trailing_text(self) -> None:
+        """Deltas without a block id keep the previous append behaviour."""
+        msg = self._start()
+        for delta in ("Found:", " 3 items"):
+            msg.append_event(
+                ToolResultTextDeltaEvent(
+                    reply_id=msg.id,
+                    tool_call_id="tc-1",
+                    delta=delta,
+                ),
+            )
+
+        self.assertListEqual(
+            [block.model_dump() for block in msg.content[0].output],
+            [self._text_dict(AnyString(), "Found: 3 items")],
+        )
