@@ -25,6 +25,10 @@ class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
         self.assertFalse(tool.is_concurrency_safe)
         self.assertIn("command", tool.input_schema["properties"])
         self.assertEqual(tool.input_schema["required"], ["command"])
+        self.assertEqual(
+            tool.input_schema["properties"]["timeout"]["minimum"],
+            1,
+        )
         self.assertEqual(tool._cwd, "workspace")
         self.assertIs(tool._backend, backend)
         self.assertIn("Glob", tool.description)
@@ -313,6 +317,50 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             backend.exec_shell.await_args.kwargs["timeout"],
             600.0,
         )
+
+    async def test_timeout_zero_rejected(self) -> None:
+        """timeout=0 must not reach the backend (#3307)."""
+        backend = AsyncMock()
+        tool = PowerShell(backend=backend)
+
+        chunks = [
+            chunk
+            async for chunk in tool.call(
+                command="Get-Location",
+                timeout=0,
+            )
+        ]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "error")
+        self.assertIn("timeout must be at least 1ms", chunks[0].content[0].text)
+        self.assertIn("got: 0", chunks[0].content[0].text)
+        backend.exec_shell.assert_not_awaited()
+
+    async def test_timeout_negative_rejected(self) -> None:
+        """timeout<0 must be rejected with a clear error (#3307)."""
+        backend = AsyncMock()
+        tool = PowerShell(backend=backend)
+
+        chunks = [
+            chunk
+            async for chunk in tool.call(
+                command="Get-Location",
+                timeout=-5,
+            )
+        ]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "error")
+        self.assertIn("timeout must be at least 1ms", chunks[0].content[0].text)
+        self.assertIn("got: -5", chunks[0].content[0].text)
+        backend.exec_shell.assert_not_awaited()
+
+    async def test_timeout_schema_minimum_is_one(self) -> None:
+        """JSON schema minimum for timeout is 1ms (#3307)."""
+        tool = PowerShell(backend=AsyncMock())
+        timeout_schema = tool.input_schema["properties"]["timeout"]
+        self.assertEqual(timeout_schema["minimum"], 1)
 
 
 @unittest.skipUnless(
