@@ -2,6 +2,7 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
+from contextlib import AsyncExitStack
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -58,6 +59,14 @@ from ...state import ToolContext
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
+
+# ``PATCH /sessions/{id}`` reads the record, validates the request
+# (several awaits), and then writes it back. A chat run may start in that
+# window; the write takes the session lock for a moment so it builds on a
+# record no run is rewriting. Contention here is a run that started after
+# the handler's own liveness check, so waiting briefly is enough either
+# way.
+_SESSION_PATCH_LOCK_TIMEOUT_SECS = 0.5
 
 
 async def _build_team_detail(
@@ -554,50 +563,85 @@ async def update_session(
         body.knowledge_config,
     )
 
-    # ``None`` leaves the stored state untouched (see
-    # ``StorageBase.upsert_session``). ``permission_mode`` is the only
-    # request field living inside ``state``; every other field is a
-    # pure config write, and rewriting ``state`` for those would put
-    # this handler's opening snapshot back over whatever the run has
-    # persisted since.
-    updated_state = None
-    if body.permission_mode is not None:
-        updated_ctx = existing.state.permission_context.model_copy(
-            update={"mode": body.permission_mode},
+    # The validations above await, so a chat run may have started and
+    # finished since ``existing`` was read, persisting state of its own.
+    # Re-read and write under the session lock: the run holds the same
+    # lock while it persists, so either it finished before this block
+    # (and its state is in ``latest``) or it starts after the write (and
+    # assembles from the updated config and state). Without the lock a
+    # ``permission_mode`` write would put the opening snapshot back over
+    # a run that completed during validation.
+    async with AsyncExitStack() as stack:
+        try:
+            await stack.enter_async_context(
+                message_bus.acquire_lock_bounded(
+                    MessageBusKeys.session_lock(session_id),
+                    ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+                    timeout_secs=_SESSION_PATCH_LOCK_TIMEOUT_SECS,
+                ),
+            )
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cannot modify session configuration while the "
+                    "session is running."
+                ),
+            ) from exc
+
+        latest = await storage.get_session(user_id, agent_id, session_id)
+        if latest is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session '{session_id}' not found.",
+            )
+
+        # ``None`` leaves the stored state untouched (see
+        # ``StorageBase.upsert_session``). ``permission_mode`` is the only
+        # request field living inside ``state``; every other field is a
+        # pure config write, and rewriting ``state`` for those would put
+        # this handler's snapshot back over whatever the run has
+        # persisted since.
+        updated_state = None
+        if body.permission_mode is not None:
+            updated_ctx = latest.state.permission_context.model_copy(
+                update={"mode": body.permission_mode},
+            )
+
+            updated_state = latest.state.model_copy(
+                update={
+                    "permission_context": updated_ctx,
+                },
+            )
+
+        # PATCH semantics: only fields explicitly present in the request body
+        # are applied. ``exclude_unset=True`` lets clients distinguish "leave
+        # unchanged" (omit) from "clear" (send ``null``) — required for
+        # clearing ``fallback_chat_model_config``.
+        config_updates = body.model_dump(
+            exclude_unset=True,
+            exclude={"permission_mode"},
         )
 
-        updated_state = existing.state.model_copy(
-            update={
-                "permission_context": updated_ctx,
-            },
+        # An explicit rename settles the name for good — auto-naming must
+        # not overwrite what the user just typed.
+        if "name" in config_updates:
+            config_updates["naming"] = {
+                **latest.config.naming.model_dump(),
+                "auto": False,
+            }
+
+        record = await storage.upsert_session(
+            user_id=user_id,
+            agent_id=agent_id,
+            config=SessionConfig.model_validate(
+                {**latest.config.model_dump(mode="json"), **config_updates},
+            ),
+            state=updated_state,
+            session_id=session_id,
         )
 
-    # PATCH semantics: only fields explicitly present in the request body are
-    # applied. ``exclude_unset=True`` lets clients distinguish "leave
-    # unchanged" (omit) from "clear" (send ``null``) — required for clearing
-    # ``fallback_chat_model_config``.
-    config_updates = body.model_dump(
-        exclude_unset=True,
-        exclude={"permission_mode"},
-    )
-
-    # An explicit rename settles the name for good — auto-naming must
-    # not overwrite what the user just typed.
-    if "name" in config_updates:
-        config_updates["naming"] = {
-            **existing.config.naming.model_dump(),
-            "auto": False,
-        }
-
-    return await storage.upsert_session(
-        user_id=user_id,
-        agent_id=agent_id,
-        config=SessionConfig.model_validate(
-            {**existing.config.model_dump(mode="json"), **config_updates},
-        ),
-        state=updated_state,
-        session_id=session_id,
-    )
+    return record
 
 
 # ----------------------------------------------------------------------
