@@ -10,6 +10,7 @@ other formatter, the ``format()`` method returns a list of
 import base64
 from fnmatch import fnmatch
 from typing import Any, List
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -38,7 +39,8 @@ def _xai_user_args_from_blocks(
 
     DataBlocks that are not images (or use an unsupported media type) are
     dropped with a warning, matching the user-role DataBlock handling in
-    :meth:`XAIChatFormatter.format`.
+    :meth:`XAIChatFormatter.format`. Image extras are forwarded to
+    ``xai_sdk.chat.image`` as keyword arguments.
 
     Args:
         blocks (`list`):
@@ -74,7 +76,7 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url_str.removeprefix("file://")
+                    local_path = url2pathname(url_str.removeprefix("file://"))
                     with open(local_path, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode(
                             "utf-8",
@@ -83,15 +85,19 @@ def _xai_user_args_from_blocks(
                         image(
                             f"data:{sub.source.media_type};"
                             f"base64,{encoded}",
+                            **(sub.model_extra or {}),
                         ),
                     )
                 else:
-                    args.append(image(url_str))
+                    args.append(
+                        image(url_str, **(sub.model_extra or {})),
+                    )
             elif isinstance(sub.source, Base64Source):
                 args.append(
                     image(
                         f"data:{sub.source.media_type};"
                         f"base64,{sub.source.data}",
+                        **(sub.model_extra or {}),
                     ),
                 )
     return args
@@ -101,7 +107,9 @@ class XAIChatFormatter(FormatterBase):
     """Formatter for the xAI chat model.
 
     Converts ``Msg`` objects into ``xai_sdk`` protobuf ``Message`` objects
-    that can be appended directly to a ``xai_sdk`` chat session.
+    that can be appended directly to a ``xai_sdk`` chat session. Image
+    ``DataBlock`` extras are passed as keyword arguments to
+    ``xai_sdk.chat.image`` (for example ``detail``).
 
     Unlike other formatters whose ``format()`` returns ``list[dict]``, this
     formatter returns ``list[chat_pb2.Message]``.  The type annotation is
@@ -133,8 +141,9 @@ class XAIChatFormatter(FormatterBase):
         Returns:
             `list[Any]`:
                 A list of ``chat_pb2.Message`` proto objects, ready to be
-                appended to a ``xai_sdk`` chat session via
-                ``chat.append()``.
+                appended to a ``xai_sdk`` chat session via ``chat.append()``.
+                Image ``DataBlock`` extras are forwarded to
+                ``xai_sdk.chat.image`` as keyword arguments.
         """
         from xai_sdk.chat import (
             assistant,

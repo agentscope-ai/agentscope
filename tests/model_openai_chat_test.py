@@ -174,6 +174,36 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False requests no reasoning, even with a stored effort value."""
+        self.assertIsNone(OpenAIChatModel.Parameters().thinking_enable)
+        mock_create = AsyncMock(return_value=_mock_completion(text="Hi"))
+        self.mock_client.chat.completions.create = mock_create
+
+        for params, disables_thinking in (
+            ({}, False),
+            ({"thinking_enable": None}, False),
+            ({"thinking_enable": False}, True),
+            ({"thinking_enable": True}, False),
+        ):
+            for effort in (None, "none", "high"):
+                with self.subTest(params=params, effort=effort):
+                    self.model.parameters = OpenAIChatModel.Parameters(
+                        **params,
+                        reasoning_effort=effort,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "gpt-4o",
+                        "messages": [],
+                        "stream": False,
+                    }
+                    expected_effort = "none" if disables_thinking else effort
+                    if expected_effort is not None:
+                        expected["reasoning_effort"] = expected_effort
+                    self.assertEqual(mock_create.call_args.kwargs, expected)
+
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(

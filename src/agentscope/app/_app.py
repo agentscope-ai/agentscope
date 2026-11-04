@@ -15,6 +15,7 @@ from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
+    asr_router,
     agent_router,
     channel_router,
     chat_router,
@@ -27,6 +28,7 @@ from ._router import (
     model_router,
     realtime_router,
     tts_model_router,
+    voice_profile_router,
     schedule_router,
     session_router,
     skill_router,
@@ -128,6 +130,7 @@ def create_app(
     extra_middlewares: list[FastAPIMiddleware] | None = None,
     extra_agent_middlewares: AgentMiddlewareFactory | None = None,
     extra_agent_tools: AgentToolFactory | None = None,
+    tool_offload_timeout_secs: float | None = 10.0,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
     resource_access_policy: ResourceAccessPolicyBase | None = None,
@@ -340,6 +343,7 @@ def create_app(
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
+    app.state.tool_offload_timeout_secs = tool_offload_timeout_secs
     app.state.custom_agent_cls = custom_agent_cls
     app.state.resource_access_policy = (
         resource_access_policy or DenyAllResourceAccessPolicy()
@@ -433,6 +437,7 @@ def create_app(
 
     # Built-in routers
     for router in (
+        asr_router,
         agent_router,
         chat_router,
         credential_router,
@@ -448,6 +453,7 @@ def create_app(
         model_router,
         realtime_router,
         tts_model_router,
+        voice_profile_router,
         embedding_model_router,
         channel_router,
     ):

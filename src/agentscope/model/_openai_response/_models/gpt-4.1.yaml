@@ -1,5 +1,5 @@
 name: gpt-4.1
-label: GPT-4.1
+label: GPT-4.1 (Responses API)
 status: active
 
 input_types:

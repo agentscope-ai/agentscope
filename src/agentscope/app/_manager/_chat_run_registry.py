@@ -20,6 +20,9 @@ from typing import Coroutine, Self
 from ..._logging import logger
 
 
+CHAT_RUN_SHUTDOWN = "agentscope:shutdown"
+
+
 class ChatRunRegistry:
     """In-process index of active chat-run asyncio tasks, keyed by
     session id.
@@ -129,7 +132,9 @@ class ChatRunRegistry:
         )
         tasks = list(self._tasks.values())
         for task in tasks:
-            task.cancel()
+            # Preserve an explicit Stop that is already being delivered.
+            if not task.cancelling():
+                task.cancel(CHAT_RUN_SHUTDOWN)
         # Wait for every cancel to land; swallow CancelledError per task.
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()

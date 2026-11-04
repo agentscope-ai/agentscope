@@ -4,13 +4,14 @@
 The whole module is skipped when the ``E2B_API_KEY`` environment variable is
 not set, because every test requires a live E2B cloud sandbox.
 """
+
 import os
 import unittest
-from unittest.async_case import IsolatedAsyncioTestCase
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.workspace import E2BWorkspace
-
 
 # ── E2B availability check ─────────────────────────────────────────
 
@@ -22,7 +23,7 @@ _SKIP_REASON = "E2B_API_KEY environment variable is not set"
 
 
 @unittest.skipUnless(_E2B_API_KEY, _SKIP_REASON)
-class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
+class TestE2BWorkspaceLifecycle(CheckoutWheelTestCase):
     """Test cases for E2BWorkspace lifecycle and MCP integration.
 
     Each test creates a real E2B cloud sandbox and tears it down
@@ -30,6 +31,8 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
     ``E2B_API_KEY`` is absent so that CI runs without E2B credentials
     are unaffected.
     """
+
+    workspace_type = E2BWorkspace
 
     async def asyncSetUp(self) -> None:
         """No shared setup — each test manages its own workspace."""

@@ -191,8 +191,12 @@ class HitlUI(Vertical):
         self,
         pending: list[tuple[str, str, ToolCallBlock]],
     ) -> None:
-        previous = self._pending[0][2].id if self._pending else None
-        current = pending[0][2].id if pending else None
+        previous = (
+            (self._pending[0][0], self._pending[0][2].id)
+            if self._pending
+            else None
+        )
+        current = (pending[0][0], pending[0][2].id) if pending else None
         self._pending = pending
         if previous != current:
             self._submitting = False
@@ -478,7 +482,7 @@ class ChatUI(Widget):
         self.show_thinking = show_thinking
         self.show_usage = show_usage
         self.input_enabled = input_enabled
-        self._dismissed_call_ids: set[str] = set()
+        self._dismissed_calls: set[tuple[str, str]] = set()
 
     def compose(self) -> ComposeResult:
         yield MessagesUI(
@@ -542,7 +546,7 @@ class ChatUI(Widget):
 
     def _pending_tools(self) -> list[tuple[str, str, ToolCallBlock]]:
         pending: list[tuple[str, str, ToolCallBlock]] = []
-        pending_ids: set[str] = set()
+        pending_calls: set[tuple[str, str]] = set()
         for message in self._current_messages():
             if message.role != "assistant" or message.finished_at is not None:
                 continue
@@ -551,10 +555,11 @@ class ChatUI(Widget):
                     ToolCallState.ASKING,
                     ToolCallState.SUBMITTED,
                 ):
-                    pending_ids.add(block.id)
-                    if block.id not in self._dismissed_call_ids:
+                    call = (message.id, block.id)
+                    pending_calls.add(call)
+                    if call not in self._dismissed_calls:
                         pending.append((message.id, message.name, block))
-        self._dismissed_call_ids.intersection_update(pending_ids)
+        self._dismissed_calls.intersection_update(pending_calls)
         return pending
 
     def _latest_running_reply_id(self) -> str | None:
@@ -621,8 +626,9 @@ class ChatUI(Widget):
 
     @on(HitlUI.Confirmed)
     def _on_hitl_confirmed(self, event: HitlUI.Confirmed) -> None:
-        self._dismissed_call_ids.update(
-            result.tool_call.id for result in event.value.confirm_results
+        self._dismissed_calls.update(
+            (event.value.reply_id, result.tool_call.id)
+            for result in event.value.confirm_results
         )
         self._sync_interaction_area()
         self.post_message(self.Confirmed(event.value))
@@ -630,7 +636,9 @@ class ChatUI(Widget):
     @on(AskUserUI.Submitted)
     def _on_ask_user_submitted(self, event: AskUserUI.Submitted) -> None:
         # Dismiss the form locally without changing authoritative messages.
-        self._dismissed_call_ids.add(event.tool_call_id)
+        self._dismissed_calls.add(
+            (event.value.reply_id, event.tool_call_id),
+        )
         self._sync_interaction_area()
         self.post_message(self.ExternalExecutionSubmitted(event.value))
 
