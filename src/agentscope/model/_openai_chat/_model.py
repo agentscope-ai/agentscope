@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 """The OpenAI Chat Completions model implementation."""
-import warnings
 import base64
-import io
-import uuid
-import wave
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._audio import (
+    _build_streaming_wav_header,
+    _build_wav_header,
+)
+from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
-from ..._utils._audio import _build_streaming_wav_header
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
@@ -48,13 +48,15 @@ class OpenAIChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for reasoning models "
-                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
-                "control the depth of reasoning."
+                "None and True forward reasoning_effort when it is set, "
+                "including 'none'. If reasoning_effort is unset, neither "
+                "adds reasoning parameters; the provider default applies. "
+                "False overrides reasoning_effort with 'none' to request "
+                "that reasoning be disabled."
             ),
         )
 
@@ -69,6 +71,9 @@ class OpenAIChatModel(ChatModelBase):
                 "model-dependent and may include: none, minimal, low, "
                 "medium, high, xhigh."
             ),
+            json_schema_extra={
+                "x-reset-hidden-on-change": {"thinking_enable": None},
+            },
         )
 
         temperature: float | None = Field(
@@ -167,6 +172,15 @@ class OpenAIChatModel(ChatModelBase):
         self.client_kwargs = client_kwargs or {}
         self.extra_body = dict(extra_body) if extra_body is not None else None
 
+        import openai
+
+        self.client: openai.AsyncClient = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            organization=self.credential.organization,
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import openai
@@ -177,6 +191,14 @@ class OpenAIChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
 
     async def _call_api(
         self,
@@ -206,17 +228,6 @@ class OpenAIChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import openai
-
-        client = openai.AsyncClient(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "organization": self.credential.organization,
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -226,7 +237,7 @@ class OpenAIChatModel(ChatModelBase):
         }
 
         if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
+            kwargs["max_completion_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature
@@ -234,10 +245,9 @@ class OpenAIChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.thinking_enable is False:
+            kwargs["reasoning_effort"] = "none"
+        elif self.parameters.reasoning_effort is not None:
             kwargs["reasoning_effort"] = self.parameters.reasoning_effort
 
         if self.parameters.voice is not None:
@@ -271,7 +281,7 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
+        response = await self.client.chat.completions.create(**kwargs)
 
         audio_cfg = kwargs.get("audio")
         audio_fmt = (
@@ -304,8 +314,8 @@ class OpenAIChatModel(ChatModelBase):
         Upstream sends raw PCM16 (24kHz, 16-bit mono — OpenAI's only
         streaming-supported audio format). We prefix the first audio
         chunk with a streaming WAV header so the frontend can start
-        playback immediately, and assemble a fixed-size WAV on the
-        final chunk for non-streaming consumers.
+        playback immediately; downstream accumulation is handled by
+        ``ChatResponse.append_data_block``.
 
         Args:
             start_datetime (`datetime`):
@@ -315,195 +325,142 @@ class OpenAIChatModel(ChatModelBase):
 
         Yields:
             `ChatResponse`:
-                Incremental ``ChatResponse`` objects with ``is_last=False``
-                followed by a final one with ``is_last=True``.
+                Incremental ``ChatResponse`` objects with ``is_last=False``.
+                The base class ``__call__`` accumulates them and emits the
+                final ``is_last=True`` chunk.
         """
-        usage = None
-        response_id: str | None = None
-        # All delta should have the same block identifier
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: OrderedDict = OrderedDict()
-        # Raw audio bytes accumulated across chunks. Storing the decoded
-        # form (rather than concatenated base64 strings) avoids corrupting
-        # the byte stream when an intermediate chunk happens to carry
-        # base64 padding (``=``).
-        acc_audio_data: bytearray = bytearray()
-        audio_block_id: str | None = None
         # ``True`` once the first audio chunk has been prefixed with a
         # streaming WAV header and yielded.
         audio_header_sent: bool = False
 
+        usage = None
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
+        audio_id: str = _generate_id()
+        # The mapping from index to (tool call id, tool call name)
+        tool_call_mapping: dict = OrderedDict()
+
         async with response as stream:
             async for chunk in stream:
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
+
+                # Update the response ID if exists
+                response_id = getattr(chunk, "id", None) or response_id
+                delta_res.id = response_id
+
                 if chunk.usage:
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
                             0,
                         )
+                        or 0
                         if details
                         else 0,
                     )
 
-                # Capture response_id from the first chunk that carries it
-                response_id = response_id or getattr(chunk, "id", None)
-
                 if not chunk.choices:
+                    if delta_res.content or usage:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
                 delta = choice.delta
 
+                # Thinking
                 delta_thinking = getattr(delta, "reasoning_content", None)
                 if not isinstance(delta_thinking, str):
                     delta_thinking = getattr(delta, "reasoning", None)
-                if not isinstance(delta_thinking, str):
-                    delta_thinking = ""
+                if isinstance(delta_thinking, str) and delta_thinking:
+                    delta_res.append_thinking(
+                        block_id=thinking_id,
+                        thinking=delta_thinking,
+                    )
 
+                # Text
                 delta_text = getattr(delta, "content", None) or ""
 
-                # Collect audio output (delta.audio.data /
-                # delta.audio.transcript)
-                delta_audio_block: DataBlock | None = None
-                transcript_chunk: str = ""
+                # Audio (delta.audio.data / delta.audio.transcript). Omni
+                # models deliver text via ``delta.audio.transcript`` rather
+                # than ``delta.content``; fold it into ``delta_text`` so the
+                # agent's streaming pipeline emits ``TextBlockDelta`` events
+                # alongside the audio chunks.
                 delta_audio = getattr(delta, "audio", None)
                 if delta_audio is not None:
                     if isinstance(delta_audio, dict):
-                        audio_chunk = delta_audio.get("data", "")
-                        transcript_chunk = delta_audio.get("transcript", "")
+                        audio_chunk = delta_audio.get("data", "") or ""
+                        transcript_chunk = (
+                            delta_audio.get("transcript", "") or ""
+                        )
                     else:
                         audio_chunk = getattr(delta_audio, "data", "") or ""
                         transcript_chunk = (
                             getattr(delta_audio, "transcript", "") or ""
                         )
+                    if transcript_chunk:
+                        delta_text += transcript_chunk
                     if audio_chunk:
-                        if audio_block_id is None:
-                            audio_block_id = uuid.uuid4().hex
                         pcm_bytes = base64.b64decode(audio_chunk)
-                        acc_audio_data += pcm_bytes
                         if not audio_header_sent:
                             payload = _build_streaming_wav_header() + pcm_bytes
                             audio_header_sent = True
                         else:
                             payload = pcm_bytes
-                        delta_audio_block = DataBlock(
-                            id=audio_block_id,
-                            source=Base64Source(
-                                data=base64.b64encode(payload).decode(
-                                    "ascii",
-                                ),
-                                media_type="audio/wav",
-                            ),
+                        # ``append_data_block`` expects the raw incremental
+                        # media bytes and handles base64 encoding internally
+                        # (see ``ChatResponse.append_data_block``); passing an
+                        # already base64-encoded string here would result in
+                        # double-encoding.
+                        delta_res.append_data_block(
+                            block_id=audio_id,
+                            data=payload,
+                            media_type="audio/wav",
                         )
-                # Omni models deliver text via ``delta.audio.transcript``
-                # (not ``delta.content``); fold it into ``delta_text`` so
-                # the agent's streaming pipeline emits ``TextBlockDelta``
-                # events alongside the audio chunks.
-                if transcript_chunk:
-                    delta_text += transcript_chunk
 
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
-
-                delta_tool_call_blocks: List[ToolCallBlock] = []
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = tool_call.function.arguments or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
-                        }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
-                    )
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
                 if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
+                    delta_res.append_text(
+                        block_id=text_id,
+                        text=delta_text,
                     )
-                delta_contents.extend(delta_tool_call_blocks)
-                if delta_audio_block is not None:
-                    delta_contents.append(delta_audio_block)
 
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
+                # Tool call
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    index = tool_call.index
+                    fn = getattr(tool_call, "function", None)
+                    delta_name = getattr(fn, "name", None) if fn else None
+                    delta_args = getattr(fn, "arguments", None) if fn else None
 
-        final_contents: List[
-            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-        ] = []
-        if acc_thinking.thinking:
-            final_contents.append(acc_thinking)
-        if acc_text.text:
-            final_contents.append(acc_text)
-        for tc in acc_tool_calls.values():
-            final_contents.append(
-                ToolCallBlock(id=tc["id"], name=tc["name"], input=tc["input"]),
-            )
-        if acc_audio_data:
-            # PCM bytes were already streamed incrementally above (first
-            # chunk prefixed with a WAV header). Here we also assemble a
-            # standalone fixed-size WAV and attach it to the ``is_last``
-            # chunk so callers that consume the model directly (i.e.
-            # without going through ``Agent``, which filters audio blocks
-            # out of context) get a self-contained audio block for
-            # downstream serialization / display.
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wav:
-                wav.setnchannels(1)
-                wav.setsampwidth(2)
-                wav.setframerate(24000)
-                wav.writeframes(bytes(acc_audio_data))
-            final_contents.append(
-                DataBlock(
-                    id=audio_block_id,
-                    source=Base64Source(
-                        data=base64.b64encode(buf.getvalue()).decode("ascii"),
-                        media_type="audio/wav",
-                    ),
-                ),
-            )
+                    # Record the id and name in case following deltas
+                    # don't provide them
+                    if index not in tool_call_mapping:
+                        tool_call_mapping[index] = (
+                            tool_call.id,
+                            delta_name or "unknown",
+                        )
 
-        _final_kwargs: dict[str, Any] = {
-            "content": final_contents,
-            "usage": usage,
-            "is_last": True,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+                    stored_id, stored_name = tool_call_mapping[index]
+
+                    delta_res.append_tool_call(
+                        block_id=tool_call.id or stored_id,
+                        name=delta_name or stored_name,
+                        input=delta_args or "",
+                    )
+
+                if delta_res.content or usage:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _parse_completion_response(
         self,
@@ -556,11 +513,22 @@ class OpenAIChatModel(ChatModelBase):
                 if not choice.message.content and audio_transcript:
                     content_blocks.append(TextBlock(text=audio_transcript))
                 if audio_data:
+                    payload = base64.b64decode(audio_data)
+                    media_type = f"audio/{audio_format}"
+                    if audio_format == "pcm16":
+                        # The request forces ``format: pcm16`` (see the
+                        # ``audio`` request block), which comes back as
+                        # headerless raw PCM. Wrap it so the block is a
+                        # playable WAV, matching the streaming path and the
+                        # documented intent.
+                        payload = _build_wav_header(len(payload)) + payload
+                        media_type = "audio/wav"
+                    encoded = base64.b64encode(payload).decode("ascii")
                     content_blocks.append(
                         DataBlock(
                             source=Base64Source(
-                                data=audio_data,
-                                media_type=f"audio/{audio_format}",
+                                data=encoded,
+                                media_type=media_type,
                             ),
                         ),
                     )
@@ -579,14 +547,15 @@ class OpenAIChatModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )
@@ -602,48 +571,6 @@ class OpenAIChatModel(ChatModelBase):
 
         return ChatResponse(**resp_kwargs)
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """OpenAI-compatible override for structured output.
-
-        Some third-party providers that expose an OpenAI-compatible API (e.g.
-        DeepSeek via DashScope) reject forced ``tool_choice`` when thinking
-        mode is active.  When such a ``BadRequestError`` is encountered, this
-        method automatically retries with ``tool_choice="auto"``.
-        """
-        import openai
-
-        try:
-            return await super()._call_api_with_structured_output(
-                model_name=model_name,
-                messages=messages,
-                structured_model=structured_model,
-                tool_choice=tool_choice,
-                **kwargs,
-            )
-        except openai.BadRequestError as e:
-            if "tool_choice" not in str(e):
-                raise
-            # Thinking mode rejects forced tool_choice; fall back to auto
-            warnings.warn(
-                f"Forced tool_choice rejected by provider ({e}), "
-                "retrying with tool_choice='auto'.",
-                stacklevel=2,
-            )
-            return await super()._call_api_with_structured_output(
-                model_name=model_name,
-                messages=messages,
-                structured_model=structured_model,
-                tool_choice=ToolChoice(mode="auto"),
-                **kwargs,
-            )
-
     def _format_tools(
         self,
         tools: list[dict] | None,
@@ -656,6 +583,10 @@ class OpenAIChatModel(ChatModelBase):
         to only those tools. When ``tool_choice.mode`` is a specific tool name
         (str) the model is forced to call exactly that tool without needing to
         filter the list, preserving prompt-cache efficiency.
+
+        Tool parameter schemas are flattened (``$ref`` / ``$defs`` resolved
+        inline) so that providers which do not support JSON Schema references
+        (e.g. GLM-5.x via OpenCode Go) receive a self-contained schema.
 
         Args:
             tools (`list[dict] | None`, optional):
@@ -673,6 +604,9 @@ class OpenAIChatModel(ChatModelBase):
                 allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
+        if tools:
+            tools = self._flatten_tool_schemas(tools)
+
         if not tool_choice:
             return tools, None
 
@@ -682,3 +616,38 @@ class OpenAIChatModel(ChatModelBase):
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
+
+    @staticmethod
+    def _flatten_tool_schemas(
+        tools: list[dict],
+    ) -> list[dict]:
+        """Inline ``$ref`` / ``$defs`` in each tool's parameter schema.
+
+        Args:
+            tools (`list[dict]`):
+                The list of tool dicts, each with a ``"function"`` key
+                containing the tool name, description and ``"parameters"``
+                JSON schema.
+
+        Returns:
+            `list[dict]`:
+                A new list where each tool's ``parameters`` schema has all
+                local ``$ref`` / ``$defs`` resolved inline.  Tools whose
+                schema contained no references are returned unchanged (same
+                object identity).
+        """
+        result = []
+        for tool in tools:
+            func = tool.get("function")
+            if not isinstance(func, dict):
+                result.append(tool)
+                continue
+            params = func.get("parameters")
+            if not isinstance(params, dict):
+                result.append(tool)
+                continue
+            flat = _flatten_json_schema(params)
+            if flat is not params:
+                tool = {**tool, "function": {**func, "parameters": flat}}
+            result.append(tool)
+        return result

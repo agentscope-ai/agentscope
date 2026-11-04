@@ -9,6 +9,7 @@ import frontmatter
 
 from ._base import SkillLoaderBase
 from .._logging import logger
+from .._utils._common import _normalize_local_path
 from ..skill import Skill
 
 
@@ -25,7 +26,7 @@ class LocalSkillLoader(SkillLoaderBase):
                 Whether to scan subdirectories. Defaults to False (only
                 scan current directory).
         """
-        self.directory = os.path.abspath(directory)
+        self.directory = _normalize_local_path(directory)
         self.scan_subdir = scan_subdir
         self._cache: dict[str, Skill] = {}
 
@@ -59,7 +60,10 @@ class LocalSkillLoader(SkillLoaderBase):
             async with aiofiles.open(
                 skill_md_path,
                 "r",
-                encoding="utf-8",
+                # ``utf-8-sig`` also accepts a byte order mark. Windows
+                # editors commonly write one, and it would otherwise hide
+                # the opening front matter delimiter.
+                encoding="utf-8-sig",
             ) as f:
                 content_str = await f.read()
                 content = frontmatter.loads(content_str)

@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { agentApi } from '../api';
-import type { AgentRecord, CreateAgentRequest, UpdateAgentRequest } from '../api';
+import type { AgentView, CreateAgentRequest, UpdateAgentRequest } from '../api';
 
 /**
  * Manages the full agent list with CRUD operations.
  * Fetches on mount and automatically re-fetches after each mutation.
  */
 export function useAgents() {
-	const [agents, setAgents] = useState<AgentRecord[]>([]);
+	const [agents, setAgents] = useState<AgentView[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
@@ -31,8 +31,8 @@ export function useAgents() {
 
 	/** Creates a new agent and refreshes the list. */
 	const create = useCallback(
-		async (body: CreateAgentRequest) => {
-			const res = await agentApi.create(body);
+		async (body: CreateAgentRequest, options?: { silent?: boolean }) => {
+			const res = await agentApi.create(body, options);
 			await refetch();
 			return res;
 		},
@@ -41,8 +41,8 @@ export function useAgents() {
 
 	/** Partially updates an agent and refreshes the list. */
 	const update = useCallback(
-		async (agentId: string, body: UpdateAgentRequest) => {
-			const res = await agentApi.update(agentId, body);
+		async (agentId: string, body: UpdateAgentRequest, options?: { silent?: boolean }) => {
+			const res = await agentApi.update(agentId, body, options);
 			await refetch();
 			return res;
 		},

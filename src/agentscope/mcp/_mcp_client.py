@@ -1,14 +1,22 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+import asyncio
 import re
-from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
-from typing import Any, TYPE_CHECKING
+from contextlib import (
+    AbstractAsyncContextManager,
+    asynccontextmanager,
+)
+from typing import Any, AsyncGenerator, ClassVar, TYPE_CHECKING
+from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 import mcp.types
-from mcp import ClientSession, stdio_client, StdioServerParameters
+from mcp import Client as SDKClient, stdio_client, StdioServerParameters
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client
+from mcp.client.streamable_http import (
+    create_mcp_http_client,
+    streamable_http_client,
+)
 from pydantic import Field, BaseModel, PrivateAttr
 
 from ._config import StdioMCPConfig, HttpMCPConfig
@@ -27,15 +35,18 @@ class MCPClient(BaseModel):
     This class provides a unified interface for MCP connections, handling both
     stateful (persistent) and stateless (ephemeral) connections.
 
-    - Stateful: Requires explicit connect() and close(), maintains session
-    - Stateless: No connect() needed, creates temporary session per call
+    - Stateful: Requires explicit connect() and close(), maintains a client
+    - Stateless: No connect() needed, creates a temporary client per call
 
     Private attributes:
-    - _client: The underlying MCP client context manager
-    - _session: The MCP ClientSession (for stateful connections only)
-    - _stack: AsyncExitStack for managing connection lifecycle
+    - _client: The connected MCP SDK client for stateful connections
+    - _lifecycle_task: Owns the stateful client context from enter to exit
+    - _close_requested: Signals the lifecycle task to exit the client context
     - _is_connected: Connection state flag
     - _cached_tools: Cached list of tools
+    - _http_client: The live HTTP client, while one is open
+    - _static_headers: Its headers before any runtime override
+    - _runtime_headers: See :meth:`set_runtime_headers`
 
     Example:
 
@@ -65,6 +76,18 @@ class MCPClient(BaseModel):
         tools = await client.list_tools()
 
     """
+
+    # httpx2 derives these from the request URL and body with setdefault,
+    # so a client-level value silently wins and breaks routing or framing.
+    # The headers MCP itself sends are set per request and need no guard.
+    _RESERVED_HEADERS: ClassVar[frozenset[str]] = frozenset(
+        {"connection", "content-length", "host", "transfer-encoding"},
+    )
+    # RFC 7230 token, and a field value of visible ASCII plus tab.
+    _HEADER_NAME: ClassVar[re.Pattern[str]] = re.compile(
+        r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+",
+    )
+    _HEADER_VALUE: ClassVar[re.Pattern[str]] = re.compile(r"[\t\x20-\x7e]*")
 
     name: str = Field(
         title="MCP Name",
@@ -98,12 +121,24 @@ class MCPClient(BaseModel):
     execution_timeout: float | None = None
     """The execution timeout in seconds for calling the tools from this MCP."""
 
+    stream_progress: bool = Field(
+        default=False,
+        description=(
+            "Whether local tools return a progress/result stream instead of "
+            "the final ToolChunk. Sandbox gateway tools return final results "
+            "only."
+        ),
+    )
+
     # Private attributes
-    _client: Any = PrivateAttr(default=None)
-    _session: ClientSession | None = PrivateAttr(default=None)
-    _stack: AsyncExitStack | None = PrivateAttr(default=None)
+    _client: SDKClient | None = PrivateAttr(default=None)
+    _lifecycle_task: asyncio.Task[None] | None = PrivateAttr(default=None)
+    _close_requested: asyncio.Event | None = PrivateAttr(default=None)
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
+    _http_client: httpx2.AsyncClient | None = PrivateAttr(default=None)
+    _static_headers: httpx2.Headers | None = PrivateAttr(default=None)
+    _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @property
     def is_connected(self) -> bool:
@@ -160,57 +195,144 @@ class MCPClient(BaseModel):
                     f"should not overlap, but got {intersection}.",
                 )
 
-        # Initialize the underlying client
-        self._initialize_client()
+    def _create_stdio_transport(
+        self,
+    ) -> AbstractAsyncContextManager[Any]:
+        """Build a fresh stdio transport."""
+        assert isinstance(self.mcp_config, StdioMCPConfig)
+        config = self.mcp_config
+        return stdio_client(
+            StdioServerParameters(
+                command=config.command,
+                args=config.args or [],
+                env=config.env,
+                cwd=str(config.cwd) if config.cwd else None,
+                encoding="utf-8",
+                encoding_error_handler=config.encoding_error_handler,
+            ),
+        )
 
-    def _initialize_client(self) -> None:
-        """Pre-build the stdio client context manager.
-
-        Only the stdio transport is materialised at construction time —
-        ``StdioServerParameters`` carry process-launch details that are
-        cheap to bind upfront. HTTP transports are built lazily inside
-        :meth:`connect` (or per-call inside :meth:`_get_client_gen` for
-        stateless mode), since each ``streamable_http_client`` /
-        ``sse_client`` is a one-shot context manager.
-        """
+    def _create_sdk_client(self) -> SDKClient:
+        """Build an MCP 2.x client with automatic protocol negotiation."""
         if self.mcp_config.type == "stdio_mcp":
-            config = self.mcp_config
-            self._client = stdio_client(
-                StdioServerParameters(
-                    command=config.command,
-                    args=config.args or [],
-                    env=config.env,
-                    cwd=str(config.cwd) if config.cwd else None,
-                    encoding="utf-8",
-                    encoding_error_handler=config.encoding_error_handler,
-                ),
-            )
+            transport = self._create_stdio_transport()
+        else:
+            transport = self._create_http_client()
+        return SDKClient(
+            transport,
+            mode="auto",
+        )
 
     def _create_http_client(
         self,
-    ) -> _AsyncGeneratorContextManager[Any]:
-        """Create an HTTP MCP client (SSE or streamable HTTP)."""
+    ) -> AbstractAsyncContextManager[Any]:
+        """Create an HTTP MCP transport (SSE or Streamable HTTP)."""
         config = self.mcp_config
-
-        # Determine transport from URL
-        if config.url.endswith("/sse") or config.url.endswith("/messages/"):
+        if self._is_sse:
             return sse_client(
                 url=config.url,
                 headers=config.headers,
                 timeout=config.timeout,
             )
 
-        # StreamableHTTP transport
-        http_client = None
-        if config.headers or config.timeout:
-            http_client = httpx.AsyncClient(
-                headers=config.headers,
-                timeout=config.timeout,
-            )
-        return streamable_http_client(
-            url=config.url,
-            http_client=http_client,
+        return self._create_streamable_http_client()
+
+    @property
+    def _is_sse(self) -> bool:
+        """Whether the configured URL points at the SSE transport. Only
+        the path is inspected, so a query string (``/sse?key=...``) still
+        resolves to SSE rather than falling through to streamable HTTP.
+        """
+        path = urlsplit(self.mcp_config.url).path
+        return path.endswith("/sse") or path.endswith("/messages/")
+
+    @asynccontextmanager
+    async def _create_streamable_http_client(
+        self,
+    ) -> AsyncGenerator[Any, None]:
+        """Create an owned HTTP client that runtime headers can update."""
+        config = self.mcp_config
+        # Use the SDK factory to keep the transport's own client defaults
+        client = create_mcp_http_client(
+            headers=config.headers,
+            timeout=(
+                httpx2.Timeout(config.timeout)
+                if config.timeout is not None
+                else None
+            ),
         )
+        # Snapshot before overlaying: clearing runtime headers restores it.
+        self._static_headers = httpx2.Headers(client.headers)
+        client.headers.update(self._runtime_headers)
+        self._http_client = client
+
+        try:
+            async with client:
+                async with streamable_http_client(
+                    url=config.url,
+                    http_client=client,
+                ) as transport:
+                    yield transport
+        finally:
+            if self._http_client is client:
+                self._http_client = None
+
+    async def set_runtime_headers(
+        self,
+        headers: dict[str, str],
+    ) -> None:
+        """Replace the headers sent with subsequent HTTP requests.
+
+        The map is replaced rather than merged: an empty map drops all
+        runtime overrides, so the static headers from :attr:`mcp_config`
+        apply again. Runtime headers are live instance state, excluded
+        from ``model_dump`` and workspace persistence.
+
+        The update reaches the next outbound request without reconnecting.
+        Two things it cannot reach: a call already under way, which keeps
+        the snapshot it started with, and the long-lived GET stream of a
+        Streamable HTTP session, whose headers are fixed when the stream
+        is established. Headers MCP sends itself (``mcp-session-id``,
+        ``content-type``, ...) are set per request and always win over
+        the ones set here; the few httpx2 derives from the URL and body
+        are rejected outright.
+
+        Args:
+            headers (`dict[str, str]`):
+                The complete runtime header map. An empty dict clears it.
+
+        Raises:
+            `ValueError`:
+                The client is not Streamable HTTP, or a header is
+                invalid or owned by the HTTP layer.
+        """
+        if self.mcp_config.type != "http_mcp" or self._is_sse:
+            raise ValueError(
+                "Runtime headers require a Streamable HTTP MCP client.",
+            )
+        if not isinstance(headers, dict):
+            raise ValueError("Runtime headers must be a dict.")
+
+        # httpx2 accepts illegal names and CRLF in values, and only h11
+        # rejects them mid-request, so validate before storing.
+        for name, value in headers.items():
+            if (
+                not isinstance(name, str)
+                or not isinstance(value, str)
+                or not self._HEADER_NAME.fullmatch(name)
+                or not self._HEADER_VALUE.fullmatch(value)
+            ):
+                raise ValueError(f"Runtime header {name!r} is invalid.")
+            if name.lower() in self._RESERVED_HEADERS:
+                raise ValueError(
+                    f"Runtime header {name!r} is owned by the HTTP layer.",
+                )
+
+        self._runtime_headers = dict(headers)
+        if self._http_client is not None:
+            merged = httpx2.Headers(self._static_headers)
+            merged.update(self._runtime_headers)
+            self._http_client.headers = merged
 
     async def connect(self) -> None:
         """Connect to the MCP server (for stateful connections only).
@@ -233,24 +355,59 @@ class MCPClient(BaseModel):
                 "Call close() before reconnecting.",
             )
 
-        # Create HTTP client if needed
-        if self._client is None and self.mcp_config.type == "http_mcp":
-            self._client = self._create_http_client()
-
-        self._stack = AsyncExitStack()
+        client = self._create_sdk_client()
+        ready = asyncio.Event()
+        close_requested = asyncio.Event()
+        startup_result: list[SDKClient | BaseException] = []
+        lifecycle_task = asyncio.create_task(
+            self._run_client_lifecycle(
+                client,
+                ready,
+                close_requested,
+                startup_result,
+            ),
+        )
+        self._lifecycle_task = lifecycle_task
+        self._close_requested = close_requested
 
         try:
-            context = await self._stack.enter_async_context(self._client)
-            read_stream, write_stream = context[0], context[1]
-            self._session = ClientSession(read_stream, write_stream)
-            await self._stack.enter_async_context(self._session)
-            await self._session.initialize()
-
+            await asyncio.shield(ready.wait())
+            result = startup_result[0]
+            if isinstance(result, BaseException):
+                raise result
+            self._client = result
             self._is_connected = True
             logger.info("MCP connected: %s", self.name)
-        except Exception:
-            await self._stack.aclose()
-            self._stack = None
+        except BaseException:
+            if not lifecycle_task.done():
+                lifecycle_task.cancel()
+            try:
+                await asyncio.shield(lifecycle_task)
+            except BaseException:
+                pass
+            self._client = None
+            self._lifecycle_task = None
+            self._close_requested = None
+            self._is_connected = False
+            raise
+
+    @staticmethod
+    async def _run_client_lifecycle(
+        client: SDKClient,
+        ready: asyncio.Event,
+        close_requested: asyncio.Event,
+        startup_result: list[SDKClient | BaseException],
+    ) -> None:
+        """Own one stateful client context from initialization to close."""
+        try:
+            async with client as connected_client:
+                startup_result.append(connected_client)
+                ready.set()
+                await close_requested.wait()
+        except BaseException as error:
+            if not ready.is_set():
+                startup_result.append(error)
+                ready.set()
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
@@ -277,8 +434,16 @@ class MCPClient(BaseModel):
                 "Call connect() first.",
             )
 
+        lifecycle_task = self._lifecycle_task
+        close_requested = self._close_requested
+        if lifecycle_task is None or close_requested is None:
+            raise RuntimeError(
+                f"MCP '{self.name}' lifecycle is not initialized.",
+            )
+
+        close_requested.set()
         try:
-            await self._stack.aclose()
+            await lifecycle_task
         except Exception as e:
             if not ignore_errors:
                 raise e
@@ -288,17 +453,15 @@ class MCPClient(BaseModel):
                 str(e),
             )
         finally:
-            self._stack = None
-            self._session = None
+            self._client = None
+            self._lifecycle_task = None
+            self._close_requested = None
             self._is_connected = False
             logger.info("MCP closed: %s", self.name)
 
-    def _get_client_gen(self) -> _AsyncGeneratorContextManager[Any]:
-        """Get client generator for stateless connections."""
-        if self.mcp_config.type == "stdio_mcp":
-            return self._client
-        else:
-            return self._create_http_client()
+    def _get_client_gen(self) -> AbstractAsyncContextManager[Any]:
+        """Build a fresh MCP SDK client for a stateless operation."""
+        return self._create_sdk_client()
 
     async def list_raw_tools(self) -> list[mcp.types.Tool]:
         """List available tools from the MCP server in raw
@@ -316,20 +479,14 @@ class MCPClient(BaseModel):
             RuntimeError: If not connected (for stateful connections).
         """
         if not self.is_stateful:
-            # Stateless: create temporary session
-            async with self._get_client_gen() as cli:
-                read_stream, write_stream = cli[0], cli[1]
-                async with ClientSession(
-                    read_stream,
-                    write_stream,
-                ) as session:
-                    await session.initialize()
-                    res = await session.list_tools()
-                    self._cached_tools = res.tools
+            # Stateless: create a temporary auto-negotiating client.
+            async with self._get_client_gen() as client:
+                res = await client.list_tools(cache_mode="refresh")
+                self._cached_tools = res.tools
         else:
-            # Stateful: use existing session
+            # Stateful: use the existing high-level client.
             self._validate_connection()
-            res = await self._session.list_tools()
+            res = await self._client.list_tools(cache_mode="refresh")
             self._cached_tools = res.tools
 
         available_tools: list = self._cached_tools
@@ -368,7 +525,9 @@ class MCPClient(BaseModel):
         """Get a tool by name from the MCP server.
 
         The returned MCPTool object implements ToolProtocol and can be:
-        - Called directly: `await tool(arg1=val1)`
+        - Called directly for its final result: `await tool(arg1=val1)`
+        - Streamed when `stream_progress=True`:
+          `async for chunk in await tool(arg1=val1)`
         - Registered to toolkit: `toolkit.register_tool(tool)`
 
         Args:
@@ -384,21 +543,15 @@ class MCPClient(BaseModel):
         # Avoid circular import by importing here
         from ..tool import MCPTool
 
-        # Fetch tools if not cached. Use list_raw_tools() to avoid the
-        # recursion list_tools() → get_tool() → list_tools().
         if self._cached_tools is None:
             await self.list_raw_tools()
-
-        # Find target tool
-        target_tool = None
-        for tool in self._cached_tools:
-            if tool.name == name:
-                target_tool = tool
-                break
-
+        target_tool = next(
+            (tool for tool in self._cached_tools or [] if tool.name == name),
+            None,
+        )
         if target_tool is None:
             raise ValueError(
-                f"Tool '{name}' not found in MCP server " f"'{self.name}'",
+                f"Tool {name!r} not found in MCP server {self.name!r}",
             )
 
         # Create MCPTool based on stateful/stateless
@@ -409,6 +562,7 @@ class MCPClient(BaseModel):
                 tool=target_tool,
                 client_gen=self._get_client_gen,
                 timeout=self.execution_timeout,
+                stream_progress=self.stream_progress,
             )
         else:
             # Stateful: pass session
@@ -416,8 +570,9 @@ class MCPClient(BaseModel):
             return MCPTool(
                 mcp_name=self.name,
                 tool=target_tool,
-                session=self._session,
+                session=self._client,
                 timeout=self.execution_timeout,
+                stream_progress=self.stream_progress,
             )
 
     def _validate_connection(self) -> None:
@@ -431,8 +586,8 @@ class MCPClient(BaseModel):
                 f"MCP '{self.name}' is not connected. "
                 "Call connect() first.",
             )
-        if not self._session:
+        if not self._client:
             raise RuntimeError(
-                f"MCP '{self.name}' session is not initialized. "
+                f"MCP '{self.name}' client is not initialized. "
                 "Call connect() first.",
             )

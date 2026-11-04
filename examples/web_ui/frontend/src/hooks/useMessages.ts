@@ -11,11 +11,78 @@ import type {
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
+import { toast } from 'sonner';
 
-import { sessionApi } from '@/api';
-import { chatApi } from '@/api';
+import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
+import type { ChatQueueItem } from '@/api/chat';
 import { useAudioManager } from '@/context/AudioContext';
+import {
+	getQueueMessages,
+	type ChatInputStartedValue,
+	type ChatInputTerminalValue,
+	useChatQueue,
+} from '@/hooks/useChatQueue';
+import { useTranslation } from '@/i18n/useI18n';
+
+/**
+ * One pending subagent HITL request, projected from a team *member*
+ * session onto its *leader* session so the leader UI can render and
+ * resolve it. Mirrors the Python payload written by
+ * ``SubagentHitlProjector`` and pushed/replayed as a ``CustomEvent``
+ * (``name="subagent_require_user_confirm"``).
+ */
+export type SubagentHitlEntry = {
+	worker_session_id: string;
+	worker_agent_id: string;
+	worker_agent_name: string;
+	reply_id: string;
+	event_type: 'require_user_confirm' | 'require_external_execution';
+	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
+	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
+	created_at: string;
+};
+
+/**
+ * Return true if ``msg`` is an assistant reply currently parked on a
+ * pending tool_call (awaiting user confirmation or an external
+ * execution result). Used both to detect the "in-flight reply on page
+ * load" case and as the SDK-gap workaround that hides the confirm
+ * card once the paired tool_result lands.
+ */
+const hasPendingToolCall = (msg: Msg | undefined): boolean => {
+	if (!msg || msg.role !== 'assistant') return false;
+	for (const block of msg.content) {
+		if (block.type !== 'tool_call') continue;
+		const state = (block as ToolCallBlock).state;
+		if (state === 'asking' || state === 'submitted') return true;
+	}
+	return false;
+};
+
+const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
+	`${e.worker_session_id}:${e.reply_id}`;
+
+/**
+ * Lifecycle phase of the reply currently owned by this session.
+ *
+ * - ``idle`` — no in-flight reply; the send button is enabled.
+ * - ``streaming`` — a reply is in progress (either actively producing
+ *   events or parked awaiting HITL). A separate Stop button is shown,
+ *   while Send remains available to enqueue another turn. The
+ *   parked-vs-generating distinction is not tracked here; HITL cards
+ *   render themselves from message content when a
+ *   ``RequireUserConfirmEvent`` block is present.
+ * - ``interrupting`` — the user has requested a stop and we are
+ *   waiting for the backend's terminating ``ReplyEndEvent``. Stop
+ *   button is shown but disabled so users cannot spam it. Falls back
+ *   to ``idle`` after a 10s safety timeout in case the terminating
+ *   event never arrives (dropped SSE frame, backend bug, etc.).
+ */
+export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
+
+/** Safety fallback: force phase back to idle if REPLY_END is not seen. */
+const INTERRUPT_TIMEOUT_MS = 10_000;
 
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
@@ -30,19 +97,23 @@ import { useAudioManager } from '@/context/AudioContext';
  *   background retrigger, team member message, …).
  *
  * The hook opens the SSE connection immediately after fetching
- * history. User input and human-in-the-loop confirmations are sent
- * via ``POST /chat/`` (fire-and-forget); the resulting events arrive
- * through the already-open SSE connection.
+ * history. Ordinary user input is accepted into the backend FIFO.
+ * Human-in-the-loop confirmations use the active realtime control
+ * channel during voice mode and ``POST /chat/`` otherwise. Resulting
+ * events arrive through the already-open SSE connection.
  *
- * ``streaming`` is driven by event content, not HTTP lifecycle:
- * ``true`` after receiving ``ReplyStartEvent``, ``false`` after
- * ``ReplyEndEvent``.
+ * ``phase`` is driven by event content, not HTTP lifecycle: it moves
+ * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
+ * ``ReplyEndEvent``. Calling ``interrupt()`` moves it to
+ * ``interrupting`` until the terminating ``ReplyEndEvent`` arrives (or
+ * a 10s safety timeout fires).
  *
  * @param agentId - The agent whose session to subscribe. ``null`` to
  *   skip.
  * @param sessionId - The session to subscribe. ``null`` to skip.
- * @returns Object with ``msgs``, ``loading``, ``streaming``, ``error``,
- *   ``send``, ``onUserConfirm``, and ``abort``.
+ * @returns Message/reply state, editable queue state and mutations, HITL
+ *   handlers, send/interrupt actions, loading state, and the latest error.
+ *   ``loading`` stays true until history for the current session lands.
  */
 export function useMessages(
 	agentId: string | null,
@@ -62,17 +133,76 @@ export function useMessages(
 		 * ``tasks_context`` and ``permission_context``.
 		 */
 		onStateUpdated?: (value: Record<string, unknown>) => void;
+		/**
+		 * Called when a ``CUSTOM`` event with ``name="session_updated"``
+		 * arrives — the session record changed server-side, currently
+		 * only when auto-naming replaced its placeholder name. Refetch
+		 * the session list to pick the new one up.
+		 */
+		onSessionUpdated?: () => void;
+		/** True when a dedicated realtime transport already plays PCM audio. */
+		isRealtimeAudioActive?: () => boolean;
+		/** Send a tool confirmation over the active realtime transport. */
+		sendRealtimeUserConfirm?: (event: UserConfirmResultEvent) => Promise<void>;
 	},
 ) {
+	const { t } = useTranslation();
+	// A new identity for each visit also rejects late responses after A -> B -> A.
+	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
+	const activeSessionRef = useRef<typeof session | null>(null);
+	useLayoutEffect(() => {
+		activeSessionRef.current = session;
+		return () => {
+			activeSessionRef.current = null;
+		};
+	}, [session]);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
-	const [loading, setLoading] = useState(false);
-	const [streaming, setStreaming] = useState(false);
+	// The (agent, session) pair `msgs` actually belongs to. Loading is
+	// derived from it rather than set inside the fetch effect: an effect
+	// runs *after* the render that changed `sessionId`, so a flag it owns
+	// is still `false` for one frame — long enough to paint the empty
+	// state over a session that does have messages.
+	const [loadedKey, setLoadedKey] = useState<string | null>(null);
+	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	// Only a running reply accepts steering. Parked replies retain their
+	// streaming phase and currentReplyRef for confirmation and Stop.
+	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
 	const [error, setError] = useState<Error | null>(null);
+	// Pending subagent HITL cards projected onto this (leader) session.
+	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
+	const {
+		items: queuedItems,
+		visibleCount: queuedCount,
+		pendingCount: pendingQueueCount,
+		reorderDisabled: queueReorderDisabled,
+		addOptimistic,
+		acceptOptimistic,
+		rollbackOptimistic,
+		applyQueueSnapshot,
+		startItem,
+		finishItem,
+		updateQueued,
+		deleteQueued,
+		steerQueued,
+		moveQueued,
+		reorderQueued,
+	} = useChatQueue(agentId, sessionId, setError);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
+	const ttsConfigurationWarningsRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
+	// Timer that reverts ``interrupting`` back to ``idle`` if the
+	// terminating REPLY_END never arrives (dropped SSE frame, etc.).
+	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const clearInterruptTimer = useCallback(() => {
+		if (interruptTimerRef.current !== null) {
+			clearTimeout(interruptTimerRef.current);
+			interruptTimerRef.current = null;
+		}
+	}, []);
 
 	const audioManager = useAudioManager();
 
@@ -95,28 +225,148 @@ export function useMessages(
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
-				if (custom.name === 'team_updated') {
+				if (custom.name === 'tts_error') {
+					const failure = custom.value as { stage?: string; reply_id?: string };
+					const sessionKey = JSON.stringify([agentId, sessionId]);
+					if (failure.stage === 'configuration') {
+						if (ttsConfigurationWarningsRef.current.has(sessionKey)) return;
+						ttsConfigurationWarningsRef.current.add(sessionKey);
+					}
+					toast.warning(t('chat.ttsFailed'), {
+						id: `tts-error-${sessionKey}-${failure.reply_id ?? custom.id}`,
+					});
+				} else if (custom.name === 'team_updated') {
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+				} else if (custom.name === 'session_updated') {
+					optionsRef.current?.onSessionUpdated?.();
+				} else if (custom.name === 'subagent_require_user_confirm') {
+					// A team member is asking for confirmation; show (or
+					// refresh) its card on this leader view. Dedup by
+					// (worker_session_id, reply_id).
+					const e = custom.value as unknown as SubagentHitlEntry;
+					setSubagentHitl((prev) => [
+						...prev.filter((x) => hitlKey(x) !== hitlKey(e)),
+						e,
+					]);
+				} else if (custom.name === 'subagent_user_confirm_result') {
+					// The member resolved (or its run ended); clear the card.
+					const v = custom.value as { worker_session_id: string; reply_id: string };
+					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
+				} else if (custom.name === 'chat_input_started') {
+					const startedItem = startItem(custom.value as ChatInputStartedValue);
+					if (startedItem) {
+						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
+						msgsRef.current = [
+							...msgsRef.current,
+							...getQueueMessages([startedItem]).filter(
+								(msg) => !existingIds.has(msg.id),
+							),
+						];
+						scheduleUpdate();
+					}
+				} else if (custom.name === 'chat_queue_changed') {
+					const value = custom.value as { items?: ChatQueueItem[] };
+					applyQueueSnapshot(value.items ?? []);
+				} else if (custom.name === 'chat_input_failed') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					const failure = new Error(value.message ?? t('chatQueue.processFailed'));
+					clearInterruptTimer();
+					currentReplyRef.current = null;
+					setPhase('idle');
+					setActiveReplyId(null);
+					setError(failure);
+					toast.error(failure.message);
+				} else if (custom.name === 'chat_input_cancelled') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					const message = value.message ?? t('chatQueue.processingCancelled');
+					clearInterruptTimer();
+					currentReplyRef.current = null;
+					setPhase('idle');
+					setActiveReplyId(null);
+					toast.info(message);
+				} else if (custom.name === 'chat_input_injected') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					toast.success(t('chatQueue.injected'));
+				} else if (custom.name === 'chat_input_steer_failed') {
+					const value = custom.value as ChatInputTerminalValue;
+					toast.error(value.message ?? t('chatQueue.steerFailed'));
 				}
 				return;
 			}
 			if (event.type === EventType.REPLY_START) {
-				audioManager?.stopAllPlayback();
 				const e = event as ReplyStartEvent;
-				const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
-				msgsRef.current = [...msgsRef.current, msg];
-				currentReplyRef.current = msg;
-				setStreaming(true);
-			} else if (event.type === EventType.REPLY_END) {
-				if (currentReplyRef.current) {
-					appendEvent(currentReplyRef.current, event);
+				// A continuation (the run resuming after a confirmation or an
+				// external execution result) re-emits REPLY_START with the
+				// *same* reply_id. Re-point at the existing reply instead of
+				// appending a second msg under that id: a duplicate would
+				// collide on React keys, strand the original bubble in its
+				// running state, and hide any still-pending confirmation card
+				// — those are read off the tail msg, which would be the empty
+				// duplicate.
+				const existing = msgsRef.current.find((m) => m.id === e.reply_id);
+				if (existing) {
+					currentReplyRef.current = existing;
+				} else {
+					audioManager?.stopAllPlayback();
+					const msg =
+						e.role === 'user'
+							? UserMsg({ id: e.reply_id, name: e.name, content: [] })
+							: AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
+					msgsRef.current = [...msgsRef.current, msg];
+					currentReplyRef.current = msg;
 				}
-				setStreaming(false);
-				currentReplyRef.current = null;
-			} else if (currentReplyRef.current) {
-				appendEvent(currentReplyRef.current, event);
+				setActiveReplyId(e.reply_id);
+				clearInterruptTimer();
+				setPhase('streaming');
+			} else {
+				// Realtime providers may start the assistant response before the
+				// user's final transcription arrives. Route every identified event
+				// to its own reply instead of assuming event streams never overlap.
+				const reply = event.reply_id
+					? currentReplyRef.current?.id === event.reply_id
+						? currentReplyRef.current
+						: (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
+					: currentReplyRef.current;
+				if (reply) {
+					appendEvent(reply, event);
+					// ``appendEvent`` mutates in place, which would leave
+					// every Msg identical across renders and force the whole
+					// list to re-render on each delta. Republish just the
+					// reply that changed under a fresh identity, so the
+					// memoised bubbles of the other messages can skip the
+					// render. Anything holding a Msg reference across events
+					// must re-read it from here — ``currentReplyRef`` below,
+					// everything else looks the reply up by id.
+					const updated = { ...reply, content: [...reply.content] };
+					msgsRef.current = msgsRef.current.map((m) => (m === reply ? updated : m));
+					if (currentReplyRef.current?.id === reply.id) {
+						currentReplyRef.current = updated;
+					}
+				}
+				if (
+					event.type === EventType.REQUIRE_USER_CONFIRM ||
+					event.type === EventType.REQUIRE_EXTERNAL_EXECUTION
+				) {
+					setActiveReplyId((active) =>
+						!event.reply_id || active === event.reply_id ? null : active,
+					);
+				}
+				if (
+					event.type === EventType.REPLY_END &&
+					(!event.reply_id ||
+						currentReplyRef.current === null ||
+						currentReplyRef.current.id === event.reply_id)
+				) {
+					clearInterruptTimer();
+					setPhase('idle');
+					setActiveReplyId(null);
+					currentReplyRef.current = null;
+				}
 			}
 
 			// Route streaming audio DataBlocks to the audio manager. They still
@@ -144,16 +394,30 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager],
+		[
+			scheduleUpdate,
+			audioManager,
+			clearInterruptTimer,
+			startItem,
+			applyQueueSnapshot,
+			finishItem,
+			t,
+			agentId,
+			sessionId,
+		],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
+		setLoadedKey(null);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
 		setMsgs([]);
 		setError(null);
-		setStreaming(false);
+		clearInterruptTimer();
+		setPhase('idle');
+		setActiveReplyId(null);
+		setSubagentHitl([]);
 		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
@@ -163,18 +427,59 @@ export function useMessages(
 		let cancelled = false;
 
 		(async () => {
-			// 1. Fetch persisted history
-			setLoading(true);
-			try {
-				const { messages } = await sessionApi.messages(sessionId, agentId);
-				if (cancelled) return;
-				msgsRef.current = messages;
-				scheduleUpdate();
-			} catch (e) {
-				if (!cancelled) setError(e as Error);
-				return;
-			} finally {
-				if (!cancelled) setLoading(false);
+			let eventCursor: string | null = null;
+			// 1. Fetch persisted history — unless this tab just created the
+			// session, in which case there is provably none.
+			if (takeFreshlyCreated(sessionId)) {
+				if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
+			} else {
+				try {
+					const { messages, is_running, event_cursor } = await sessionApi.messages(
+						sessionId,
+						agentId,
+					);
+					if (cancelled) return;
+					eventCursor = event_cursor;
+					msgsRef.current = messages;
+					// If a reply is in flight (running on a worker) OR the
+					// tail msg is parked on a pending tool_call (awaiting
+					// user confirmation / external execution), initialise the
+					// phase to ``streaming`` so the interrupt button is
+					// available immediately — otherwise a fresh page load
+					// while parked leaves the UI stuck on ``idle`` with no
+					// way to abort.
+					const tail = messages[messages.length - 1];
+					const pendingToolCall = hasPendingToolCall(tail);
+					if (is_running || pendingToolCall) {
+						setPhase('streaming');
+						if (is_running && !pendingToolCall && tail?.role === 'assistant') {
+							setActiveReplyId(tail.id);
+						}
+						if (pendingToolCall) {
+							// Prime the ref so continuation events (which
+							// arrive without a fresh REPLY_START) apply to
+							// the right msg.
+							currentReplyRef.current = tail ?? null;
+						}
+					}
+					// Published synchronously, not through `scheduleUpdate`:
+					// its requestAnimationFrame batching exists for
+					// high-frequency streaming deltas, and deferring here
+					// would let `loadedKey` below clear `loading` a frame
+					// before the messages land — painting the empty-session
+					// greeting over a conversation that does have history.
+					// Both setters now land in the same React batch.
+					setMsgs([...msgsRef.current]);
+				} catch (e) {
+					if (!cancelled) setError(e as Error);
+					return;
+				} finally {
+					// Marks the load done whether it succeeded or threw —
+					// an error surfaces through `error`, and leaving
+					// `loading` stuck on would hide it behind a spinner
+					// forever.
+					if (!cancelled) setLoadedKey(`${agentId}:${sessionId}`);
+				}
 			}
 
 			// 2. Open SSE long connection for live events
@@ -183,6 +488,7 @@ export function useMessages(
 					sessionId,
 					agentId,
 					controller.signal,
+					eventCursor,
 				)) {
 					if (cancelled) break;
 					processEvent(event);
@@ -198,41 +504,67 @@ export function useMessages(
 			cancelled = true;
 			controller.abort();
 			abortRef.current = null;
+			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager]);
+	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
 
 	/**
-	 * Send a user message. Appends the message to the local list
-	 * optimistically, then fires a ``POST /chat/`` trigger. Events
-	 * arrive via the already-open SSE connection.
+	 * Send a user message. The first idle input appears in the conversation
+	 * immediately (with its matching queue row hidden); later inputs remain
+	 * in the editable queue until ``chat_input_started`` arrives.
 	 *
 	 * @param content - The message content blocks.
 	 */
 	const send = useCallback(
 		async (content: ContentBlock[]) => {
-			if (!agentId || !sessionId) return;
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			msgsRef.current = [...msgsRef.current, userMsg];
-			scheduleUpdate();
-
+			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
+			if (showInConversationImmediately) {
+				msgsRef.current = [...msgsRef.current, userMsg];
+				scheduleUpdate();
+			}
+			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
 			try {
-				await chatApi.trigger({
+				const response = await chatApi.trigger({
 					agent_id: agentId,
 					session_id: sessionId,
 					input: userMsg,
 				});
+				if (activeSessionRef.current !== session) return;
+				acceptOptimistic(optimisticId, response.queue_item_id);
 			} catch (e) {
+				if (activeSessionRef.current !== session) return;
+				// The server never accepted this input. Remove the
+				// optimistic queue row and restore the caller's draft.
+				rollbackOptimistic(optimisticId, userMsg.id);
+				if (showInConversationImmediately) {
+					msgsRef.current = msgsRef.current.filter((msg) => msg.id !== userMsg.id);
+					scheduleUpdate();
+				}
 				setError(e as Error);
+				throw e;
 			}
 		},
-		[agentId, sessionId, scheduleUpdate],
+		[
+			agentId,
+			sessionId,
+			phase,
+			pendingQueueCount,
+			session,
+			scheduleUpdate,
+			addOptimistic,
+			acceptOptimistic,
+			rollbackOptimistic,
+		],
 	);
 
 	/**
-	 * Confirm or deny a tool call (human-in-the-loop). Fires a
-	 * ``POST /chat/`` with a ``UserConfirmResultEvent``; events
-	 * arrive via SSE.
+	 * Confirm or deny a tool call (human-in-the-loop). Sends a
+	 * ``UserConfirmResultEvent`` through realtime control while voice mode
+	 * is active, or through ``POST /chat/`` otherwise. Events arrive via
+	 * SSE in both cases.
 	 *
 	 * @param toolCall - The tool call block to confirm/deny.
 	 * @param confirm - Whether the user confirmed.
@@ -263,13 +595,21 @@ export function useMessages(
 			};
 
 			try {
-				await chatApi.trigger({
-					agent_id: agentId,
-					session_id: sessionId,
-					input: event,
-				});
+				if (
+					optionsRef.current?.isRealtimeAudioActive?.() &&
+					optionsRef.current.sendRealtimeUserConfirm
+				) {
+					await optionsRef.current.sendRealtimeUserConfirm(event);
+				} else {
+					await chatApi.trigger({
+						agent_id: agentId,
+						session_id: sessionId,
+						input: event,
+					});
+				}
 			} catch (e) {
 				setError(e as Error);
+				throw e;
 			}
 		},
 		[agentId, sessionId],
@@ -280,5 +620,133 @@ export function useMessages(
 		abortRef.current?.abort();
 	}, []);
 
-	return { msgs, loading, streaming, error, send, onUserConfirm, abort };
+	/**
+	 * Request interruption of the in-progress reply (running or parked
+	 * on HITL). Optimistically moves ``phase`` to ``interrupting`` so
+	 * the UI can disable the Stop button; the phase reverts to
+	 * ``idle`` when the backend's terminating ``ReplyEndEvent``
+	 * arrives via SSE (or after a 10s safety timeout, in case that
+	 * event is lost).
+	 *
+	 * Backend contract:
+	 * - 202: interrupt was accepted (cancel signal broadcast for a
+	 *   running reply, or wakeup enqueued for a parked one). The
+	 *   resulting ``ReplyEndEvent`` arrives through the SSE stream and
+	 *   drives the phase transition.
+	 * - Idle sessions are a silent no-op at the agent layer, so
+	 *   spamming this callback is safe.
+	 */
+	const interrupt = useCallback(async () => {
+		if (!agentId || !sessionId) return;
+		// Only escalate to ``interrupting`` if a reply is actually in
+		// flight; if we're already idle (SSE completed just before the
+		// click) leave the phase alone.
+		setPhase((prev) => (prev === 'streaming' ? 'interrupting' : prev));
+		clearInterruptTimer();
+		interruptTimerRef.current = setTimeout(() => {
+			interruptTimerRef.current = null;
+			setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
+		}, INTERRUPT_TIMEOUT_MS);
+		try {
+			await sessionApi.interrupt(sessionId, agentId);
+		} catch (e) {
+			clearInterruptTimer();
+			setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
+			setError(e as Error);
+		}
+	}, [agentId, sessionId, clearInterruptTimer]);
+
+	/**
+	 * Confirm or deny a tool call that a *team member* is awaiting,
+	 * from this leader view (design §3.6 — backend routing).
+	 *
+	 * The result is POSTed to the **leader** session (the
+	 * ``(agentId, sessionId)`` this hook is bound to), NOT the worker.
+	 * The backend resolves ``reply_id`` → worker session via the
+	 * leader's pending hash and forwards the event to the worker's
+	 * continuation. The client never addresses the worker directly —
+	 * ``entry.worker_*`` ids are used only for local dedup / clearing.
+	 *
+	 * @param entry - The pending subagent HITL entry being resolved.
+	 * @param toolCall - The tool call block to confirm/deny.
+	 * @param confirm - Whether the user confirmed.
+	 * @param rules - Optional permission rules to attach.
+	 */
+	const onSubagentConfirm = useCallback(
+		async (
+			entry: SubagentHitlEntry,
+			toolCall: ToolCallBlock,
+			confirm: boolean,
+			rules?: ToolCallBlock['suggested_rules'],
+		) => {
+			if (!agentId || !sessionId) return;
+
+			const event: UserConfirmResultEvent = {
+				type: EventType.USER_CONFIRM_RESULT,
+				id: crypto.randomUUID(),
+				created_at: new Date().toISOString(),
+				reply_id: entry.reply_id, // worker's reply_id; backend maps it
+				confirm_results: [
+					{ confirmed: confirm, tool_call: toolCall, rules: rules ?? null },
+				],
+			};
+
+			try {
+				// Post to the leader front door — backend routes to the
+				// worker session (§3.6). Do NOT address the worker here.
+				await chatApi.trigger({
+					agent_id: agentId,
+					session_id: sessionId,
+					input: event,
+				});
+			} catch (e) {
+				setError(e as Error);
+				// Rethrow so the card can re-enable itself and be retried.
+				throw e;
+			}
+
+			// Drop only the call just answered — an entry can carry several
+			// pending tool calls, and clearing the whole entry would take the
+			// unanswered siblings' cards down with it. The backend's clear
+			// event removes whatever is left.
+			setSubagentHitl((prev) =>
+				prev.flatMap((x) => {
+					if (hitlKey(x) !== hitlKey(entry)) return [x];
+					const remaining = (x.event.tool_calls ?? []).filter(
+						(tc) => tc.id !== toolCall.id,
+					);
+					return remaining.length > 0
+						? [{ ...x, event: { ...x.event, tool_calls: remaining } }]
+						: [];
+				}),
+			);
+		},
+		[agentId, sessionId],
+	);
+
+	const currentKey = agentId !== null && sessionId !== null ? `${agentId}:${sessionId}` : null;
+	const ownsConversation = currentKey !== null && loadedKey === currentKey;
+	const loading = currentKey !== null && !ownsConversation;
+
+	return {
+		msgs: ownsConversation ? msgs : [],
+		loading,
+		queuedItems: ownsConversation ? queuedItems : [],
+		queuedCount: ownsConversation ? queuedCount : 0,
+		queueReorderDisabled: !ownsConversation || queueReorderDisabled,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
+		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
+		error: ownsConversation ? error : null,
+		activeReplyId: ownsConversation && phase === 'streaming' ? activeReplyId : null,
+		steerQueued,
+		send,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl: ownsConversation ? subagentHitl : [],
+		abort,
+		interrupt,
+	};
 }

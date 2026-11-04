@@ -25,3 +25,5 @@ output_size: 32768
 parameter_overrides:
   max_tokens:
     maximum: 32768
+  reasoning_effort:
+    hidden: true

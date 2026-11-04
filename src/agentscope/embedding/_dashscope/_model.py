@@ -3,14 +3,20 @@
 
 Handles both text-only and multimodal models under a single class.
 Text models (``text-embedding-v3``, ``text-embedding-v4``) accept
-``list[str]``.  Multimodal models (``qwen*-vl-embedding``,
+``list[str | TextBlock]``.  Multimodal models (``qwen*-vl-embedding``,
 ``multimodal-embedding-*``, ``tongyi-embedding-vision-*``)
 additionally accept :class:`~agentscope.message.DataBlock`.
 The model name determines which DashScope API endpoint is used.
+
+Text payloads may be passed either as bare ``str`` or as
+:class:`~agentscope.message.TextBlock` — the latter is unpacked to its
+``.text`` field on entry so the rest of the pipeline only deals with
+``str`` and ``DataBlock``.
 """
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
@@ -21,7 +27,7 @@ from .._embedding_usage import EmbeddingUsage
 from .._embedding_base import EmbeddingModelBase
 from ..._logging import logger
 from ...credential import CredentialBase
-from ...message import DataBlock, Base64Source, URLSource
+from ...message import DataBlock, Base64Source, TextBlock, URLSource
 
 #: Model name prefixes that route to the multimodal API.
 _MULTIMODAL_PREFIXES = (
@@ -83,7 +89,7 @@ _DEFAULT_LIMITS = _MultimodalLimits(
 )
 
 
-class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
+class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
     """Unified DashScope embedding model.
 
     Routes to the text or multimodal DashScope API based on the model
@@ -105,6 +111,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int | None,
         parameters: "DashScopeEmbeddingModel.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
@@ -121,10 +128,16 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
                 The embedding model name (e.g.
                 ``"text-embedding-v4"`` or
                 ``"qwen3-vl-embedding"``).
+            dimensions (`int | None`):
+                The output embedding vector dimensions.  Required at
+                the contract level — see :class:`EmbeddingModelBase`
+                for the rationale.  ``None`` is accepted only for
+                backward compatibility with legacy configs that
+                persisted ``dimensions`` inside ``parameters``.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific non-dimensional text parameters, such as
+                ``text_type``. Per-call keyword arguments take precedence.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -135,22 +148,22 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
             retry_delay (`float`, defaults to ``1.0``):
                 Seconds between retry attempts.
         """
-        self._is_multimodal: bool = model.startswith(_MULTIMODAL_PREFIXES)
-
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        self.supports_multimodal = model.startswith(_MULTIMODAL_PREFIXES)
         self.api_key: str = credential.api_key.get_secret_value()
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
         # Resolve multimodal constraints.
-        if self._is_multimodal:
+        if self.supports_multimodal:
             self._limits = _MODEL_LIMITS.get(model, _DEFAULT_LIMITS)
 
     @classmethod
@@ -169,7 +182,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
 
     async def __call__(
         self,
-        inputs: list[str | DataBlock],
+        inputs: list[str | TextBlock | DataBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Embed inputs with batching and retry.
@@ -180,26 +193,34 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         total elements, images, and videos per request.
 
         Args:
-            inputs (`list[str | DataBlock]`):
-                The input data to embed.
+            inputs (`list[str | TextBlock | DataBlock]`):
+                The input data to embed.  ``TextBlock`` items are
+                unpacked to their ``.text`` field on entry, so the
+                remainder of the pipeline only sees ``str`` and
+                ``DataBlock``.
             **kwargs:
                 Forwarded to the DashScope API.
 
         Returns:
             `EmbeddingResponse`: Merged response for all inputs.
         """
-        if not self._is_multimodal:
+        normalized: list[str | DataBlock] = [
+            item.text if isinstance(item, TextBlock) else item
+            for item in inputs
+        ]
+
+        if not self.supports_multimodal:
             # Text mode — use base class batching.
-            return await super().__call__(inputs, **kwargs)
+            return await super().__call__(normalized, **kwargs)
 
         # Multimodal mode — content-aware batching.
-        batches = self._split_multimodal_batches(inputs)
+        batches = self._split_multimodal_batches(normalized)
 
         if len(batches) > 1:
             logger.info(
                 "Embedding %d multimodal inputs in %d batches for "
                 "model %s (limits: elements=%d, images=%d, videos=%d).",
-                len(inputs),
+                len(normalized),
                 len(batches),
                 self.model,
                 self._limits.max_elements,
@@ -294,7 +315,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         Returns:
             `EmbeddingResponse`: Embedding vectors and usage info.
         """
-        if self._is_multimodal:
+        if self.supports_multimodal:
             return await self._call_multimodal(inputs, **kwargs)
         return await self._call_text(inputs, **kwargs)
 
@@ -330,13 +351,21 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         api_kwargs: dict[str, Any] = {
             "input": texts,
             "model": self.model,
+            "api_key": self.api_key,
             "dimension": self.dimensions,
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
+        }
+
+        # Exclude api_key from cache identifier to avoid persisting secrets
+        # and to keep cache valid across key rotations.
+        cache_identifier = {
+            k: v for k, v in api_kwargs.items() if k != "api_key"
         }
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
             if cached:
                 return EmbeddingResponse(
@@ -348,8 +377,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        response = dashscope.embeddings.TextEmbedding.call(
-            api_key=self.api_key,
+        response = await asyncio.to_thread(
+            dashscope.embeddings.TextEmbedding.call,
             **api_kwargs,
         )
         time = (datetime.now() - start_time).total_seconds()
@@ -360,11 +389,15 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
             )
 
         embeddings = [
-            entry["embedding"] for entry in response.output["embeddings"]
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(response.output["embeddings"]),
+                key=lambda item: item[1].get("text_index", item[0]),
+            )
         ]
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
                 embeddings=embeddings,
             )
         return EmbeddingResponse(
@@ -410,14 +443,14 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
             "input": formatted,
             "model": self.model,
             "api_key": self.api_key,
+            "dimension": self.dimensions,
             **kwargs,
         }
 
-        # Exclude api_key from cache identifier to avoid persisting secrets
-        # and to keep cache valid across key rotations.
-        cache_identifier = {
-            k: v for k, v in api_kwargs.items() if k != "api_key"
-        }
+        # Exclude api_key and isolate the cache identifier from SDK mutations.
+        cache_identifier = copy.deepcopy(
+            {k: v for k, v in api_kwargs.items() if k != "api_key"},
+        )
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
@@ -433,7 +466,10 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        res = dashscope.MultiModalEmbedding.call(**api_kwargs)
+        res = await asyncio.to_thread(
+            dashscope.MultiModalEmbedding.call,
+            **api_kwargs,
+        )
         time = (datetime.now() - start_time).total_seconds()
 
         if res.status_code != 200:
@@ -441,7 +477,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        embeddings = [
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(res.output["embeddings"]),
+                key=lambda item: item[1].get("index", item[0]),
+            )
+        ]
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,

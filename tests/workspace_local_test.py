@@ -6,27 +6,41 @@ import json
 import base64
 import hashlib
 import tempfile
-from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 from dataclasses import asdict
 from urllib.parse import urlparse
-from urllib.request import url2pathname
 
 import aiofiles
 from utils import AnyString, MockModel
-from agentscope.agent import Agent, ContextConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
-from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.tool import (
+    Bash,
+    Edit,
+    Glob,
+    Grep,
+    LocalBackend,
+    PowerShell,
+    Read,
+    Toolkit,
+    ToolBase,
+    ToolChunk,
+    Write,
+)
 from agentscope.permission import PermissionDecision, PermissionBehavior
-from agentscope.workspace import LocalWorkspace
+from agentscope.workspace import LocalWorkspace, WorkspaceBase
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
     UserMsg,
     AssistantMsg,
     DataBlock,
+    HintBlock,
     Base64Source,
     URLSource,
     TextBlock,
@@ -34,6 +48,9 @@ from agentscope.message import (
     ToolResultState,
     ToolCallBlock,
 )
+
+# Probe the temp filesystem rather than assuming case rules from the OS.
+_CASE_INSENSITIVE_FS = os.path.exists(tempfile.gettempdir().swapcase())
 
 
 class _LongResultTool(ToolBase):
@@ -79,6 +96,77 @@ class _LongResultTool(ToolBase):
             ],
             state=ToolResultState.SUCCESS,
         )
+
+
+class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace builtin tools."""
+
+    async def test_list_tools_builtin_posix_uses_bash(self) -> None:
+        """A POSIX local workspace returns Bash and filesystem tools."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="posix"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_list_tools_builtin_windows_uses_powershell(self) -> None:
+        """A Windows local workspace returns PowerShell, not Bash."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="nt"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {PowerShell, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_windows_shell_switch_is_local_workspace_behavior(
+        self,
+    ) -> None:
+        """Build the tool list in LocalWorkspace without delegating up."""
+        workspace = LocalWorkspace(workdir="workspace")
+        backend = workspace.get_backend()
+
+        with (
+            patch.object(
+                WorkspaceBase,
+                "list_tools",
+                new=AsyncMock(side_effect=AssertionError("must not delegate")),
+            ),
+            patch(
+                "agentscope.workspace._local_workspace.os",
+                SimpleNamespace(name="nt"),
+            ),
+        ):
+            tools = await workspace.list_tools()
+
+        self.assertIsInstance(tools[0], PowerShell)
+        self.assertIs(tools[0]._backend, backend)
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
@@ -179,6 +267,27 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             msg = Msg.model_validate_json(line)
             self.assertIsNotNone(msg)
 
+    async def test_offload_context_empty_msgs_appends_nothing(self) -> None:
+        """Offloading an empty batch must not append a blank JSONL line.
+
+        The empty join used to be written as a standalone ``\\n``, which
+        is not a JSON record and broke every line-oriented consumer of
+        ``context.jsonl``.
+        """
+        session_id = "test_session_empty_batch"
+        msgs1 = [UserMsg(name="user", content="First message")]
+        file_path = await self.workspace.offload_context(session_id, msgs1)
+        await self.workspace.offload_context(session_id, [])
+
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
+
+        self.assertFalse(content.endswith(b"\n\n"))
+        for line in content.decode("utf-8").splitlines():
+            self.assertTrue(line.strip())
+            Msg.model_validate_json(line)
+            json.loads(line)
+
     async def test_offload_context_with_datablock(self) -> None:
         """Test offloading messages with DataBlock content.
 
@@ -224,9 +333,12 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         self.assertIsInstance(loaded_msg.content, list)
         self.assertEqual(len(loaded_msg.content), 2)
         data_url = str(loaded_msg.content[1].source.url)
-        self.assertTrue(data_url.startswith("file://"))
-        # Convert file URL to local path (works on both Windows and Unix)
-        data_file_path = url2pathname(urlparse(data_url).path)
+        self.assertTrue(data_url.startswith("workspace://"))
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
         self.assertTrue(os.path.exists(data_file_path))
 
         # Verify the data file contains the correct content
@@ -242,11 +354,13 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
                 TextBlock(
                     text="Check this image:",
                     id=loaded_msg.content[0].id,
+                    created_at=loaded_msg.content[0].created_at,
                 ),
                 DataBlock(
                     id=loaded_msg.content[1].id,
                     source=loaded_msg.content[1].source,
                     name="test_image",
+                    created_at=loaded_msg.content[1].created_at,
                 ),
             ],
             id=loaded_msg.id,
@@ -256,6 +370,62 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
             loaded_msg.model_dump_json(),
             expected_msg.model_dump_json(),
         )
+
+    async def test_offload_context_nested_media(self) -> None:
+        """Offload nested media without changing the caller's message."""
+        data = base64.b64encode(b"nested media").decode()
+        media = DataBlock(
+            id="media",
+            source=Base64Source(data=data, media_type="image/png"),
+            created_at="2026-01-01T00:00:00",
+        )
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolResultBlock(
+                    id="tool-call",
+                    name="get_media",
+                    output=[media],
+                    state=ToolResultState.SUCCESS,
+                    created_at="2026-01-01T00:00:00",
+                ),
+                HintBlock(
+                    id="hint",
+                    hint=[media],
+                    created_at="2026-01-01T00:00:00",
+                ),
+            ],
+            id="message",
+            created_at="2026-01-01T00:00:00",
+        )
+        original = msg.model_dump(mode="json")
+
+        path = await self.workspace.offload_context("nested-media", [msg])
+        saved = Msg.model_validate_json(
+            await self.workspace.get_backend().read_file(path),
+        )
+
+        url = (
+            "workspace:///data/"
+            f"{hashlib.sha256(data.encode()).hexdigest()}.png"
+        )
+        expected = msg.model_dump(mode="json")
+        for index, field in ((0, "output"), (1, "hint")):
+            expected["content"][index][field][0] = {
+                "type": "data",
+                "id": "media",
+                "source": {
+                    "type": "url",
+                    "url": url,
+                    "media_type": "image/png",
+                },
+                "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
+            }
+
+        self.assertEqual(saved.model_dump(mode="json"), expected)
+        self.assertEqual(msg.model_dump(mode="json"), original)
 
     async def test_offload_data_block_deduplication(self) -> None:
         """Test that duplicate DataBlocks are deduplicated.
@@ -278,16 +448,19 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         )
 
         # Offload both data blocks
-        result1 = await self.workspace._offload_data_block(data_block1)
-        result2 = await self.workspace._offload_data_block(data_block2)
+        result1 = await self.workspace.offload_data_block(data_block1)
+        result2 = await self.workspace.offload_data_block(data_block2)
 
         # Verify both point to the same file by comparing source URLs
         self.assertEqual(str(result1.source.url), str(result2.source.url))
 
         # Verify the file exists
         data_url = str(result1.source.url)
-        # Convert file URL to local path (works on both Windows and Unix)
-        data_file_path = url2pathname(urlparse(data_url).path)
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
         self.assertTrue(os.path.exists(data_file_path))
 
         # Verify only one file was created in the data directory
@@ -313,7 +486,7 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         )
 
         # Offload the data block
-        result = await self.workspace._offload_data_block(data_block)
+        result = await self.workspace.offload_data_block(data_block)
 
         # Verify the data block is returned as-is by comparing full objects
         self.assertDictEqual(result.model_dump(), data_block.model_dump())
@@ -406,7 +579,7 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
 
         # Verify the content structure (URL format varies by platform)
         self.assertTrue(content.startswith("File created successfully: "))
-        self.assertIn("<data url='file://", content)
+        self.assertIn("<data url='workspace://", content)
         self.assertIn("name='output.txt'", content)
         self.assertIn("media_type='text/plain'", content)
         self.assertTrue(content.endswith("/>"))
@@ -418,8 +591,11 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         url_match = re.search(r"url='([^']+)'", content)
         self.assertIsNotNone(url_match)
         data_url = url_match.group(1)
-        # Convert file URL to local path (works on both Windows and Unix)
-        data_file_path = url2pathname(urlparse(data_url).path)
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
         self.assertTrue(os.path.exists(data_file_path))
 
 
@@ -521,7 +697,7 @@ description: {description}
         await workspace.initialize()
 
         # Verify skills were copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify skill directories exist
@@ -545,7 +721,7 @@ description: {description}
         )
 
         # Verify .skills file was created with correct new structure
-        skills_hash_file = os.path.join(skills_dir, ".skills")
+        skills_hash_file = os.path.join(skills_dir, ".index")
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -565,6 +741,90 @@ description: {description}
             {k: v["skill_name"] for k, v in skills_index.items()},
             {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
         )
+
+    async def test_initialize_with_tilde_skill_path(self) -> None:
+        """Test that ``skill_paths`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is seeded through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            with patch.dict(os.environ, env, clear=False):
+                workspace = LocalWorkspace(
+                    workdir=self.temp_dir.name,
+                    skill_paths=[os.path.join("~", "tilde_skill")],
+                )
+                self.assertEqual(
+                    workspace.skill_paths,
+                    [os.path.abspath(skill_dir)],
+                )
+                await workspace.initialize()
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            ".seed",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
+
+    async def test_add_skill_with_tilde_path(self) -> None:
+        """Test that ``add_skill`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is added through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            workspace = LocalWorkspace(workdir=self.temp_dir.name)
+            await workspace.initialize()
+            with patch.dict(os.environ, env, clear=False):
+                await workspace.add_skill(os.path.join("~", "tilde_skill"))
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
 
     async def test_initialize_skip_duplicate_skills(self) -> None:
         """Test that duplicate skills are not copied again.
@@ -591,7 +851,8 @@ description: {description}
         skills_hash_file = os.path.join(
             self.temp_dir.name,
             "skills",
-            ".skills",
+            ".seed",
+            ".index",
         )
         async with aiofiles.open(skills_hash_file, "r") as f:
             hash_data_first = await f.read()
@@ -600,6 +861,7 @@ description: {description}
         skill_target = os.path.join(
             self.temp_dir.name,
             "skills",
+            ".seed",
             "test_skill_dup",
         )
         mtime_first = os.path.getmtime(skill_target)
@@ -640,12 +902,12 @@ description: {description}
         await workspace.initialize()
 
         # Verify only one skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         skill_target = os.path.join(skills_dir, "test_skill_dedup")
         self.assertTrue(os.path.exists(skill_target))
 
         # Verify .skills file contains only one entry
-        skills_hash_file = os.path.join(skills_dir, ".skills")
+        skills_hash_file = os.path.join(skills_dir, ".index")
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
@@ -716,7 +978,7 @@ description: {description}
         await workspace.initialize()
 
         # Verify only the valid skill was copied
-        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
         self.assertTrue(os.path.exists(skills_dir))
 
         # Verify valid skill exists
@@ -805,6 +1067,136 @@ description: {description}
         # Verify empty list is returned
         self.assertListEqual(skills, [])
 
+    async def test_add_skill_with_utf8_bom(self) -> None:
+        """Test installing and listing a skill with a UTF-8 BOM."""
+        skill_dir = self._create_test_skill(
+            "bom_skill",
+            "Installed despite the BOM",
+        )
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(skill_md_path, "rb") as f:
+            content = f.read()
+        with open(skill_md_path, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + content)
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+        await workspace.add_skill(skill_dir)
+
+        installed_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "bom_skill",
+        )
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Installed despite the BOM",
+                    "dir": installed_dir,
+                    "markdown": "# bom_skill\n\nInstalled despite the BOM",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(installed_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+    async def test_list_skills_reconciles_utf8_bom_skill(self) -> None:
+        """Test indexing a manually added skill with a UTF-8 BOM."""
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        skill_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "dropped_skill",
+        )
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+            f.write(
+                b"\xef\xbb\xbf---\n"
+                b"name: dropped_skill\n"
+                b"description: Dropped with a BOM\n"
+                b"---\n\nBody.\n",
+            )
+
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "dropped_skill",
+                    "description": "Dropped with a BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(skill_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+
+class _UnindexedWorkspace(WorkspaceBase):  # pylint: disable=abstract-method
+    """Use a local backend to test the base skill listing implementation."""
+
+    def __init__(self, workdir: str) -> None:
+        """Bind a local backend over ``workdir``."""
+        super().__init__()
+        self.workdir = workdir
+        self._backend = LocalBackend()
+
+    async def initialize(self) -> None:
+        """Nothing to provision for this workspace."""
+
+    async def close(self) -> None:
+        """Nothing to release for this workspace."""
+
+    async def _equip_partition(self, agent_id: str | None) -> str:
+        """Return the partition without copying the seed template."""
+        partition = self._skill_partition(agent_id)
+        os.makedirs(partition, exist_ok=True)
+        return partition
+
+
+class TestWorkspaceBaseListSkills(IsolatedAsyncioTestCase):
+    """Front-matter parsing in the default ``WorkspaceBase.list_skills``."""
+
+    async def test_list_skills_with_utf8_bom(self) -> None:
+        """A BOM-prefixed SKILL.md is listed, not silently dropped."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = _UnindexedWorkspace(workdir)
+            partition = await workspace._equip_partition(None)
+            skill_dir = os.path.join(partition, "bom_skill")
+            os.makedirs(skill_dir)
+            with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+                f.write(
+                    b"\xef\xbb\xbf---\n"
+                    b"name: bom_skill\n"
+                    b"description: Listed despite the BOM\n"
+                    b"---\n\nBody.\n",
+                )
+
+            skills = await workspace.list_skills()
+
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Listed despite the BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": 0.0,
+                },
+            ],
+        )
+
 
 class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
     """Test the local workspace class offloading with the agent."""
@@ -822,7 +1214,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
         """
         with tempfile.TemporaryDirectory() as workdir:
             session_id = "test_session"
-            model = MockModel(stream=False)
+            model = MockModel(stream=False, context_size=100000)
             agent = Agent(
                 name="Friday",
                 system_prompt="You're a helpful assistant named Friday.",
@@ -833,6 +1225,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 context_config=ContextConfig(
                     tool_result_limit=50,
                 ),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 offloader=LocalWorkspace(
                     workdir=workdir,
                 ),
@@ -893,7 +1289,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             # The full text is "0" * 30000 followed by a base64 DataBlock;
             # tool_result_limit=50 reserves ~200 chars of text in context, the
             # remaining 29800 chars + the DataBlock placeholder are offloaded.
-            data_url = Path(data_file_path).as_uri()
+            data_url = f"workspace:///data/{data_hash}.png"
             expected_offload_content = (
                 "0" * 29800 + f"<data url='{data_url}' name='fake_image.png' "
                 f"media_type='image/png'/>"
@@ -914,6 +1310,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": "long_result_tool",
                         "input": "{}",
@@ -922,19 +1320,26 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": "long_result_tool",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "text": "0" * 200 + reminder_1,
                                 "id": AnyString(),
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "text": "End_1.",
                         "id": AnyString(),
                     },
@@ -942,6 +1347,9 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(
@@ -979,6 +1387,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 model=model,
                 toolkit=Toolkit(),
                 offloader=LocalWorkspace(workdir=workdir),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 state=AgentState(session_id=session_id),
             )
 
@@ -1038,8 +1450,13 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                             data=b64_data,
                             media_type="image/png",
                         ),
+                        created_at="2026-01-01T00:00:00",
                     ),
-                    TextBlock(id="text_block_a", text="A" * 500),
+                    TextBlock(
+                        id="text_block_a",
+                        text="A" * 500,
+                        created_at="2026-01-01T00:00:00",
+                    ),
                 ],
                 id="msg_a",
                 created_at="2026-01-01T00:00:00",
@@ -1050,6 +1467,17 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             self.assertTrue(os.path.exists(offload_path))
             async with aiofiles.open(offload_path, "r") as f:
                 content_after_first = await f.read()
+
+            # The offloader rewrites the DataBlock (Base64Source → URLSource)
+            # as a fresh block, so its ``created_at`` is regenerated rather
+            # than preserved; capture the actual value for the assertion.
+            offloaded_data_created_at = (
+                Msg.model_validate_json(
+                    content_after_first.strip(),
+                )
+                .content[0]
+                .created_at
+            )
 
             # The DataBlock is persisted to ``{workdir}/data/`` as soon as
             # it is included in an offloaded line — this happens during the
@@ -1072,17 +1500,23 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             # literally so a developer can read off exactly what gets
             # persisted; only the temp-dir-dependent file URL is
             # interpolated via ``data_url``.
-            data_url = Path(data_file_path).as_uri()
+            data_url = f"workspace:///data/{data_hash}.png"
             expected_user_msg_a_offloaded_json = (
                 '{"name":"user","content":['
                 '{"type":"data","id":"data_block_a","source":'
                 '{"type":"url","url":"' + data_url + '",'
-                '"media_type":"image/png"},"name":"fake_image_a.png"},'
+                '"media_type":"image/png"},"name":"fake_image_a.png",'
+                '"created_at":"' + offloaded_data_created_at + '",'
+                '"finished_at":null},'
                 '{"type":"text","text":"' + "A" * 500 + '",'
-                '"id":"text_block_a"}'
+                '"id":"text_block_a",'
+                '"created_at":"2026-01-01T00:00:00","finished_at":null}'
                 '],"role":"user","id":"msg_a","metadata":{},'
                 '"created_at":"2026-01-01T00:00:00",'
-                '"finished_at":"2026-01-01T00:00:00","usage":null}'
+                '"usage":null,'
+                '"finished_at":"2026-01-01T00:00:00",'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             self.assertEqual(
                 content_after_first,
@@ -1102,7 +1536,11 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
             user_msg_b = UserMsg(
                 name="user",
                 content=[
-                    TextBlock(id="text_block_b", text="B" * 500),
+                    TextBlock(
+                        id="text_block_b",
+                        text="B" * 500,
+                        created_at="2026-01-02T00:00:00",
+                    ),
                 ],
                 id="msg_b",
                 created_at="2026-01-02T00:00:00",
@@ -1122,18 +1560,29 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '{"name":"Friday","content":['
                 '{"type":"text","text":"End_1.","id":"'
                 + assistant_1.content[0].id
-                + '"}'
+                + '","created_at":"'
+                + assistant_1.content[0].created_at
+                + '","finished_at":'
+                + json.dumps(assistant_1.content[0].finished_at)
+                + "}"
                 '],"role":"assistant","id":"' + assistant_1.id + '",'
                 '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
-                '"finished_at":null,"usage":null}'
+                '"usage":null,'
+                '"finished_at":null,'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             expected_user_msg_b_json = (
                 '{"name":"user","content":['
                 '{"type":"text","text":"' + "B" * 500 + '",'
-                '"id":"text_block_b"}'
+                '"id":"text_block_b",'
+                '"created_at":"2026-01-02T00:00:00","finished_at":null}'
                 '],"role":"user","id":"msg_b","metadata":{},'
                 '"created_at":"2026-01-02T00:00:00",'
-                '"finished_at":"2026-01-02T00:00:00","usage":null}'
+                '"usage":null,'
+                '"finished_at":"2026-01-02T00:00:00",'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             self.assertEqual(
                 content_after_second,
@@ -1175,6 +1624,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "text": "End_2.",
                         "id": AnyString(),
                     },
@@ -1182,6 +1633,9 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(
@@ -1269,6 +1723,7 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         ws = LocalWorkspace(workdir=self.temp_dir.name)
         await ws.initialize()
 
+        # A v1 flat-list .mcp is migrated into the legacy scope
         mcps = await ws.list_mcps()
         names = [m.name for m in mcps]
         self.assertIn("good_one", names)
@@ -1295,5 +1750,533 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         )
         await ws.initialize()
         self.assertTrue(ws.is_alive)
-        names = [m.name for m in await ws.list_mcps()]
+        # Instantiated lazily on first list_mcps for this scope
+        names = [
+            m.name
+            for m in await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            )
+        ]
         self.assertNotIn("will_fail_connect", names)
+
+
+class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
+    """Per-``(agent_id, session_id)`` MCP scoping in LocalWorkspace.
+
+    Covers:
+    - each scope is seeded from ``default_mcps`` and gets its own
+      instances, built lazily on first ``list_mcps``
+    - ``add_mcp`` / ``remove_mcp`` only touch the calling scope
+    - a scope absent from ``.mcp`` is not the same as one persisted
+      with an empty list
+    - ``purge_session`` drops declarations, instances and offload files
+    - the live-stateful cap never evicts the requesting scope
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def _make_mcp(name: str) -> MCPClient:
+        """Return a stateless HTTP MCP that needs no live server."""
+        return MCPClient(
+            name=name,
+            is_stateful=False,
+            mcp_config={
+                "type": "http_mcp",
+                "url": f"http://127.0.0.1:1/{name}",
+            },
+        )
+
+    def _read_mcp_file(self) -> dict:
+        """Return the parsed ``.mcp`` payload."""
+        with open(self.mcp_file, encoding="utf-8") as f:
+            return json.load(f)
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_scopes_get_independent_instances(self) -> None:
+        """Each scope is seeded from defaults with its own instances."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        # Nothing is instantiated before the first list_mcps.
+        self.assertEqual(ws._mcp_instances, {})
+
+        a1 = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
+        a2 = await ws.list_mcps(agent_id="agent-A", session_id="sess-2")
+        b1 = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
+
+        self.assertEqual([m.name for m in a1], ["seed"])
+        self.assertEqual([m.name for m in a2], ["seed"])
+        self.assertIsNot(a1[0], a2[0])
+        self.assertIsNot(a1[0], b1[0])
+
+        # Repeat access reuses the same instances.
+        self.assertIs(
+            (await ws.list_mcps(agent_id="agent-A", session_id="sess-1"))[0],
+            a1[0],
+        )
+
+        # A scope that only read defaults leaves no trace on disk.
+        self.assertFalse(os.path.exists(self.mcp_file))
+
+    async def test_add_and_remove_are_scoped(self) -> None:
+        """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        extra = self._make_mcp("extra")
+
+        registered = await ws.add_mcp(
+            extra,
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+
+        self.assertIs(registered, extra)
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
+        )
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-2",
+                )
+            ],
+            ["seed"],
+        )
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-B",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+        saved = self._read_mcp_file()
+        self.assertEqual(saved["version"], 2)
+        self.assertEqual(list(saved["mcps"]), ["agent-A"])
+
+        await ws.remove_mcp("extra", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_duplicate_name_in_one_scope_raises(self) -> None:
+        """A duplicate name is rejected per scope, not globally."""
+        ws = await self._workspace()
+
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with self.assertRaises(ValueError):
+            await ws.add_mcp(
+                self._make_mcp("dup"),
+                agent_id="agent-A",
+                session_id="sess-1",
+            )
+
+        # The same name in another scope is fine.
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
+
+    async def test_emptied_scope_is_not_reseeded(self) -> None:
+        """An empty declaration differs from an absent one."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
+        self.assertEqual(
+            self._read_mcp_file()["mcps"]["agent-A"]["sess-1"],
+            [],
+        )
+
+        # It survives a restart rather than falling back to defaults.
+        await ws.close()
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            await ws2.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
+        # An untouched scope still gets the defaults.
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-9",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_mcp_file_with_utf8_bom_is_restored(self) -> None:
+        """A BOM-prefixed .mcp still restores the persisted declarations.
+
+        The file is ordinary JSON in the workspace; a Windows editor may
+        re-save it with a byte order mark. Plain UTF-8 used to fail to
+        parse, silently dropping every declaration and falling back to
+        ``default_mcps``.
+        """
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with open(self.mcp_file, "rb") as f:
+            payload = f.read()
+        with open(self.mcp_file, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + payload)
+        await ws.close()
+
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
+        )
+
+    async def test_reset_returns_to_factory_defaults(self) -> None:
+        """``reset`` drops ``.mcp``, so defaults are seeded again."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertTrue(os.path.exists(self.mcp_file))
+
+        await ws.reset()
+
+        self.assertFalse(os.path.exists(self.mcp_file))
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_purge_session_drops_scope_and_offload(self) -> None:
+        """``purge_session`` forgets declarations and offload files."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.offload_context(
+            "sess-1",
+            [UserMsg(name="user", content="hi")],
+        )
+        session_dir = os.path.join(self.temp_dir.name, "sessions", "sess-1")
+        self.assertTrue(os.path.isdir(session_dir))
+
+        await ws.purge_session(agent_id="agent-A", session_id="sess-1")
+
+        self.assertFalse(os.path.exists(session_dir))
+        self.assertNotIn("agent-A", self._read_mcp_file()["mcps"])
+        # The scope is back to "never seen" — defaults apply again.
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_capacity_never_evicts_the_caller(self) -> None:
+        """The live-stateful cap only evicts other agents/sessions."""
+        connected: list[str] = []
+
+        async def _fake_connect(client: MCPClient) -> None:
+            """Mark connected without opening a transport."""
+            connected.append(client.name)
+            client._is_connected = True
+
+        async def _fake_close(client: MCPClient, *_a: Any, **_kw: Any) -> None:
+            """Mark disconnected without touching a transport."""
+            client._is_connected = False
+
+        def _stateful(name: str) -> MCPClient:
+            """A stateful spec whose transport is never opened."""
+            return MCPClient(
+                name=name,
+                is_stateful=True,
+                mcp_config={
+                    "type": "http_mcp",
+                    "url": f"http://127.0.0.1:1/{name}",
+                },
+            )
+
+        with patch.object(MCPClient, "connect", _fake_connect), patch.object(
+            MCPClient,
+            "close",
+            _fake_close,
+        ):
+            ws = await self._workspace(
+                default_mcps=[_stateful("a"), _stateful("b")],
+                max_live_stateful_mcps=2,
+            )
+
+            first = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual(len(first), 2)
+
+            # The cap is 2, so serving another session evicts the
+            # first — but the newcomer still gets its full set.
+            second = await ws.list_mcps(agent_id="agent-B", session_id="s1")
+            self.assertEqual(len(second), 2)
+            self.assertEqual(ws._mcp_instances[("agent-A", "s1")], {})
+
+            # Coming back rebuilds the evicted session's declaration.
+            again = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual([m.name for m in again], ["a", "b"])
+            self.assertEqual(len(connected), 6)
+
+
+class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
+    """Per-agent skill partitions under ``skills/``.
+
+    Covers:
+    - an agent's installs stay out of every other agent's listing
+    - ``skill_paths`` equip each agent with its own copy, once
+    - a caller that names no agent gets the default partition
+    - a pre-partition ``skills/`` becomes the seed template
+    - an agent id that would escape ``skills/`` is refused
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.src_dir = tempfile.TemporaryDirectory()
+        self.skills_dir = os.path.join(self.temp_dir.name, "skills")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+        self.src_dir.cleanup()
+
+    def _make_skill(self, dir_name: str, skill_name: str) -> str:
+        """Write a minimal skill directory outside the workspace."""
+        path = os.path.join(self.src_dir.name, dir_name)
+        os.makedirs(path, exist_ok=True)
+        with open(
+            os.path.join(path, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                f"---\nname: {skill_name}\ndescription: d\n---\n\nbody\n",
+            )
+        return path
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_agent_installs_are_isolated(self) -> None:
+        """What one agent installs, no other agent can see."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["a-skill"],
+        )
+        self.assertEqual(await ws.list_skills(agent_id="B"), [])
+        self.assertEqual(await ws.list_skills(), [])
+        self.assertTrue(
+            os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
+        )
+
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
+    async def test_add_skill_case_only_directory_collision(self) -> None:
+        """Case-only names get distinct paths without renaming the skills."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("source-a", "Example"))
+        await ws.add_skill(self._make_skill("source-b", "example"))
+
+        self.assertDictEqual(
+            {
+                s.name: (os.path.basename(s.dir), s.markdown)
+                for s in await ws.list_skills()
+            },
+            {"Example": ("Example", "body"), "example": ("example_1", "body")},
+        )
+
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
+    async def test_seed_skill_case_only_directory_collision(self) -> None:
+        """Seed population keeps both skills on insensitive filesystems."""
+        ws = await self._workspace(
+            skill_paths=[
+                self._make_skill("source-a", "Example"),
+                self._make_skill("source-b", "example"),
+            ],
+        )
+
+        for agent_id in ("A", "B"):
+            self.assertDictEqual(
+                {
+                    s.name: (os.path.basename(s.dir), s.markdown)
+                    for s in await ws.list_skills(agent_id=agent_id)
+                },
+                {
+                    "Example": ("Example", "body"),
+                    "example": ("example_1", "body"),
+                },
+            )
+
+    async def test_seeds_equip_each_agent_with_its_own_copy(self) -> None:
+        """``skill_paths`` reach every agent, but as separate copies."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+
+        for agent_id in ("A", "B"):
+            self.assertEqual(
+                [s.name for s in await ws.list_skills(agent_id=agent_id)],
+                ["seed-skill"],
+            )
+
+        # A drops its copy: B keeps its own, and A does not get it back.
+        await ws.remove_skill("seed-skill", agent_id="A")
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="B")],
+            ["seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, ".seed", "seed-skill"),
+            ),
+        )
+
+    async def test_unnamed_caller_gets_the_default_partition(self) -> None:
+        """The SDK path, which never names an agent, is just a partition."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+        await ws.add_skill(self._make_skill("plain", "plain-skill"))
+
+        self.assertEqual(
+            sorted(s.name for s in await ws.list_skills()),
+            ["plain-skill", "seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, "default", "plain-skill"),
+            ),
+        )
+        # An agent is equipped from the template, not from that partition.
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["seed-skill"],
+        )
+
+    async def test_pre_partition_layout_becomes_the_template(self) -> None:
+        """Skills sitting directly under ``skills/`` equip every agent."""
+        legacy = os.path.join(self.skills_dir, "legacy")
+        os.makedirs(legacy)
+        with open(
+            os.path.join(legacy, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("---\nname: old\ndescription: d\n---\n\nbody\n")
+        with open(
+            os.path.join(self.skills_dir, ".skills"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "skills_dir_mtime": 0.0,
+                    "skills": {"legacy": {"hash": "h", "skill_name": "old"}},
+                },
+                f,
+            )
+
+        ws = await self._workspace()
+
+        self.assertEqual(os.listdir(self.skills_dir), [".seed"])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["old"],
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.skills_dir, ".seed", ".index")),
+        )
+
+    async def test_traversing_agent_id_is_refused(self) -> None:
+        """An agent id is a directory name, so it may not escape."""
+        ws = await self._workspace()
+        for agent_id in ("../escape", "..", ".seed"):
+            with self.assertRaises(ValueError):
+                await ws.list_skills(agent_id=agent_id)
+
+    async def test_purge_agent_drops_its_partition(self) -> None:
+        """Deleting an agent takes its skills with it."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        await ws.purge_agent(agent_id="A")
+
+        self.assertFalse(os.path.exists(os.path.join(self.skills_dir, "A")))
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])

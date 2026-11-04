@@ -14,6 +14,13 @@ class ModelCard(BaseModel):
     type: Literal["chat_model"] = "chat_model"
     """The model card type."""
 
+    model_class: str = Field(
+        default="",
+        description="The model implementation class type (e.g. openai_chat).",
+    )
+    """Discriminator identifying which ChatModelBase subclass owns this card.
+    Set automatically by :meth:`ChatModelBase.list_models`."""
+
     name: str = Field(description="The name of the model")
     """The model name."""
 
@@ -102,6 +109,8 @@ class ModelCard(BaseModel):
         if "application/x-thinking" not in output_types:
             properties.pop("thinking_enable", None)
             properties.pop("thinking_budget", None)
+            properties.pop("thinking_mode", None)
+            properties.pop("thinking_display", None)
 
         # Auto-filter: only omni-style models that declare an ``audio/*``
         # output type expose the ``voice`` parameter to the frontend

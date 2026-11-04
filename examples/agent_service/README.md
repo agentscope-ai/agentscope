@@ -7,7 +7,7 @@ This example demonstrates
 - how to set up the agent service with Redis storage, and
 - how to launch the service and its companion Web UI
 
-Details about the agent service please refer to the [tutorial](https://docs.agentscope.io/v2/deploy/agent-service).
+Details about the agent service please refer to the [tutorial](https://docs.agentscope.io/latest/en/deploy/agent-service).
 
 ## Prerequisites
 
@@ -20,9 +20,9 @@ Details about the agent service please refer to the [tutorial](https://docs.agen
 Install AgentScope from PyPI or source:
 
 ```bash
-uv pip install agentscope[full]
+uv pip install "agentscope[full]"
 # or
-# uv pip install -e [full]
+# uv pip install -e ".[full]"
 ```
 
 Install Redis and start it as backend storage:

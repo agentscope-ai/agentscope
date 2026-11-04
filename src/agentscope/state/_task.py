@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """The task class."""
-import uuid
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from .._utils._common import _generate_id, _generate_timestamp
 
 
 class Task(BaseModel):
@@ -19,13 +19,13 @@ class Task(BaseModel):
     metadata: dict[str, Any]
     """The additional metadata of the task."""
 
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """The created timestamp."""
 
     state: Literal["pending", "in_progress", "completed"] = "pending"
     """The task state."""
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The task identifier."""
 
     owner: str | None = None

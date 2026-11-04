@@ -1,23 +1,45 @@
 # -*- coding: utf-8 -*-
 """App routers."""
+from ._asr import asr_router
 from ._agent import agent_router
 from ._background_task import background_task_router
+from ._channel import channel_router
 from ._chat import chat_router
 from ._credential import credential_router
+from ._embedding_model import embedding_model_router
+from ._health import health_router
+from ._hub import hub_router
+from ._knowledge_base import knowledge_base_router
+from ._mcp import mcp_router
 from ._schedule import schedule_router
 from ._session import session_router
+from ._skill import skill_router
+from ._sop import sop_router
 from ._model import model_router
+from ._realtime import realtime_router
 from ._tts_model import tts_model_router
+from ._voice_profile import voice_profile_router
 from ._workspace import workspace_router
 
 __all__ = [
+    "asr_router",
     "agent_router",
     "background_task_router",
+    "channel_router",
     "model_router",
+    "realtime_router",
+    "embedding_model_router",
     "tts_model_router",
+    "voice_profile_router",
     "chat_router",
     "credential_router",
+    "health_router",
+    "hub_router",
+    "knowledge_base_router",
+    "mcp_router",
     "schedule_router",
     "session_router",
+    "skill_router",
+    "sop_router",
     "workspace_router",
 ]

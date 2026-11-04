@@ -5,6 +5,7 @@ import base64
 from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -72,6 +73,11 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         - Videos: ``{"type": "video_url", "video_url": {"url": ...}}``
         - Audio: ``{"type": "input_audio", "input_audio": {...}}``
 
+        ``DataBlock`` extra fields are merged into the content item itself,
+        at the same level as ``image_url``, ``video_url`` or ``input_audio``.
+        This matches DashScope's OpenAI-compatible multimodal extensions, for
+        example video ``fps`` and ``snippet``.
+
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
@@ -96,13 +102,13 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         main_type = block.source.media_type.split("/")[0]
 
         if main_type == "image":
-            return self._format_image_source(block.source)
+            return self._format_image_source(block.source, block.model_extra)
 
         if main_type == "video":
-            return self._format_video_source(block.source)
+            return self._format_video_source(block.source, block.model_extra)
 
         if main_type == "audio":
-            return self._format_audio_source(block.source)
+            return self._format_audio_source(block.source, block.model_extra)
 
         logger.warning(
             "Unsupported main media type %s for DashScope API. "
@@ -114,18 +120,31 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     @staticmethod
     def _format_image_source(
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Convert an image source to OpenAI-compatible ``image_url`` format.
 
         Local ``file://`` URLs are read from disk and converted to base64
-        data URIs. Remote URLs are passed through unchanged.
+        data URIs. Remote URLs are passed through unchanged. Extra fields are
+        merged at the content-item level, not inside ``image_url``.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The image source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific image parameters to merge into the content
+                item, at the same level as ``type`` and ``image_url``.
+
+        Returns:
+            `dict[str, Any]`:
+                A DashScope image content item.
         """
         if isinstance(source, Base64Source):
             url = f"data:{source.media_type};base64,{source.data}"
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -134,27 +153,44 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         else:
             raise ValueError(f"Unsupported image source type: {type(source)}")
 
-        return {
+        result = {
             "type": "image_url",
             "image_url": {"url": url},
         }
+        if extra:
+            result.update(extra)
+        return result
 
     @staticmethod
     def _format_video_source(
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Convert a video source to DashScope's ``video_url`` format
         (OpenAI-compatible extension).
 
         Local ``file://`` URLs are read from disk and converted to base64
-        data URIs. Remote URLs are passed through unchanged.
+        data URIs. Remote URLs are passed through unchanged. Extra fields such
+        as ``fps`` and ``snippet`` are merged at the content-item level, not
+        inside ``video_url``.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The video source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific video parameters to merge into the content
+                item, such as DashScope's ``fps`` and ``snippet``.
+
+        Returns:
+            `dict[str, Any]`:
+                A DashScope video content item.
         """
         if isinstance(source, Base64Source):
             url = f"data:{source.media_type};base64,{source.data}"
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -163,55 +199,67 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         else:
             raise ValueError(f"Unsupported video source type: {type(source)}")
 
-        return {
+        result = {
             "type": "video_url",
             "video_url": {"url": url},
         }
+        if extra:
+            result.update(extra)
+        return result
 
     @staticmethod
     def _format_audio_source(
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Convert an audio source to DashScope ``input_audio`` format.
 
         DashScope's compatible API accepts URLs directly in the ``data``
-        field (unlike standard OpenAI which requires base64). Local files
-        are still read and base64-encoded.
+        field. Base64-encoded audio and local files are encoded as data URLs.
+        Extra fields are merged at the content-item level, not inside
+        ``input_audio``.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The audio source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific audio parameters to merge into the content
+                item, at the same level as ``type`` and ``input_audio``.
+
+        Returns:
+            `dict[str, Any]`:
+                A DashScope audio content item.
         """
+        fmt = source.media_type.split("/")[-1]
+        if fmt == "mpeg":
+            fmt = "mp3"
+
         if isinstance(source, Base64Source):
-            fmt = source.media_type.split("/")[-1]
-            return {
-                "type": "input_audio",
-                "input_audio": {
-                    "data": source.data,
-                    "format": fmt,
-                },
-            }
+            data = f"data:;base64,{source.data}"
 
-        if isinstance(source, URLSource):
+        elif isinstance(source, URLSource):
             url_str = str(source.url)
-            fmt = source.media_type.split("/")[-1]
             if url_str.startswith("file://"):
-                local_path = url_str.removeprefix("file://")
+                local_path = url2pathname(url_str.removeprefix("file://"))
                 with open(local_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
-                return {
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": data,
-                        "format": fmt,
-                    },
-                }
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                data = f"data:;base64,{encoded}"
             else:
-                return {
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": url_str,
-                        "format": fmt,
-                    },
-                }
+                data = url_str
 
-        raise ValueError(f"Unsupported audio source type: {type(source)}")
+        else:
+            raise ValueError(f"Unsupported audio source type: {type(source)}")
+
+        result = {
+            "type": "input_audio",
+            "input_audio": {
+                "data": data,
+                "format": fmt,
+            },
+        }
+        if extra:
+            result.update(extra)
+        return result
 
 
 class DashScopeChatFormatter(_DashScopeFormatterBase):
@@ -249,7 +297,14 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             tool_calls = []
             thinking_parts: list[str] = []
 
+            # Hold the promoted media until this turn's tool messages are out.
+            pending_media: list[dict] = []
+
             for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    formatted_msgs.extend(pending_media)
+                    pending_media = []
+
                 if isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
 
@@ -367,7 +422,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
                         if promo_content:
-                            formatted_msgs.append(
+                            pending_media.append(
                                 {
                                     "role": "user",
                                     "content": promo_content,
@@ -379,6 +434,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         "Unsupported block type %s in the message, skipped.",
                         type(block),
                     )
+
+            formatted_msgs.extend(pending_media)
 
             msg_dashscope: dict[str, Any] = {
                 "role": msg.role,
@@ -448,6 +505,8 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 A list of dictionaries formatted for the DashScope API.
         """
 
+        self.assert_list_of_msgs(msgs)
+
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":
@@ -464,13 +523,18 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_msgs.extend(
-                        await self._format_agent_message(
-                            group,
-                            is_first_agent_message,
-                        ),
+                    (
+                        formatted_group,
+                        has_history,
+                    ) = await self._format_agent_message_with_hints(
+                        group,
+                        is_first_agent_message,
+                        self._format_agent_message,
+                        prompt_requires_text=True,
                     )
-                    is_first_agent_message = False
+                    formatted_msgs.extend(formatted_group)
+                    if has_history:
+                        is_first_agent_message = False
 
         return formatted_msgs
 
@@ -483,6 +547,22 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
         return await DashScopeChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the DashScope chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The DashScope user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,

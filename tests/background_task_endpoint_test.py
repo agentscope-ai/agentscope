@@ -30,8 +30,8 @@ class TestTaskStatusLifecycle(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up a manager with a mock message bus."""
         self.bus = MagicMock(spec=MessageBus)
-        self.bus.bg_task_register = AsyncMock()
-        self.bus.bg_task_unregister = AsyncMock()
+        self.bus.registry_set = AsyncMock()
+        self.bus.registry_del = AsyncMock()
         self.mgr = BackgroundTaskManager(message_bus=self.bus)
 
     async def test_completed_status_on_normal_finish(self) -> None:
@@ -131,8 +131,8 @@ class TestEviction(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up a manager with a mock message bus."""
         self.bus = MagicMock(spec=MessageBus)
-        self.bus.bg_task_register = AsyncMock()
-        self.bus.bg_task_unregister = AsyncMock()
+        self.bus.registry_set = AsyncMock()
+        self.bus.registry_del = AsyncMock()
         self.mgr = BackgroundTaskManager(message_bus=self.bus)
 
     async def test_eviction_removes_oldest_completed(self) -> None:
@@ -171,8 +171,8 @@ class TestListAndGetTasks(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up a manager with a mock message bus."""
         self.bus = MagicMock(spec=MessageBus)
-        self.bus.bg_task_register = AsyncMock()
-        self.bus.bg_task_unregister = AsyncMock()
+        self.bus.registry_set = AsyncMock()
+        self.bus.registry_del = AsyncMock()
         self.mgr = BackgroundTaskManager(message_bus=self.bus)
 
     async def test_list_tasks_filters_by_user(self) -> None:

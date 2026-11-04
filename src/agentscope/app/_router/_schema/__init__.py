@@ -6,8 +6,59 @@ from ._background_task import (
     ListBackgroundTasksResponse,
     to_info,
 )
-from ._chat import ChatRequest, ChatTriggerResponse
+from ._channel import (
+    StartCredentialBindingRequest,
+    ChannelActionResponse,
+    ChannelChatId,
+    ChannelChatIdsResponse,
+    ChannelResponse,
+    ChannelSessionsResponse,
+    CreateChannelRequest,
+    UpdateChannelRequest,
+)
+from ._chat import (
+    ChatRequest,
+    ChatTriggerResponse,
+    ChatQueueItem,
+    ChatQueueResponse,
+    ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
+    UpdateChatQueueItemRequest,
+)
+from ._asr import (
+    ListASRModelsRequest,
+    ListASRModelsResponse,
+    RealtimeASRStartRequest,
+    RealtimeASRTokenRequest,
+    RealtimeASRTokenResponse,
+    TranscriptionResponse,
+)
+from ._health import ComponentStatus, HealthResponse
+from ._hub import HubInfo
+from ._hub_mcp import InstallMCPRequest, MCPView, UpdateMCPRequest
+from ._hub_skill import SkillView
+from ._workspace import (
+    AddFromLibraryRequest,
+    AddFromLibraryResponse,
+    AddSkillsFromLibraryRequest,
+    DirectoryEntry,
+    DirectoryListing,
+    DownloadTokenResponse,
+    MCPClientStatus,
+    ToolInfo,
+)
+from ._embedding_model import (
+    ListEmbeddingModelsResponse,
+    ListEmbeddingModelsRequest,
+)
 from ._model import ListModelsResponse, ListModelsRequest
+from ._realtime import (
+    ListRealtimeModelsRequest,
+    ListRealtimeModelsResponse,
+    RealtimeConfigResponse,
+    RealtimeOfferRequest,
+    RealtimeOfferResponse,
+)
 from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
 from ._schedule import (
     CreateScheduleRequest,
@@ -16,8 +67,19 @@ from ._schedule import (
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
+from ._sop import (
+    CreateSOPRequest,
+    CreateSOPResponse,
+    ListSOPRunsResponse,
+    ListSOPsResponse,
+    SOPSchemaResponse,
+    StartSOPRunRequest,
+    SubmitVerdictRequest,
+    UpdateSOPRequest,
+)
 from ._agent import (
     AgentSchemaResponse,
+    AgentSchemaV2Response,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -30,20 +92,84 @@ from ._credential import (
     ListCredentialsResponse,
     ListCredentialSchemasResponse,
 )
+from ._knowledge_base import (
+    ChunkerInfo,
+    CreateKnowledgeBaseRequest,
+    CreateKnowledgeBaseResponse,
+    KbEmbeddingProvider,
+    KbMiddlewareParametersSchemaResponse,
+    KnowledgeDocumentView,
+    ListChunkersResponse,
+    ListKbEmbeddingModelsResponse,
+    ListKnowledgeBasesResponse,
+    ListDocumentChunksResponse,
+    DocumentDownloadTokenResponse,
+    ListKnowledgeDocumentsResponse,
+    ListKnowledgeDocumentStatusResponse,
+    ListSupportedContentTypesResponse,
+    SearchKnowledgeBaseRequest,
+    SearchKnowledgeBaseResponse,
+    UpdateKnowledgeBaseRequest,
+    UploadKnowledgeDocumentResponse,
+)
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
+    SessionStatus,
+    SessionStatusResponse,
     SessionView,
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._voice_profile import (
+    AvailableEnginesResponse,
+    CloneVoiceRequest,
+    CloneVoiceResponse,
+    CreateVoiceProfileRequest,
+    CreateVoiceProfileResponse,
+    CredentialRef,
+    EngineInfo,
+    EngineModelInfo,
+    ListVoiceProfilesResponse,
+    OpenAIConsentRequest,
+    OpenAIConsentResponse,
+    UpdateVoiceProfileRequest,
+)
 
 __all__ = [
+    # Health
+    "ComponentStatus",
+    "HealthResponse",
+    # Hub
+    "HubInfo",
+    "InstallMCPRequest",
+    "MCPView",
+    "UpdateMCPRequest",
+    "SkillView",
+    # Workspace
+    "AddFromLibraryRequest",
+    "AddFromLibraryResponse",
+    "AddSkillsFromLibraryRequest",
+    "DirectoryEntry",
+    "DirectoryListing",
+    "DownloadTokenResponse",
+    "MCPClientStatus",
+    "ToolInfo",
     # Agent
+    "CreateSOPRequest",
+    "CreateSOPResponse",
+    "ListSOPRunsResponse",
+    "ListSOPsResponse",
+    "SOPSchemaResponse",
+    "StartSOPRunRequest",
+    "SubmitVerdictRequest",
+    "UpdateSOPRequest",
     "AgentSchemaResponse",
+    "AgentSchemaV2Response",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",
@@ -53,18 +179,65 @@ __all__ = [
     "BackgroundTaskInfo",
     "ListBackgroundTasksResponse",
     "to_info",
+    # Channel
+    "ChannelActionResponse",
+    "ChannelChatId",
+    "ChannelChatIdsResponse",
+    "ChannelResponse",
+    "ChannelSessionsResponse",
+    "CreateChannelRequest",
+    "StartCredentialBindingRequest",
+    "UpdateChannelRequest",
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",
+    "ChatQueueItem",
+    "ChatQueueResponse",
+    "ReorderChatQueueRequest",
+    "SteerChatQueueItemRequest",
+    "UpdateChatQueueItemRequest",
+    # ASR
+    "ListASRModelsRequest",
+    "ListASRModelsResponse",
+    "RealtimeASRStartRequest",
+    "RealtimeASRTokenRequest",
+    "RealtimeASRTokenResponse",
+    "TranscriptionResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",
     "UpdateCredentialRequest",
     "ListCredentialsResponse",
     "ListCredentialSchemasResponse",
+    # Knowledge base
+    "ChunkerInfo",
+    "CreateKnowledgeBaseRequest",
+    "CreateKnowledgeBaseResponse",
+    "KbEmbeddingProvider",
+    "KbMiddlewareParametersSchemaResponse",
+    "KnowledgeDocumentView",
+    "ListChunkersResponse",
+    "ListKbEmbeddingModelsResponse",
+    "ListKnowledgeBasesResponse",
+    "ListDocumentChunksResponse",
+    "DocumentDownloadTokenResponse",
+    "ListKnowledgeDocumentsResponse",
+    "ListKnowledgeDocumentStatusResponse",
+    "ListSupportedContentTypesResponse",
+    "SearchKnowledgeBaseRequest",
+    "SearchKnowledgeBaseResponse",
+    "UpdateKnowledgeBaseRequest",
+    "UploadKnowledgeDocumentResponse",
     # Model
+    "ListEmbeddingModelsRequest",
+    "ListEmbeddingModelsResponse",
     "ListModelsRequest",
     "ListModelsResponse",
+    "ListRealtimeModelsRequest",
+    "ListRealtimeModelsResponse",
+    "RealtimeConfigResponse",
+    "RealtimeOfferRequest",
+    "RealtimeOfferResponse",
     # TTS Model
     "ListTTSModelsRequest",
     "ListTTSModelsResponse",
@@ -77,10 +250,26 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "InterruptSessionResponse",
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",
+    "SessionStatus",
+    "SessionStatusResponse",
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # Voice Profile
+    "AvailableEnginesResponse",
+    "CloneVoiceRequest",
+    "CloneVoiceResponse",
+    "CreateVoiceProfileRequest",
+    "CreateVoiceProfileResponse",
+    "CredentialRef",
+    "EngineInfo",
+    "EngineModelInfo",
+    "ListVoiceProfilesResponse",
+    "OpenAIConsentRequest",
+    "OpenAIConsentResponse",
+    "UpdateVoiceProfileRequest",
 ]

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """The edit tool in agentscope."""
+import difflib
 import fnmatch
-import os
+import glob
 from typing import Any, List
 
-import aiofiles
-
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -21,6 +20,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Edit(ToolBase):
@@ -57,8 +57,9 @@ Usage:
             },
             "old_string": {
                 "type": "string",
+                "minLength": 1,
                 "description": (
-                    "The exact string to replace. Must match exactly "
+                    "The nonempty string to replace. Must match exactly "
                     "including whitespace and indentation."
                 ),
             },
@@ -89,6 +90,8 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the edit tool.
 
@@ -106,9 +109,18 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
+
+        super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -150,13 +162,19 @@ Usage:
                 bypass_immune=True,
             )
 
-        # 2. Check ACCEPT_EDITS mode for files in working directories
-        if context.mode == PermissionMode.ACCEPT_EDITS:
+        # 2. Auto-allow edits within a working directory. This applies to
+        # ACCEPT_EDITS (interactive) and DONT_ASK (its unattended
+        # counterpart), which trusts in-working-directory edits without a
+        # prompt because no user is available to grant one.
+        if context.mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
             if self._path_in_allowed_working_path(file_path, context):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
                     message=f"Permission granted for editing {file_path} "
-                    f"(accept edits mode - in working directory)",
+                    f"(in working directory)",
                     decision_reason="File is in working directory and not "
                     "a dangerous path",
                 )
@@ -168,7 +186,7 @@ Usage:
             message="",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -198,7 +216,7 @@ Usage:
             return False
         return fnmatch.fnmatch(file_path, rule_content)
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
@@ -220,8 +238,13 @@ Usage:
         if not file_path:
             return []
 
-        parent = os.path.dirname(file_path)
-        pattern = (parent.rstrip("/") + "/**") if parent else "**"
+        parent = self._backend.dirname(file_path)
+        # Glob patterns are POSIX-style strings (matched by fnmatch),
+        # not real filesystem paths — do NOT use backend.join_path here.
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        escaped = glob.escape(parent)
+        pattern = (escaped.rstrip("/\\") + "/**") if escaped else "**"
 
         return [
             PermissionRule(
@@ -232,7 +255,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         old_string: str,
@@ -241,8 +264,20 @@ Usage:
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Execute the edit and return the result."""
+        if not old_string:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Error: old_string must not be empty. "
+                        "Use the Write tool to populate an empty file.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         # Validate file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -257,7 +292,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File not found: {file_path}"),
@@ -283,7 +318,13 @@ Usage:
 
         content = None
         if _agent_state is not None:
-            cache = await _agent_state.tool_context.get_cache(file_path)
+            # Take the mtime from the backend that reads the file, so the
+            # cache also works for sandbox-only paths.
+            mtime = await self._backend.stat_mtime(file_path)
+            cache = await _agent_state.tool_context.get_cache(
+                file_path,
+                mtime=mtime,
+            )
             if cache is None:
                 # Haven't read this file before
                 return ToolChunk(
@@ -298,14 +339,12 @@ Usage:
                 )
             content = "".join(cache.lines)
         else:
-            # No state provided, read from disk
+            # No state provided, read from backend
             try:
-                async with aiofiles.open(
-                    file_path,
-                    "r",
-                    encoding="utf-8",
-                ) as f:
-                    content = await f.read()
+                raw = await self._backend.read_file(file_path)
+                # Normalize CRLF/CR to match the cached-content path and
+                # the LF-based old_string the caller supplies.
+                content = _normalize_newlines(raw.decode("utf-8"))
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
@@ -355,14 +394,12 @@ Usage:
                 1,
             )
 
-        # Write updated content back to file
+        # Write updated content back to file via backend
         try:
-            async with aiofiles.open(
+            await self._backend.write_file(
                 file_path,
-                "w",
-                encoding="utf-8",
-            ) as f:
-                await f.write(updated_content)
+                updated_content.encode("utf-8"),
+            )
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
@@ -370,10 +407,35 @@ Usage:
                 is_last=True,
             )
 
+        # Refresh the read cache so consecutive edits don't require a re-read
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(updated_content).splitlines(
+                    keepends=True,
+                ),
+                mtime=await self._backend.stat_mtime(file_path),
+            )
+
         # Return success message
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"
         )
+
+        # Build a unified diff of the change with absolute line numbers so the
+        # web UI can render it with real line numbers and proper inter-hunk
+        # gaps. The diff is kept in ``metadata`` only (not in the textual
+        # output) so it does not bloat the LLM context.
+        diff_text = "".join(
+            difflib.unified_diff(
+                content.splitlines(keepends=True),
+                updated_content.splitlines(keepends=True),
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path}",
+                n=3,
+            ),
+        )
+
         return ToolChunk(
             content=[
                 TextBlock(
@@ -383,4 +445,9 @@ Usage:
             ],
             state=ToolResultState.RUNNING,
             is_last=True,
+            metadata={
+                "diff": diff_text,
+                "file_path": file_path,
+                "occurrences": occurrences if replace_all else 1,
+            },
         )

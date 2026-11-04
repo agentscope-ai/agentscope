@@ -3,8 +3,12 @@
 DashScopeMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
+from urllib.request import url2pathname
 
 from agentscope.formatter import (
     DashScopeChatFormatter,
@@ -173,7 +177,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "type": "input_audio",
                         "input_audio": {
                             "data": self.audio_url,
-                            "format": "mpeg",
+                            "format": "mp3",
                         },
                     },
                 ],
@@ -295,7 +299,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "type": "input_audio",
                         "input_audio": {
                             "data": self.audio_url,
-                            "format": "mpeg",
+                            "format": "mp3",
                         },
                     },
                 ],
@@ -308,6 +312,50 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
     # -------------------------------------------------------------------
     # DashScopeChatFormatter tests
     # -------------------------------------------------------------------
+
+    async def test_chat_formatter_video_extra_params(self) -> None:
+        """DataBlock extra params are forwarded at content-item level."""
+        fmt = DashScopeChatFormatter()
+        video_url = str(
+            URLSource(
+                url="https://example.com/video.mp4",
+                media_type="video/mp4",
+            ).url,
+        )
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this video."),
+                    DataBlock(
+                        source=URLSource(
+                            url=video_url,
+                            media_type="video/mp4",
+                        ),
+                        fps=2,
+                        snippet=[0, 30],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize this video."},
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": video_url},
+                            "fps": 2,
+                            "snippet": [0, 30],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
 
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
@@ -373,18 +421,174 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{expected_b64}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = DashScopeChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_base64_audio(self) -> None:
+        """Base64-encoded audio is inlined as a DashScope data URL."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="UklGRg==",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,UklGRg==",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_mpeg_audio_uses_mp3_format(self) -> None:
+        """The standard audio/mpeg MIME type maps to DashScope's mp3."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data="SUQz",
+                            media_type="audio/mpeg",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,SUQz",
+                                "format": "mp3",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    @patch("builtins.open", new_callable=mock_open, read_data=b"RIFF")
+    async def test_chat_formatter_local_audio(
+        self,
+        mocked_open: object,
+    ) -> None:
+        """Local audio is read and inlined as a DashScope data URL."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=URLSource(
+                            url="file:///tmp/audio.wav",
+                            media_type="audio/wav",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "data:;base64,UklGRg==",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+        mocked_open.assert_called_once_with(
+            url2pathname("/tmp/audio.wav"),
+            "rb",
+        )
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """URL images in tool results are promoted to a follow-up user message.
 
         The textual part of the tool result contains a system-reminder with a
-        unique identifier; the identifier is mocked to be deterministic.
+        unique identifier; the identifier comes from the block's own stable
+        id.
         """
         fmt = DashScopeChatFormatter()
         msgs = [
@@ -402,6 +606,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=URLSource(
                                     url=self.image_url,
                                     media_type="image/png",
@@ -1027,6 +1232,131 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "image_url",
                             "image_url": {"url": self.image_data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = DashScopeChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=URLSource(
+                                    url="https://example.com/shot.png",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        shot_output = (
+            "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_shot",
+                            "type": "function",
+                            "function": {
+                                "name": "screenshot",
+                                "arguments": "{}",
+                            },
+                        },
+                        {
+                            "id": "call_title",
+                            "type": "function",
+                            "function": {
+                                "name": "get_title",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_shot",
+                    "content": shot_output,
+                    "name": "screenshot",
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_title",
+                    "content": "Example Domain",
+                    "name": "get_title",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>The multimodal data "
+                            "and their identifiers are listed as follows:",
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/shot.png",
+                            },
+                        },
+                        {"type": "text", "text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "The page is Example Domain.",
                         },
                     ],
                 },

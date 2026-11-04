@@ -1,11 +1,28 @@
 # -*- coding: utf-8 -*-
 """The tool response class."""
-import uuid
+import base64
+import binascii
 from typing import List, Literal, Self
 
 from pydantic import BaseModel, Field
 
+from .._utils._common import _generate_id
 from ..message import DataBlock, TextBlock, Base64Source, ToolResultState
+
+
+def _merge_base64_chunks(existing: str, incoming: str) -> str:
+    """Merge independently encoded base64 chunks without corrupting padding."""
+    try:
+        merged = base64.b64decode(
+            existing,
+            validate=True,
+        ) + base64.b64decode(incoming, validate=True)
+    except (binascii.Error, ValueError):
+        # Keep compatibility with callers/tests that used placeholder strings
+        # instead of valid base64 payloads.
+        return existing + incoming
+
+    return base64.b64encode(merged).decode("ascii")
 
 
 class ToolChunk(BaseModel):
@@ -24,10 +41,11 @@ class ToolChunk(BaseModel):
 
     metadata: dict = Field(default_factory=dict)
     """The metadata to be accessed within the agent, so that we don't need to
-    parse the tool result block."""
+    parse the tool result block. The reserved ``mcp_progress`` key carries
+    transient progress and is not accumulated into ``ToolResponse``."""
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    """The identity of the tool response."""
+    id: str = Field(default_factory=_generate_id)
+    """The identity of the tool chunk."""
 
 
 class ToolResponse(BaseModel):
@@ -37,7 +55,8 @@ class ToolResponse(BaseModel):
     content: List[TextBlock | DataBlock] = Field(default_factory=list)
     """The completed tool result data blocks."""
 
-    state: Literal[
+    # Incremental mypy checks may skip the imported enum definition.
+    state: Literal[  # type: ignore[valid-type]
         ToolResultState.ERROR,
         ToolResultState.DENIED,
         ToolResultState.INTERRUPTED,
@@ -49,78 +68,63 @@ class ToolResponse(BaseModel):
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The identity of the tool response."""
 
     def append_chunk(self, chunk: ToolChunk) -> Self:
         """Append a tool chunk to the current tool response, accumulate the
         data blocks and update the state and metadata."""
 
-        # Update content blocks
-        current_ids_to_index = {
-            _.id: index for index, _ in enumerate(self.content)
+        # Only Base64 fragments can continue an earlier block by ID.
+        streams = {
+            block.id: block
+            for block in self.content
+            if block.type == "data" and block.source.type == "base64"
         }
-        for chunk_block in chunk.content:
-            if chunk_block.id in current_ids_to_index:
-                # Append to the existing block
-                target_block = self.content[
-                    current_ids_to_index[chunk_block.id]
-                ]
+        for block in chunk.content:
+            if block.type == "text" or block.source.type == "url":
+                self.content.append(block.model_copy(deep=True))
+                continue
 
-                if isinstance(target_block, TextBlock) and isinstance(
-                    chunk_block,
-                    TextBlock,
-                ):
-                    target_block.text += chunk_block.text
-                elif isinstance(target_block, DataBlock) and isinstance(
-                    chunk_block,
-                    DataBlock,
-                ):
-                    if isinstance(
-                        target_block.source,
-                        Base64Source,
-                    ) and isinstance(chunk_block.source, Base64Source):
-                        # Accumulate the base64 data
-                        target_block.source.data += chunk_block.source.data
-                        # Update the newest media type and name if provided
-                        target_block.name = (
-                            chunk_block.name or target_block.name
-                        )
-                        target_block.source.media_type = (
-                            chunk_block.source.media_type
-                            or target_block.source.media_type
-                        )
-                    else:
-                        raise ValueError(
-                            "Cannot append DataBlock with URL source or "
-                            f"different source types: {target_block.source} "
-                            f"vs {chunk_block.source}",
-                        )
-                else:
-                    # For different block types with the same ID, we just
-                    # append the new block with a new ID to avoid the conflict
-                    new_chunk_block = chunk_block.model_copy(deep=True)
-                    new_chunk_block.id = uuid.uuid4().hex
-                    self.content.append(new_chunk_block)
-
+            target = streams.get(block.id)
+            if target is None:
+                target = block.model_copy(deep=True)
+                self.content.append(target)
+                streams[block.id] = target
             else:
-                # Append a copy to avoid modifying the original chunk
-                self.content.append(chunk_block.model_copy(deep=True))
-
-                # Update the index mapping for the new block
-                current_ids_to_index[chunk_block.id] = len(self.content) - 1
+                assert isinstance(target.source, Base64Source)
+                target.source.data = _merge_base64_chunks(
+                    target.source.data,
+                    block.source.data,
+                )
+                target.name = block.name or target.name
+                target.source.media_type = (
+                    block.source.media_type or target.source.media_type
+                )
 
         # Update id, state and metadata
         # Only reserve the failure state and keep the previous state if not
         # worse.
         if chunk.state == ToolResultState.ERROR:
             self.state = ToolResultState.ERROR
-        elif chunk.state == "interrupted":
+        elif (
+            self.state != ToolResultState.ERROR
+            and chunk.state == ToolResultState.INTERRUPTED
+        ):
             self.state = ToolResultState.INTERRUPTED
-        elif chunk.state == ToolResultState.DENIED:
+        elif (
+            self.state != ToolResultState.ERROR
+            and chunk.state == ToolResultState.DENIED
+        ):
             self.state = ToolResultState.DENIED
 
-        self.metadata.update(chunk.metadata)
+        self.metadata.update(
+            {
+                key: value
+                for key, value in chunk.metadata.items()
+                if key != "mcp_progress"
+            },
+        )
 
         # Post-processing: merge consecutive TextBlocks
         # DataBlocks are kept separate and only merged by explicit id matching

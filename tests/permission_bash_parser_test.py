@@ -8,6 +8,81 @@ from agentscope.tool._builtin._bash_parser import BashCommandParser
 from agentscope.tool import Bash
 
 
+class BashPermissionSplitTest(unittest.TestCase):
+    """Verify lossless permission boundaries without executing a shell."""
+
+    def test_subshell_redirection_keeps_scope(self) -> None:
+        """Keep a redirected subshell intact as a single operation."""
+        command = "(cat public.txt && cat public.txt) > private.txt"
+        parser = BashCommandParser()
+        self.assertEqual(parser.split_into_subcommands(command), [command])
+        self.assertEqual(
+            parser.split_into_subcommands(
+                "git status && "
+                "(cat public.txt && cat public.txt) > private.txt",
+            ),
+            ["git status", command],
+        )
+
+    def test_split_preserves_shell_operations(self) -> None:
+        """Keep Unicode, redirects, assignments, and quoted operators."""
+        cases = [
+            ("", [""]),
+            ("   ", ["   "]),
+            (
+                "git add '中文.txt' && git commit -m update",
+                ["git add '中文.txt'", "git commit -m update"],
+            ),
+            (
+                "git add 'ééééé' && curl git -o output.txt",
+                ["git add 'ééééé'", "curl git -o output.txt"],
+            ),
+            (
+                "cat public.txt && cat public.txt > private.txt",
+                ["cat public.txt", "cat public.txt > private.txt"],
+            ),
+            (
+                "git status && > output.txt",
+                ["git status", "> output.txt"],
+            ),
+            (
+                "cat a | cat b > output.txt",
+                ["cat a", "cat b > output.txt"],
+            ),
+            (
+                "git status && X=hello",
+                ["git status", "X=hello"],
+            ),
+            (
+                "git commit -m 'a && b | c' && git status",
+                ["git commit -m 'a && b | c'", "git status"],
+            ),
+            ("git status # comment", ["git status"]),
+            ("git status &&", ["git status &&"]),
+            (
+                "cat <<EOF\nhello\nEOF\ngit status",
+                ["cat <<EOF\nhello\nEOF", "git status"],
+            ),
+        ]
+        parser = BashCommandParser()
+        self.assertEqual(
+            [parser.split_into_subcommands(command) for command, _ in cases],
+            [expected for _, expected in cases],
+        )
+
+    def test_all_command_separators(self) -> None:
+        """Recognize every list and pipeline separator."""
+        parser = BashCommandParser()
+        for separator in (" && ", " || ", "; ", " | ", " |& ", "\n", " & "):
+            command = separator.join(["git status", "curl example.com"])
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    parser.split_into_subcommands(command),
+                    ["git status", "curl example.com"],
+                )
+                self.assertEqual(parser.is_read_only_command(command), False)
+
+
 @unittest.skipIf(
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
@@ -123,7 +198,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         test_cases = [
             ("cat file.txt | grep error", []),
             ("docker ps | grep nginx", ["docker ps"]),
-            ("npm run build | tee output.log", ["npm run"]),
+            ("npm run build | tee output.log", ["npm run", "tee output.log"]),
         ]
 
         for command, expected in test_cases:
@@ -140,7 +215,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
             ),
             (
                 "npm install && npm run build | tee log.txt",
-                ["npm install", "npm run"],
+                ["npm install", "npm run", "tee log.txt"],
             ),
         ]
 
@@ -223,8 +298,6 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "git log",
             "git diff",
             "git show",
-            "git branch",
-            "git remote -v",
             "git log --oneline",
         ]
         for cmd in read_only_commands:
@@ -244,6 +317,9 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "tail -f log.txt",
             "grep pattern file.txt",
             "find . -name '*.py'",
+            "find . -name '-delete'",
+            "find . -path './-fprint'",
+            "find . -regex '.*-exec.*'",
             "tree",
             "pwd",
             "which python",
@@ -253,6 +329,72 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 self.assertTrue(
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be read-only",
+                )
+
+    async def test_mutating_find_commands_are_not_read_only(self) -> None:
+        """Test find predicates that can modify files are not read-only."""
+        mutating_find_commands = [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -daystart -delete",
+            "find . -nogroup -delete",
+            "find . -nouser -delete",
+            "find . -exec rm {} \\;",
+            "find . -execdir rm {} \\;",
+            "find . -fls results.txt",
+            "find . -fprint results.txt",
+            "find . -fprint0 results.txt",
+            "find . -fprintf results.txt '%p\\n'",
+            "find . -ok rm {} \\;",
+            "find . -okdir rm {} \\;",
+        ]
+        for cmd in mutating_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_tee_writes_through_are_not_read_only(self) -> None:
+        """Test commands writing through ``tee`` are not read-only."""
+        writing_commands = [
+            "echo x | tee out.txt",
+            "echo x | tee -a out.txt",
+            "echo x | tee /tmp/out.txt",
+            "cat README.md | tee /tmp/out.txt",
+            "printf hi | tee /tmp/out.txt",
+        ]
+        for cmd in writing_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_mutating_git_commands_are_not_read_only(self) -> None:
+        """Git subcommands that mutate by argument skip the fast path."""
+        expected = {
+            "git branch -D main": False,
+            "git branch -vD x": False,
+            "git tag -d v1": False,
+            "git remote add o u": False,
+            "git reflog expire --all": False,
+            "git grep -Otouch foo": False,
+            "git grep -iO touch foo": False,
+            "git grep '-Otouch' foo": False,
+            "git grep --open-files-in-pager=touch foo": False,
+            "git diff --output=/tmp/x": False,
+            "git log --output ~/.bashrc": False,
+            "git status": True,
+            "git log": True,
+            "git log --oneline -n 5": True,
+            "git grep -n foo": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
                 )
 
     async def test_single_read_only_docker_commands(self) -> None:
@@ -323,6 +465,74 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be non-read-only "
                     f"(contains non-read-only subcommand)",
+                )
+
+    async def test_separator_hidden_commands_not_read_only(self) -> None:
+        """Test newline and ``&`` separators cannot hide mutations."""
+        hidden_commands = [
+            "cat file.txt\nrm -rf /tmp/victim",
+            "cat file.txt\nmkdir new_dir",
+            "cat file.txt & rm -rf /tmp/victim",
+            "cat file.txt & touch file.txt",
+            "ls\nshutdown now",
+            "ls\r\nshutdown now",
+            "cat \u20ac\u20ac\u20ac\nrm -f ls",
+            "cat \u20ac\u20ac\u20ac & rm -f ls",
+        ]
+        for cmd in hidden_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be non-read-only "
+                    f"(contains non-read-only subcommand)",
+                )
+
+    async def test_separator_compound_all_read_only(self) -> None:
+        """Test newline- and ``&``-separated all-read-only compounds."""
+        read_only_commands = [
+            "git status\ngit diff",
+            "cat file1.txt\ncat file2.txt",
+            "git status & git log",
+            "cat file.txt &",
+            "cat caf\u00e9.txt\npwd",
+            "cat caf\u00e9.txt & pwd",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only "
+                    f"(all subcommands are read-only)",
+                )
+
+    async def test_split_compound_command_unicode(self) -> None:
+        """Test compound splitting preserves Unicode command text."""
+        for separator in ["\n", " & "]:
+            for commands in [
+                ["cat \u20ac\u20ac\u20ac", "rm -f ls"],
+                ["cat caf\u00e9.txt", "pwd"],
+            ]:
+                command = separator.join(commands)
+                with self.subTest(command=command):
+                    root = self.parser.parser.parse(
+                        command.encode("utf8"),
+                    ).root_node
+                    self.assertEqual(
+                        self.parser.split_compound_command(root, command),
+                        commands,
+                    )
+
+    async def test_separator_lookalikes_stay_read_only(self) -> None:
+        """Test quoted ``&`` and heredoc newlines are not separators."""
+        read_only_commands = [
+            'grep "a&b" file.txt',
+            "cat <<EOF\nhello world\nEOF",
+        ]
+        for cmd in read_only_commands:
+            with self.subTest(cmd=repr(cmd)):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd!r}' to be read-only",
                 )
 
     async def test_commands_with_output_redirection(self) -> None:
@@ -855,6 +1065,168 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn(expected_substring, result)
 
+    async def test_denylist_every_e_expression(self) -> None:
+        """Test denylist: every -e expression is checked, not only the 1st."""
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '/x/w /tmp/out' f",
+                self.dangerous_files,
+            ),
+            "sed write operation (w/W) not allowed",
+        )
+        self.assertEqual(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e '1e id' f",
+                self.dangerous_files,
+            ),
+            "sed expression '1e id' not in allowlist",
+        )
+        self.assertIsNone(
+            self.parser.check_sed_constraints(
+                "sed -e 's/a/b/' -e 's/x/y/g' f",
+                self.dangerous_files,
+            ),
+        )
+
+    async def test_long_option_with_inline_value(self) -> None:
+        """Test long options that carry their value after an '='.
+
+        ``shlex`` keeps such an option and its value in one token, so a value
+        that is a sed script, a backup suffix or a script file has to be split
+        off before the option is recognised -- otherwise both disappear from
+        the analysis and the command they belong to goes unchecked.
+        """
+        cases = [
+            (
+                "sed -n --expression='/bin/sh/e' -e '1p' notes.txt",
+                "sed -n -e '1p' -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed --file=script.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+            (
+                "sed --expression='/bin/sh/e' notes.txt",
+                "sed --expression '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                # An unchecked long option leaves the *filename* to be judged
+                # as the expression, so plain line printing is flagged too.
+                "sed -n --expression='5p' notes.txt",
+                "sed -n '5p' notes.txt",
+                None,
+            ),
+        ]
+        for inline, separated, expected in cases:
+            with self.subTest(inline=inline):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        inline,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_short_option_with_attached_value(self) -> None:
+        """Attached short-option values match their separated forms."""
+        cases = [
+            (
+                "sed -e's/a/b/' notes.txt",
+                "sed -e 's/a/b/' notes.txt",
+                None,
+            ),
+            (
+                "sed -ne'5p' notes.txt",
+                "sed -n -e '5p' notes.txt",
+                None,
+            ),
+            (
+                "sed -e'/bin/sh/e' notes.txt",
+                "sed -e '/bin/sh/e' notes.txt",
+                "sed execute operation (e/E) not allowed",
+            ),
+            (
+                "sed -i.bak 's/x/y/' .env",
+                "sed --in-place=.bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -fscript.sed 's/x/y/' notes.txt",
+                "sed -f script.sed 's/x/y/' notes.txt",
+                "sed flag -f not allowed",
+            ),
+        ]
+        for attached, separated, expected in cases:
+            with self.subTest(attached=attached):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        separated,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        attached,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
+    async def test_separated_backup_suffix(self) -> None:
+        """A separated dotted -i suffix is a backup suffix, not a script."""
+        cases = [
+            (
+                "sed -i .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .orig 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed --in-place .bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                "sed -i .bak 's/x/y/' .env",
+                "sed -i modifying dangerous file: .env",
+            ),
+            (
+                "sed -i bak 's/x/y/' notes.txt",
+                None,
+            ),
+            (
+                # A dot inside a script keeps the token unconsumed.
+                "sed -i '/example.com/d' notes.txt",
+                "sed expression '/example.com/d' not in allowlist",
+            ),
+        ]
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_sed_constraints(
+                        cmd,
+                        self.dangerous_files,
+                    ),
+                    expected,
+                )
+
     async def test_denylist_execute_operations(self) -> None:
         """Test denylist: execute operations (e/E)."""
         test_cases = [
@@ -975,7 +1347,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -990,7 +1362,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1006,7 +1378,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1023,7 +1395,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1039,7 +1411,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )

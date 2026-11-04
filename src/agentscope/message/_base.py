@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 import base64
-import uuid
-from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from .._utils._common import _generate_id, _generate_timestamp
 from ._block import (
     TextBlock,
     ThinkingBlock,
@@ -21,6 +20,7 @@ from ._block import (
     ContentBlock,
     ContentBlockTypes,
 )
+from ..types import ReplyFinishedReason, ErrorInfo
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -61,11 +61,19 @@ class Usage(BaseModel):
     """The number of input tokens."""
     output_tokens: int
     """The number of output tokens."""
+    cache_input_tokens: int = 0
+    """The number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """The number of input tokens used to create the prompt cache."""
 
 
 class Msg(BaseModel):
     """The message class in AgentScope, responsible for information storage
     and transmission among different agents."""
+
+    # =========================================================================
+    # The fields that will be fed into the context
+    # =========================================================================
 
     name: str
     """The name of the sender."""
@@ -73,16 +81,40 @@ class Msg(BaseModel):
     """The message content as a list of content blocks."""
     role: Literal["user", "assistant", "system"]
     """The role of the sender."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The message identifier."""
+
+    # =========================================================================
+    # The fields that record the message metadata (creation time, current
+    #  usage and additional metadata).
+    # =========================================================================
+
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """The creation time of the message"""
-    finished_at: str | None = Field(default=None)
-    """The finished time of the message"""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
+
+    # =========================================================================
+    # The fields used for workflow control, including the finished time,
+    #  reason, error message and structured output.
+    # =========================================================================
+
+    finished_at: str | None = Field(default=None)
+    """The finished time of the message"""
+    finished_reason: ReplyFinishedReason | None = Field(default=None)
+    """Terminal reason of this reply (error / interrupted /
+    exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
+    structured_output: dict | None = Field(default=None)
+    """The structured output of the reply. Populated only when a structured
+    output is requested via ``reply(..., structured_schema=...)`` and
+    successfully generated; ``None`` otherwise, e.g. not requested, or the
+    reply ends (interrupted / error / exceed_max_iters) before the output
+    is generated."""
+    error: ErrorInfo | None = Field(default=None)
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
     @model_validator(mode="after")
     def validate_role_content(self) -> Self:
@@ -120,10 +152,14 @@ class Msg(BaseModel):
         typs = [block_type] if isinstance(block_type, str) else block_type
         return any(b.type in typs for b in self.content)
 
-    def get_text_content(self, separator: str = "\n") -> str | None:
-        """Get the concatenated text from all TextBlocks."""
+    def get_text_content(self, separator: str = "\n") -> str:
+        """Join all top-level TextBlocks, returning "" if none are present.
+
+        Use ``has_content_blocks("text")`` to distinguish missing text
+        blocks from text blocks containing empty strings.
+        """
         gathered = [b.text for b in self.content if b.type == "text"]
-        return separator.join(gathered) if gathered else None
+        return separator.join(gathered)
 
     @overload
     def get_content_blocks(
@@ -208,13 +244,17 @@ class Msg(BaseModel):
                 return block
         return None
 
-    def append_event(self, event: AgentEvent) -> Self:
+    def append_event(  # pylint: disable=too-many-branches,too-many-statements
+        self,
+        event: AgentEvent,
+    ) -> Self:
         """Update the message by applying a streaming event.
 
         Mutates ``self.content``, ``self.finished_at``, and ``self.usage``:
         content blocks are appended/updated by block-level events,
         ``finished_at`` is stamped by ``REPLY_END``, and ``usage`` is
         initialized then accumulated across each ``MODEL_CALL_END``.
+        Custom events are skipped because they do not update message content.
         Events whose ``reply_id`` does not match ``self.id`` are skipped with
         a warning. Block-level delta/end events whose target block cannot be
         found are also skipped with a warning.
@@ -224,6 +264,9 @@ class Msg(BaseModel):
                 The event to apply.
         """
         from ..event import EventType  # local import to avoid circular dep
+
+        if event.type == EventType.CUSTOM:
+            return self
 
         if event.reply_id != self.id:
             logger.warning(
@@ -238,32 +281,42 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+                # ``event.finished_reason`` is a bare string (EventBase sets
+                # ``use_enum_values``); coerce back to the enum so this
+                # field serializes cleanly.
+                self.finished_reason = ReplyFinishedReason(
+                    event.finished_reason,
+                )
+                self.error = event.error
 
             case EventType.MODEL_CALL_END:
-                if self.usage is None:
-                    self.usage = Usage(
+                self.append_usage(
+                    Usage(
                         input_tokens=event.input_tokens,
                         output_tokens=event.output_tokens,
-                    )
-                else:
-                    self.usage.input_tokens += event.input_tokens
-                    self.usage.output_tokens += event.output_tokens
+                        cache_input_tokens=event.cache_input_tokens,
+                        cache_creation_input_tokens=(
+                            event.cache_creation_input_tokens
+                        ),
+                    ),
+                )
 
             case EventType.TEXT_BLOCK_START:
                 self.content.append(TextBlock(id=event.block_id, text=""))
 
-            case EventType.TEXT_BLOCK_DELTA:
+            case EventType.TEXT_BLOCK_DELTA | EventType.TEXT_BLOCK_END:
                 block = self._find_block("text", event.block_id)
                 if block is None:
                     logger.warning(
                         "TextBlock %r not found, skipping.",
                         event.block_id,
                     )
-                else:
+                elif event.type == EventType.TEXT_BLOCK_DELTA:
                     block.text += event.delta
-
-            case EventType.TEXT_BLOCK_END:
-                pass
+                else:
+                    if event.text is not None:
+                        block.text = event.text
+                    block.finished_at = event.created_at
 
             case EventType.DATA_BLOCK_START:
                 self.content.append(
@@ -273,17 +326,25 @@ class Msg(BaseModel):
                             data="",
                             media_type=event.media_type,
                         ),
+                        name=event.name,
                     ),
                 )
 
-            case EventType.DATA_BLOCK_DELTA:
+            case EventType.DATA_BLOCK_DELTA | EventType.DATA_BLOCK_END:
                 block = self._find_block("data", event.block_id)
                 if block is None:
                     logger.warning(
                         "DataBlock %s not found, skipping.",
                         event.block_id,
                     )
-                elif event.data:
+                elif event.type == EventType.DATA_BLOCK_DELTA and event.url:
+                    # A URL is the whole content, so it replaces the empty
+                    # base64 source the start event created.
+                    block.source = URLSource(
+                        url=event.url,
+                        media_type=event.media_type,
+                    )
+                elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
                     # Each delta is an independently base64-encoded chunk
                     # (with its own padding); naive string concat would
                     # corrupt the byte stream. Decode, concat bytes, re-encode.
@@ -296,39 +357,37 @@ class Msg(BaseModel):
                     block.source.data = base64.b64encode(
                         existing + incoming,
                     ).decode("ascii")
-
-            case EventType.DATA_BLOCK_END:
-                pass
+                elif event.type == EventType.DATA_BLOCK_END:
+                    block.finished_at = event.created_at
 
             case EventType.THINKING_BLOCK_START:
                 self.content.append(
                     ThinkingBlock(id=event.block_id, thinking=""),
                 )
 
-            case EventType.THINKING_BLOCK_DELTA:
+            case EventType.THINKING_BLOCK_DELTA | EventType.THINKING_BLOCK_END:
                 block = self._find_block("thinking", event.block_id)
                 if block is None:
                     logger.warning(
                         "ThinkingBlock %r not found, skipping.",
                         event.block_id,
                     )
-                else:
+                elif event.type == EventType.THINKING_BLOCK_DELTA:
                     block.thinking += event.delta
-
-            case EventType.THINKING_BLOCK_END:
-                pass
+                else:
+                    block.finished_at = event.created_at
 
             case EventType.HINT_BLOCK:
                 # One-shot event — the full HintBlock content arrives in
                 # a single event, so just append it to ``content`` for
                 # persistence and replay.
-                self.content.append(
-                    HintBlock(
-                        id=event.block_id,
-                        source=event.source,
-                        hint=event.hint,
-                    ),
+                hint_block = HintBlock(
+                    id=event.block_id,
+                    source=event.source,
+                    hint=event.hint,
                 )
+                hint_block.finished_at = hint_block.created_at
+                self.content.append(hint_block)
 
             case EventType.TOOL_CALL_START:
                 self.content.append(
@@ -339,19 +398,18 @@ class Msg(BaseModel):
                     ),
                 )
 
-            case EventType.TOOL_CALL_DELTA:
+            case EventType.TOOL_CALL_DELTA | EventType.TOOL_CALL_END:
                 block = self._find_block("tool_call", event.tool_call_id)
                 if block is None:
                     logger.warning(
                         "ToolCallBlock %r not found, skipping.",
                         event.tool_call_id,
                     )
-                else:
+                elif event.type == EventType.TOOL_CALL_DELTA:
                     assert isinstance(block, ToolCallBlock)
                     block.input += event.delta
-
-            case EventType.TOOL_CALL_END:
-                pass
+                else:
+                    block.finished_at = event.created_at
 
             case EventType.TOOL_RESULT_START:
                 self.content.append(
@@ -363,14 +421,18 @@ class Msg(BaseModel):
                     ),
                 )
 
-            case EventType.TOOL_RESULT_TEXT_DELTA:
+            case (
+                EventType.TOOL_RESULT_TEXT_DELTA
+                | EventType.TOOL_RESULT_DATA_DELTA
+                | EventType.TOOL_RESULT_END
+            ):
                 block = self._find_block("tool_result", event.tool_call_id)
                 if block is None:
                     logger.warning(
                         "ToolResultBlock %r not found, skipping.",
                         event.tool_call_id,
                     )
-                else:
+                elif event.type == EventType.TOOL_RESULT_TEXT_DELTA:
                     assert isinstance(block, ToolResultBlock)
                     if isinstance(block.output, str):
                         block.output = [TextBlock(text=block.output)]
@@ -379,15 +441,7 @@ class Msg(BaseModel):
                         block.output.append(TextBlock(text=event.delta))
                     else:
                         block.output[-1].text += event.delta
-
-            case EventType.TOOL_RESULT_DATA_DELTA:
-                block = self._find_block("tool_result", event.tool_call_id)
-                if block is None:
-                    logger.warning(
-                        "ToolResultBlock %r not found, skipping.",
-                        event.tool_call_id,
-                    )
-                else:
+                elif event.type == EventType.TOOL_RESULT_DATA_DELTA:
                     assert isinstance(block, ToolResultBlock)
                     if isinstance(block.output, str):
                         block.output = [TextBlock(text=block.output)]
@@ -402,28 +456,49 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    block.output.append(
-                        DataBlock(id=event.block_id, source=src),
-                    )
-
-            case EventType.TOOL_RESULT_END:
-                block = self._find_block("tool_result", event.tool_call_id)
-                if block is None:
-                    logger.warning(
-                        "ToolResultBlock %r not found, skipping.",
-                        event.tool_call_id,
-                    )
+                    # Merge same-id Base64 chunks like
+                    # ToolResponse.append_chunk.
+                    merge_target: DataBlock | None = None
+                    for output_block in block.output:
+                        if (
+                            isinstance(output_block, DataBlock)
+                            and output_block.id == event.block_id
+                            and isinstance(output_block.source, Base64Source)
+                        ):
+                            merge_target = output_block
+                            break
+                    if merge_target is not None and isinstance(
+                        src,
+                        Base64Source,
+                    ):
+                        existing = base64.b64decode(merge_target.source.data)
+                        incoming = base64.b64decode(src.data)
+                        merge_target.source.data = base64.b64encode(
+                            existing + incoming,
+                        ).decode("ascii")
+                        merge_target.source.media_type = (
+                            src.media_type or merge_target.source.media_type
+                        )
+                    else:
+                        block.output.append(
+                            DataBlock(id=event.block_id, source=src),
+                        )
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
-                # The paired ToolCallBlock's lifecycle ends with its
-                # result — flip it to FINISHED here so the SSE-rebuilt
-                # reply_msg matches ``agent.state.context``, which
-                # ``_update_tool_call_state`` mutates directly.
-                call_block = self._find_block("tool_call", event.tool_call_id)
-                if call_block is not None:
-                    assert isinstance(call_block, ToolCallBlock)
-                    call_block.state = ToolCallState.FINISHED
+                    block.metadata = event.metadata
+                    block.finished_at = event.created_at
+                    # The paired ToolCallBlock's lifecycle ends with its
+                    # result — flip it to FINISHED here so the SSE-rebuilt
+                    # reply_msg matches ``agent.state.context``, which
+                    # ``_update_tool_call_state`` mutates directly.
+                    call_block = self._find_block(
+                        "tool_call",
+                        event.tool_call_id,
+                    )
+                    if call_block is not None:
+                        assert isinstance(call_block, ToolCallBlock)
+                        call_block.state = ToolCallState.FINISHED
 
             case EventType.REQUIRE_USER_CONFIRM:
                 for tool_call in event.tool_calls:
@@ -438,7 +513,10 @@ class Msg(BaseModel):
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:
                     b = self._find_block("tool_call", result.tool_call.id)
-                    if b is not None:
+                    # Only ASKING calls can transition; skip stale results
+                    # (e.g. arriving after an interrupt already resolved the
+                    # tool call).
+                    if b is not None and b.state == ToolCallState.ASKING:
                         assert isinstance(b, ToolCallBlock)
                         b.state = (
                             ToolCallState.ALLOWED
@@ -454,9 +532,41 @@ class Msg(BaseModel):
                         b.state = ToolCallState.SUBMITTED
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
+                # Skip results whose tool_call already has a tool_result
+                # (e.g. late arrival after an interrupt).
+                existing_ids = {
+                    b.id
+                    for b in self.content
+                    if isinstance(b, ToolResultBlock)
+                }
                 for result in event.execution_results:
+                    if result.id in existing_ids:
+                        continue
+                    if result.finished_at is None:
+                        result.finished_at = event.created_at
                     self.content.append(result)
 
+        return self
+
+    def append_usage(self, usage: Usage) -> Self:
+        """Accumulate the token usage of one model call into this message.
+
+        The message keeps a copy of ``usage``, so the object handed over by
+        the caller is never adopted and keeps its own value.
+
+        Args:
+            usage (`Usage`):
+                The token usage to be accumulated.
+        """
+        if self.usage is None:
+            self.usage = usage.model_copy()
+        else:
+            self.usage.input_tokens += usage.input_tokens
+            self.usage.output_tokens += usage.output_tokens
+            self.usage.cache_input_tokens += usage.cache_input_tokens
+            self.usage.cache_creation_input_tokens += (
+                usage.cache_creation_input_tokens
+            )
         return self
 
 
@@ -466,6 +576,7 @@ def UserMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a user message with role ``"user"``.
@@ -486,6 +597,9 @@ def UserMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The reason the message was finished. Defaults to ``None`` when not
+            provided.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -494,7 +608,7 @@ def UserMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="user"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(
@@ -504,7 +618,8 @@ def UserMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        finished_reason=finished_reason,
+        id=id or _generate_id(),
     )
 
 
@@ -514,6 +629,8 @@ def AssistantMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
+    structured_output: dict | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
 ) -> Msg:
@@ -535,6 +652,10 @@ def AssistantMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Not set by
             default for assistant messages.
+        structured_output (`dict | None`, optional):
+            The structured output carried by the assistant message.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The finished reason for the assistant message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -550,9 +671,11 @@ def AssistantMsg(
         content=_to_blocks(content),
         role="assistant",
         metadata=metadata or {},
-        created_at=created_at or datetime.now().isoformat(),
+        created_at=created_at or _generate_timestamp(),
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        finished_reason=finished_reason,
+        structured_output=structured_output,
+        id=id or _generate_id(),
         usage=usage,
     )
 
@@ -563,6 +686,7 @@ def SystemMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a system message with role ``"system"``.
@@ -583,6 +707,8 @@ def SystemMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The finished reason for the system message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -591,7 +717,7 @@ def SystemMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="system"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(
@@ -601,5 +727,6 @@ def SystemMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        finished_reason=finished_reason,
+        id=id or _generate_id(),
     )

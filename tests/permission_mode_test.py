@@ -36,6 +36,8 @@ from agentscope.tool import (
     Write,
     Read,
     Edit,
+    Glob,
+    Grep,
 )
 
 
@@ -65,6 +67,27 @@ class PermissionEngineDefaultModeTest(IsolatedAsyncioTestCase):
             {"file_path": "/tmp/file.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
+    async def test_default_read_only_tools_auto_allow(self) -> None:
+        """Read / Glob / Grep are read-only and must be auto-allowed in
+        DEFAULT via the read-only fast path — no confirmation prompt.
+
+        Regression for the DEFAULT-mode gap where read-only tools fell
+        through to the default ASK because DEFAULT lacked the read-only
+        fast path that ACCEPT_EDITS / EXPLORE already had.
+        """
+        cases = [
+            (Read(), {"file_path": "/anywhere/file.txt"}),
+            (Glob(), {"pattern": "**/*.py"}),
+            (Grep(), {"pattern": "TODO"}),
+        ]
+        for tool, tool_input in cases:
+            decision = await self.engine.check_permission(tool, tool_input)
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only tool {tool.name} in DEFAULT",
+            )
 
     async def test_default_deny_rule_returns_deny(self) -> None:
         """Deny rule has the highest priority."""
@@ -823,6 +846,99 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_dont_ask_read_only_tools_auto_allow(self) -> None:
+        """Read / Glob / Grep are auto-allowed in DONT_ASK: the read-only
+        fast path applies in every mode, so unattended runs can freely
+        inspect files without an (impossible) prompt."""
+        cases = [
+            (Read(), {"file_path": "/anywhere/file.txt"}),
+            (Glob(), {"pattern": "**/*.py"}),
+            (Grep(), {"pattern": "TODO"}),
+        ]
+        for tool, tool_input in cases:
+            decision = await self.engine.check_permission(tool, tool_input)
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only tool {tool.name} in DONT_ASK",
+            )
+
+    async def test_dont_ask_edit_within_working_directory_allows(
+        self,
+    ) -> None:
+        """DONT_ASK is the unattended counterpart of ACCEPT_EDITS: edits
+        within a configured working directory are auto-allowed (no user is
+        available to grant them interactively)."""
+        context = PermissionContext(
+            mode=PermissionMode.DONT_ASK,
+            working_directories={
+                "/tmp/project": AdditionalWorkingDirectory(
+                    path="/tmp/project",
+                    source="test",
+                ),
+            },
+        )
+        engine = PermissionEngine(context)
+        for tool in (Write(), Edit()):
+            decision = await engine.check_permission(
+                tool,
+                {"file_path": "/tmp/project/file.txt"},
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for {tool.name} inside DONT_ASK working dir",
+            )
+
+    async def test_dont_ask_edit_outside_working_directory_denies(
+        self,
+    ) -> None:
+        """Edits outside the working directory cannot be granted without a
+        user to ask, so they are refused (DONT_ASK never returns ASK)."""
+        context = PermissionContext(
+            mode=PermissionMode.DONT_ASK,
+            working_directories={
+                "/tmp/project": AdditionalWorkingDirectory(
+                    path="/tmp/project",
+                    source="test",
+                ),
+            },
+        )
+        engine = PermissionEngine(context)
+        decision = await engine.check_permission(
+            Write(),
+            {"file_path": "/home/user/other.txt"},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_dont_ask_bash_filesystem_command_working_dir(self) -> None:
+        """DONT_ASK auto-allows filesystem commands whose targets are all
+        inside the working directory, and denies those that escape it."""
+        context = PermissionContext(
+            mode=PermissionMode.DONT_ASK,
+            working_directories={
+                "/tmp/project": AdditionalWorkingDirectory(
+                    path="/tmp/project",
+                    source="test",
+                ),
+            },
+        )
+        engine = PermissionEngine(context)
+        inside = await engine.check_permission(
+            Bash(),
+            {"command": "touch /tmp/project/new.txt"},
+        )
+        self.assertEqual(inside.behavior, PermissionBehavior.ALLOW)
+        outside = await engine.check_permission(
+            Bash(),
+            {"command": "touch /home/user/new.txt"},
+        )
+        self.assertEqual(outside.behavior, PermissionBehavior.DENY)
+
     async def test_dont_ask_ask_rule_returns_deny(self) -> None:
         """An ASK rule hit is converted to DENY (issue #3): the user is
         not available to answer the prompt, so the operation cannot
@@ -893,3 +1009,53 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
             {"command": "rm -rf /"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+
+# ---------------------------------------------------------------------------
+# Cross-mode invariants
+# ---------------------------------------------------------------------------
+
+
+class PermissionEngineReadOnlyConsistencyTest(IsolatedAsyncioTestCase):
+    """A read-only invocation must be ALLOWed in *every* mode.
+
+    Read-only operations have no side effects, so every mode auto-allows
+    them via the shared read-only fast path. This test pins that invariant
+    across all modes at once — it is the guard against the modes drifting
+    apart on read-only handling (the divergence that once left DEFAULT and
+    DONT_ASK without a read-only fast path).
+    """
+
+    async def test_read_only_tool_allowed_in_every_mode(self) -> None:
+        """Read (a statically read-only tool) → ALLOW in all five modes."""
+        for mode in PermissionMode:
+            context = PermissionContext(mode=mode)
+            engine = PermissionEngine(context)
+            decision = await engine.check_permission(
+                Read(),
+                {"file_path": "/anywhere/file.txt"},
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only Read in mode {mode.value}",
+            )
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_read_only_bash_command_allowed_in_every_mode(self) -> None:
+        """A statically read-only bash command → ALLOW in all five modes."""
+        for mode in PermissionMode:
+            context = PermissionContext(mode=mode)
+            engine = PermissionEngine(context)
+            decision = await engine.check_permission(
+                Bash(),
+                {"command": "git status"},
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only bash in mode {mode.value}",
+            )

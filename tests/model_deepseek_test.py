@@ -10,7 +10,7 @@ Tests cover both non-streaming and streaming modes, verifying that:
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -156,27 +156,195 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello world!"),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello world!")]),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Hello world!",
+                    ),
+                ],
+            ),
         )
         self.assertEqual(result.id, "deepseek-1")
 
-    @patch("openai.AsyncClient")
+    async def test_thinking_enable_unset_not_sent(self) -> None:
+        """An unset thinking_enable must not inject a thinking type."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+            },
+        )
+
+    async def test_thinking_enable_explicit_none_not_sent(self) -> None:
+        """Explicit None leaves thinking behavior to the server."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=None),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+            },
+        )
+
+    async def test_thinking_enable_unset_preserves_extra_body(self) -> None:
+        """Unset thinking preserves the caller's complete extra body."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        extra_body = {"custom": "value", "thinking": {"type": "enabled"}}
+
+        await self.model([], extra_body=extra_body)
+
+        self.assertDictEqual(
+            extra_body,
+            {"custom": "value", "thinking": {"type": "enabled"}},
+        )
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {
+                    "custom": "value",
+                    "thinking": {"type": "enabled"},
+                },
+            },
+        )
+
+    async def test_thinking_enable_explicit_false_sends_disabled(self) -> None:
+        """An explicit thinking_enable=False still disables thinking."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=False),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        )
+
+    async def test_thinking_enable_explicit_true_sends_enabled(self) -> None:
+        """An explicit thinking_enable=True sends thinking.type=enabled."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=True),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        )
+
+    async def test_extra_body_is_not_mutated(self) -> None:
+        """Defaulting thinking.type leaves the caller's extra_body intact."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-v4-pro",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=False),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        model.client = self.mock_client
+        self.mock_client.chat.completions.create = mock_create
+        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
+
+        await model([], extra_body=extra_body)
+
+        self.assertDictEqual(
+            extra_body,
+            {"custom": "value", "thinking": {"budget_tokens": 1024}},
+        )
+        self.assertDictEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": "deepseek-v4-pro",
+                "messages": [],
+                "stream": False,
+                "extra_body": {
+                    "custom": "value",
+                    "thinking": {"budget_tokens": 1024, "type": "disabled"},
+                },
+            },
+        )
+
     async def test_tool_call_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         mock_create = AsyncMock(
@@ -195,7 +363,7 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -204,12 +372,14 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="call-1",
                         name="get_weather",
                         input='{"city":"Beijing"}',
                     ),
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="call-2",
                         name="get_time",
                         input='{"tz":"UTC"}',
@@ -218,10 +388,8 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("openai.AsyncClient")
     async def test_thinking_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream response with reasoning creates ThinkingBlock."""
         mock_create = AsyncMock(
@@ -230,7 +398,7 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
                 reasoning="Let me think step by step...",
             ),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -241,9 +409,14 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Let me think step by step...",
                     ),
-                    TextBlock.model_construct(id=A, text="The answer is 42."),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="The answer is 42.",
+                    ),
                 ],
             ),
         )
@@ -259,11 +432,11 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
     async def test_stream_text_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream text yields n deltas (is_last=False) + 1 final
         (is_last=True) with full content."""
@@ -277,7 +450,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -285,18 +458,46 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (False, [TextBlock.model_construct(id=A, text="!")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world!")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="!")],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world!",
+                        ),
+                    ],
+                ),
             ],
         )
         self.assertEqual(responses[-1].id, "deepseek-1")
 
-    @patch("openai.AsyncClient")
     async def test_stream_thinking_and_text(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream with thinking + text yields deltas then final with both."""
         chunks = [
@@ -310,7 +511,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -320,31 +521,64 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                    ],
                 ),
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="ing...")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="ing...",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
-                (False, [TextBlock.model_construct(id=A, text=" here.")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" here.",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Thinking...",
                         ),
-                        TextBlock.model_construct(id=A, text="Answer here."),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer here.",
+                        ),
                     ],
                 ),
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_tool_calls(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream tool calls accumulate across chunks into final response."""
         chunks = [
@@ -366,7 +600,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -377,7 +611,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="get_weather",
                             input='{"ci',
@@ -387,7 +622,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="get_weather",
                             input='ty":"BJ"}',
@@ -397,7 +633,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="get_weather",
                             input='{"city":"BJ"}',
@@ -407,10 +644,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_text_then_tool_call(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream with text followed by tool call accumulates both."""
         chunks = [
@@ -433,7 +668,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -446,18 +681,26 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me check",
                         ),
                     ],
                 ),
                 (
                     False,
-                    [TextBlock.model_construct(id=A, text="I'll look it up.")],
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="I'll look it up.",
+                        ),
+                    ],
                 ),
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='{"q":"weather"}',
@@ -469,13 +712,16 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me check",
                         ),
                         TextBlock.model_construct(
                             id=A,
+                            created_at=A,
                             text="I'll look it up.",
                         ),
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='{"q":"weather"}',
@@ -485,10 +731,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_usage_in_final(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Usage information is captured and present in final response."""
         chunks = [
@@ -503,7 +747,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -511,8 +755,14 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hi")]),
-                (True, [TextBlock.model_construct(id=A, text="Hi")]),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
+                (
+                    True,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
             ],
         )
         self.assertEqual(responses[-1].usage.input_tokens, 100)

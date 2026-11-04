@@ -8,7 +8,7 @@ export function AppLayout() {
 		<div className="h-screen flex">
 			<SidebarProvider>
 				<AppSidebar />
-				<SidebarInset className="flex-1 overflow-hidden">
+				<SidebarInset className="flex-1 overflow-hidden bg-canvas">
 					<Outlet />
 				</SidebarInset>
 			</SidebarProvider>

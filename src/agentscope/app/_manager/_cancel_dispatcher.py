@@ -3,8 +3,9 @@
 
 Subscribes to two bus channels:
 
-1. **Session cancel** — cancel all local work for a session (chat run
-   + all BG tasks). Triggered by session deletion or explicit abort.
+1. **Session cancel** — cancel all local work for a session (chat run,
+   realtime run, and all BG tasks). Triggered by session deletion or
+   explicit abort.
 2. **Task cancel** — cancel a single BG task by task_id. Triggered by
    the :class:`ToolStop` agent tool when the target task lives on a
    different worker.
@@ -14,12 +15,15 @@ or task simply do no work — the publisher does not need to know which
 worker holds what; it broadcasts and lets each holder self-select.
 """
 import asyncio
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
+    from .._service._webrtc_session import WebRTCSession
     from ._background_task_manager import BackgroundTaskManager
     from ._chat_run_registry import ChatRunRegistry
 
@@ -36,6 +40,10 @@ class CancelDispatcher:
             cancelled.
         bg_manager (`BackgroundTaskManager`):
             The per-process background task manager.
+        realtime_connections (`Mapping`, optional):
+            The per-process browser realtime sessions. The shared cancel
+            broadcast closes matching runners on whichever process owns
+            them.
     """
 
     def __init__(
@@ -43,6 +51,11 @@ class CancelDispatcher:
         message_bus: "MessageBus",
         registry: "ChatRunRegistry",
         bg_manager: "BackgroundTaskManager",
+        realtime_connections: Mapping[
+            tuple[str, str],
+            "WebRTCSession",
+        ]
+        | None = None,
     ) -> None:
         """Bind dependencies.
 
@@ -53,12 +66,18 @@ class CancelDispatcher:
                 The per-process chat-run registry.
             bg_manager (`BackgroundTaskManager`):
                 The per-process background task manager.
+            realtime_connections (`Mapping`, optional):
+                The per-process browser realtime sessions.
         """
         self._bus = message_bus
         self._registry = registry
         self._bg_manager = bg_manager
+        self._realtime_connections = (
+            realtime_connections if realtime_connections is not None else {}
+        )
         self._session_task: asyncio.Task | None = None
         self._task_cancel_task: asyncio.Task | None = None
+        self._interrupt_task: asyncio.Task | None = None
 
     async def __aenter__(self) -> Self:
         """Start both dispatcher loops and wait until their bus
@@ -69,6 +88,7 @@ class CancelDispatcher:
         """
         session_ready = asyncio.Event()
         task_ready = asyncio.Event()
+        interrupt_ready = asyncio.Event()
 
         self._session_task = asyncio.create_task(
             self._session_cancel_loop(session_ready),
@@ -78,14 +98,23 @@ class CancelDispatcher:
             self._task_cancel_loop(task_ready),
             name="cancel-dispatcher:task",
         )
+        self._interrupt_task = asyncio.create_task(
+            self._interrupt_loop(interrupt_ready),
+            name="cancel-dispatcher:interrupt",
+        )
 
         await session_ready.wait()
         await task_ready.wait()
+        await interrupt_ready.wait()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Cancel both dispatcher loops on context exit."""
-        for task in (self._session_task, self._task_cancel_task):
+        """Cancel all dispatcher loops on context exit."""
+        for task in (
+            self._session_task,
+            self._task_cancel_task,
+            self._interrupt_task,
+        ):
             if task is None:
                 continue
             task.cancel()
@@ -95,6 +124,7 @@ class CancelDispatcher:
                 pass
         self._session_task = None
         self._task_cancel_task = None
+        self._interrupt_task = None
 
     # ------------------------------------------------------------------
     # Session-level cancel loop
@@ -108,11 +138,14 @@ class CancelDispatcher:
                 Signalled after the underlying SUBSCRIBE completes.
         """
         try:
-            async for session_id in self._bus.session_subscribe_cancel(
+            async for payload in self._bus.subscribe(
+                MessageBusKeys.session_cancel_channel(),
                 on_ready=ready.set,
             ):
-                self._cancel_session(session_id)
-        except Exception:  # pylint: disable=broad-except
+                sid = payload.get("session_id")
+                if isinstance(sid, str):
+                    self._cancel_session(sid)
+        except Exception:
             logger.exception(
                 "CancelDispatcher session-cancel loop crashed.",
             )
@@ -146,6 +179,21 @@ class CancelDispatcher:
                 session_id,
             )
 
+        realtime_cancelled = 0
+        for (_, candidate_session_id), runner in list(
+            self._realtime_connections.items(),
+        ):
+            if candidate_session_id == session_id:
+                runner.request_close()
+                realtime_cancelled += 1
+        if realtime_cancelled:
+            logger.info(
+                "CancelDispatcher: closing %d local realtime run(s) for "
+                "session %s",
+                realtime_cancelled,
+                session_id,
+            )
+
     # ------------------------------------------------------------------
     # Task-level cancel loop
     # ------------------------------------------------------------------
@@ -158,9 +206,13 @@ class CancelDispatcher:
                 Signalled after the underlying SUBSCRIBE completes.
         """
         try:
-            async for task_id in self._bus.task_subscribe_cancel(
+            async for payload in self._bus.subscribe(
+                MessageBusKeys.task_cancel_channel(),
                 on_ready=ready.set,
             ):
+                task_id = payload.get("task_id")
+                if not isinstance(task_id, str):
+                    continue
                 cancelled = self._bg_manager.cancel_task(task_id)
                 if cancelled:
                     logger.info(
@@ -176,3 +228,51 @@ class CancelDispatcher:
             # Unblock ``__aenter__`` even if subscribe failed before
             # ``on_ready`` ran, so startup cannot deadlock.
             ready.set()
+
+    # ------------------------------------------------------------------
+    # Session-level interrupt loop
+    # ------------------------------------------------------------------
+
+    async def _interrupt_loop(self, ready: asyncio.Event) -> None:
+        """Subscribe to the session interrupt channel and cancel matching
+        local tasks.
+
+        Args:
+            ready (`asyncio.Event`):
+                Signalled after the underlying SUBSCRIBE completes.
+        """
+        try:
+            async for payload in self._bus.subscribe(
+                MessageBusKeys.session_interrupt_channel(),
+                on_ready=ready.set,
+            ):
+                sid = payload.get("session_id")
+                if isinstance(sid, str):
+                    self._interrupt_session(sid)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "CancelDispatcher interrupt loop crashed.",
+            )
+        finally:
+            ready.set()
+
+    def _interrupt_session(self, session_id: str) -> None:
+        """Cancel the local chat-run task for a session.
+
+        Unlike ``_cancel_session``, this method only cancels the
+        chat-run asyncio task—it does **not** cancel background tasks.
+        The agent handles ``CancelledError`` gracefully at each
+        breakpoint, preserving partial context.
+
+        Args:
+            session_id (`str`):
+                The session whose chat run should be interrupted.
+        """
+        task = self._registry.get(session_id)
+        if task is not None and not task.done():
+            logger.info(
+                "CancelDispatcher: interrupting local chat run for "
+                "session %s",
+                session_id,
+            )
+            task.cancel()

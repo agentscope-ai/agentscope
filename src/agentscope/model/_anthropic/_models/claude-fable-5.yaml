@@ -1,0 +1,38 @@
+name: claude-fable-5
+label: Claude Fable 5
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens: {"maximum": 128000}
+  # Thinking is always on here and cannot be disabled or budgeted —
+  # ``reasoning_effort`` is the only depth control it accepts.
+  thinking_enable:
+    hidden: true
+  thinking_budget:
+    hidden: true
+  thinking_mode:
+    default: adaptive
+    anyOf:
+      - enum: [adaptive]
+        type: string
+      - type: "null"
+  # Defaults to "omitted" on these models, which renders as empty thinking
+  # blocks — ask for summaries explicitly.
+  thinking_display:
+    default: summarized

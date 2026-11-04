@@ -13,7 +13,4 @@ output_types:
 
 context_size: 512
 
-parameter_overrides:
-  dimensions:
-    hidden: true
-    default: 1024
+dimensions: 1024

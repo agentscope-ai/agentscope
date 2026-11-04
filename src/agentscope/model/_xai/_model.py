@@ -5,6 +5,7 @@ from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
@@ -46,13 +47,15 @@ class XAIChatModel(ChatModelBase):
         )
         """The maximum number of tokens to generate."""
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for models that support "
-                "extended thinking (e.g. ``grok-3-mini``). Use "
-                "reasoning_effort to control the depth of reasoning."
+                "None and True forward reasoning_effort when it is set. "
+                "If reasoning_effort is unset, neither adds reasoning "
+                "parameters; the provider default applies. False raises "
+                "ValueError before making a request because this adapter "
+                "does not support disabling thinking."
             ),
         )
 
@@ -63,8 +66,8 @@ class XAIChatModel(ChatModelBase):
                 "Controls the depth of reasoning for models that support "
                 "extended thinking (e.g. ``grok-3-mini``). Set to "
                 "``'low'``, ``'medium'``, or ``'high'`` to enable reasoning "
-                "with the corresponding effort level. ``None`` disables "
-                "reasoning."
+                "with the corresponding effort level. When None, no "
+                "reasoning effort is sent."
             ),
         )
 
@@ -184,6 +187,13 @@ class XAIChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
+        if self.parameters.thinking_enable is False:
+            raise ValueError(
+                "The xAI SDK does not support disabling thinking. "
+                "Set thinking_enable to None or True and use "
+                "reasoning_effort to control reasoning depth.",
+            )
+
         from xai_sdk import AsyncClient
 
         client = AsyncClient(
@@ -205,10 +215,7 @@ class XAIChatModel(ChatModelBase):
             create_kwargs["temperature"] = self.parameters.temperature
         if self.parameters.top_p is not None:
             create_kwargs["top_p"] = self.parameters.top_p
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.reasoning_effort is not None:
             create_kwargs[
                 "reasoning_effort"
             ] = self.parameters.reasoning_effort
@@ -298,85 +305,89 @@ class XAIChatModel(ChatModelBase):
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the xAI streaming response from ``xai_sdk``.
 
+        Each iteration yields only the incremental *delta* content; the
+        base ``ChatModelBase.__call__`` accumulates them and emits the
+        final ``is_last=True`` chunk. ``xai_sdk`` does not stream tool
+        calls or usage — both are only available on the final response
+        object — so after the delta loop exits we emit one last carrier
+        delta containing the full ``ToolCallBlock`` list and ``usage``
+        for the accumulator to merge.
+
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             chat (`Any`):
                 The ``xai_sdk`` chat session object.
-            client (`Any`):
+            client (`AsyncClient`):
                 The ``xai_sdk.AsyncClient`` instance; closed when the
                 generator is exhausted or abandoned.
 
         Yields:
             `ChatResponse`:
-                Incremental ``ChatResponse`` objects with ``is_last=False``
-                followed by a final one with ``is_last=True``.
+                Incremental ``ChatResponse`` objects with ``is_last=False``.
         """
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
+        # xAI exposes the upstream response id from the very first
+        # streamed ``response`` object; fall back to a locally-generated
+        # id so every delta carries a stable identifier before then.
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
         last_response = None
-        response_id: str | None = None
 
         try:
             async for response, chunk in chat.stream():
-                if response_id is None:
-                    response_id = getattr(response, "id", None) or None
+                upstream_id = getattr(response, "id", None)
+                if upstream_id:
+                    response_id = upstream_id
+
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
+
+                delta_thinking: str = chunk.reasoning_content or ""
+                if delta_thinking:
+                    delta_res.append_thinking(
+                        delta_thinking,
+                        block_id=thinking_id,
+                    )
 
                 delta_text: str = chunk.content or ""
-                delta_thinking: str = chunk.reasoning_content or ""
-
-                delta_contents: List[TextBlock | ThinkingBlock] = []
-
-                if delta_thinking:
-                    acc_thinking.thinking += delta_thinking
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
                 if delta_text:
-                    acc_text.text += delta_text
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
-                    )
+                    delta_res.append_text(delta_text, block_id=text_id)
 
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
+                if delta_res.content:
+                    yield delta_res
 
                 last_response = response
 
         finally:
             await client.close()
 
-        final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
-        if acc_thinking.thinking:
-            final_contents.append(acc_thinking)
-        if acc_text.text:
-            final_contents.append(acc_text)
+        # ``xai_sdk`` does not stream tool calls or usage — both are only
+        # populated on the final accumulated ``response`` object. Emit a
+        # single trailing carrier delta so the base accumulator picks up
+        # the ``ToolCallBlock``s and ``ChatUsage``.
+        trailing = ChatResponse(
+            content=[],
+            is_last=False,
+            id=response_id,
+        )
 
         if last_response is not None:
             for tc in last_response.tool_calls or []:
-                final_contents.append(
-                    ToolCallBlock(
-                        id=tc.id,
-                        name=tc.function.name,
-                        input=tc.function.arguments,
-                    ),
+                trailing.append_tool_call(
+                    block_id=tc.id,
+                    name=tc.function.name,
+                    input=tc.function.arguments,
                 )
 
-        usage = None
         if last_response is not None and last_response.usage is not None:
             u = last_response.usage
-            usage = ChatUsage(
+            trailing.usage = ChatUsage(
                 input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                output_tokens=u.completion_tokens + u.reasoning_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,
@@ -385,14 +396,8 @@ class XAIChatModel(ChatModelBase):
                 ),
             )
 
-        final_kwargs: dict[str, Any] = {
-            "content": final_contents,
-            "usage": usage,
-            "is_last": True,
-        }
-        if response_id:
-            final_kwargs["id"] = response_id
-        yield ChatResponse(**final_kwargs)
+        if trailing.content or trailing.usage:
+            yield trailing
 
     def _parse_completion_response(
         self,
@@ -434,7 +439,7 @@ class XAIChatModel(ChatModelBase):
             u = response.usage
             usage = ChatUsage(
                 input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                output_tokens=u.completion_tokens + u.reasoning_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,

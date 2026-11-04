@@ -6,9 +6,12 @@ covers rule priority, rule pattern matching (Bash / file glob), dangerous
 path detection, suggestion generation, Bash read-only command analysis,
 and bypass-immune safety checks.
 """
+import os
 import sys
+import tempfile
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.permission import (
     PermissionEngine,
@@ -22,10 +25,194 @@ from agentscope.permission import (
 from agentscope.tool import (
     Bash,
     Write,
-    Read,
     Edit,
     ToolBase,
 )
+
+
+class PermissionEngineCompoundBashTest(IsolatedAsyncioTestCase):
+    """Exercise compound permissions without running shell commands."""
+
+    async def test_parser_failure_requires_confirmation(self) -> None:
+        """A parser exception must yield a safety ASK, not raw-prefix ALLOW."""
+        engine = PermissionEngine(PermissionContext())
+        engine.add_rule(
+            PermissionRule(
+                tool_name="Bash",
+                rule_content="git:*",
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+        with patch("agentscope.tool._builtin._bash_parser.Parser") as parser:
+            parser.return_value.parse.side_effect = ValueError(
+                "Parser unavailable",
+            )
+            decision = await engine.check_permission(
+                Bash(),
+                {"command": "git status && curl example.com"},
+            )
+        self.assertEqual(
+            decision,
+            PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message="Permission required: Command parsing failed, "
+                "cannot verify safety",
+                decision_reason="Safety check: command contains dynamic "
+                "expansion that cannot be statically analyzed",
+                suggested_rules=[],
+                bypass_immune=True,
+            ),
+        )
+
+    async def test_restrictions_match_any_operation(self) -> None:
+        """Deny and ask rules retain priority in every permission mode."""
+        for mode in PermissionMode:
+            for behavior in (PermissionBehavior.DENY, PermissionBehavior.ASK):
+                engine = PermissionEngine(PermissionContext(mode=mode))
+                engine.add_rule(
+                    PermissionRule(
+                        tool_name="Bash",
+                        rule_content="git:*",
+                        behavior=PermissionBehavior.ALLOW,
+                        source="test",
+                    ),
+                )
+                engine.add_rule(
+                    PermissionRule(
+                        tool_name="Bash",
+                        rule_content="git push:*",
+                        behavior=behavior,
+                        source="test",
+                    ),
+                )
+                expected = (
+                    PermissionBehavior.DENY
+                    if mode == PermissionMode.DONT_ASK
+                    else behavior
+                )
+                for separator in (" && ", " || ", "; ", " | ", "\n", " & "):
+                    for commands in (
+                        ["git push origin main", "git status"],
+                        ["git status", "git push origin main"],
+                    ):
+                        command = separator.join(commands)
+                        with self.subTest(
+                            mode=mode,
+                            behavior=behavior,
+                            command=command,
+                        ):
+                            decision = await engine.check_permission(
+                                Bash(),
+                                {"command": command},
+                            )
+                            self.assertEqual(decision.behavior, expected)
+
+    async def test_allow_rules_cover_all_operations(self) -> None:
+        """Different allow rules may jointly cover a compound invocation."""
+        engine = PermissionEngine(PermissionContext())
+        for pattern in ("git:*", "npm:*", "install"):
+            engine.add_rule(
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content=pattern,
+                    behavior=PermissionBehavior.ALLOW,
+                    source="test",
+                ),
+            )
+        for command in (
+            "git add . && git commit",
+            "npm install && pip install",
+            "git add . && npm test",
+            "npm test && git add .",
+            "git add '中文.txt' && git commit -m update",
+            "git commit -m 'a && b' && git status",
+        ):
+            tool_input = {"command": command, "description": "Test coverage"}
+            with self.subTest(command=command):
+                self.assertEqual(
+                    await engine.check_permission(Bash(), tool_input),
+                    PermissionDecision(
+                        behavior=PermissionBehavior.ALLOW,
+                        message="Permission granted for Bash",
+                        updated_input=tool_input,
+                    ),
+                )
+
+    async def test_uncovered_operations_require_confirmation(self) -> None:
+        """No prefix, wildcard, or substring may hide another operation."""
+        cases = [
+            ("git:*", "git status && echo pwned > /tmp/pwned"),
+            (
+                "git commit:*",
+                "git commit -m 'x' && curl http://evil.com",
+            ),
+            ("install", "npm install && rm -rf /tmp/data"),
+            ("git *", "git add . && echo hi"),
+            ("git:*", "git log | tee /tmp/log"),
+            ("git:*", "git status && curl example.com"),
+            ("git *", "git status | curl example.com"),
+            ("install", "npm install && curl example.com"),
+            ("git:*", "git add 'ééééé' && curl git -o output.txt"),
+            ("git:*", "git status && > output.txt"),
+            ("git:*", "git status && X=hello"),
+            ("git:*", "git status\ncurl example.com"),
+            ("git:*", "git status & curl example.com"),
+            (
+                "cat *public.txt",
+                "cat public.txt && cat public.txt > private.txt",
+            ),
+            (
+                "cat *public.txt",
+                "cat public.txt | cat public.txt > private.txt",
+            ),
+        ]
+        for pattern, command in cases:
+            with self.subTest(pattern=pattern, command=command):
+                engine = PermissionEngine(PermissionContext())
+                engine.add_rule(
+                    PermissionRule(
+                        tool_name="Bash",
+                        rule_content=pattern,
+                        behavior=PermissionBehavior.ALLOW,
+                        source="test",
+                    ),
+                )
+                decision = await engine.check_permission(
+                    Bash(),
+                    {"command": command},
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
+    async def test_safety_checks_keep_original_command(self) -> None:
+        """Whole-command safety checks must precede any allow coverage."""
+        for command in (
+            "git status &&",
+            "git status && git add 'unterminated",
+            "git status && git add $(pwd)",
+            "git status && git log > .env",
+            "git status && for x in a; do git add x; done",
+        ):
+            for mode, expected in (
+                (PermissionMode.DEFAULT, PermissionBehavior.ASK),
+                (PermissionMode.DONT_ASK, PermissionBehavior.DENY),
+                (PermissionMode.BYPASS, PermissionBehavior.ALLOW),
+            ):
+                with self.subTest(mode=mode, command=command):
+                    engine = PermissionEngine(PermissionContext(mode=mode))
+                    engine.add_rule(
+                        PermissionRule(
+                            tool_name="Bash",
+                            rule_content=None,
+                            behavior=PermissionBehavior.ALLOW,
+                            source="test",
+                        ),
+                    )
+                    decision = await engine.check_permission(
+                        Bash(),
+                        {"command": command},
+                    )
+                    self.assertEqual(decision.behavior, expected)
 
 
 class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
@@ -265,10 +452,15 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
         self.engine = PermissionEngine(self.context)
 
     async def test_file_glob_pattern_matching(self) -> None:
-        """Test file path glob pattern matching."""
+        """Test file path glob pattern matching.
+
+        Uses ``Write`` (a mutating tool) rather than a read-only tool:
+        read-only invocations are auto-allowed before rule matching in
+        every mode, so they cannot exercise the allow-rule glob path.
+        """
         self.engine.add_rule(
             PermissionRule(
-                tool_name="Read",
+                tool_name="Write",
                 rule_content="*.py",
                 behavior=PermissionBehavior.ALLOW,
                 source="test",
@@ -277,14 +469,14 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
 
         # Test matching file
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "test.py"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test non-matching file
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "test.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -435,6 +627,39 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
         # Should NOT be a safety check
         self.assertNotIn("safety", decision.decision_reason.lower())
 
+    async def test_symlink_to_dangerous_file_still_asks(self) -> None:
+        """A symlink aliasing a sensitive file is judged by its target."""
+        with tempfile.TemporaryDirectory() as tmp:
+            real = os.path.join(tmp, ".bashrc")
+            with open(real, "w", encoding="utf-8") as f:
+                f.write("export PATH=/tmp\n")
+            link = os.path.join(tmp, "innocent.txt")
+            os.symlink(real, link)
+
+            decision = await self.engine.check_permission(
+                Write(),
+                {"file_path": link},
+            )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("safety", decision.decision_reason.lower())
+
+    async def test_symlink_into_dangerous_directory_asks(self) -> None:
+        """A symlinked path into ``.ssh`` is judged as dangerous too."""
+        with tempfile.TemporaryDirectory() as tmp:
+            real_dir = os.path.join(tmp, ".ssh")
+            os.mkdir(real_dir)
+            link = os.path.join(tmp, "innocent")
+            os.symlink(real_dir, link)
+
+            decision = await self.engine.check_permission(
+                Write(),
+                {"file_path": os.path.join(link, "authorized_keys")},
+            )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("safety", decision.decision_reason.lower())
+
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.engine = None
@@ -472,9 +697,14 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
         self.assertIn("git commit:*", suggestion_contents)
 
     async def test_file_suggestions(self) -> None:
-        """Test suggestion generation for file operations."""
+        """Test suggestion generation for file operations.
+
+        Uses ``Write`` (a mutating tool): read-only tools are auto-allowed
+        and an ALLOW decision carries no suggestions, so a mutating tool is
+        needed to reach the ASK path that generates them.
+        """
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "/tmp/test.py"},
         )
 

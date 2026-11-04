@@ -3,10 +3,11 @@
 # pylint: disable=protected-access, unused-argument
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from utils import MockModel
+from utils import MockModel, AnyString
 
 from agentscope.agent import Agent, ContextConfig
 from agentscope.message import (
+    AssistantMsg,
     ToolResultBlock,
     TextBlock,
     DataBlock,
@@ -134,11 +135,29 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20, "id": "block1"},
-            {"type": "text", "text": "B" * 20 + "C" * 60, "id": "block2"},
+            {
+                "type": "text",
+                "text": "A" * 20,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            {
+                "type": "text",
+                "text": "B" * 20 + "C" * 60,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "C" * 40, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 40,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -196,8 +215,20 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20, "id": "block1"},
-            {"type": "text", "text": "B" * 20, "id": "block2"},
+            {
+                "type": "text",
+                "text": "A" * 20,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            {
+                "type": "text",
+                "text": "B" * 20,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
             {
@@ -209,6 +240,8 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                     "media_type": "image/png",
                 },
                 "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
             },
         ]
 
@@ -255,11 +288,29 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 100, "id": "block1"},
+            {
+                "type": "text",
+                "text": "A" * 100,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "B" * 20, "id": "block2"},
-            {"type": "text", "text": "C" * 20, "id": "block3"},
+            {
+                "type": "text",
+                "text": "B" * 20,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            {
+                "type": "text",
+                "text": "C" * 20,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -329,11 +380,25 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                     "media_type": "image/png",
                 },
                 "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
             },
-            {"type": "text", "text": "B" * 20 + "C" * 5, "id": "block2"},
+            {
+                "type": "text",
+                "text": "B" * 20 + "C" * 5,
+                "id": "block2",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "C" * 15, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 15,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -387,10 +452,22 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20 + "B" * 80, "id": "block1"},
+            {
+                "type": "text",
+                "text": "A" * 20 + "B" * 80,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "B" * 20 + "C" * 20, "id": "block3"},
+            {
+                "type": "text",
+                "text": "B" * 20 + "C" * 20,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -421,15 +498,12 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             messages: list,
             tools: list | None = None,
         ) -> int:
-            """Mock token counting function based on content length."""
+            """Mock token counting function based on text and data blocks."""
             content = messages[0].content
             if isinstance(content, list):
-                if len(content) == 3:
-                    return 150
-                elif len(content) == 2:
-                    return 80
-                elif len(content) == 1:
-                    return 40
+                text = sum(len(b.text) for b in content if hasattr(b, "text"))
+                data = sum(75 for b in content if b.type == "data")
+                return text + data
             return 50
 
         self.mock_model.count_tokens = mock_count_tokens
@@ -450,7 +524,13 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
 
         # Verify results using assertListEqual
         expected_reserved = [
-            {"type": "text", "text": "A" * 20, "id": "block1"},
+            {
+                "type": "text",
+                "text": "A" * 20,
+                "id": "block1",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
             {
                 "type": "data",
                 "id": "block2",
@@ -460,11 +540,25 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
                     "media_type": "image/png",
                 },
                 "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
             },
-            {"type": "text", "text": "C" * 5, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 5,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
         expected_offload = [
-            {"type": "text", "text": "C" * 15, "id": "block3"},
+            {
+                "type": "text",
+                "text": "C" * 15,
+                "id": "block3",
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
 
         self.assertListEqual(
@@ -475,6 +569,130 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             [b.model_dump() for b in offload.output],
             expected_offload,
         )
+
+    async def test_split_keeps_metadata_and_timestamps(self) -> None:
+        """Both halves of a split tool result keep metadata and timestamps."""
+        tool_result = ToolResultBlock(
+            id="test_9",
+            name="Write",
+            output=[
+                TextBlock(text="A" * 20, id="block1"),
+                TextBlock(text="B" * 400, id="block2"),
+            ],
+            state="success",
+            metadata={"diff": "--- a/x\n+++ b/x", "file_path": "/tmp/x.py"},
+            created_at="2026-09-21T10:00:00",
+            finished_at="2026-09-21T10:00:05",
+        )
+
+        async def mock_count_tokens(
+            messages: list,
+            tools: list | None = None,
+        ) -> int:
+            """Mock token counting function based on content length."""
+            content = messages[0].content
+            if isinstance(content, list):
+                return sum(len(b.text) for b in content if hasattr(b, "text"))
+            return 0
+
+        self.mock_model.count_tokens = mock_count_tokens
+        (
+            reserved,
+            offload,
+        ) = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+
+        self.assertDictEqual(
+            reserved.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "test_9",
+                "name": "Write",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": "A" * 20 + "B" * 80,
+                        "id": "block1",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "success",
+                "metadata": {
+                    "diff": "--- a/x\n+++ b/x",
+                    "file_path": "/tmp/x.py",
+                },
+                "created_at": "2026-09-21T10:00:00",
+                "finished_at": "2026-09-21T10:00:05",
+            },
+        )
+        self.assertDictEqual(
+            offload.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "test_9",
+                "name": "Write",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": "B" * 320,
+                        "id": "block2",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "success",
+                "metadata": {
+                    "diff": "--- a/x\n+++ b/x",
+                    "file_path": "/tmp/x.py",
+                },
+                "created_at": "2026-09-21T10:00:00",
+                "finished_at": "2026-09-21T10:00:05",
+            },
+        )
+
+    async def test_multibyte_prefix_stays_within_counted_limit(
+        self,
+    ) -> None:
+        """A dense prefix is shortened until the counter itself fits."""
+        dense_char = "\u20ac"
+        payload = dense_char * 400 + "a" * 1200
+        tool_result = ToolResultBlock(
+            id="test_mixed",
+            name="test_tool",
+            output=[TextBlock(text=payload, id="block1")],
+        )
+        original = tool_result.model_dump()
+        (
+            reserved,
+            offload,
+        ) = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+        assert offload is not None
+        self.assertLessEqual(
+            await self.mock_model.count_tokens(
+                [AssistantMsg(self.agent.name, content=reserved.output)],
+                None,
+            ),
+            self.agent.context_config.tool_result_limit,
+        )
+        # 133 three-byte characters use 399 bytes; 134 use 402 (101 tokens).
+        expected_block = {
+            "type": "text",
+            "id": "block1",
+            "created_at": AnyString(),
+            "finished_at": None,
+        }
+        self.assertListEqual(
+            [reserved.model_dump(), offload.model_dump()],
+            [
+                {**original, "output": [{**expected_block, "text": text}]}
+                for text in (payload[:133], payload[133:])
+            ],
+        )
+        self.assertDictEqual(tool_result.model_dump(), original)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

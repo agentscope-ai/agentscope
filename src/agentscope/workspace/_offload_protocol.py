@@ -2,11 +2,25 @@
 """The offload protocol."""
 from typing import Protocol
 
-from ..message import Msg, ToolResultBlock
+from ..message import DataBlock, Msg, ToolResultBlock
 
 
 class Offloader(Protocol):
     """The offloader protocol."""
+
+    async def offload_data_block(self, block: DataBlock) -> DataBlock:
+        """Persist a base64 data block to workspace storage.
+
+        Args:
+            block (`DataBlock`):
+                A data block. Blocks already backed by a URL source are
+                returned unchanged.
+
+        Returns:
+            `DataBlock`:
+                A data block whose source is a portable ``workspace://``
+                URL pointing at the persisted file inside the workspace.
+        """
 
     async def offload_context(
         self,

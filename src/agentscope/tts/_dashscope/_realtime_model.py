@@ -40,6 +40,8 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
         """
 
         def __init__(self) -> None:
+            """Initialize callback with audio buffer and synchronization
+            events."""
             super().__init__()
             self.chunk_event = threading.Event()
             self.finish_event = threading.Event()
@@ -55,6 +57,7 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
                     self._pcm_bytes = bytearray()
                     self._consumed = 0
                     self.finish_event.clear()
+                    self.chunk_event.clear()
 
                 elif event_type == "response.audio.delta":
                     audio_data = response.get("delta")
@@ -122,7 +125,7 @@ def _make_callback_class() -> type["QwenTtsRealtimeCallback"]:
 
         async def get_audio_chunks(self) -> AsyncGenerator[TTSResponse, None]:
             """Yield incremental WAV audio chunks as they arrive."""
-            header_sent = False
+            header_sent = self._consumed > 0
             while True:
                 if self.finish_event.is_set():
                     delta = self._take_delta(header=not header_sent)
@@ -454,7 +457,9 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
         if self.stream:
             return self._callback.get_audio_chunks()
 
-        return self._callback.get_audio_response(block=True)
+        response = self._callback.get_audio_response(block=True)
+        self._callback.reset()
+        return response
 
     def _reset_state(self) -> None:
         """Reset per-utterance tracking state."""

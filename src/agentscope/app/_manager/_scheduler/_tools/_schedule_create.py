@@ -140,8 +140,9 @@ to complete the task independently.
             storage (`Any`):
                 The storage backend used to persist the schedule record.
             scheduler_manager (`Any`):
-                The scheduler manager used to register the APScheduler job.
-                Must expose a ``register_schedule(record)`` coroutine.
+                The scheduler manager, used to tell the timer-owning node
+                that a schedule changed. Must expose a
+                ``notify_changed(schedule_id)`` coroutine.
         """
         self._user_id = user_id
         self._agent_id = agent_id
@@ -222,7 +223,7 @@ to complete the task independently.
                 enabled=enabled,
                 cron_expression=cron_expression,
                 timezone=timezone,
-                started_at=started_at or datetime.now(),
+                started_at=started_at or datetime.now().astimezone(),
                 ended_at=ended_at,
                 stateful=stateful,
                 permission_mode=perm_mode,
@@ -232,8 +233,9 @@ to complete the task independently.
             ),
         )
 
+        self._scheduler_manager.validate_schedule(record)
         await self._storage.upsert_schedule(self._user_id, record)
-        await self._scheduler_manager.register_schedule(record)
+        await self._scheduler_manager.notify_changed(record.id)
 
         return ToolChunk(
             content=[

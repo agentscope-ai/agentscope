@@ -1,5 +1,5 @@
 name: gpt-5.5
-label: GPT-5.5
+label: GPT-5.5 (Responses API)
 status: active
 
 input_types:
@@ -8,8 +8,7 @@ input_types:
   - image/png
   - image/gif
   - image/webp
-  - audio/mp3
-  - audio/wav
+  - application/pdf
 
 output_types:
   - text/plain

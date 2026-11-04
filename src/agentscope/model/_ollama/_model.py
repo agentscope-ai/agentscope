@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The Ollama chat model implementation."""
 import json
-import uuid
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
@@ -35,11 +35,13 @@ class OllamaChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description="Whether to enable thinking"
-            " (for models like qwen3, deepseek-r1).",
+            " (for models like qwen3, deepseek-r1)."
+            " When None, the ``think`` option is not sent and the"
+            " model's default behavior applies.",
         )
 
         temperature: float | None = Field(
@@ -109,6 +111,13 @@ class OllamaChatModel(ChatModelBase):
         self.formatter = formatter or OllamaChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import ollama
+
+        self.client: ollama.AsyncClient = ollama.AsyncClient(
+            host=self.credential.host,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import httpx
@@ -150,15 +159,6 @@ class OllamaChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import ollama
-
-        client = ollama.AsyncClient(
-            **{
-                "host": self.credential.host,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -175,7 +175,8 @@ class OllamaChatModel(ChatModelBase):
         if options:
             kwargs["options"] = options
 
-        kwargs["think"] = self.parameters.thinking_enable
+        if self.parameters.thinking_enable is not None:
+            kwargs["think"] = self.parameters.thinking_enable
 
         kwargs.update(generate_kwargs)
 
@@ -185,12 +186,16 @@ class OllamaChatModel(ChatModelBase):
             kwargs["tools"] = fmt_tools
 
         start_datetime = datetime.now()
-        response = await client.chat(**kwargs)
+        response = await self.client.chat(**kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)
 
         return await self._parse_completion_response(start_datetime, response)
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Ollama uses a top-level ``think`` option."""
+        return {"think": False}
 
     def _format_tools(
         self,
@@ -247,79 +252,53 @@ class OllamaChatModel(ChatModelBase):
                 Incremental ``ChatResponse`` objects with ``is_last=False``
                 followed by a final one with ``is_last=True``.
         """
-        # All delta should have the same block identifier.
-        # Ollama does not return a request id, so we generate one upfront
-        # to keep it stable.
-        response_id = getattr(response, "id", None) or uuid.uuid4().hex
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: dict = {}
-        usage = None
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
 
         async for chunk in response:
-            delta_content: list = []
+            delta_res = ChatResponse(
+                content=[],
+                is_last=False,
+                id=response_id,
+            )
+
             msg = chunk.message
 
-            chunk_thinking = getattr(msg, "thinking", None)
-            if chunk_thinking:
-                acc_thinking.thinking += chunk_thinking
-                delta_content.append(
-                    ThinkingBlock(id=acc_thinking.id, thinking=chunk_thinking),
+            # Thinking
+            if getattr(msg, "thinking", None):
+                delta_res.append_thinking(
+                    block_id=thinking_id,
+                    thinking=msg.thinking,
                 )
 
+            # Text
             if msg.content:
-                acc_text.text += msg.content
-                delta_content.append(
-                    TextBlock(id=acc_text.id, text=msg.content),
+                delta_res.append_text(
+                    block_id=text_id,
+                    text=msg.content,
                 )
 
-            for idx, tool_call in enumerate(msg.tool_calls or []):
-                function = tool_call.function
-                tool_id = f"{idx}_{function.name}"
-                input_str = json.dumps(function.arguments)
-                acc_tool_calls[tool_id] = {
-                    "name": function.name,
-                    "input": input_str,
-                }
-                delta_content.append(
-                    ToolCallBlock(
-                        id=tool_id,
-                        name=function.name,
-                        input=input_str,
+            # Tool call. The ollama client drops the server's call id, and
+            # one built from the position repeats in the next round
+            for tool_call in msg.tool_calls or []:
+                delta_res.append_tool_call(
+                    block_id=_generate_id(),
+                    name=tool_call.function.name,
+                    input=json.dumps(
+                        tool_call.function.arguments,
+                        ensure_ascii=False,
                     ),
                 )
 
             current_time = (datetime.now() - start_datetime).total_seconds()
-            usage = ChatUsage(
+            delta_res.usage = ChatUsage(
                 input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
                 output_tokens=getattr(chunk, "eval_count", 0) or 0,
                 time=current_time,
             )
 
-            if delta_content:
-                yield ChatResponse(
-                    id=response_id,
-                    content=delta_content,
-                    is_last=False,
-                    usage=usage,
-                )
-
-        final_content: list = []
-        if acc_thinking.thinking:
-            final_content.append(acc_thinking)
-        if acc_text.text:
-            final_content.append(acc_text)
-        for tool_id, tc in acc_tool_calls.items():
-            final_content.append(
-                ToolCallBlock(id=tool_id, name=tc["name"], input=tc["input"]),
-            )
-
-        yield ChatResponse(
-            id=response_id,
-            content=final_content,
-            is_last=True,
-            usage=usage,
-        )
+            yield delta_res
 
     async def _parse_completion_response(
         self,
@@ -347,12 +326,15 @@ class OllamaChatModel(ChatModelBase):
         if response.message.content:
             content_blocks.append(TextBlock(text=response.message.content))
 
-        for idx, tool_call in enumerate(response.message.tool_calls or []):
+        for tool_call in response.message.tool_calls or []:
             content_blocks.append(
                 ToolCallBlock(
-                    id=f"{idx}_{tool_call.function.name}",
+                    id=_generate_id(),
                     name=tool_call.function.name,
-                    input=json.dumps(tool_call.function.arguments),
+                    input=json.dumps(
+                        tool_call.function.arguments,
+                        ensure_ascii=False,
+                    ),
                 ),
             )
 
@@ -367,7 +349,7 @@ class OllamaChatModel(ChatModelBase):
             )
 
         return ChatResponse(
-            id=getattr(response, "id", None) or uuid.uuid4().hex,
+            id=getattr(response, "id", None) or _generate_id(),
             content=content_blocks,
             is_last=True,
             usage=usage,

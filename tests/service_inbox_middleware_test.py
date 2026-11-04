@@ -35,7 +35,7 @@ from agentscope.message import (
 )
 
 
-class _FakeBus(MessageBus):
+class _FakeBus(MessageBus):  # pylint: disable=too-many-public-methods
     """In-memory bus that only implements the inbox API needed by
     :class:`InboxMiddleware`. All other primitives raise ``NotImplemented``
     to make accidental dependencies obvious."""
@@ -70,6 +70,22 @@ class _FakeBus(MessageBus):
         entries = self._queues.get(key, [])[:max_count]
         self._queues[key] = self._queues.get(key, [])[max_count:]
         return entries
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        return list(self._queues.get(key, [])[:max_count])
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        entries = [(self._alloc_id(), payload) for payload in payloads]
+        self._queues[key] = entries
+        return [entry_id for entry_id, _payload in entries]
 
     async def queue_delete(self, key: str) -> None:
         self._queues.pop(key, None)
@@ -127,6 +143,17 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         raise NotImplementedError
 
+    async def try_lock(
+        self,
+        key: str,
+        *,
+        ttl_secs: int = 600,
+    ) -> bool:
+        return True
+
+    async def unlock(self, key: str) -> None:
+        pass
+
     # Mode F — registry (unused)
     async def registry_set(
         self,
@@ -138,6 +165,20 @@ class _FakeBus(MessageBus):
     ) -> None:
         raise NotImplementedError
 
+    async def registry_set_if(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        expected: str,
+        ttl_secs: int | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def registry_pop(self, namespace: str, field: str) -> str | None:
+        raise NotImplementedError
+
     async def registry_del(self, namespace: str, field: str) -> None:
         raise NotImplementedError
 
@@ -145,6 +186,13 @@ class _FakeBus(MessageBus):
         raise NotImplementedError
 
     async def registry_getall(self, namespace: str) -> dict[str, str]:
+        raise NotImplementedError
+
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
         raise NotImplementedError
 
     async def registry_drop(self, namespace: str) -> None:
@@ -274,17 +322,28 @@ class TestInboxMiddlewareInjection(IsolatedAsyncioTestCase):
                 "name": "A",
                 "role": "assistant",
                 "content": [
-                    {"type": "text", "text": "hello", "id": AnyString()},
+                    {
+                        "type": "text",
+                        "text": "hello",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
                     {
                         "type": "hint",
                         "hint": "poke",
                         "id": hint.id,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
                         "source": "tester",
                     },
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             },
         )
@@ -337,12 +396,17 @@ class TestInboxMiddlewareInjection(IsolatedAsyncioTestCase):
                         "type": "hint",
                         "hint": "hi",
                         "id": hint.id,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
                         "source": "x",
                     },
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             },
         )
@@ -375,12 +439,17 @@ class TestInboxMiddlewareInjection(IsolatedAsyncioTestCase):
                         "type": "hint",
                         "hint": "hi",
                         "id": hint.id,
+                        "created_at": AnyString(),
+                        "finished_at": AnyString(),
                         "source": "x",
                     },
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
                 "usage": None,
             },
         )
