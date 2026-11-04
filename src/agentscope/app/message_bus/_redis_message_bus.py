@@ -676,12 +676,16 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         """
         from redis import exceptions as redis_exceptions
 
+        consumer = asyncio.current_task()
+        initial_cancels = consumer.cancelling() if consumer else 0
         pubsub = self._client.pubsub()
         try:
             await pubsub.subscribe(key)
             if on_ready is not None:
                 on_ready()
             while True:
+                if consumer and consumer.cancelling() > initial_cancels:
+                    raise asyncio.CancelledError
                 try:
                     message = await pubsub.get_message(
                         ignore_subscribe_messages=True,
@@ -693,6 +697,9 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                     # connections). No message arrived in this window;
                     # keep listening rather than crashing the loop.
                     continue
+                # A ready read can return normally during cancellation.
+                if consumer and consumer.cancelling() > initial_cancels:
+                    raise asyncio.CancelledError
                 if message is None:
                     # No payload within the poll window — keep waiting.
                     continue
@@ -703,6 +710,11 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 if data is None:
                     continue
                 yield json.loads(data)
+                # An async generator can be resumed by a different task.
+                next_consumer = asyncio.current_task()
+                if next_consumer is not consumer:
+                    consumer = next_consumer
+                    initial_cancels = consumer.cancelling() if consumer else 0
         finally:
             # Closing drops the subscription and returns the connection to
             # the pool; shield it so a cancelled consumer cannot leak it.

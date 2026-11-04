@@ -496,6 +496,16 @@ class TestSchedulerReconcile(_SchedulerOwnershipTestBase):
 class TestSchedulerOwnership(_SchedulerOwnershipTestBase):
     """Only the enabled node holds timers; every node can notify."""
 
+    async def test_shutdown_immediately_after_publish(self) -> None:
+        """A pending notification must not keep the subscription open."""
+        pubsub = self.fr.pubsub()
+        with patch.object(self.fr, "pubsub", return_value=pubsub):
+            async with asyncio.timeout(3):
+                async with self.manager:
+                    await self.manager.notify_changed("schedule")
+
+        self.assertIsNone(pubsub.connection)
+
     async def test_disabled_node_holds_no_timers(self) -> None:
         """Entering a disabled manager starts nothing, however many
         enabled schedules are persisted."""
