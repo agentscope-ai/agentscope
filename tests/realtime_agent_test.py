@@ -2703,7 +2703,8 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                                 msg.id,
                                 [
                                     block.text
-                                    for block in msg.get_content_blocks("text")
+                                    for block in msg.content
+                                    if isinstance(block, TextBlock)
                                 ],
                             )
                             for msg in agent.state.context
@@ -3242,7 +3243,8 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                         msg.id,
                         [
                             block.id
-                            for block in msg.get_content_blocks("tool_result")
+                            for block in msg.content
+                            if isinstance(block, ToolResultBlock)
                         ],
                     )
                     for msg in agent.state.context
@@ -3255,6 +3257,21 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
 
     async def test_interruption_releases_confirmation_lock(self) -> None:
         """An unanswered old prompt cannot block the next reply's tool."""
+        factories = [None]
+        if eager_factory := getattr(asyncio, "eager_task_factory", None):
+            factories.append(eager_factory)
+        loop = asyncio.get_running_loop()
+        original_factory = loop.get_task_factory()
+        for factory in factories:
+            with self.subTest(eager=factory is not None):
+                try:
+                    loop.set_task_factory(factory)
+                    await self._check_interrupted_confirmation()
+                finally:
+                    loop.set_task_factory(original_factory)
+
+    async def _check_interrupted_confirmation(self) -> None:
+        """Validate cancellation and approval ownership under one scheduler."""
         model = ScriptedModel([])
         agent = RealtimeAgent(
             "Friday",
@@ -3331,12 +3348,17 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
             )
             await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
             self.assertEqual(
-                model.calls,
-                [
-                    "tool_result(old,'Tool \"ask_tool\" denied by user.')",
-                    "tool_result(new,'y-final')",
-                    "tool_result(old,'z-final')",
-                ],
+                {
+                    "independent_results": sorted(model.calls[:2]),
+                    "confirmed_result": model.calls[2:],
+                },
+                {
+                    "independent_results": [
+                        "tool_result(new,'y-final')",
+                        "tool_result(old,'Tool \"ask_tool\" denied by user.')",
+                    ],
+                    "confirmed_result": ["tool_result(old,'z-final')"],
+                },
             )
             self.assertEqual(agent._confirmations, {})
             self.assertEqual(agent._confirmation_replies, {})
