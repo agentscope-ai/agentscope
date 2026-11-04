@@ -286,31 +286,6 @@ class BackgroundTaskManager:
         task_id = bg_task.id
         self.tasks[task_id] = bg_task
 
-        # Register in the global Redis registry.
-        metadata = json.dumps(
-            {
-                "tool_name": tool_name,
-                "agent_id": agent_id,
-                "started_at": time.time(),
-            },
-            ensure_ascii=False,
-        )
-        await self._message_bus.registry_set(
-            MessageBusKeys.bg_tasks(session_id),
-            task_id,
-            metadata,
-            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
-        )
-
-        logger.info(
-            "Background task registered: task_id=%s, session_id=%s, "
-            "agent_id=%s, tool_name=%s",
-            task_id,
-            session_id,
-            agent_id,
-            tool_name,
-        )
-
         def _on_done(_t: asyncio.Task) -> None:
             self.tasks.pop(task_id, None)
             # Schedule async Redis cleanup (fire-and-forget). Wrap in a
@@ -325,7 +300,36 @@ class BackgroundTaskManager:
                 # Event loop already closed during shutdown.
                 pass
 
-        asyncio_task.add_done_callback(_on_done)
+        # Register in the global Redis registry.
+        metadata = json.dumps(
+            {
+                "tool_name": tool_name,
+                "agent_id": agent_id,
+                "started_at": time.time(),
+            },
+            ensure_ascii=False,
+        )
+        try:
+            await self._message_bus.registry_set(
+                MessageBusKeys.bg_tasks(session_id),
+                task_id,
+                metadata,
+                ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+            )
+        finally:
+            # Install cleanup even if registration fails or is cancelled.
+            # Wait until the write exits to avoid deleting before it commits.
+            asyncio_task.add_done_callback(_on_done)
+
+        logger.info(
+            "Background task registered: task_id=%s, session_id=%s, "
+            "agent_id=%s, tool_name=%s",
+            task_id,
+            session_id,
+            agent_id,
+            tool_name,
+        )
+
         return task_id
 
     async def _safe_bg_task_unregister(
