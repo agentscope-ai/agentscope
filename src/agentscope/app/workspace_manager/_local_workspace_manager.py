@@ -92,10 +92,12 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 session_id="",
             )
 
-        # Phase 1: cache hit + collect expired.
+        # Phase 1: refresh the requested entry, then collect expired. The
+        # sweep must run *after* the lookup, otherwise it can pop the very
+        # entry this call is asking for and force a full rebuild - tearing
+        # down live MCP sessions and discarding in-memory state.
         async with self._lock:
             now = time.monotonic()
-            expired = self._pop_expired(now)
             cached = self._cache.get(workspace_id)
             if cached is not None:
                 ws, _ = cached
@@ -103,6 +105,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 hit: LocalWorkspace | None = ws
             else:
                 hit = None
+            expired = self._pop_expired(now)
 
         # Phase 2: close expired entries outside the lock, in parallel,
         # so a slow stdio MCP shutdown does not block unrelated callers.
