@@ -106,7 +106,7 @@ class GeminiTTSModel(TTSModelBase):
         credential: GeminiCredential,
         model: str = "gemini-2.5-flash-preview-tts",
         parameters: "GeminiTTSModel.Parameters | None" = None,
-        stream: bool | None = None,
+        stream: bool = False,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the Gemini TTS model.
@@ -128,10 +128,8 @@ class GeminiTTSModel(TTSModelBase):
             `None`):
                 The TTS parameters (voice, etc.). When ``None``, the default
                 parameters will be used.
-            stream (`bool | None`, defaults to `None`):
-                Whether to use streaming output. When omitted, streaming
-                is enabled for the two Gemini 3.8 models and disabled for
-                older models. When `True`,
+            stream (`bool`, defaults to `False`):
+                Whether to use streaming output. When `True`,
                 :meth:`synthesize` returns an async generator yielding
                 incremental ``TTSResponse`` chunks;
                 when `False`, it returns a single aggregated
@@ -145,11 +143,7 @@ class GeminiTTSModel(TTSModelBase):
             credential=credential,
             model=model,
             parameters=parameters,
-            stream=(
-                model in _STRUCTURED_SPEECH_MODELS
-                if stream is None
-                else stream
-            ),
+            stream=stream,
         )
         self.client_kwargs = client_kwargs or {}
 

@@ -244,7 +244,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs["model"], "gemini-2.5-pro-preview-tts")
 
     def test_model_defaults_and_cards(self) -> None:
-        """Keep old defaults and expose style only on the two new cards."""
+        """Default to unary output and expose style only on new cards."""
         cards = {card.name: card for card in GeminiTTSModel.list_models()}
         names = (
             *_NEW_MODELS,
@@ -262,7 +262,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     (model.stream, model.realtime, set(properties)),
                     (
-                        name in _NEW_MODELS,
+                        False,
                         False,
                         {"voice", "style"}
                         if name in _NEW_MODELS

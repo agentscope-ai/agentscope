@@ -653,8 +653,8 @@ class TestGeminiTTSRuntime(IsolatedAsyncioTestCase):
             ("gemini-2.5-pro-preview-tts", "warm", False, False),
             ("gemini-2.5-flash-preview-tts", None, True, False),
             ("gemini-2.5-pro-preview-tts", "", True, False),
-            ("gemini-3.8-flash-tts", "warm", True, True),
-            ("gemini-3.8-flash-lite-tts", "warm", True, True),
+            ("gemini-3.8-flash-tts", "warm", True, False),
+            ("gemini-3.8-flash-lite-tts", "warm", True, False),
         ):
             with self.subTest(model=name, style=style):
                 parameters = {"voice": "Kore"}
