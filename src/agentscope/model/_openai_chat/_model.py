@@ -389,8 +389,16 @@ class OpenAIChatModel(ChatModelBase):
                         thinking=delta_thinking,
                     )
 
-                # Text
+                # Text. A refusal streams in ``delta.refusal`` and leaves
+                # ``content`` unset; without folding it in the agent sees an
+                # empty stream and the model's explanation is lost. The
+                # Responses API model already does this for
+                # ``response.refusal.delta``.
                 delta_text = getattr(delta, "content", None) or ""
+                if not delta_text:
+                    refusal_chunk = getattr(delta, "refusal", None)
+                    if isinstance(refusal_chunk, str):
+                        delta_text = refusal_chunk
 
                 # Audio (delta.audio.data / delta.audio.transcript). Omni
                 # models deliver text via ``delta.audio.transcript`` rather
@@ -497,6 +505,12 @@ class OpenAIChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
+            else:
+                # Chat Completions reports a refusal separately from
+                # ``content``, so an otherwise empty message is the refusal.
+                refusal = getattr(choice.message, "refusal", None)
+                if isinstance(refusal, str) and refusal:
+                    content_blocks.append(TextBlock(text=refusal))
 
             # Extract audio output (message.audio.data /
             # message.audio.transcript)
