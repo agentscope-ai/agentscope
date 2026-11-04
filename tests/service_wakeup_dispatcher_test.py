@@ -470,6 +470,43 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
             ],
         )
 
+    async def test_one_failing_trigger_does_not_stop_dispatch(self) -> None:
+        """A bus error on one trigger must not kill the listener."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        )
+        original_is_locked = bus.is_locked
+
+        async def flaky_is_locked(key: str) -> bool:
+            if key == MessageBusKeys.session_lock("bad"):
+                raise ConnectionError("redis blip")
+            return await original_is_locked(key)
+
+        async with dispatcher:
+            with patch.object(bus, "is_locked", flaky_is_locked):
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {"user_id": "u", "session_id": "bad", "agent_id": "a"},
+                )
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {"user_id": "u", "session_id": "good", "agent_id": "a"},
+                )
+                await bus.publish(MessageBusKeys.wakeup_signal(), {})
+                await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+            self.assertFalse(dispatcher._task.done())
+
+        self.assertEqual(
+            [call["session_id"] for call in chat.calls],
+            ["good"],
+        )
+
     async def test_initial_drain_picks_up_pending_entries(self) -> None:
         """Entries on the queue from before ``__aenter__`` are picked up
         without waiting for a fresh signal."""

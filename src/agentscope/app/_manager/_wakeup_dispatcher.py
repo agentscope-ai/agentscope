@@ -268,13 +268,24 @@ class WakeupDispatcher:
                 continue
             # Entries from older producers omit ``kind`` — treat as wake.
             kind = payload.get("kind", MessageBusKeys.WAKEUP_KIND_WAKE)
-            await self._dispatch_one(
-                user_id=user_id,
-                session_id=session_id,
-                agent_id=agent_id,
-                kind=kind,
-                raw_input=payload.get("input"),
-            )
+            try:
+                await self._dispatch_one(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    kind=kind,
+                    raw_input=payload.get("input"),
+                )
+            except Exception:  # pylint: disable=broad-except
+                # One failing trigger must not end the subscription loop:
+                # the remaining entries of this batch were already drained
+                # and every later signal would go unhandled.
+                logger.exception(
+                    "WakeupDispatcher: failed to dispatch %s trigger for "
+                    "session %s.",
+                    kind,
+                    session_id,
+                )
 
     async def _dispatch_one(
         self,
