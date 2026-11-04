@@ -86,6 +86,16 @@ class IndexTaskConsumer:
             name="index-task-consumer",
         )
         await ready.wait()
+        # ``_loop`` sets ``ready`` in ``finally`` so a failed
+        # ``subscribe`` cannot deadlock startup. An already-ended task
+        # therefore means the signal was never subscribed: fail startup
+        # instead of leaving an app that never processes an index task.
+        if self._task.done():
+            self._task = None
+            raise RuntimeError(
+                "IndexTaskConsumer could not subscribe to the index-task "
+                "signal during startup.",
+            )
         await self._drain_and_dispatch()
         return self
 
