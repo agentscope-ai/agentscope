@@ -4,6 +4,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
+from agentscope.message import ToolResultState
 from agentscope.state import AgentState
 from agentscope.tool import TaskCreate, TaskGet, TaskList, TaskUpdate
 
@@ -382,6 +383,25 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         self.agent_state = AgentState()
         self.task_update = TaskUpdate()
         self.task_create = TaskCreate()
+
+    async def test_update_without_fields_is_reported_as_error(self) -> None:
+        """A no-op update must not be reported as a successful update."""
+        # Create a task
+        await self.task_create(
+            subject="Original Subject",
+            description="Test description",
+            _agent_state=self.agent_state,
+        )
+        task_id = self.agent_state.tasks_context.tasks[0].id
+
+        # Call the tool without any updatable field
+        result = await self.task_update(
+            task_id=task_id,
+            _agent_state=self.agent_state,
+        )
+
+        self.assertEqual(result.state, ToolResultState.ERROR)
+        self.assertIn("No updates were made", result.content[0].text)
 
     async def test_update_subject(self) -> None:
         """Test updating task subject."""
