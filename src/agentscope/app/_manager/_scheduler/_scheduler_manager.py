@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Callable, Coroutine
 from datetime import datetime
+from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfoNotFoundError
 
 from typing import Self, TYPE_CHECKING
@@ -95,6 +96,13 @@ class SchedulerManager:
         # both call it, and a slow read must not apply its stale snapshot
         # after a newer reconcile has already changed the job set.
         self._reconcile_lock = asyncio.Lock()
+        # Concurrent deletes of the same user's schedule share a lock.
+        # Once the last caller leaves, the lock can be collected.
+        self._delete_locks: WeakValueDictionary[
+            tuple[str, str],
+            asyncio.Lock,
+        ] = WeakValueDictionary()
+        self._deleting: set[str] = set()
         self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
@@ -449,19 +457,31 @@ class SchedulerManager:
             storage=self._storage,
             message_bus=self._message_bus,
         )
-        async with self._reconcile_lock:
+        lock = self._delete_locks.setdefault(
+            (user_id, schedule_id),
+            asyncio.Lock(),
+        )
+        async with lock:
             if await self._storage.get_schedule(user_id, schedule_id) is None:
                 return False
 
             if self._enabled:
-                self._remove_job(schedule_id)
+                async with self._reconcile_lock:
+                    self._remove_job(schedule_id)
+                    self._deleting.add(schedule_id)
             deleted = False
             try:
                 deleted = await service.delete_schedule(user_id, schedule_id)
             finally:
-                # A failed cascade may have left the schedule enabled.
+                self._deleting.discard(schedule_id)
                 if self._enabled and not deleted:
-                    await self._reconcile_locked()
+                    try:
+                        await self.reconcile()
+                    except Exception:
+                        logger.exception(
+                            "Failed to restore schedule %s after deletion",
+                            schedule_id,
+                        )
 
         if deleted:
             await self.notify_changed(schedule_id)
@@ -510,13 +530,18 @@ class SchedulerManager:
 
     async def _reconcile_locked(self) -> None:
         """Apply one storage snapshot; caller must hold the reconcile lock."""
+        # A cascade may finish while storage returns an older snapshot.
+        # New cascades cannot start until this reconcile releases the lock.
+        deleting = self._deleting.copy()
         try:
             records = await self._storage.list_all_schedules()
         except Exception:  # pylint: disable=broad-except
             logger.exception("Schedule reconcile: failed to list schedules")
             return
 
-        desired = {r.id: r for r in records if r.data.enabled}
+        desired = {
+            r.id: r for r in records if r.data.enabled and r.id not in deleting
+        }
 
         for schedule_id in set(self._versions) - set(desired):
             self._remove_job(schedule_id)

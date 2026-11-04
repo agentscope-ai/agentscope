@@ -41,7 +41,6 @@ from agentscope.app.storage import (
     ScheduleData,
     ScheduleRecord,
     ScheduleOrigin,
-    SessionRecord,
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.permission import PermissionMode
@@ -601,50 +600,149 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
             self.assertListEqual(self.job_ids(), [record.id])
             publish.assert_not_awaited()
 
-    async def test_owner_stops_job_before_cascade(self) -> None:
-        """Reconcile cannot restore the timer during session cleanup."""
-        record = _make_record()
-        await self.storage.upsert_schedule("u", record)
-        list_sessions = self.storage.list_sessions_by_schedule
-        reconciles = []
+    async def test_other_jobs_reconcile_during_delete(self) -> None:
+        """B can start and stop while A is still being deleted."""
+        a = _make_record()
+        b = _make_record()
+        await self.storage.upsert_schedule("u", a)
+        delete = self.storage.delete_schedule
 
-        async def during_cleanup(
-            user_id: str,
-            schedule_id: str,
-        ) -> list[SessionRecord]:
-            if not reconciles:
-                reconciles.append(
-                    asyncio.create_task(self.manager.reconcile()),
+        async def during_delete(user_id: str, schedule_id: str) -> bool:
+            if schedule_id == a.id:
+                self.assertEqual(self.job_ids(), [])
+                await self.storage.upsert_schedule("u", b)
+                await asyncio.wait_for(self.manager.reconcile(), timeout=2)
+                self.assertEqual(self.job_ids(), [b.id])
+                result = await asyncio.wait_for(
+                    self.owner_delete_tool(schedule_id=b.id),
+                    timeout=2,
                 )
-                # Give the competing reconcile a turn to acquire the lock.
-                await asyncio.sleep(0)
-                list_all.assert_not_awaited()
-            self.assertEqual(self.job_ids(), [])
-            return await list_sessions(user_id, schedule_id)
+                self.assertEqual(result.state, ToolResultState.SUCCESS)
+                self.assertEqual(self.job_ids(), [])
+            return await delete(user_id, schedule_id)
 
         async with self.manager:
-            self.assertEqual(self.job_ids(), [record.id])
+            with patch.object(self.storage, "delete_schedule", during_delete):
+                result = await self.owner_delete_tool(schedule_id=a.id)
+            self.assertEqual(result.state, ToolResultState.SUCCESS)
+            self.assertIsNone(await self.storage.get_schedule("u", a.id))
+
+    async def test_concurrent_deletes_share_one_cascade(self) -> None:
+        """A second delete checks storage again after the first finishes."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        delete = self.storage.delete_schedule
+
+        async def delayed_delete(user_id: str, schedule_id: str) -> bool:
+            entered.set()
+            await release.wait()
+            return await delete(user_id, schedule_id)
+
+        async with self.manager:
+            with patch.object(
+                self.storage,
+                "delete_schedule",
+                side_effect=delayed_delete,
+            ) as cascade:
+                first = asyncio.create_task(
+                    self.owner_delete_tool(schedule_id=record.id),
+                )
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=2)
+                    second = asyncio.create_task(
+                        self.owner_delete_tool(schedule_id=record.id),
+                    )
+                    await asyncio.sleep(0)
+                finally:
+                    release.set()
+                    await first
+                results = await asyncio.wait_for(
+                    asyncio.gather(first, second),
+                    timeout=2,
+                )
+
+            self.assertEqual(
+                [r.state for r in results],
+                [ToolResultState.SUCCESS, ToolResultState.ERROR],
+            )
+            cascade.assert_awaited_once_with("u", record.id)
+
+    async def test_stale_read_cannot_restore_a_deleted_job(self) -> None:
+        """A reconcile that read A during its cascade must still skip A."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        captured = asyncio.Event()
+        release = asyncio.Event()
+        list_all = self.storage.list_all_schedules
+        delete = self.storage.delete_schedule
+        reconciles = []
+
+        async def slow_read() -> list[ScheduleRecord]:
+            snapshot = await list_all()
+            captured.set()
+            await release.wait()
+            return snapshot
+
+        async def during_delete(user_id: str, schedule_id: str) -> bool:
+            reconciles.append(asyncio.create_task(self.manager.reconcile()))
+            await asyncio.wait_for(captured.wait(), timeout=2)
+            return await delete(user_id, schedule_id)
+
+        async with self.manager:
             with (
-                patch.object(
-                    self.storage,
-                    "list_all_schedules",
-                    wraps=self.storage.list_all_schedules,
-                ) as list_all,
-                patch.object(
-                    self.storage,
-                    "list_sessions_by_schedule",
-                    during_cleanup,
-                ),
+                patch.object(self.storage, "list_all_schedules", slow_read),
+                patch.object(self.storage, "delete_schedule", during_delete),
+                patch.object(self.manager, "notify_changed"),
             ):
                 try:
-                    result = await self.owner_delete_tool(
-                        schedule_id=record.id,
+                    result = await asyncio.wait_for(
+                        self.owner_delete_tool(schedule_id=record.id),
+                        timeout=3,
                     )
                 finally:
+                    release.set()
                     await asyncio.gather(*reconciles)
-
             self.assertEqual(result.state, ToolResultState.SUCCESS)
-            self.assertIsNone(await self.storage.get_schedule("u", record.id))
+            self.assertEqual(self.job_ids(), [])
+
+    async def test_cancelled_delete_restores_job_and_allows_retry(
+        self,
+    ) -> None:
+        """Cancelling the cascade releases the schedule for a later delete."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        entered = asyncio.Event()
+
+        async def wait_for_cancel(user_id: str, schedule_id: str) -> bool:
+            self.assertEqual((user_id, schedule_id), ("u", record.id))
+            entered.set()
+            await asyncio.Event().wait()
+            self.fail("The delete should have been cancelled")
+
+        async with self.manager:
+            with patch.object(
+                self.storage,
+                "delete_schedule",
+                wait_for_cancel,
+            ):
+                task = asyncio.create_task(
+                    self.owner_delete_tool(schedule_id=record.id),
+                )
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=2)
+                finally:
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+
+            self.assertEqual(self.job_ids(), [record.id])
+            result = await asyncio.wait_for(
+                self.owner_delete_tool(schedule_id=record.id),
+                timeout=2,
+            )
+            self.assertEqual(result.state, ToolResultState.SUCCESS)
             self.assertEqual(self.job_ids(), [])
 
     async def test_failed_delete_restores_enabled_job(self) -> None:
@@ -667,6 +765,29 @@ class TestScheduleDeleteNotification(_SchedulerOwnershipTestBase):
                 self.manager._versions,
                 {record.id: record.updated_at},
             )
+
+    async def test_recovery_failure_preserves_delete_error(self) -> None:
+        """A later reconcile can restore the job if recovery also fails."""
+        record = _make_record()
+        await self.storage.upsert_schedule("u", record)
+        async with self.manager:
+            with (
+                patch.object(
+                    self.storage,
+                    "delete_schedule",
+                    side_effect=OSError("delete failed"),
+                ),
+                patch.object(
+                    self.manager,
+                    "reconcile",
+                    side_effect=RuntimeError("recovery failed"),
+                ),
+                self.assertRaisesRegex(OSError, "delete failed"),
+            ):
+                await self.owner_delete_tool(schedule_id=record.id)
+
+            await self.manager.reconcile()
+            self.assertEqual(self.job_ids(), [record.id])
 
     async def test_missing_delete_does_not_notify(self) -> None:
         """A missing record returns an error without a lifecycle event."""
