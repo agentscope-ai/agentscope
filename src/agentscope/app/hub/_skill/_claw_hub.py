@@ -19,7 +19,8 @@ import asyncio
 import json
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -174,7 +175,7 @@ class ClawSkillHub(SkillHubBase):
     def _retry_delay(headers: dict) -> float:
         """Compute the retry delay (in seconds) from rate-limit headers.
 
-        Honors ``Retry-After`` first, then falls back to
+        Honors numeric or HTTP-date ``Retry-After`` first, then falls back to
         ``RateLimit-Reset`` (delay) and ``X-RateLimit-Reset`` (absolute
         Unix epoch seconds), as documented by ClawHub.
 
@@ -195,6 +196,14 @@ class ClawSkillHub(SkillHubBase):
             try:
                 return max(0.0, float(retry_after))
             except ValueError:
+                pass
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                now = datetime.fromtimestamp(time.time(), tz=timezone.utc)
+                return max(0.0, (retry_at - now).total_seconds())
+            except (TypeError, ValueError, OverflowError):
                 pass
 
         reset = headers.get("RateLimit-Reset") or headers.get(
