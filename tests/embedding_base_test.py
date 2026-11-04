@@ -2,8 +2,8 @@
 # pylint: disable=protected-access
 """Unit tests for EmbeddingModelBase."""
 from dataclasses import asdict
-from typing import Literal
-from unittest import TestCase
+from typing import Any, Literal
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from utils import AnyString
 
@@ -12,6 +12,35 @@ from agentscope.embedding import (
     EmbeddingResponse,
     EmbeddingUsage,
 )
+from agentscope.credential import CredentialBase
+
+
+class _RecordingEmbedding(EmbeddingModelBase[str]):
+    """Offline embedding model that records provider calls."""
+
+    def __init__(self, batch_size: int) -> None:
+        super().__init__(
+            credential=CredentialBase(),
+            model="test",
+            dimensions=1,
+            parameters=None,
+            context_size=10,
+            batch_size=batch_size,
+            max_retries=0,
+            retry_delay=0,
+        )
+        self.calls: list[list[str]] = []
+
+    async def _call_api(
+        self,
+        inputs: list[str],
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
+        self.calls.append(inputs)
+        return EmbeddingResponse(
+            embeddings=[[float(value)] for value in inputs],
+            usage=EmbeddingUsage(tokens=len(inputs), time=0),
+        )
 
 
 def _resp(
@@ -29,7 +58,17 @@ def _resp(
 
 
 class EmbeddingModelBaseTest(TestCase):
-    """Test response merging across cached and API batches."""
+    """Test construction and response merging across batches."""
+
+    def test_batch_size_must_be_positive(self) -> None:
+        """Reject invalid batches before any provider call can be made."""
+        for batch_size in (-1, 0):
+            with self.subTest(batch_size=batch_size):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "batch_size must be a positive integer",
+                ):
+                    _RecordingEmbedding(batch_size)
 
     def test_merge_single_batch_preserves_cache_source(self) -> None:
         """Preserve the complete response for a single cached batch."""
@@ -119,3 +158,38 @@ class EmbeddingModelBaseTest(TestCase):
                 ),
             ),
         )
+
+
+class EmbeddingModelBaseBatchingTest(IsolatedAsyncioTestCase):
+    """Exercise valid batch sizes without contacting a provider."""
+
+    async def test_positive_batch_sizes_preserve_inputs_and_embeddings(
+        self,
+    ) -> None:
+        """Small, partial, and oversized batches keep provider input order."""
+        expected_batches = {
+            1: [["0"], ["1"], ["2"]],
+            2: [["0", "1"], ["2"]],
+            5: [["0", "1", "2"]],
+        }
+        for batch_size, batches in expected_batches.items():
+            with self.subTest(batch_size=batch_size):
+                model = _RecordingEmbedding(batch_size)
+
+                response = await model(["0", "1", "2"])
+
+                self.assertEqual(model.calls, batches)
+                self.assertEqual(
+                    response.embeddings,
+                    [[0.0], [1.0], [2.0]],
+                )
+
+    async def test_empty_inputs_skip_provider_call(self) -> None:
+        """An empty request returns empty vectors and zero usage."""
+        model = _RecordingEmbedding(batch_size=2)
+
+        response = await model([])
+
+        self.assertEqual(model.calls, [])
+        self.assertEqual(response.embeddings, [])
+        self.assertEqual(response.usage, EmbeddingUsage(tokens=0, time=0))
