@@ -104,7 +104,9 @@ class MockConcurrentTool(ToolBase):
         )
 
 
-class AgentBasicTest(IsolatedAsyncioTestCase):
+class AgentBasicTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The basic test of the agent class."""
 
     async def asyncSetUp(self) -> None:
@@ -225,6 +227,31 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(agent.context_config.context_buffer_ratio, 0.3)
+
+    async def test_deprecated_override_does_not_mutate_the_caller_config(
+        self,
+    ) -> None:
+        """Migrating the deprecated ratio must not write through a config
+        object that another agent shares."""
+        context_config = ContextConfig()
+        with self.assertWarns(DeprecationWarning):
+            overriding = Agent(
+                name="overriding",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+            )
+        sharing = Agent(
+            name="sharing",
+            system_prompt="You are an agent.",
+            model=MockModel(),
+            context_config=context_config,
+        )
+
+        self.assertEqual(overriding.context_config.context_buffer_ratio, 0.5)
+        self.assertEqual(context_config.context_buffer_ratio, 0.2)
+        self.assertEqual(sharing.context_config.context_buffer_ratio, 0.2)
 
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,

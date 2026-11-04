@@ -619,6 +619,31 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         self.assertIn("embedding_store", components)
 
 
+class TestAppLifecycle(IsolatedAsyncioTestCase):
+    """Tests for the lazily built embedded app's one-time start."""
+
+    async def test_concurrent_callers_start_the_app_once(self) -> None:
+        """Hooks that run before the app is started must start it once."""
+
+        class _SlowStartApp(_FakeReMeApp):
+            """A fake app whose start yields, so callers interleave."""
+
+            async def start(self) -> None:
+                await asyncio.sleep(0)
+                await super().start()
+
+        mw = ReMeMiddleware()
+        app = _SlowStartApp()
+        with mock.patch.object(mw, "_build_app", return_value=app):
+            await asyncio.gather(
+                *(mw._ensure_started() for _ in range(5)),
+            )
+
+        self.assertEqual(app.start_count, 1)
+        self.assertTrue(mw._started)
+        self.assertIs(mw._app, app)
+
+
 # ----------------------------------------------------------------------
 # Static-control mode (default)
 # ----------------------------------------------------------------------
