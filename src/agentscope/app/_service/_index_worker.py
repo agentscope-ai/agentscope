@@ -229,7 +229,8 @@ class IndexWorker:
            keeps the lease alive while parsing runs.
         4. **Finalise** — on success mark ``ready`` with the final
            chunk count; on failure mark ``error`` with a sanitised
-           message.  The lease is released regardless.
+           message, then release the lease.  If renewal signals lease
+           loss, stop local work without changing the shared record.
 
         Args:
             user_id (`str`):
@@ -265,6 +266,7 @@ class IndexWorker:
             self._heartbeat(user_id, knowledge_base_id, document_id),
             name=f"lease-renew:{document_id}",
         )
+        lease_lost = False
         try:
             # Race the pipeline against the heartbeat: if the heartbeat
             # returns first, the lease was stolen mid-flight (e.g. the
@@ -272,25 +274,22 @@ class IndexWorker:
             # stop the pipeline before it writes the vector store again,
             # otherwise the worker that just took over and this one will
             # both insert the same chunks.
-            await asyncio.wait(
+            done, _ = await asyncio.wait(
                 {pipeline_task, heartbeat_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            if not pipeline_task.done():
-                # Heartbeat reached the end first; only `_heartbeat`'s
-                # lost-lease branch returns, so cancel the pipeline and
-                # surface it as a terminal error for this document.
-                pipeline_task.cancel()
-                with contextlib.suppress(
-                    asyncio.CancelledError,
-                    Exception,
-                ):
-                    await pipeline_task
-                raise RuntimeError(
-                    f"Lost lease on {document_id} during processing; "
-                    "another worker has taken over.",
-                )
+            if heartbeat_task in done:
+                # Lease loss wins even when both tasks finish together.
+                # Consume heartbeat exceptions before draining the pipeline;
+                # only a normal return means ownership is no longer assured.
+                try:
+                    await heartbeat_task
+                    lease_lost = True
+                finally:
+                    pipeline_task.cancel()
+                    await asyncio.gather(pipeline_task, return_exceptions=True)
+                return
 
             # Pipeline finished first; stop the heartbeat and re-raise
             # whatever the pipeline raised (if anything).
@@ -315,15 +314,15 @@ class IndexWorker:
                 exc,
             )
         finally:
-            # Release is CAS-guarded server-side on ``processing_node``
-            # (storage._base.release_knowledge_document_lease) — calling
-            # it after a stolen lease is a safe no-op.
-            await self._storage.release_knowledge_document_lease(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                document_id=document_id,
-                processing_node=self._node_id,
-            )
+            # A failed renewal may leave our lease waiting to expire (e.g.
+            # Redis WATCH contention). Keep it discoverable by the sweeper.
+            if not lease_lost:
+                await self._storage.release_knowledge_document_lease(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    document_id=document_id,
+                    processing_node=self._node_id,
+                )
 
     async def _guarded_pipeline(
         self,
@@ -549,7 +548,8 @@ class IndexWorker:
           "lost-lease" signal, cancelling the pipeline before it
           double-writes the vector store.
 
-        Anything other than ``ok=False`` keeps the loop alive.
+        Renewal exceptions propagate to :meth:`process` for ordinary
+        error handling after the pipeline has been stopped.
         """
         interval_seconds = self._renew_interval.total_seconds()
         while True:
