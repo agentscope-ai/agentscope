@@ -286,31 +286,6 @@ class BackgroundTaskManager:
         task_id = bg_task.id
         self.tasks[task_id] = bg_task
 
-        # Register in the global Redis registry.
-        metadata = json.dumps(
-            {
-                "tool_name": tool_name,
-                "agent_id": agent_id,
-                "started_at": time.time(),
-            },
-            ensure_ascii=False,
-        )
-        await self._message_bus.registry_set(
-            MessageBusKeys.bg_tasks(session_id),
-            task_id,
-            metadata,
-            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
-        )
-
-        logger.info(
-            "Background task registered: task_id=%s, session_id=%s, "
-            "agent_id=%s, tool_name=%s",
-            task_id,
-            session_id,
-            agent_id,
-            tool_name,
-        )
-
         def _on_done(_t: asyncio.Task) -> None:
             self.tasks.pop(task_id, None)
             # Schedule async Redis cleanup (fire-and-forget). Wrap in a
@@ -325,7 +300,49 @@ class BackgroundTaskManager:
                 # Event loop already closed during shutdown.
                 pass
 
+        # Attach the cleanup callback before any await: once the task is in
+        # ``self.tasks``, nothing else removes it, and a failure in the
+        # registry write below must not leave a permanent entry (nor a task
+        # ToolStop can no longer reach) behind.
         asyncio_task.add_done_callback(_on_done)
+
+        # Register in the global Redis registry. This is a best-effort
+        # cross-worker lookup: losing it only means another process cannot
+        # see the task, so a transient bus error must not fail the tool call
+        # whose execution has already been handed over to this task.
+        metadata = json.dumps(
+            {
+                "tool_name": tool_name,
+                "agent_id": agent_id,
+                "started_at": time.time(),
+            },
+            ensure_ascii=False,
+        )
+        try:
+            await self._message_bus.registry_set(
+                MessageBusKeys.bg_tasks(session_id),
+                task_id,
+                metadata,
+                ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to register background task in the global "
+                "registry: task_id=%s, session_id=%s, error=%s",
+                task_id,
+                session_id,
+                str(e),
+            )
+
+        logger.info(
+            "Background task registered: task_id=%s, session_id=%s, "
+            "agent_id=%s, tool_name=%s",
+            task_id,
+            session_id,
+            agent_id,
+            tool_name,
+        )
+
         return task_id
 
     async def _safe_bg_task_unregister(
