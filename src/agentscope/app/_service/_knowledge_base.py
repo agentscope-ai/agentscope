@@ -900,13 +900,8 @@ class KnowledgeBaseService:
     ) -> None:
         """Clean up the blob only if storage persistence did not commit.
 
-        Decides from storage rather than the exception: if the document
-        record was already persisted before cancellation/failure occurred,
-        preserve the blob so background sweepers can recover the document.
-        Inside a single shielded unit, checks get_knowledge_document and
-        deletes the blob only when the record is absent (None). If the lookup
-        itself raises, keeps the blob (fail safe: leak > data loss) and logs
-        the failure.
+        Preserve the source file if a persisted record references it.
+        If the lookup fails, log the error and keep the file.
         """
 
         async def _check_and_delete() -> None:
@@ -916,7 +911,7 @@ class KnowledgeBaseService:
                     knowledge_base_id,
                     document_id,
                 )
-            except Exception:  # noqa: BLE001 — fail safe: leak > data loss
+            except Exception:
                 logger.exception(
                     "Failed to verify document %s persistence; keeping blob "
                     "%s",
@@ -928,7 +923,7 @@ class KnowledgeBaseService:
             if persisted is None:
                 try:
                     await self._blob_store.delete(blob_uri)
-                except Exception:  # noqa: BLE001 — cleanup only
+                except Exception:
                     logger.exception(
                         "Failed to delete blob %s",
                         blob_uri,
@@ -947,7 +942,7 @@ class KnowledgeBaseService:
         async def _delete() -> None:
             try:
                 await self._blob_store.delete(blob_uri)
-            except Exception:  # noqa: BLE001 — cleanup only
+            except Exception:
                 logger.exception(
                     "Failed to delete blob %s",
                     blob_uri,
