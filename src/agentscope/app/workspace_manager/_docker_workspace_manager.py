@@ -68,7 +68,7 @@ class DockerWorkspaceManager(
         *,
         isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         base_image: str = DEFAULT_BASE_IMAGE,
-        node_version: str = "20",
+        node_version: str = "22.23.4",
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
@@ -99,9 +99,8 @@ class DockerWorkspaceManager(
                 session creation always wins over this policy.
             base_image (`str`, defaults to `DEFAULT_BASE_IMAGE`):
                 Base Docker image; must provide ``python3``.
-            node_version (`str`, defaults to `"20"`):
-                Major Node.js version (e.g. ``"20"``) to bake into
-                the image.
+            node_version (`str`, defaults to `"22.23.4"`):
+                Node.js image version to bake into the image.
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages to install into the gateway
                 venv at image-build time.
@@ -280,36 +279,35 @@ class DockerWorkspaceManager(
         """
         del session_id  # accepted for interface parity; not used here
 
-        if not workspace_id:
-            workspace_id = await self.assign_workspace_id(
-                user_id=user_id,
-                agent_id=agent_id,
-                session_id="",
-            )
+        resolved_id: str = workspace_id or await self.assign_workspace_id(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id="",
+        )
 
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(resolved_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[resolved_id] = (ws, time.monotonic())
                 return ws
 
         # Cache miss: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
         # workspaces for the same id.
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(resolved_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[resolved_id] = (ws, time.monotonic())
                 return ws
 
             ws = await self._build_and_start(
-                workspace_id=workspace_id,
+                workspace_id=resolved_id,
                 user_id=user_id,
                 agent_id=agent_id,
             )
-            self._cache[workspace_id] = (ws, time.monotonic())
+            self._cache[resolved_id] = (ws, time.monotonic())
             return ws
 
     @deprecated(

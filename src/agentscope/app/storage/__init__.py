@@ -45,6 +45,7 @@ from ._model import (
     SOPWorkspaceGrain,
     SkillRecord,
     ChatModelConfig,
+    ASRModelConfig,
     RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
@@ -54,6 +55,8 @@ from ._model import (
     TeamMember,
     AgentChatConfig,
     InviteConfig,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 
 if TYPE_CHECKING:
@@ -127,6 +130,7 @@ __all__ = [
     "SOPWorkspaceGrain",
     "SkillRecord",
     "ChatModelConfig",
+    "ASRModelConfig",
     "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
@@ -137,4 +141,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]

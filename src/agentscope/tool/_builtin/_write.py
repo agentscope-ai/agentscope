@@ -2,6 +2,7 @@
 """The write tool in agentscope."""
 import difflib
 import fnmatch
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -217,7 +218,10 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        escaped = glob.escape(parent)
+        pattern = (escaped.rstrip("/\\") + "/**") if escaped else "**"
 
         return [
             PermissionRule(
@@ -292,10 +296,17 @@ Usage:
                 previous_content = ""
 
         # Write content to file (backend handles parent dir creation)
-        await self._backend.write_file(
-            file_path,
-            content.encode("utf-8"),
-        )
+        try:
+            await self._backend.write_file(
+                file_path,
+                content.encode("utf-8"),
+            )
+        except Exception as e:
+            return ToolChunk(
+                content=[TextBlock(text=f"Error writing file: {str(e)}")],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         # Refresh the read cache so a later Edit doesn't require a re-read
         if _agent_state is not None:

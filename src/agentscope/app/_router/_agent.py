@@ -208,7 +208,7 @@ async def create_agent(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 exc.errors(include_context=False)
                 if isinstance(exc, ValidationError)
@@ -284,7 +284,7 @@ async def update_agent(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 exc.errors(include_context=False)
                 if isinstance(exc, ValidationError)

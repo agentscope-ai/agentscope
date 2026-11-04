@@ -5,16 +5,28 @@
 Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
+import base64
+import copy
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Annotated, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from pydantic import BaseModel, Field
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.formatter import GeminiChatFormatter
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ThinkingBlock,
+)
 from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
@@ -157,6 +169,7 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         self.model.parameters.max_tokens = 1024
         self.model.parameters.temperature = 0.2
         self.model.parameters.top_p = 0.3
+        self.model.parameters.thinking_enable = True
         self.mock_client.aio.models.generate_content = AsyncMock(
             return_value=_mock_completion([_make_part(text="ok")]),
         )
@@ -166,8 +179,8 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             "temperature": 0.2,
             "top_p": 0.3,
             "thinking_config": {
-                "include_thoughts": False,
-                "thinking_budget": 0,
+                "include_thoughts": True,
+                "thinking_budget": 1024,
             },
         }
         cases = {
@@ -191,6 +204,78 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     sent_config,
                     {**default_config, key: value},
+                )
+
+    async def test_thinking_config_omitted_by_default(self) -> None:
+        """Default parameters send no ``thinking_config`` so the model's
+        default behavior applies (e.g. Pro models think by default and
+        reject ``thinking_budget: 0``)."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+        self.model.parameters = GeminiChatModel.Parameters()
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(sent_config, {})
+
+    async def test_thinking_config_false_forwarded(self) -> None:
+        """``thinking_enable=False`` sends the disable configuration."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+        self.model.parameters = GeminiChatModel.Parameters(
+            thinking_enable=False,
+        )
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(
+            sent_config,
+            {
+                "thinking_config": {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                },
+            },
+        )
+
+    async def test_thinking_config_true_forwarded(self) -> None:
+        """Enabled thinking uses the default or explicitly provided budget."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        for budget, expected_budget in [(None, 1024), (8192, 8192)]:
+            with self.subTest(thinking_budget=budget):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    thinking_enable=True,
+                    thinking_budget=budget,
+                )
+
+                await self.model([])
+
+                call_args = (
+                    self.mock_client.aio.models.generate_content.call_args
+                )
+                self.assertEqual(
+                    call_args.kwargs["config"],
+                    {
+                        "thinking_config": {
+                            "include_thoughts": True,
+                            "thinking_budget": expected_budget,
+                        },
+                    },
                 )
 
     async def test_tool_call_response(self) -> None:
@@ -684,6 +769,184 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
 
 
 # ---------------------------------------------------------------------------
+# Thought signature round-trip tests
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiThoughtSignatures(IsolatedAsyncioTestCase):
+    """Keep signatures in marked IDs without changing message schemas."""
+
+    async def test_tool_call_round_trip(self) -> None:
+        """Preserve parallel and sequential calls across JSON storage."""
+        for streaming in (False, True):
+            for provider_id in (None, "call-original", "Y2FsbA=="):
+                with self.subTest(stream=streaming, id=provider_id):
+                    with patch("google.genai.Client") as client_class:
+                        model = _make_model(stream=streaming)
+                    client = client_class.return_value
+                    history = [
+                        Msg(
+                            name="user",
+                            role="user",
+                            content=[TextBlock(text="Weather?")],
+                        ),
+                    ]
+                    expected_history = [
+                        {"role": "user", "parts": [{"text": "Weather?"}]},
+                    ]
+
+                    # Only the first of the parallel calls has a signature.
+                    # The next step gets a different signature in this turn.
+                    for step, signature in enumerate(
+                        (bytes(range(256)), b"next-step-signature"),
+                    ):
+                        call_id = "gemini_ts:" + base64.b64encode(
+                            signature,
+                        ).decode("ascii")
+                        parts = [
+                            _make_part(
+                                function_call={
+                                    "id": provider_id,
+                                    "name": "get_weather",
+                                    "args": {"city": "Tokyo"},
+                                },
+                                thought_signature=signature,
+                            ),
+                        ]
+                        if step == 0:
+                            parts.append(
+                                _make_part(
+                                    function_call={
+                                        "id": provider_id,
+                                        "name": "get_weather",
+                                        "args": {"city": "Paris"},
+                                    },
+                                ),
+                            )
+                        if streaming:
+                            generate = AsyncMock(
+                                return_value=_MockAsyncStream(
+                                    [_make_stream_chunk([p]) for p in parts],
+                                ),
+                            )
+                            client.aio.models.generate_content_stream = (
+                                generate
+                            )
+                            responses = [r async for r in await model(history)]
+                            result = responses[-1]
+                        else:
+                            generate = AsyncMock(
+                                return_value=_mock_completion(parts),
+                            )
+                            client.aio.models.generate_content = generate
+                            result = await model(history)
+
+                        self.assertEqual(
+                            generate.await_args.kwargs["contents"],
+                            expected_history,
+                        )
+                        expected_blocks = [
+                            ToolCallBlock.model_construct(
+                                id=call_id,
+                                created_at=A,
+                                name="get_weather",
+                                input=json.dumps({"city": "Tokyo"}),
+                            ),
+                        ]
+                        if step == 0:
+                            expected_blocks.append(
+                                ToolCallBlock.model_construct(
+                                    id=provider_id or A,
+                                    created_at=A,
+                                    name="get_weather",
+                                    input=json.dumps({"city": "Paris"}),
+                                ),
+                            )
+                        self.assertEqual(result.content, expected_blocks)
+                        self.assertEqual(
+                            len({b.id for b in result.content}),
+                            len(result.content),
+                        )
+                        message = AssistantMsg(
+                            name="assistant",
+                            content=[
+                                *result.content,
+                                *[
+                                    ToolResultBlock(
+                                        id=b.id,
+                                        name=b.name,
+                                        output="sunny",
+                                    )
+                                    for b in result.content
+                                ],
+                            ],
+                        )
+                        history.append(
+                            Msg.model_validate_json(message.model_dump_json()),
+                        )
+                        expected_parts = []
+                        expected_results = []
+                        for block, part in zip(result.content, parts):
+                            expected_part = {
+                                "function_call": {
+                                    "id": block.id,
+                                    "name": "get_weather",
+                                    "args": part.function_call.args,
+                                },
+                            }
+                            if part.thought_signature:
+                                expected_part["thought_signature"] = signature
+                            expected_parts.append(expected_part)
+                            expected_results.append(
+                                {
+                                    "function_response": {
+                                        "id": block.id,
+                                        "name": "get_weather",
+                                        "response": {"output": "sunny"},
+                                    },
+                                },
+                            )
+                        expected_history.extend(
+                            [
+                                {"role": "model", "parts": expected_parts},
+                                {"role": "user", "parts": expected_results},
+                            ],
+                        )
+                        self.assertEqual(
+                            await GeminiChatFormatter().format(history),
+                            expected_history,
+                        )
+
+    async def test_unmarked_ids_are_not_decoded(self) -> None:
+        """Do not infer signatures from plain or legacy Base64 IDs."""
+        for call_id in ("call-1", "Y2FsbA==", "bGVnYWN5LXNpZ25hdHVyZQ=="):
+            with self.subTest(id=call_id):
+                message = AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(id=call_id, name="search", input="{}"),
+                    ],
+                )
+                self.assertEqual(
+                    await GeminiChatFormatter().format([message]),
+                    [
+                        {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "function_call": {
+                                        "id": call_id,
+                                        "name": "search",
+                                        "args": {},
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
+
+
+# ---------------------------------------------------------------------------
 # _format_tools tests
 # ---------------------------------------------------------------------------
 
@@ -1068,6 +1331,60 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_escaped_definition_names(self) -> None:
+        """JSON Pointer escapes are decoded once and in the correct order."""
+        for keyword in ("$defs", "definitions"):
+            for name, token in (
+                ("a/b", "a~1b"),
+                ("a~b", "a~0b"),
+                ("a~1b", "a~01b"),
+            ):
+                with self.subTest(keyword=keyword, name=name):
+                    ref = {
+                        "$ref": f"#/{keyword}/{token}",
+                        "description": "Value",
+                    }
+                    schema = {
+                        keyword: {name: {"type": "string"}},
+                        "properties": {"value": ref},
+                    }
+                    original = json.dumps(schema, sort_keys=True)
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {
+                            "properties": {
+                                "value": {
+                                    "type": "string",
+                                    "description": "Value",
+                                },
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        json.dumps(schema, sort_keys=True),
+                        original,
+                    )
+
+    def test_flatten_escaped_recursive_definition(self) -> None:
+        """Escaped names use the same decoded key for cycle detection."""
+        result = _flatten_json_schema(
+            {
+                "$defs": {
+                    "Node/Child": {
+                        "type": "object",
+                        "properties": {
+                            "next": {"$ref": "#/$defs/Node~1Child"},
+                        },
+                    },
+                },
+                "properties": {"root": {"$ref": "#/$defs/Node~1Child"}},
+            },
+        )
+        self.assertEqual(
+            result["properties"]["root"]["properties"]["next"],
+            {"type": "object", "description": "(circular: Node/Child)"},
+        )
+
     def test_flatten_circular_ref_returns_placeholder(self) -> None:
         """Circular $ref produces a placeholder without infinite recursion."""
         self.assertEqual(
@@ -1095,6 +1412,179 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     },
                 },
             },
+        )
+
+    def test_flatten_removes_local_discriminators(self) -> None:
+        """Flattened unions retain constraints without dangling mappings."""
+
+        class Ring(BaseModel):
+            """One branch of the discriminated union."""
+
+            kind: Literal["ring"]
+            radius: float
+
+        class Disc(BaseModel):
+            """The other branch of the discriminated union."""
+
+            kind: Literal["disc"]
+            diameter: float
+
+        class ShapeTool(BaseModel):
+            """Tool schema containing a discriminated union."""
+
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        class Drawing(BaseModel):
+            """A branch containing another discriminated union."""
+
+            kind: Literal["drawing"]
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        class DrawingTool(BaseModel):
+            """Tool schema containing nested discriminated unions."""
+
+            drawing: Annotated[Drawing | Ring, Field(discriminator="kind")]
+
+        ring = {
+            "description": "One branch of the discriminated union.",
+            "properties": {
+                "kind": {"const": "ring", "title": "Kind", "type": "string"},
+                "radius": {"title": "Radius", "type": "number"},
+            },
+            "required": ["kind", "radius"],
+            "title": "Ring",
+            "type": "object",
+        }
+        disc = {
+            "description": "The other branch of the discriminated union.",
+            "properties": {
+                "kind": {"const": "disc", "title": "Kind", "type": "string"},
+                "diameter": {"title": "Diameter", "type": "number"},
+            },
+            "required": ["kind", "diameter"],
+            "title": "Disc",
+            "type": "object",
+        }
+        shape = {
+            "oneOf": [ring, disc],
+            "title": "Shape",
+        }
+        for model, expected in (
+            (
+                ShapeTool,
+                {
+                    "description": (
+                        "Tool schema containing a discriminated union."
+                    ),
+                    "properties": {"shape": shape},
+                    "required": ["shape"],
+                    "title": "ShapeTool",
+                    "type": "object",
+                },
+            ),
+            (
+                DrawingTool,
+                {
+                    "description": (
+                        "Tool schema containing nested discriminated unions."
+                    ),
+                    "properties": {
+                        "drawing": {
+                            "oneOf": [
+                                {
+                                    "description": (
+                                        "A branch containing another "
+                                        "discriminated union."
+                                    ),
+                                    "properties": {
+                                        "kind": {
+                                            "const": "drawing",
+                                            "title": "Kind",
+                                            "type": "string",
+                                        },
+                                        "shape": shape,
+                                    },
+                                    "required": ["kind", "shape"],
+                                    "title": "Drawing",
+                                    "type": "object",
+                                },
+                                ring,
+                            ],
+                            "title": "Drawing",
+                        },
+                    },
+                    "required": ["drawing"],
+                    "title": "DrawingTool",
+                    "type": "object",
+                },
+            ),
+        ):
+            with self.subTest(model=model.__name__):
+                schema = model.model_json_schema()
+                original = copy.deepcopy(schema)
+                self.assertEqual(_flatten_json_schema(schema), expected)
+                self.assertEqual(schema, original)
+
+    def test_flatten_removes_local_discriminators_from_anyof(self) -> None:
+        """Local mappings are removed for both definition dialects."""
+        branch = {
+            "type": "object",
+            "properties": {"kind": {"type": "string", "enum": ["ring"]}},
+            "required": ["kind"],
+        }
+        for keyword in ("$defs", "definitions"):
+            with self.subTest(keyword=keyword):
+                ref = f"#/{keyword}/Ring"
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            keyword: {"Ring": branch},
+                            "anyOf": [{"$ref": ref}],
+                            "discriminator": {
+                                "propertyName": "kind",
+                                "mapping": {
+                                    "ring": ref,
+                                    "remote": "https://example.com/schema",
+                                },
+                            },
+                        },
+                    ),
+                    {"anyOf": [branch]},
+                )
+
+    def test_flatten_keeps_other_discriminators(self) -> None:
+        """Mappings unrelated to removed definitions stay unchanged."""
+        for discriminator in (
+            {"propertyName": "kind"},
+            {"propertyName": "kind", "mapping": {}},
+            {
+                "propertyName": "kind",
+                "mapping": {
+                    "missing": "#/$defs/Ghost",
+                    "legacy": "#/definitions/Ghost",
+                    "remote": "https://example.com/schema",
+                    "implicit": "Ring",
+                },
+            },
+        ):
+            with self.subTest(discriminator=discriminator):
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            "$defs": {"Ring": {"type": "object"}},
+                            "discriminator": discriminator,
+                        },
+                    ),
+                    {"discriminator": discriminator},
+                )
+
+        discriminator = {
+            "propertyName": "kind",
+            "mapping": {"ring": "#/$defs/Ring"},
+        }
+        self.assertEqual(
+            _flatten_json_schema({"discriminator": discriminator}),
+            {"discriminator": discriminator},
         )
 
     def test_flatten_keeps_property_names(self) -> None:

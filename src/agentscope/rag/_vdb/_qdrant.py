@@ -248,6 +248,7 @@ class QdrantStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -260,20 +261,25 @@ class QdrantStore(VectorStoreBase):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
         """
         from qdrant_client import models
 
+        conditions = [
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            ),
+        ]
+        base_filter = self._build_metadata_filter(metadata_filter)
+        if base_filter is not None:
+            conditions.extend(base_filter.must)
         await self.get_client().delete(
             collection_name=collection,
             points_selector=models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="document_id",
-                            match=models.MatchValue(value=document_id),
-                        ),
-                    ],
-                ),
+                filter=models.Filter(must=conditions),
             ),
         )
 
