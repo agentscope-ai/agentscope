@@ -99,29 +99,6 @@ scripts/model_examples/
 
 ## Quick Start
 
-### Volcengine Multimodal Input
-
-`volcengine_multimodal.py` uses `doubao-seed-2-1-lite-260915` to demonstrate
-image URLs, local image files, Base64 images, video URLs, and audio input.
-Like the other multimodal scripts, it runs without required arguments:
-
-```bash
-conda run -n agentscope python scripts/model_examples/volcengine_multimodal.py
-conda run -n agentscope python scripts/model_examples/run_tests.py --providers volcengine --tests multimodal
-```
-
-Set `VOLCENGINE_API_KEY` first. Supported MIME types are `audio/mpeg`
-(`audio/mp3` alias), `audio/wav`, `audio/aac`, and `audio/mp4` (M4A).
-Public URLs pass through to Ark; local paths become Base64 input.
-The audio example defaults to a public MP3. To use your own file, call
-`await example_audio("./sample.wav", "audio/wav")` from the example module.
-For Base64 already in memory, use
-`DataBlock(source=Base64Source(data=encoded_audio, media_type="audio/wav"))`.
-These inputs also work with `VolcengineMultiAgentFormatter`, hints, and tool
-results. Choose an audio-capable model; not every Doubao model supports audio.
-Ark limits URL/Base64 audio to 25 MB per file and 120 minutes per request.
-See the [official audio guide](https://docs.volcengine.com/docs/ark/audio-understanding?lang=zh).
-
 ### 1. Export API Keys
 
 Set the environment variables for the providers you want to test:

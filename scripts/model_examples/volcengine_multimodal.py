@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Examples of Volcengine image, video, and audio input using DataBlock."""
+"""Examples of Volcengine image, video, and audio input using DataBlock.
+
+Set VOLCENGINE_API_KEY and run this script without arguments, or use the
+example runner with --providers volcengine --tests multimodal.
+The examples use doubao-seed-2-1-lite-260915. For a local audio file, call
+``await example_audio("./sample.wav", "audio/wav")``.
+"""
 
 import asyncio
 import base64
