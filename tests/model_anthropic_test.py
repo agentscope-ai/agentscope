@@ -541,34 +541,6 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         self.assertIn("max_tokens", str(ctx.exception))
         self.mock_create.assert_not_called()
 
-    async def test_interleaved_tool_budget_can_exceed_cap(self) -> None:
-        """Only a tool request opting into interleaving can use this cap."""
-        self.model.parameters.thinking_enable = True
-        tools = [{"function": {"name": "lookup"}}]
-        headers = {"Anthropic-Beta": "other, interleaved-thinking-2025-05-14"}
-        await self.model(
-            [],
-            tools=tools,
-            max_tokens=1000,
-            extra_headers=headers,
-        )
-        self.assertEqual(
-            self.mock_create.call_args.kwargs,
-            {
-                "model": self.model.model,
-                "messages": [],
-                "stream": False,
-                "max_tokens": 1000,
-                "thinking": {"type": "enabled", "budget_tokens": 1024},
-                "tools": [
-                    {"name": "lookup", "description": "", "input_schema": {}},
-                ],
-                "extra_headers": headers,
-            },
-        )
-        with self.assertRaisesRegex(ValueError, "max_tokens=1000"):
-            await self.model([], tools=tools, max_tokens=1000)
-
     async def test_caller_can_disable_thinking_per_call(self) -> None:
         """An explicit thinking kwarg is the per-call escape hatch."""
         self.model.parameters.thinking_enable = True

@@ -187,28 +187,6 @@ class AnthropicChatModel(ChatModelBase):
             return self.parameters.thinking_mode
         return "enabled" if self.parameters.thinking_enable else None
 
-    def _is_interleaved(self, kwargs: dict[str, Any]) -> bool:
-        """Check for tool use with the manual interleaved thinking header."""
-        if not (kwargs.get("extra_body") or {}).get(
-            "tools",
-            kwargs.get("tools"),
-        ):
-            return False
-
-        http_client = self.client_kwargs.get("http_client")
-        for headers in (
-            kwargs.get("extra_headers") or {},
-            self.client.default_headers,
-            getattr(http_client, "headers", {}),
-        ):
-            for name, value in headers.items():
-                if name.lower() == "anthropic-beta":
-                    return isinstance(value, str) and any(
-                        token.strip() == "interleaved-thinking-2025-05-14"
-                        for token in value.split(",")
-                    )
-        return False
-
     def _set_thinking_config(self, kwargs: dict[str, Any]) -> None:
         """Apply thinking defaults using the limits the SDK will send."""
         extra_body = kwargs.get("extra_body") or {}
@@ -225,7 +203,7 @@ class AnthropicChatModel(ChatModelBase):
             if budget is None:
                 max_tokens = _DEFAULT_MAX_TOKENS if limit is None else limit
                 budget = max(1024, max_tokens // 2)
-                if budget >= max_tokens and not self._is_interleaved(kwargs):
+                if budget >= max_tokens:
                     raise ValueError(
                         "Cannot fit an automatic thinking budget under "
                         f"max_tokens={max_tokens}. Raise max_tokens above "
