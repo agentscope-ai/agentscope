@@ -86,6 +86,49 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunk.state, "error")
         self.assertIn("not found", chunk.content[0].text)
 
+    async def test_diff_preserves_missing_final_newline(self) -> None:
+        """An unterminated edit produces separate old and new records."""
+        marker = "\\ No newline at end of file\n"
+        cases = (
+            ("old", "new", "-old\n" + marker + "+new\n" + marker),
+            ("old", "new\n", "-old\n" + marker + "+new\n"),
+            ("old\n", "new", "-old\n+new\n" + marker),
+            ("old\n", "new\n", "-old\n+new\n"),
+        )
+        for original, updated, records in cases:
+            with self.subTest(original=original, updated=updated):
+                with open(self.temp_file.name, "wb") as stream:
+                    stream.write(original.encode("utf-8"))
+                chunk = await self.edit_tool(
+                    file_path=self.temp_file.name,
+                    old_string=original,
+                    new_string=updated,
+                )
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(
+                    chunk.metadata["diff"],
+                    f"--- a/{self.temp_file.name}\n"
+                    f"+++ b/{self.temp_file.name}\n"
+                    "@@ -1 +1 @@\n" + records,
+                )
+                with open(self.temp_file.name, "rb") as stream:
+                    self.assertEqual(stream.read(), updated.encode("utf-8"))
+
+        with open(self.temp_file.name, "wb") as stream:
+            stream.write(b"head\nold\nlast")
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="old",
+            new_string="new",
+        )
+        self.assertEqual(
+            chunk.metadata["diff"],
+            f"--- a/{self.temp_file.name}\n+++ b/{self.temp_file.name}\n"
+            "@@ -1,3 +1,3 @@\n head\n-old\n+new\n last\n" + marker,
+        )
+        with open(self.temp_file.name, "rb") as stream:
+            self.assertEqual(stream.read(), b"head\nnew\nlast")
+
     async def test_empty_target_preserves_file(self) -> None:
         """An empty target must not expand between every character."""
         for original in (b"abc\r\ndef\r\n", b""):
