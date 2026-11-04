@@ -14,6 +14,7 @@ import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.genai.types import HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
 
 from utils import AnyString
@@ -130,6 +131,149 @@ class _MockAsyncStream:
         chunk = self._chunks[self._index]
         self._index += 1
         return chunk
+
+
+# ---------------------------------------------------------------------------
+# Argon configuration tests
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiArgon(IsolatedAsyncioTestCase):
+    """Verify Argon requests and configuration without network access."""
+
+    def setUp(self) -> None:
+        with patch("google.genai.Client"):
+            self.model = GeminiChatModel(
+                credential=GeminiCredential(api_key="test"),
+                model="gemini-4-argon",
+                stream=False,
+            )
+
+    async def test_request_parameters(self) -> None:
+        """Check defaults, levels, summaries, and per-call overrides."""
+        cases: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = [
+            ({}, {}, {}),
+            (
+                {"thinking_enable": False},
+                {},
+                {"thinking_config": {"include_thoughts": False}},
+            ),
+        ]
+        for level in ("low", "medium", "high"):
+            cases.append(
+                (
+                    {"thinking_level": level, "thinking_enable": True},
+                    {},
+                    {
+                        "thinking_config": {
+                            "thinking_level": level.upper(),
+                            "include_thoughts": True,
+                        },
+                    },
+                ),
+            )
+        cases.append(
+            (
+                {"thinking_budget": 1024, "max_tokens": 100_000},
+                {
+                    "thinking_config": ThinkingConfig(thinking_level="LOW"),
+                    "max_output_tokens": 65_536,
+                    "temperature": 0.2,
+                    "top_p": 0.3,
+                    "top_k": 20,
+                },
+                {
+                    "thinking_config": {"thinking_level": "LOW"},
+                    "max_output_tokens": 65_536,
+                },
+            ),
+        )
+        api = AsyncMock(return_value=_mock_completion([]))
+        self.model.client.aio.models.generate_content = api
+        for parameters, overrides, expected in cases:
+            with self.subTest(parameters=parameters):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    **parameters,
+                )
+                await self.model([], **overrides)
+                self.assertEqual(
+                    api.call_args.kwargs,
+                    {
+                        "model": "gemini-4-argon",
+                        "contents": [],
+                        "config": expected,
+                    },
+                )
+        self.model.stream = True
+        stream_api = AsyncMock(return_value=_MockAsyncStream([]))
+        self.model.client.aio.models.generate_content_stream = stream_api
+        async for _ in await self.model([], **cases[-1][1]):
+            pass
+        stream_api.assert_awaited_once_with(**api.call_args.kwargs)
+
+    async def test_invalid_config_never_reaches_api(self) -> None:
+        """Reject unsupported budgets, reasoning levels, and long decode."""
+        cases: list[tuple[dict[str, Any], dict[str, Any], str]] = [
+            ({"thinking_budget": 1024}, {}, "thinking_budget"),
+            ({}, {"thinking_config": {"thinking_budget": 0}}, "budget"),
+            ({}, {"thinking_config": {"thinkingBudget": 100}}, "budget"),
+            (
+                {},
+                {"thinking_config": {"thinking_level": "MINIMAL"}},
+                "thinking_level",
+            ),
+            ({"max_tokens": 65_537}, {}, "65536"),
+            ({}, {"max_output_tokens": 65_537}, "65536"),
+        ]
+        for parameters, kwargs, message in cases:
+            with self.subTest(parameters=parameters, **kwargs):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    **parameters,
+                )
+                self.model.client.reset_mock()
+                with self.assertRaisesRegex(ValueError, message):
+                    await self.model([], **kwargs)
+                self.assertEqual(self.model.client.mock_calls, [])
+
+    def test_timeout_does_not_mutate_shared_client_options(self) -> None:
+        """Keep Argon defaults local for dict and SDK HTTP options."""
+        cases: list[tuple[dict[str, Any] | HttpOptions, int]] = [
+            ({"timeout": None}, 900_000),
+            (HttpOptions(), 900_000),
+            ({"timeout": 1234}, 1234),
+            (HttpOptions(timeout=0), 0),
+        ]
+        for options, expected_timeout in cases:
+            with self.subTest(options=options):
+                shared = {"http_options": options}
+                before = copy.deepcopy(shared)
+                with patch("google.genai.Client") as client:
+                    argon = GeminiChatModel(
+                        credential=GeminiCredential(api_key="test"),
+                        model="models/gemini-4-argon",
+                        client_kwargs=shared,
+                    )
+                    self.assertEqual(
+                        client.call_args.kwargs,
+                        {
+                            "api_key": "test",
+                            "http_options": HttpOptions(
+                                timeout=expected_timeout,
+                            ),
+                        },
+                    )
+                    self.assertEqual(shared, before)
+                    self.assertIsNot(argon.client_kwargs, shared)
+                    GeminiChatModel(
+                        credential=GeminiCredential(api_key="test"),
+                        model="gemini-2.5-flash",
+                        client_kwargs=shared,
+                    )
+                    self.assertEqual(
+                        client.call_args.kwargs,
+                        {"api_key": "test", **before},
+                    )
+                    self.assertEqual(shared, before)
 
 
 # ---------------------------------------------------------------------------
