@@ -411,7 +411,10 @@ class ToolBase(ABC):
         entries in :attr:`PermissionContext.working_directories`. Paths
         are compared via :func:`os.path.realpath` so that aliases like
         macOS's ``/tmp`` → ``/private/tmp`` and symlinked working
-        directories compare equal on both sides.
+        directories compare equal on both sides. ``~`` and ``$VAR`` are
+        expanded first, so a path that only names its target through a
+        variable is judged where that variable points rather than as a
+        relative path that happens to sit inside the working directory.
 
         Used by tools that conditionally auto-allow file operations in
         :attr:`PermissionMode.ACCEPT_EDITS` (e.g. Write, Edit, and the
@@ -432,7 +435,9 @@ class ToolBase(ABC):
         additional_dirs = list(context.working_directories.keys())
         all_working_dirs = [current_dir] + additional_dirs
 
-        abs_file_path = os.path.realpath(os.path.expanduser(file_path))
+        abs_file_path = os.path.realpath(
+            os.path.expandvars(os.path.expanduser(file_path)),
+        )
 
         for working_dir in all_working_dirs:
             abs_working_dir = os.path.realpath(
@@ -462,6 +467,10 @@ class ToolBase(ABC):
         Case-insensitive matching is used to prevent bypasses on
         case-insensitive filesystems (macOS, Windows).
 
+        ``~`` and ``$VAR`` are expanded before the match, so
+        ``$HOME/.env`` is recognized as the ``.env`` it resolves to
+        rather than as a file whose name merely contains the text.
+
         Args:
             file_path (`str`):
                 The file path to check
@@ -481,7 +490,9 @@ class ToolBase(ABC):
         """
 
         # Resolve symlinks so an alias is judged by its target
-        abs_path = os.path.realpath(os.path.expanduser(file_path))
+        abs_path = os.path.realpath(
+            os.path.expandvars(os.path.expanduser(file_path)),
+        )
 
         # Split path into segments
         path_parts = Path(abs_path).parts
