@@ -347,6 +347,7 @@ class RealtimeAgent:
         """Surface a crashed downlink instead of a silently dead session."""
         if task.cancelled() or task.exception() is None:
             return
+        self._downlink = None
         self._connected = False
         self._connected_event.clear()
         logger.error(
