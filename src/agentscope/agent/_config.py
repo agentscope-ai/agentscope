@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field, field_validator
+import string
+
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from ..model import ChatModelBase
 
@@ -190,6 +197,55 @@ class ContextConfig(BaseModel):
     workspace (if an offloader is provided) and replaced by a hint that
     records the offloaded path; otherwise they are dropped and replaced by a
     hint without path information."""
+
+    @model_validator(mode="after")
+    def _check_summary_template_fields(self) -> "ContextConfig":
+        """Check the summary template only uses fields the schema declares.
+
+        Once a compression summary is generated, the template is rendered
+        with ``summary_template.format(**res.content)``, where ``res.content``
+        holds exactly the fields that ``summary_schema`` declares. The two are
+        configured independently, so a schema that drops a field the template
+        still references makes that call raise a bare ``KeyError`` in the
+        middle of a reply, long after configuration. Report the mismatch when
+        the configuration is built instead.
+        """
+        properties = self.summary_schema.get("properties")
+        if not isinstance(properties, dict):
+            # Schemas composed with ``$ref``/``allOf``/... cannot be
+            # introspected reliably here, so leave those to the runtime.
+            return self
+
+        def _referenced_fields(template: str) -> set:
+            """Base field names ``template`` needs, nested specs included.
+
+            ``{stats[count]}`` and ``{stats.total}`` reach *into* a declared
+            field and only need the base name, but a nested spec such as
+            ``{a:{width}}`` needs ``width`` as a field of its own. Both are
+            supplied by ``format(**content)``, so both are checked here.
+            """
+            names = set()
+            for _, field_name, format_spec, _ in string.Formatter().parse(
+                template,
+            ):
+                if field_name is None:
+                    continue
+                names.add(field_name.split("[", 1)[0].split(".", 1)[0])
+                if format_spec:
+                    names |= _referenced_fields(format_spec)
+            return names
+
+        referenced = _referenced_fields(self.summary_template)
+        undeclared = sorted(referenced - set(properties))
+        if undeclared:
+            raise ValueError(
+                f"summary_template references {undeclared}, which "
+                f"summary_schema does not declare, so formatting the "
+                f"summary would fail with a KeyError. Declare them in "
+                f"summary_schema['properties'] or remove them from "
+                f"summary_template.",
+            )
+        return self
 
 
 class InjectionConfig(BaseModel):
