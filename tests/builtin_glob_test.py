@@ -13,6 +13,45 @@ from agentscope.permission import (
 )
 
 
+def _create_files(
+    root: str,
+    relatives: tuple[str, ...],
+    mtimes: dict[str, int] | None = None,
+) -> dict[str, str]:
+    """Create empty files under *root* and return their absolute paths.
+
+    Args:
+        root: Directory that will contain the files.
+        relatives: Slash-separated paths relative to *root*.
+        mtimes: Optional modification times keyed by those relative
+            paths.  When omitted, the filesystem timestamp is kept.
+
+    Returns:
+        Mapping of each relative path to its absolute path.
+    """
+    created: dict[str, str] = {}
+    for relative in relatives:
+        target = os.path.join(root, *relative.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8"):
+            pass
+        if mtimes is not None and relative in mtimes:
+            timestamp = mtimes[relative]
+            os.utime(target, (timestamp, timestamp))
+        created[relative] = target
+    return created
+
+
+def _listed_paths(text: str) -> list[str]:
+    """Return matched paths, ignoring a trailing pagination note."""
+    paths: list[str] = []
+    for line in text.splitlines():
+        if not line or line.startswith("[Showing results"):
+            continue
+        paths.append(line)
+    return paths
+
+
 # pylint: disable=too-many-public-methods
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
@@ -120,6 +159,133 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
+
+    async def test_overlapping_recursive_patterns_are_unique(self) -> None:
+        """Overlapping ``**`` segments must not repeat the same path."""
+        simple = os.path.join(self.temp_dir, "simple")
+        simple_files = _create_files(
+            simple,
+            ("root.py", "sub/child.py", "sub/deep/leaf.py"),
+        )
+        repeated = os.path.join(self.temp_dir, "repeated_subdir")
+        repeated_files = _create_files(
+            repeated,
+            (
+                "root.py",
+                "subdir/top.py",
+                "subdir/mid/subdir/leaf.py",
+                "other/subdir/side.py",
+                "other/skip.py",
+            ),
+        )
+        cases = (
+            (
+                "**/**/*.py",
+                simple,
+                {
+                    simple_files["root.py"],
+                    simple_files["sub/child.py"],
+                    simple_files["sub/deep/leaf.py"],
+                },
+            ),
+            (
+                "**/**/**/*.py",
+                simple,
+                {
+                    simple_files["root.py"],
+                    simple_files["sub/child.py"],
+                    simple_files["sub/deep/leaf.py"],
+                },
+            ),
+            (
+                "**/subdir/**/*.py",
+                repeated,
+                {
+                    repeated_files["subdir/top.py"],
+                    repeated_files["subdir/mid/subdir/leaf.py"],
+                    repeated_files["other/subdir/side.py"],
+                },
+            ),
+            (
+                "subdir/**/**/*.py",
+                repeated,
+                {
+                    repeated_files["subdir/top.py"],
+                    repeated_files["subdir/mid/subdir/leaf.py"],
+                },
+            ),
+        )
+        for pattern, base_dir, expected in cases:
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=base_dir,
+                    head_limit=0,
+                )
+                paths = _listed_paths(chunk.content[0].text)
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(len(paths), len(set(paths)))
+                self.assertEqual(set(paths), expected)
+
+    async def test_overlapping_recursive_patterns_do_not_consume_pages(
+        self,
+    ) -> None:
+        """A newer duplicate must not occupy two pagination slots."""
+        root = os.path.join(self.temp_dir, "paged_overlap")
+        files = _create_files(
+            root,
+            ("root.py", "sub/child.py", "sub/deep/leaf.py"),
+            mtimes={
+                "root.py": 1_000,
+                "sub/child.py": 2_000,
+                "sub/deep/leaf.py": 3_000,
+            },
+        )
+
+        first_page = await self.glob_tool(
+            pattern="**/**/*.py",
+            path=root,
+            head_limit=2,
+        )
+        self.assertEqual(
+            _listed_paths(first_page.content[0].text),
+            [files["sub/deep/leaf.py"], files["sub/child.py"]],
+        )
+        self.assertIn(
+            "[Showing results with pagination = limit: 2]",
+            first_page.content[0].text,
+        )
+
+        # offset=2 is the third distinct file. Without dedupe the
+        # newest path is emitted several times and still occupies
+        # this slot.
+        third = await self.glob_tool(
+            pattern="**/**/*.py",
+            path=root,
+            head_limit=1,
+            offset=2,
+        )
+        self.assertEqual(
+            _listed_paths(third.content[0].text),
+            [files["root.py"]],
+        )
+
+    async def test_single_double_star_pattern_stays_unique(self) -> None:
+        """A single ``**`` segment still returns each match once."""
+        root = os.path.join(self.temp_dir, "single_star")
+        files = _create_files(
+            root,
+            ("root.py", "sub/child.py", "sub/deep/leaf.py"),
+        )
+
+        chunk = await self.glob_tool(
+            pattern="**/*.py",
+            path=root,
+            head_limit=0,
+        )
+        paths = _listed_paths(chunk.content[0].text)
+        self.assertEqual(len(paths), len(set(paths)))
+        self.assertEqual(set(paths), set(files.values()))
 
     async def test_current_directory_segments(self) -> None:
         """Standalone dot segments do not change the matched files."""
