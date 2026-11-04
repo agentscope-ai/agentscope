@@ -596,6 +596,14 @@ class BashCommandParser:
                         body.end_byte : node.end_byte
                     ].decode("utf8")
                     return
+            # Extract commands from command substitution $(...), `...` and
+            # process substitution <(...), >(...) so their inner commands are
+            # checked independently. Without this, ``cat $(rm -rf /)`` is
+            # classified read-only because the outer ``cat`` prefix matches,
+            # while the destructive substituted command is never examined.
+            for child in node.children:
+                if child.type in ("command_substitution", "process_substitution"):
+                    extract_commands(child)
             subcommands.append(
                 source[node.start_byte : node.end_byte].decode("utf8"),
             )
