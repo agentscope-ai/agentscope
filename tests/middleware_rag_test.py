@@ -998,6 +998,21 @@ class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
         # Exactly one placeholder is fine.
         RAGMiddleware.Parameters(hint_template="wrapped: {context}.")
 
+    async def test_hint_template_rejects_unknown_placeholder(self) -> None:
+        """A stray placeholder must be rejected at construction.
+
+        The validator used to only count ``{context}``, so ``{cite}``
+        passed and then raised ``KeyError`` inside ``_wrap_hint`` — a
+        call made outside the search error handling — the first time a
+        text-only reply matched, crashing the reply.
+        """
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(
+                hint_template="cite it as {cite}: {context}",
+            )
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="broken { brace {context}")
+
     async def test_rerank_parameters_validation(self) -> None:
         """The candidate set widens retrieval, the template needs a
         query."""
