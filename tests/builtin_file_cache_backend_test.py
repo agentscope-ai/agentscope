@@ -90,6 +90,7 @@ class BackendAwareCacheTest(IsolatedAsyncioTestCase):
                     "updated_at": 1000.001,
                     "bytes": 6 / 1024,
                     "file_path": "/workspace/test.txt",
+                    "line_ending": "\n",
                 },
             ],
         )
