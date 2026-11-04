@@ -411,6 +411,7 @@ class TestMessage(IsolatedAsyncioTestCase):
                 self._inner = inner
 
             def __getattr__(self, name: str) -> object:
+                """Forward every other pipeline call to the real client."""
                 return getattr(self._inner, name)
 
             async def __aenter__(self) -> "_GatedPipeline":
@@ -421,6 +422,7 @@ class TestMessage(IsolatedAsyncioTestCase):
                 return await self._inner.__aexit__(*exc_info)
 
             async def execute(self) -> list:
+                """Hold until both writers have read, then run the reads."""
                 nonlocal arrived
                 async with gate_lock:
                     arrived += 1
