@@ -81,8 +81,8 @@ class Grep(ToolBase):
             },
             "glob": {
                 "type": "string",
-                "description": "Glob pattern to filter files (e.g., '*.js', "
-                "'*.{ts,tsx}').",
+                "description": "A single glob pattern to filter files "
+                "(e.g., '*.js', '*.{ts,tsx}').",
             },
             "type": {
                 "type": "string",
@@ -343,7 +343,7 @@ class Grep(ToolBase):
             pattern: The regex pattern to search for
             path: The directory or file path to search in
             output_mode: Output mode ('content', 'files_with_matches', 'count')
-            glob: Glob pattern to filter files
+            glob: A single glob pattern to filter files
             type: File type to filter by (rg --type)
             i: Case-insensitive search (rg -i)
             case_insensitive: Alias for i (backward compatibility)
@@ -431,16 +431,8 @@ class Grep(ToolBase):
             args.extend(["--type", type])
 
         # Glob filter
-        if glob is not None:
-            raw_patterns = glob.split()
-            glob_patterns: list[str] = []
-            for raw in raw_patterns:
-                if "{" in raw and "}" in raw:
-                    glob_patterns.append(raw)
-                else:
-                    glob_patterns.extend(p for p in raw.split(",") if p)
-            for gp in glob_patterns:
-                args.extend(["--glob", gp])
+        if glob:
+            args.extend(["--glob", glob])
 
         try:
             results = await self._run_ripgrep(args, search_path)
