@@ -7,6 +7,7 @@ from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
+from opentelemetry.trace import StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -1067,3 +1068,90 @@ class TracingTest(IsolatedAsyncioTestCase):
         )
         with self.assertNoLogs("opentelemetry.context", level="ERROR"):
             await self._drive_then_close_from_other_task(gen)
+
+    # -----------------------------------------------------------------------
+    # Tests: closing a stream early is not a failure
+    # -----------------------------------------------------------------------
+
+    def _assert_closed_span_is_not_an_error(self) -> None:
+        """The single span finished by the closed stream must be OK."""
+        spans = self.exporter.get_finished_spans()
+        self.assertEqual(len(spans), 1)
+        self.assertNotEqual(
+            spans[0].status.status_code,
+            StatusCode.ERROR,
+            f"{spans[0].name} was marked as failed: "
+            f"{spans[0].status.description}",
+        )
+        self.assertNotIn(
+            "GeneratorExit",
+            [event.name for event in spans[0].events],
+        )
+
+    async def test_on_reply_close_is_not_an_error(self) -> None:
+        """A consumer that stops reading has not seen a failed reply."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield "chunk-1"
+            await asyncio.Event().wait()  # suspend at the yield boundary
+
+        gen = middleware.on_reply(
+            self.agent,
+            {"inputs": UserMsg(name="user", content="hi")},
+            next_handler,
+        )
+        await self._drive_then_close_from_other_task(gen)
+
+        self._assert_closed_span_is_not_an_error()
+
+    async def test_on_model_call_close_is_not_an_error(self) -> None:
+        """A consumer that stops reading has not seen a failed call."""
+        middleware = TracingMiddleware()
+
+        async def _stream() -> Any:
+            yield ChatResponse(
+                content=[TextBlock(text="chunk-1")],
+                is_last=False,
+            )
+            await asyncio.Event().wait()  # suspend at the yield boundary
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            return _stream()
+
+        gen = await middleware.on_model_call(
+            self.agent,
+            {"current_model": self.model},
+            next_handler,
+        )
+        await self._drive_then_close_from_other_task(gen)
+
+        self._assert_closed_span_is_not_an_error()
+
+    async def test_on_acting_close_is_not_an_error(self) -> None:
+        """A consumer that stops reading has not seen a failed tool call."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield ToolResultBlock(
+                id="t1",
+                name="get_weather",
+                output="ok",
+                state=ToolResultState.SUCCESS,
+            )
+            await asyncio.Event().wait()  # suspend at the yield boundary
+
+        gen = middleware.on_acting(
+            self.agent,
+            {
+                "tool_call": ToolCallBlock(
+                    id="t1",
+                    name="get_weather",
+                    input=json.dumps({"city": "Hangzhou"}),
+                ),
+            },
+            next_handler,
+        )
+        await self._drive_then_close_from_other_task(gen)
+
+        self._assert_closed_span_is_not_an_error()
