@@ -137,6 +137,8 @@ class OllamaChatFormatter(_OllamaFormatterBase):
             images = []
             # Hold the promoted media until this turn's tool messages are out.
             pending_media: list[dict] = []
+            # The assistant message that consecutive tool calls are added to.
+            last_tool_call_msg: dict[str, Any] | None = None
 
             for block in msg.get_content_blocks():
                 if pending_media and not isinstance(block, ToolResultBlock):
@@ -194,14 +196,27 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     pass
 
                 elif isinstance(block, ToolCallBlock):
-                    messages.append(
-                        self._format_tool_call_message(
-                            msg.role,
-                            content_parts,
-                            images,
-                            block,
-                        ),
+                    tool_call_msg = self._format_tool_call_message(
+                        msg.role,
+                        content_parts,
+                        images,
+                        block,
                     )
+                    if (
+                        not content_parts
+                        and not images
+                        and messages
+                        and messages[-1] is last_tool_call_msg
+                    ):
+                        # Parallel calls share one message, since Ollama
+                        # keeps only the tool calls of the first of
+                        # consecutive same-role messages.
+                        last_tool_call_msg["tool_calls"].extend(
+                            tool_call_msg["tool_calls"],
+                        )
+                    else:
+                        messages.append(tool_call_msg)
+                        last_tool_call_msg = tool_call_msg
                     content_parts = []
                     images = []
 
