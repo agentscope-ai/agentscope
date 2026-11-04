@@ -186,9 +186,7 @@ class Agent:
                 DeprecationWarning,
                 stacklevel=2,
             )
-            # Copy before applying the deprecated override: the caller may
-            # share one config object between agents, and writing through
-            # it would silently change every one of them.
+            # Other agents may share the caller's config.
             self.context_config = self.context_config.model_copy(deep=True)
             self.context_config.context_buffer_ratio = (
                 self.injection_config.context_buffer_ratio
