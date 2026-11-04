@@ -874,3 +874,226 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(tool_messages[0]["tool_name"], "get_capital")
         # The OpenAI-style tool_call_id must NOT be emitted for Ollama.
         self.assertNotIn("tool_call_id", tool_messages[0])
+
+
+_AUDIO_PLACEHOLDER = "[audio/wav attached, not supported by this provider]"
+_IMAGE_B64 = "ZmFrZSBpbWFnZSBkYXRh"
+
+
+def _audio_block() -> DataBlock:
+    """A non-image block Ollama cannot ingest."""
+    return DataBlock(
+        source=Base64Source(
+            data="aGVsbG8=",
+            media_type="audio/wav",
+        ),
+    )
+
+
+def _image_block() -> DataBlock:
+    """A supported image block."""
+    return DataBlock(
+        source=Base64Source(
+            data=_IMAGE_B64,
+            media_type="image/png",
+        ),
+    )
+
+
+class TestOllamaUnsupportedMedia(IsolatedAsyncioTestCase):
+    """Unsupported media must stay visible instead of vanishing.
+
+    Ollama only carries images. Before the placeholder, ``None`` from
+    ``_format_ollama_data_block`` was dropped, so a media-only user
+    message disappeared from the formatted history.
+    """
+
+    async def test_chat_formatter_unsupported_media_only(self) -> None:
+        """A media-only user message keeps the turn with a placeholder."""
+        fmt = OllamaChatFormatter()
+        res = await fmt.format(
+            [UserMsg(name="user", content=[_audio_block()])],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": _AUDIO_PLACEHOLDER,
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_media_keeps_text(self) -> None:
+        """Text survives alongside the placeholder for mixed messages."""
+        fmt = OllamaChatFormatter()
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="listen:"),
+                        _audio_block(),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": f"listen:\n{_AUDIO_PLACEHOLDER}",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_supported_image_unchanged(self) -> None:
+        """Supported images still land in ``images``, with no placeholder."""
+        fmt = OllamaChatFormatter()
+
+        image_only = await fmt.format(
+            [UserMsg(name="user", content=[_image_block()])],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [_IMAGE_B64],
+                },
+            ],
+            image_only,
+        )
+
+        mixed = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        _image_block(),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [_IMAGE_B64],
+                },
+            ],
+            mixed,
+        )
+        self.assertNotIn("not supported", mixed[0]["content"])
+
+    async def test_chat_formatter_unsupported_media_in_hint(self) -> None:
+        """A hint carrying unsupported media keeps a placeholder."""
+        fmt = OllamaChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        HintBlock(
+                            hint=[
+                                TextBlock(text="background:"),
+                                _audio_block(),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": f"background:\n{_AUDIO_PLACEHOLDER}",
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_formatter_unsupported_media_only(self) -> None:
+        """Multi-agent history keeps a media-only turn."""
+        fmt = OllamaMultiAgentFormatter()
+        res = await fmt.format(
+            [UserMsg(name="user", content=[_audio_block()])],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        fmt.conversation_history_prompt
+                        + "<history>\n"
+                        + f"user:\n{_AUDIO_PLACEHOLDER}\n</history>"
+                    ),
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_formatter_unsupported_media_keeps_text(
+        self,
+    ) -> None:
+        """Multi-agent history keeps text and the placeholder."""
+        fmt = OllamaMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="listen:"),
+                        _audio_block(),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        fmt.conversation_history_prompt
+                        + "<history>\n"
+                        + f"user:\nlisten:\n{_AUDIO_PLACEHOLDER}\n</history>"
+                    ),
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_formatter_supported_image_unchanged(
+        self,
+    ) -> None:
+        """Supported images in history stay on the images list."""
+        fmt = OllamaMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        _image_block(),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        fmt.conversation_history_prompt
+                        + "<history>\n"
+                        + "user:\nWhat is this?\n</history>"
+                    ),
+                    "images": [_IMAGE_B64],
+                },
+            ],
+            res,
+        )
