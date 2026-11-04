@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..deps import (
+    get_allowed_stdio_commands,
     get_current_user_id,
     get_skill_hubs,
     get_storage,
@@ -103,6 +104,7 @@ async def add_mcp(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_service: WorkspaceService = Depends(get_workspace_service),
+    allowed: frozenset[str] | None = Depends(get_allowed_stdio_commands),
 ) -> None:
     """Add an MCP client to the session's workspace.
 
@@ -111,7 +113,28 @@ async def add_mcp(
     existing record of the same name is left alone: the library is where
     that MCP is defined, and adding it to a second workspace must not
     silently redefine it.
+
+    A stdio MCP makes the server spawn ``command`` as a local process. When
+    the app was created with ``allowed_stdio_commands``, any other command
+    is refused before anything is started or stored.
+
+    Raises:
+        `HTTPException`: 403 if a stdio ``command`` is not in the
+            configured allowlist, or 409 if the name is already taken.
     """
+    if (
+        allowed is not None
+        and mcp.mcp_config.type == "stdio_mcp"
+        and mcp.mcp_config.command not in allowed
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Stdio MCP command {mcp.mcp_config.command!r} is not in "
+                "this service's allowed stdio commands."
+            ),
+        )
+
     workspace = await workspace_service.resolve(
         user_id,
         agent_id,
