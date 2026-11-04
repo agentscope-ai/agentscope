@@ -387,8 +387,6 @@ class PowerShellExecutableResolutionTest(IsolatedAsyncioTestCase):
         """A probe killed before answering is not a usable shell."""
         backend = AsyncMock()
         backend.exec_shell.side_effect = [
-            # ``pwsh`` exists on PATH but hangs on startup, so the probe
-            # is killed and reports the conventional -1 exit code.
             ExecResult(-1, b"", b"timed out"),
             ExecResult(0, b"", b""),
         ]
@@ -398,7 +396,6 @@ class PowerShellExecutableResolutionTest(IsolatedAsyncioTestCase):
             await tool._resolve_executable(),
             "powershell.exe",
         )
-        # The resolved shell is cached, so the next call probes nothing
         self.assertEqual(
             await tool._resolve_executable(),
             "powershell.exe",
