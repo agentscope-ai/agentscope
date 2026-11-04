@@ -224,6 +224,13 @@ class RealtimeModelBase(ABC):
         """Declare the user turn finished. Only called when the caller owns
         endpointing, i.e. the session was opened with turn detection off."""
 
+    async def start_turn(self) -> None:
+        """Notify the model that local VAD detected a new user turn.
+
+        Adapters may settle pending input here even without an active reply.
+        The default implementation does nothing.
+        """
+
     # ------------------------------------------------------------------
     # Response control
     # ------------------------------------------------------------------

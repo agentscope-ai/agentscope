@@ -2,9 +2,12 @@
 """Unit tests for the Gemini Live realtime adapter: cards, the setup
 message and frame parsing. Nothing here opens a connection."""
 # pylint: disable=protected-access
+import asyncio
 import base64
 import unittest
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
@@ -17,6 +20,7 @@ from agentscope.realtime import (
 
 CRED = GeminiCredential(api_key="key-x")
 MODEL = "gemini-3.1-flash-live-preview"
+THINKING_MODEL = "gemini-3.8-live-extended-thinking"
 TOOLS = [
     {
         "type": "function",
@@ -180,6 +184,309 @@ class GeminiSetupTest(unittest.TestCase):
         )
 
 
+class GeminiThinkingTest(unittest.TestCase):
+    """Extended Thinking configuration and interaction boundaries."""
+
+    def test_setup_and_model_discovery(self) -> None:
+        """Only the new model exposes reasoning and non-blocking tools."""
+        cards = CRED.list_realtime_models()
+        self.assertEqual(
+            {
+                card.name: "thinking_level"
+                in card.parameter_schema["properties"]
+                for card in cards
+            },
+            {
+                "gemini-2.5-flash-native-audio-preview-12-2025": False,
+                MODEL: False,
+                "gemini-3.8-live": False,
+                THINKING_MODEL: True,
+            },
+        )
+        for level in (None, "low", "medium", "high"):
+            with self.subTest(level=level):
+                expected = GeminiRealtimeModel(MODEL, CRED)._setup(
+                    "be nice",
+                    TOOLS,
+                    "handle",
+                )
+                setup = expected["setup"]
+                setup["model"] = f"models/{THINKING_MODEL}"
+                setup["tools"][0]["functionDeclarations"][0][
+                    "behavior"
+                ] = "NON_BLOCKING"
+                if level:
+                    setup["generationConfig"]["thinkingConfig"] = {
+                        "thinkingLevel": level.upper(),
+                    }
+                model = GeminiRealtimeModel(
+                    THINKING_MODEL,
+                    CRED,
+                    parameters=GeminiRealtimeModel.Parameters(
+                        thinking_level=level,
+                    ),
+                )
+                self.assertEqual(
+                    model._setup("be nice", TOOLS, "handle"),
+                    expected,
+                )
+
+    def test_invalid_thinking_configuration(self) -> None:
+        """Unsupported levels and older models fail before connecting."""
+        with self.assertRaises(ValueError):
+            GeminiRealtimeModel.Parameters(thinking_level="minimal")
+        for card in GeminiRealtimeModel.list_models():
+            if card.name == THINKING_MODEL:
+                continue
+            with self.subTest(model=card.name):
+                with self.assertRaisesRegex(ValueError, "requires"):
+                    GeminiRealtimeModel(
+                        card.name,
+                        CRED,
+                        parameters=GeminiRealtimeModel.Parameters(
+                            thinking_level="low",
+                        ),
+                    )
+
+    def test_background_interaction(self) -> None:
+        """Fillers and tools share one response until final IDLE."""
+        model = GeminiRealtimeModel(THINKING_MODEL, CRED)
+        messages = [
+            {"serverContent": {"interactionStatus": "IN_PROGRESS"}},
+            {
+                "serverContent": {
+                    "modelTurn": {
+                        "parts": [{"thought": True, "text": "Plan"}],
+                    },
+                },
+            },
+            {
+                "serverContent": {
+                    "modelTurn": {
+                        "parts": [{"inlineData": {"data": "AQA="}}],
+                    },
+                    "outputTranscription": {"text": "Checking."},
+                    "turnComplete": True,
+                    "interactionStatus": "IN_PROGRESS",
+                },
+            },
+            {
+                "toolCall": {
+                    "functionCalls": [
+                        {"id": "c1", "name": "get_weather", "args": {}},
+                    ],
+                },
+                "interactionStatus": "IN_PROGRESS",
+            },
+            {"serverContent": {"turnComplete": True}},
+            {
+                "serverContent": {
+                    "outputTranscription": {"text": "Sunny."},
+                    "interactionStatus": "IDLE",
+                    "turnComplete": True,
+                },
+                "usageMetadata": {
+                    "promptTokenCount": 12,
+                    "responseTokenCount": 7,
+                },
+            },
+            {"serverContent": {"interactionStatus": "IDLE"}},
+        ]
+        with patch(
+            "agentscope.realtime._gemini._model.uuid.uuid4",
+            return_value=SimpleNamespace(hex="r1"),
+        ):
+            actual = [_dump(model._parse(frame)) for frame in messages]
+        self.assertEqual(
+            actual,
+            [
+                [("ResponseCreatedEvent", {"item_id": "r1"})],
+                [],
+                [
+                    (
+                        "AudioDeltaEvent",
+                        {
+                            "item_id": "r1",
+                            "pcm": b"\x01\x00",
+                            "sample_rate": 24000,
+                        },
+                    ),
+                    (
+                        "TranscriptDeltaEvent",
+                        {"item_id": "r1", "delta": "Checking."},
+                    ),
+                ],
+                [
+                    (
+                        "ToolCallEvent",
+                        {
+                            "item_id": "r1",
+                            "non_blocking": True,
+                            "tool_call": {
+                                "type": "tool_call",
+                                "id": "c1",
+                                "name": "get_weather",
+                                "input": "{}",
+                                "state": "pending",
+                                "suggested_rules": [],
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        },
+                    ),
+                ],
+                [],
+                [
+                    (
+                        "TranscriptDeltaEvent",
+                        {"item_id": "r1", "delta": "Sunny."},
+                    ),
+                    (
+                        "ResponseDoneEvent",
+                        {
+                            "item_id": "r1",
+                            "input_tokens": 12,
+                            "output_tokens": 7,
+                        },
+                    ),
+                ],
+                [],
+            ],
+        )
+        self.assertEqual((model._response_id, model._usage), ("", {}))
+
+    def test_status_only_completion_and_interruption(self) -> None:
+        """Root/content statuses finish silent work and reset on barge-in."""
+        for at_root in (False, True):
+            for interrupted in (False, True):
+                with self.subTest(root=at_root, interrupted=interrupted):
+                    model = GeminiRealtimeModel(THINKING_MODEL, CRED)
+                    content: dict = {"interactionStatus": "IN_PROGRESS"}
+                    frame: dict = (
+                        content if at_root else {"serverContent": content}
+                    )
+                    opened = model._parse(frame)
+                    reply_id = opened[0].item_id
+                    if interrupted:
+                        events = model._parse(
+                            {"serverContent": {"interrupted": True}},
+                        )
+                        self.assertEqual(
+                            _dump(events),
+                            [
+                                (
+                                    "SpeechStartedEvent",
+                                    {
+                                        "item_id": AnyString(),
+                                        "at_ms": 0,
+                                    },
+                                ),
+                            ],
+                        )
+                    content = {"interactionStatus": "IDLE"}
+                    frame = content if at_root else {"serverContent": content}
+                    self.assertEqual(
+                        _dump(model._parse(frame)),
+                        []
+                        if interrupted
+                        else [
+                            (
+                                "ResponseDoneEvent",
+                                {
+                                    "item_id": reply_id,
+                                    "input_tokens": 0,
+                                    "output_tokens": 0,
+                                },
+                            ),
+                        ],
+                    )
+                    self.assertEqual(model._parse(frame), [])
+                    next_turn = model._parse(
+                        {
+                            "serverContent": {
+                                "outputTranscription": {"text": "Next"},
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        _dump(next_turn),
+                        [
+                            (
+                                "ResponseCreatedEvent",
+                                {
+                                    "item_id": AnyString(),
+                                },
+                            ),
+                            (
+                                "TranscriptDeltaEvent",
+                                {
+                                    "item_id": next_turn[0].item_id,
+                                    "delta": "Next",
+                                },
+                            ),
+                        ],
+                    )
+                    self.assertNotEqual(next_turn[0].item_id, reply_id)
+
+    def test_late_transcription_and_silent_completion(self) -> None:
+        """Thinking before transcription and silent replies retain input."""
+        for starts_thinking in (False, True):
+            with self.subTest(starts_thinking=starts_thinking):
+                model = GeminiRealtimeModel(THINKING_MODEL, CRED)
+                if starts_thinking:
+                    model._parse({"interactionStatus": "IN_PROGRESS"})
+                reply_id = model._response_id
+                for text in ("Check ", "weather"):
+                    events = model._parse(
+                        {
+                            "serverContent": {
+                                "inputTranscription": {"text": text},
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        _dump(events),
+                        [
+                            (
+                                "InputTranscriptionDeltaEvent",
+                                {
+                                    "item_id": model._user_id,
+                                    "delta": text,
+                                    "response_id": reply_id,
+                                },
+                            ),
+                        ],
+                    )
+                expected = [
+                    (
+                        "InputTranscriptionEvent",
+                        {
+                            "item_id": model._user_id,
+                            "text": "Check weather",
+                        },
+                    ),
+                ]
+                if starts_thinking:
+                    expected.append(
+                        (
+                            "ResponseDoneEvent",
+                            {
+                                "item_id": reply_id,
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                            },
+                        ),
+                    )
+                self.assertEqual(
+                    _dump(model._parse({"interactionStatus": "IDLE"})),
+                    expected,
+                )
+                self.assertEqual(
+                    (model._input_text, model._user_id, model._response_id),
+                    ("", "", ""),
+                )
+
+
 class GeminiParseTest(unittest.TestCase):
     """Server messages -> model events."""
 
@@ -286,6 +593,7 @@ class GeminiParseTest(unittest.TestCase):
                     "ToolCallEvent",
                     {
                         "item_id": AnyString(),
+                        "non_blocking": False,
                         "tool_call": {
                             "type": "tool_call",
                             "id": "c1",
@@ -394,6 +702,78 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
 
         self.model._send = capture  # type: ignore[method-assign]
 
+    async def test_local_cancel_settles_thinking_input(self) -> None:
+        """Local VAD interruption must separate successive input turns."""
+        model = GeminiRealtimeModel(
+            THINKING_MODEL,
+            CRED,
+            parameters=GeminiRealtimeModel.Parameters(turn_detection="none"),
+        )
+        model._send = AsyncMock()
+        setup = model._setup("", None, "")["setup"]
+        self.assertEqual(
+            setup["realtimeInputConfig"]["activityHandling"],
+            "NO_INTERRUPTION",
+        )
+        first = model._parse(
+            {
+                "serverContent": {
+                    "inputTranscription": {"text": "Check weather"},
+                    "interactionStatus": "IN_PROGRESS",
+                },
+            },
+        )
+        user_id = first[0].item_id
+        await model.cancel_response()
+        await model.cancel_response()
+        settled = []
+        while not model._queue.empty():
+            settled.append(model._queue.get_nowait())
+        self.assertEqual(
+            _dump(settled),
+            [
+                (
+                    "InputTranscriptionEvent",
+                    {"item_id": user_id, "text": "Check weather"},
+                ),
+            ],
+        )
+        second = model._parse(
+            {"serverContent": {"inputTranscription": {"text": "Change "}}},
+        )
+        await model.cancel_response()
+        self.assertTrue(model._queue.empty())
+        second += model._parse(
+            {
+                "serverContent": {
+                    "inputTranscription": {"text": "city"},
+                    "interactionStatus": "IDLE",
+                },
+            },
+        )
+        self.assertNotEqual(second[0].item_id, user_id)
+        self.assertEqual(
+            _dump(second[:3]),
+            [
+                (
+                    "InputTranscriptionDeltaEvent",
+                    {
+                        "item_id": second[0].item_id,
+                        "delta": text,
+                        "response_id": "",
+                    },
+                )
+                for text in ("Change ", "city")
+            ]
+            + [
+                (
+                    "InputTranscriptionEvent",
+                    {"item_id": second[0].item_id, "text": "Change city"},
+                ),
+            ],
+        )
+        model._send.assert_not_awaited()
+
     async def test_text_turn_and_tool_result(self) -> None:
         """A text turn is complete on arrival; a tool result resumes the
         model without asking for a response."""
@@ -482,6 +862,47 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
 
 class GeminiDisconnectTest(IsolatedAsyncioTestCase):
     """A closed WebSocket surfaces as ModelDisconnectedError."""
+
+    async def test_thinking_endpoint_and_reconnect(self) -> None:
+        """Thinking uses alpha; ordinary Live retains its beta endpoint."""
+        for name, version in ((THINKING_MODEL, "v1alpha"), (MODEL, "v1beta")):
+            with self.subTest(model=name):
+                model = GeminiRealtimeModel(name, CRED)
+                socket = AsyncMock()
+
+                async def acknowledge(
+                    session: GeminiRealtimeModel = model,
+                ) -> None:
+                    """Acknowledge setup and keep the reader alive."""
+                    session._ready.set()
+                    await asyncio.Event().wait()
+
+                with patch(
+                    "websockets.connect",
+                    new_callable=AsyncMock,
+                    return_value=socket,
+                ) as connect, patch.object(model, "_read", acknowledge):
+                    model._response_id = "old-response"
+                    model._usage = {"responseTokenCount": 99}
+                    model._awaiting_tool_reply = True
+                    model._pending_tool_calls.add("old-call")
+                    await model.connect("hi")
+                    self.assertEqual(
+                        (
+                            model._response_id,
+                            model._usage,
+                            model._awaiting_tool_reply,
+                            model._pending_tool_calls,
+                        ),
+                        ("", {}, False, set()),
+                    )
+                    connect.assert_awaited_once_with(
+                        "wss://generativelanguage.googleapis.com/ws/"
+                        f"google.ai.generativelanguage.{version}."
+                        "GenerativeService.BidiGenerateContent?key=key-x",
+                    )
+                    await model.close()
+                    socket.close.assert_awaited_once_with()
 
     async def test_send_on_closed_socket(self) -> None:
         """websockets' ConnectionClosed becomes the realtime-level error
