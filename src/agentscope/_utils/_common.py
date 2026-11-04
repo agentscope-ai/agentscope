@@ -403,6 +403,13 @@ def _flatten_json_schema(schema: dict) -> dict:
 
             visited = visited | {def_name}
             resolved = _resolve_ref(defs[def_name], visited)
+            if not isinstance(resolved, dict):
+                # Boolean schemas are legal (RFC draft 2020-12) and carry no
+                # keywords of their own, so the sibling keywords of the
+                # referencing object cannot be merged onto them. Wrap the
+                # boolean in `allOf` to keep both the referenced rule and
+                # the siblings.
+                resolved = {"allOf": [resolved]}
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
