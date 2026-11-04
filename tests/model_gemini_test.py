@@ -1672,3 +1672,52 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+class TestFlattenEscapedDiscriminators(unittest.TestCase):
+    """Test JSON Pointer decoding in discriminator mapping cleanup."""
+
+    def test_flatten_removes_discriminators_with_escaped_names(self) -> None:
+        """Decode local mapping tokens before checking removed definitions."""
+        branch = {"type": "object", "required": ["kind"]}
+        for keyword in ("$defs", "definitions"):
+            for name, token in (
+                ("Ring/Named", "Ring~1Named"),
+                ("Ring~Named", "Ring~0Named"),
+                ("Ring~1Named", "Ring~01Named"),
+            ):
+                with self.subTest(keyword=keyword, name=name):
+                    ref = f"#/{keyword}/{token}"
+                    schema = {
+                        keyword: {name: branch},
+                        "oneOf": [{"$ref": ref}],
+                        "discriminator": {
+                            "propertyName": "kind",
+                            "mapping": {"ring": ref},
+                        },
+                    }
+                    original = copy.deepcopy(schema)
+
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {"oneOf": [branch]},
+                    )
+                    self.assertEqual(schema, original)
+
+    def test_flatten_keeps_unresolved_escaped_discriminators(self) -> None:
+        """An encoded token is not the literal name of its definition."""
+        for keyword in ("$defs", "definitions"):
+            with self.subTest(keyword=keyword):
+                discriminator = {
+                    "propertyName": "kind",
+                    "mapping": {"ring": f"#/{keyword}/Ring~1Named"},
+                }
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            keyword: {"Ring~1Named": {"type": "object"}},
+                            "discriminator": discriminator,
+                        },
+                    ),
+                    {"discriminator": discriminator},
+                )
