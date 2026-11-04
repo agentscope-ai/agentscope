@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -20,13 +20,17 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     UserMsg,
     ToolResultState,
 )
-from agentscope.event import ExternalExecutionResultEvent
+from agentscope.event import (
+    ExternalExecutionResultEvent,
+    RequireExternalExecutionEvent,
+)
 
 
 class MockExternalSequentialTool(ToolBase):
@@ -1609,6 +1613,82 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ),
                 (None, 0, 1) if index == 0 else ("completed", 2, 2),
             )
+
+    async def test_external_result_is_truncated_like_an_internal_one(
+        self,
+    ) -> None:
+        """A huge external execution result obeys ``tool_result_limit``."""
+        model = MockModel(context_size=200_000)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(tools=[MockExternalSequentialTool()]),
+            context_config=ContextConfig(tool_result_limit=50),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                self.final_mock_responses,
+            ],
+        )
+
+        require = None
+        async for event in agent.reply_stream(
+            UserMsg(name="user", content=self.user_input_text),
+        ):
+            if isinstance(event, RequireExternalExecutionEvent):
+                require = event
+        self.assertIsNotNone(require)
+
+        huge_output = "x" * 200_000
+        await agent.reply(
+            ExternalExecutionResultEvent(
+                reply_id=require.reply_id,
+                execution_results=[
+                    ToolResultBlock(
+                        id=self.tool_call_id_1,
+                        name=self.sequential_tool_name,
+                        output=huge_output,
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        )
+
+        results = [
+            block
+            for msg in agent.state.context
+            for block in msg.get_content_blocks("tool_result")
+            if block.id == self.tool_call_id_1
+        ]
+        self.assertEqual(len(results), 1)
+
+        result = results[0]
+        tokens = await model.count_tokens(
+            [AssistantMsg(agent.name, content=result.output)],
+            None,
+        )
+        # The limit plus the truncation reminder that explains the cut
+        self.assertLessEqual(
+            tokens,
+            120,
+            f"The external result kept {tokens} tokens in context",
+        )
+        self.assertIn("<<<TRUNCATED>>>", str(result.output))
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
