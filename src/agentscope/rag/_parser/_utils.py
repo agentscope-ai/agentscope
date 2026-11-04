@@ -82,17 +82,21 @@ def _table_to_markdown(table_data: list[list[str]]) -> str:
     if not table_data:
         return ""
 
-    num_cols = len(table_data[0])
+    # Rows may be ragged — e.g. hand-built or converted docx tables whose
+    # header is narrower than a data row. The widest row defines the column
+    # count; truncating to the header width would silently drop cells.
+    num_cols = max(len(row) for row in table_data)
     if num_cols == 0:
         return ""
 
-    header = [_format_markdown_table_cell(cell) for cell in table_data[0]]
+    header_row = list(table_data[0]) + [""] * (num_cols - len(table_data[0]))
+    header = [_format_markdown_table_cell(cell) for cell in header_row]
     lines = [
         "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---"] * num_cols) + " |",
     ]
     for row in table_data[1:]:
-        # Pad short rows so column counts match the header.
+        # Pad short rows so every row spans the same column count.
         padded = list(row) + [""] * max(0, num_cols - len(row))
         cells = [
             _format_markdown_table_cell(cell) for cell in padded[:num_cols]
