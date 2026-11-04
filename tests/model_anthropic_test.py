@@ -14,6 +14,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import httpx2
+from anthropic import DefaultAsyncHttpxClient
 from anthropic import types as anthropic_types
 
 from utils import AnyString
@@ -618,9 +620,16 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         self.model.parameters.max_tokens = 1500
         bodies = []
 
-        def capture(request: httpx.Request) -> httpx.Response:
+        # Use the same HTTP types as the installed Anthropic SDK.
+        backend = (
+            httpx2
+            if issubclass(DefaultAsyncHttpxClient, httpx2.AsyncClient)
+            else httpx
+        )
+
+        def capture(request: Any) -> Any:
             bodies.append(json.loads(request.content))
-            return httpx.Response(
+            return backend.Response(
                 200,
                 json={
                     "id": "msg-1",
@@ -632,8 +641,8 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
                 },
             )
 
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(capture),
+        async with DefaultAsyncHttpxClient(
+            transport=backend.MockTransport(capture),
         ) as client:
             model = AnthropicChatModel(
                 credential=self.model.credential,

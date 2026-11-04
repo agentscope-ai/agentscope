@@ -208,8 +208,11 @@ class AnthropicChatModel(ChatModelBase):
             return "disabled"
         return "enabled" if self.parameters.thinking_enable else None
 
-    def _set_thinking_config(self, kwargs: dict[str, Any]) -> None:
-        """Apply thinking defaults unless the caller supplied ``thinking``.
+    def _build_thinking_config(
+        self,
+        max_tokens: int,
+    ) -> tuple[dict[str, Any] | None, int]:
+        """Build thinking defaults and return a suggested output limit.
 
         Only manual (``enabled``) thinking needs a budget. If the caller
         omits it, use half the effective output limit, rounded down, with
@@ -221,19 +224,14 @@ class AnthropicChatModel(ChatModelBase):
         the budget reaches or exceeds the 8192-token default, set the limit
         to the budget plus 1024 to leave room for the answer.
         """
-        extra_body = kwargs.get("extra_body") or {}
-        if "thinking" in kwargs or "thinking" in extra_body:
-            return
         mode = self._thinking_mode()
         if mode is None:
-            return
+            return None, max_tokens
 
         thinking: dict[str, Any] = {"type": mode}
         if mode == "enabled":
-            limit = kwargs.get("max_tokens")
             budget = self.parameters.thinking_budget
             if budget is None:
-                max_tokens = _DEFAULT_MAX_TOKENS if limit is None else limit
                 budget = max(1024, max_tokens // 2)
                 if budget >= max_tokens:
                     raise ValueError(
@@ -241,16 +239,15 @@ class AnthropicChatModel(ChatModelBase):
                         f"max_tokens={max_tokens}. Raise max_tokens above "
                         "1024 or disable thinking for this call.",
                     )
-            elif limit is None and budget >= _DEFAULT_MAX_TOKENS:
-                # Only expand the framework's default output limit.
-                kwargs["max_tokens"] = budget + 1024
+            elif budget >= max_tokens:
+                max_tokens = budget + 1024
             thinking["budget_tokens"] = budget
 
         # ``display`` is invalid alongside ``type: "disabled"``.
         if mode != "disabled" and self.parameters.thinking_display:
             thinking["display"] = self.parameters.thinking_display
 
-        kwargs["thinking"] = thinking
+        return thinking, max_tokens
 
     def _build_output_config(self) -> dict[str, Any] | None:
         """Build the provider-specific output configuration."""
@@ -316,8 +313,14 @@ class AnthropicChatModel(ChatModelBase):
         if fmt_tool_choice is not None:
             kwargs["tool_choice"] = fmt_tool_choice
 
-        self._set_thinking_config(kwargs)
-        kwargs.setdefault("max_tokens", _DEFAULT_MAX_TOKENS)
+        default_limit = _DEFAULT_MAX_TOKENS
+        if "thinking" not in kwargs and "thinking" not in extra_body:
+            thinking, default_limit = self._build_thinking_config(
+                kwargs.get("max_tokens", default_limit),
+            )
+            if thinking is not None:
+                kwargs["thinking"] = thinking
+        kwargs.setdefault("max_tokens", default_limit)
 
         formatted_messages = await self.formatter.format(messages)
 
