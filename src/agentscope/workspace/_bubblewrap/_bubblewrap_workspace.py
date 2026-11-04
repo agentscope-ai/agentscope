@@ -20,6 +20,7 @@ from ...mcp import MCPClient
 from .._gateway_client import GatewayClient
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import (
+    UV_VERSION,
     _GATEWAY_BASE_REQUIREMENTS,
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
@@ -556,7 +557,7 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
             "curl -LsSf --retry 5 --retry-delay 2 --retry-all-errors "
             "--connect-timeout 15 --max-time 60 --retry-max-time 180 "
             '-o "$tmp_installer" '
-            "https://astral.sh/uv/install.sh; "
+            f"https://astral.sh/uv/{UV_VERSION}/install.sh; "
             f"env UV_INSTALL_DIR={quoted_bin_dir} "
             'INSTALLER_NO_MODIFY_PATH=1 sh "$tmp_installer"; '
             'rm -f "$tmp_installer"; '

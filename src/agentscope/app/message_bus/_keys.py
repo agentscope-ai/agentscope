@@ -50,6 +50,11 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     input, so it is re-queued rather than dropped while the session is
     running."""
 
+    WAKEUP_KIND_QUEUED_MESSAGE: Final = "queued_message"
+    """Trigger kind: drain the next ordinary browser input from the
+    session's FIFO turn queue. Busy or HITL-parked sessions defer this
+    trigger until the current reply has fully finished."""
+
     # ------------------------------------------------------------------
     # Cross-session UI projection — a generic per-session Redis-hash
     # store onto which one session can project UI cards owned by another
@@ -126,10 +131,27 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     SESSION_REPLAY_MAX_LEN = 1000
     """Replay log length cap; older events are trimmed on append."""
 
+    _SESSION_EVENT_CHECKPOINT = "agentscope:session:event_checkpoint:{sid}"
+    _SESSION_EVENT_CHECKPOINT_LOCK = (
+        "agentscope:session:event_checkpoint:lock:{sid}"
+    )
+    SESSION_EVENT_CURSOR_FIELD: Final = "cursor"
+    SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS = 30
+
     @classmethod
     def session_events(cls, session_id: str) -> str:
         """Replay log + live pub/sub channel key for a session."""
         return cls._SESSION_EVENTS.format(sid=session_id)
+
+    @classmethod
+    def session_event_checkpoint(cls, session_id: str) -> str:
+        """Registry namespace for the persisted replay cursor."""
+        return cls._SESSION_EVENT_CHECKPOINT.format(sid=session_id)
+
+    @classmethod
+    def session_event_checkpoint_lock(cls, session_id: str) -> str:
+        """Lock pairing a persisted message snapshot with its cursor."""
+        return cls._SESSION_EVENT_CHECKPOINT_LOCK.format(sid=session_id)
 
     # ------------------------------------------------------------------
     # Session run lock
@@ -226,6 +248,170 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         having no consumer.
         """
         return cls._INBOX_CONSUMER.format(sid=session_id)
+
+    # ------------------------------------------------------------------
+    # Session user-input queue
+    # ------------------------------------------------------------------
+    # These keys intentionally use ``session_id`` rather than ``user_id``.
+    # This relies on storage assigning globally unique session ids and on
+    # every public queue endpoint enforcing session ownership before access.
+    # Revisit the key shape if a storage backend ever accepts caller-chosen
+    # session ids.
+
+    _CHAT_INPUTS = "agentscope:chat:inputs:{sid}"
+    _CHAT_INPUT_DISPATCH_LOCK = "agentscope:chat:inputs:lock:{sid}"
+    _CHAT_INPUT_MUTATION_LOCK = "agentscope:chat:inputs:mutation:{sid}"
+    _CHAT_INPUT_PENDING_REGISTRY = "agentscope:chat:pending"
+    _CHAT_INPUT_INFLIGHT_REGISTRY = "agentscope:chat:inflight"
+    _CHAT_ACTIVE_REPLY_REGISTRY = "agentscope:chat:active_reply"
+    _CHAT_INPUT_RECOVERY_LOCK = "agentscope:chat:recovery:lock"
+    _CHAT_INPUT_RECOVERY_STATE = "agentscope:chat:recovery:state"
+    _CHAT_INPUT_USER_QUOTA_LOCK = "agentscope:chat:quota:lock:{uid}"
+
+    CHAT_INPUT_MAX_LEN: Final = 100
+    """Maximum number of pending ordinary user turns per session."""
+
+    CHAT_INPUT_USER_MAX_LEN: Final = 500
+    """Maximum pending/in-flight ordinary turns owned by one user."""
+
+    CHAT_INPUT_MUTATION_TTL_SECS: Final = 10
+    """Crash lease for short queue mutations."""
+
+    CHAT_INPUT_DISPATCH_TTL_SECS: Final = 30
+    """Renewed claim-pump lease; bounds hard-crash queue stalls."""
+
+    CHAT_INPUT_MUTATION_TIMEOUT_SECS: Final = 2.0
+    """Maximum foreground wait for a queue mutation lock."""
+
+    CHAT_INPUT_RECOVERY_LOCK_TIMEOUT_SECS: Final = 0.1
+    """Maximum recovery-sweep wait for one session mutation lock."""
+
+    CHAT_INPUT_MAX_ATTEMPTS: Final = 3
+    """Maximum pre-execution persistence attempts before terminal failure."""
+
+    CHAT_INPUT_RETRY_SECS: Final = 1.0
+    """Initial retry backoff; multiplied by the failed attempt count."""
+
+    @classmethod
+    def chat_input_payloads(cls, session_id: str) -> str:
+        """Return the session-local registry of complete input payloads."""
+        return f"agentscope:chat:payloads:{session_id}"
+
+    @classmethod
+    def chat_input_claim(cls, session_id: str) -> str:
+        """Return the session-local durable claim registry."""
+        return f"agentscope:chat:claim:{session_id}"
+
+    @classmethod
+    def chat_input_user_sessions(cls, user_id: str) -> str:
+        """Return one user's lightweight pending-session index."""
+        return f"agentscope:chat:user_sessions:{user_id}"
+
+    @classmethod
+    def chat_inputs(cls, session_id: str) -> str:
+        """Return the FIFO key for ordinary user turns.
+
+        Args:
+            session_id (`str`):
+                Session that owns the queue.
+
+        Returns:
+            `str`:
+                Per-session pending-input queue key.
+        """
+        return cls._CHAT_INPUTS.format(sid=session_id)
+
+    @classmethod
+    def chat_input_dispatch_lock(cls, session_id: str) -> str:
+        """Return the cross-process queue-dispatch mutex key.
+
+        Args:
+            session_id (`str`):
+                Session whose queue drain must be serialized.
+
+        Returns:
+            `str`:
+                Per-session dispatch-lock key.
+        """
+        return cls._CHAT_INPUT_DISPATCH_LOCK.format(sid=session_id)
+
+    @classmethod
+    def chat_input_mutation_lock(cls, session_id: str) -> str:
+        """Return the short-lived queue-mutation mutex key.
+
+        Args:
+            session_id (`str`):
+                Session whose pending queue may be changed.
+
+        Returns:
+            `str`:
+                Per-session mutation-lock key.
+        """
+        return cls._CHAT_INPUT_MUTATION_LOCK.format(sid=session_id)
+
+    @classmethod
+    def chat_input_pending_registry(cls) -> str:
+        """Return the registry key for sessions with pending input.
+
+        Returns:
+            `str`:
+                Global pending-session registry key.
+        """
+        return cls._CHAT_INPUT_PENDING_REGISTRY
+
+    @classmethod
+    def chat_input_inflight_registry(cls) -> str:
+        """Return the registry key for durably claimed turns.
+
+        Returns:
+            `str`:
+                Global per-session in-flight claim registry key.
+        """
+        return cls._CHAT_INPUT_INFLIGHT_REGISTRY
+
+    @classmethod
+    def chat_active_reply_registry(cls) -> str:
+        """Return the registry containing each session's active reply id.
+
+        Returns:
+            `str`:
+                Global registry mapping session ids to active reply ids.
+        """
+        return cls._CHAT_ACTIVE_REPLY_REGISTRY
+
+    @classmethod
+    def chat_input_user_quota_lock(cls, user_id: str) -> str:
+        """Return the per-user pending-turn quota mutex key.
+
+        Args:
+            user_id (`str`):
+                User whose aggregate quota check must be serialized.
+
+        Returns:
+            `str`:
+                Per-user quota-lock key.
+        """
+        return cls._CHAT_INPUT_USER_QUOTA_LOCK.format(uid=user_id)
+
+    @classmethod
+    def chat_input_recovery_lock(cls) -> str:
+        """Return the cluster-wide recovery-sweep mutex key.
+
+        Returns:
+            `str`:
+                Recovery leadership lock key.
+        """
+        return cls._CHAT_INPUT_RECOVERY_LOCK
+
+    @classmethod
+    def chat_input_recovery_state(cls) -> str:
+        """Return the recovery leadership metadata registry key.
+
+        Returns:
+            `str`:
+                Registry key containing recovery owner and expiry fields.
+        """
+        return cls._CHAT_INPUT_RECOVERY_STATE
 
     # ------------------------------------------------------------------
     # Run trigger queue (wakeup / resume)

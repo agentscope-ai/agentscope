@@ -8,6 +8,7 @@ from agentscope.tool import Edit
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 
@@ -238,3 +239,98 @@ class EditToolTest(IsolatedAsyncioTestCase):
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)
+
+    async def test_non_utf8_file_is_not_edited(self) -> None:
+        """Test editing a non-UTF-8 file fails and keeps its bytes."""
+        original = b"name = 'caf\xe9'\ncount = 1\n"
+        with open(self.temp_file.name, "wb") as f:
+            f.write(original)
+
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string="count = 1",
+            new_string="count = 2",
+        )
+
+        self.assertEqual(
+            chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Error reading file: 'utf-8' codec can't decode "
+                            "byte 0xe9 in position 11: invalid continuation "
+                            "byte"
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+        with open(self.temp_file.name, "rb") as f:
+            self.assertEqual(f.read(), original)
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent."""
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {
+                    "file_path": f"/tmp/probe/{parent}/out.csv",
+                    "old_string": "a",
+                    "new_string": "b",
+                }
+                engine = PermissionEngine(PermissionContext())
+                first = await engine.check_permission(
+                    self.edit_tool,
+                    tool_input,
+                )
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Edit",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                engine.add_rule(first.suggested_rules[0])
+                approved = await engine.check_permission(
+                    self.edit_tool,
+                    tool_input,
+                )
+                unrelated = await engine.check_permission(
+                    self.edit_tool,
+                    {
+                        **tool_input,
+                        "file_path": f"/tmp/probe/{sibling}/out.csv",
+                    },
+                )
+                self.assertEqual(
+                    [
+                        first.behavior,
+                        approved.behavior,
+                        unrelated.behavior,
+                    ],
+                    [
+                        PermissionBehavior.ASK,
+                        PermissionBehavior.ALLOW,
+                        PermissionBehavior.ASK,
+                    ],
+                )

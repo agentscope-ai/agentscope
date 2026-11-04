@@ -69,8 +69,20 @@ class ScoreAnswer(DictMixin):
     """The answer type discriminator."""
 
 
+@dataclass
+class RefusalAnswer(DictMixin):
+    """A refusal to answer one question, independent of other answers."""
+
+    type: Literal["refusal_answer"] = field(
+        default_factory=lambda: "refusal_answer",
+    )
+    """The answer type discriminator."""
+
+
 #: A provider-independent classifier answer.
-ClassifierAnswer: TypeAlias = BinaryAnswer | ChoiceAnswer | ScoreAnswer
+ClassifierAnswer: TypeAlias = (
+    BinaryAnswer | ChoiceAnswer | ScoreAnswer | RefusalAnswer
+)
 
 
 @dataclass

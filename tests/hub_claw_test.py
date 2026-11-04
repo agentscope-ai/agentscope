@@ -1,8 +1,60 @@
 # -*- coding: utf-8 -*-
 """ClawHub card-building test case, without any network."""
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
+
+import httpx
 
 from agentscope.app.hub import ClawSkillHub
+
+
+class ClawSkillContentTest(IsolatedAsyncioTestCase):
+    """Parsing skill content returned by the ClawHub file endpoint."""
+
+    async def test_skill_frontmatter_with_utf8_bom(self) -> None:
+        """A BOM-prefixed ``SKILL.md`` still has its frontmatter parsed."""
+        skill_md = (
+            "\ufeff---\nname: demo\ndescription: Frontmatter description\n"
+            "---\n\n# Demo\nRun the demo."
+        )
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/file"):
+                return httpx.Response(200, text=skill_md)
+            return httpx.Response(
+                200,
+                json={
+                    "skill": {"slug": "demo"},
+                    "owner": {"handle": "alice"},
+                    "latestVersion": {"version": "1.2.3"},
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        with patch("httpx.AsyncClient", return_value=client):
+            async with ClawSkillHub() as hub:
+                card = await hub.get_skill("user", "alice/demo")
+
+        self.assertDictEqual(
+            card.model_dump(),
+            {
+                "hub_id": "clawhub",
+                "id": "alice/demo",
+                "name": "demo",
+                "description": "Frontmatter description",
+                "display_name": None,
+                "tags": [],
+                "version": "1.2.3",
+                "updated_at": None,
+                "author": "alice",
+                "icon_url": None,
+                "installs": None,
+                "downloads": None,
+                "url": "https://clawhub.ai/skills/demo",
+                "markdown": "# Demo\nRun the demo.",
+                "metadata": {},
+            },
+        )
 
 
 class ClawCardTest(TestCase):

@@ -2,14 +2,17 @@
 # pylint: disable=redefined-builtin
 """Test the team pipeline."""
 import asyncio
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
+    AgentEvent,
     ConfirmResult,
+    ExternalExecutionResultEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
@@ -267,6 +270,240 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
             ],
         )
         self.assertListEqual(self.researcher.state.context, [])
+
+    async def test_member_model_failure_clears_parked_assignment(self) -> None:
+        """Close a failed assignment and let the same member work next turn."""
+        failure = RuntimeError("simulated transient member model failure")
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+                _tool_call(
+                    "call-2",
+                    '{"member": "researcher", "prompt": "Retry A"}',
+                ),
+                _text("A is 42."),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [failure, _text("recovered member response")],
+        )
+
+        with self.assertRaises(RuntimeError) as caught:
+            await self._run(self.query)
+
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(
+            self.leader.state.get_awaiting_tool_calls("leader"),
+            [],
+        )
+        self.assertEqual(
+            [
+                block.model_dump()
+                for block in self.leader.state.context[-1].get_content_blocks(
+                    "tool_result",
+                )
+            ],
+            [
+                {
+                    "type": "tool_result",
+                    "id": "call-1",
+                    "name": "TeamAssign",
+                    "output": (
+                        "<system-reminder>The tool call has been interrupted "
+                        "by the user.</system-reminder>"
+                    ),
+                    "state": "interrupted",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
+
+        events = await self._run(UserMsg(name="user", content="try again"))
+        self.assertEqual(
+            [event for event in events if event[0] == "REPLY_END"],
+            [("REPLY_END", "researcher"), ("REPLY_END", "leader")],
+        )
+        self.assertEqual(
+            [
+                block.model_dump()
+                for block in self.leader.state.context[-1].get_content_blocks(
+                    "tool_result",
+                )
+            ],
+            [
+                {
+                    "type": "tool_result",
+                    "id": "call-2",
+                    "name": "TeamAssign",
+                    "output": [
+                        {
+                            "type": "text",
+                            "text": "recovered member response",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                    ],
+                    "state": "success",
+                    "metadata": {},
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
+        self.assertEqual(
+            (self.leader.model.cnt, self.researcher.model.cnt),
+            (3, 2),
+        )
+        self.assertEqual(self.researcher.state.context, [])
+
+    async def test_invalid_inputs_preserve_parked_team(self) -> None:
+        """Rejected inputs must leave the pending confirmation resumable."""
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+                _text("A is 42."),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call("call-r1", '{"input": "A"}', "ask_tool"),
+                _text("Found A"),
+            ],
+        )
+        await self._run(self.query)
+        reply_id = self.researcher.state.reply_id
+        states = [self.leader.state, self.researcher.state]
+        before = [state.model_dump() for state in states]
+        invalid_inputs = [
+            UserConfirmResultEvent(
+                reply_id="stale-reply-id",
+                confirm_results=[],
+            ),
+            UserConfirmResultEvent(
+                reply_id=reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=ToolCallBlock(
+                            id="unknown-call",
+                            name="ask_tool",
+                            input='{"input": "A"}',
+                        ),
+                    ),
+                ],
+            ),
+            ExternalExecutionResultEvent(
+                reply_id=reply_id,
+                execution_results=[],
+            ),
+            self.query,
+        ]
+        for inputs in invalid_inputs:
+            with self.subTest(inputs=inputs):
+                with self.assertRaises(ValueError):
+                    await self._run(inputs)
+                self.assertEqual(
+                    [state.model_dump() for state in states],
+                    before,
+                )
+
+        calls = self.researcher.state.get_awaiting_tool_calls("researcher")
+        events = await self._run(
+            UserConfirmResultEvent(
+                reply_id=reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=calls[0],
+                    ),
+                ],
+            ),
+        )
+        self.assertEqual(events[-1], ("REPLY_END", "leader"))
+
+    async def test_cleanup_failure_preserves_member_error(self) -> None:
+        """A failing interrupt must neither recurse nor replace the error."""
+        failure = RuntimeError("member model failed")
+        self.researcher.model.set_responses([failure])
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+            ],
+        )
+        original_reply_stream = self.leader.reply_stream
+        interrupts = []
+
+        async def reply_stream(
+            inputs: Any,
+        ) -> AsyncGenerator[AgentEvent, None]:
+            """Simulate a reply middleware failing before interrupt cleanup."""
+            if isinstance(inputs, UserInterruptEvent):
+                interrupts.append(inputs.reply_id)
+                raise RuntimeError("middleware unavailable")
+            async for event in original_reply_stream(inputs):
+                yield event
+
+        with (
+            patch.object(self.leader, "reply_stream", reply_stream),
+            self.assertLogs("as", level="WARNING"),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                await self._run(self.query)
+
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(interrupts, [self.leader.state.reply_id])
+
+    async def test_resumed_member_failure_clears_assignment(self) -> None:
+        """A model failure after confirmation also releases the leader."""
+        failure = RuntimeError("resumed member failed")
+        self.leader.model.set_responses(
+            [
+                _tool_call(
+                    "call-1",
+                    '{"member": "researcher", "prompt": "Find A"}',
+                ),
+                _text("next turn"),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call("call-r1", '{"input": "A"}', "ask_tool"),
+                failure,
+            ],
+        )
+        await self._run(self.query)
+        calls = self.researcher.state.get_awaiting_tool_calls("researcher")
+        with self.assertRaises(RuntimeError) as caught:
+            await self._run(
+                UserConfirmResultEvent(
+                    reply_id=self.researcher.state.reply_id,
+                    confirm_results=[
+                        ConfirmResult(
+                            confirmed=True,
+                            tool_call=calls[0],
+                        ),
+                    ],
+                ),
+            )
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(
+            self.leader.state.get_awaiting_tool_calls("leader"),
+            [],
+        )
+        events = await self._run(UserMsg(name="user", content="try again"))
+        self.assertEqual(events[-1], ("REPLY_END", "leader"))
 
     async def test_member_hitl_round_trip(self) -> None:
         """A researcher parked on confirmation ends the stream with the

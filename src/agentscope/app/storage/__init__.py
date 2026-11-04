@@ -45,13 +45,18 @@ from ._model import (
     SOPWorkspaceGrain,
     SkillRecord,
     ChatModelConfig,
+    ASRModelConfig,
+    RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
     TeamData,
     TeamRecord,
     UserRecord,
     TeamMember,
+    AgentChatConfig,
     InviteConfig,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 
 if TYPE_CHECKING:
@@ -86,6 +91,7 @@ __all__ = [
     "RedisStorage",
     "AsyncSQLAlchemyStorage",
     # The ORM models
+    "AgentChatConfig",
     "InviteConfig",
     "AgentData",
     "AgentRecord",
@@ -124,6 +130,8 @@ __all__ = [
     "SOPWorkspaceGrain",
     "SkillRecord",
     "ChatModelConfig",
+    "ASRModelConfig",
+    "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
     "TeamMember",
@@ -133,4 +141,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]

@@ -72,6 +72,7 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 
 ## 新闻
 <!-- BEGIN NEWS -->
+- **[2026-10] `功能` `实验性`:** 智能体服务支持基于 WebRTC 的实时语音对话，文本与语音模式共享同一会话历史。
 - **[2026-09] `功能` `实验性`:** 支持 SOP（标准作业流程）—— 将多步骤任务按标准流程执行，框架与智能体服务均已支持。[文档](https://docs.agentscope.io/latest/zh/building-blocks/sop) | [服务](https://docs.agentscope.io/latest/zh/deploy/sop)
 - **[2026-09] `功能`:** 支持 `TeamPipeline` —— 由 leader 智能体向成员智能体分派任务。[文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/team)
 - **[2026-09] `集成`:** 通过 `MiniMaxChatModel` 支持 MiniMax 聊天模型（默认 MiniMax-M3）。
@@ -81,7 +82,6 @@ AgentScope 的目标是充分发挥大模型的推理与工具调用能力，
 - **[2026-09] `集成`:** `RealtimeAgent` 支持 DashScope、OpenAI、Gemini 与 xAI 的实时语音 API。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/speech-to-speech)
 - **[2026-09] `功能` `实验性`:** 支持实时语音智能体。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/realtime/overview)
 - **[2026-09] `功能`:** 支持 A2A 协议 —— 通过 `A2AAgent` 与任意远端 A2A 智能体对话。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/a2a)
-- **[2026-08] `功能`:** 支持流水线 —— 按照固化逻辑运行多智能体，并向外提供统一接口。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [文档](https://docs.agentscope.io/latest/zh/building-blocks/pipeline/overview)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)

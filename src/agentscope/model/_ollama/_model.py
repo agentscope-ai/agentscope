@@ -35,11 +35,13 @@ class OllamaChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description="Whether to enable thinking"
-            " (for models like qwen3, deepseek-r1).",
+            " (for models like qwen3, deepseek-r1)."
+            " When None, the ``think`` option is not sent and the"
+            " model's default behavior applies.",
         )
 
         temperature: float | None = Field(
@@ -173,7 +175,8 @@ class OllamaChatModel(ChatModelBase):
         if options:
             kwargs["options"] = options
 
-        kwargs["think"] = self.parameters.thinking_enable
+        if self.parameters.thinking_enable is not None:
+            kwargs["think"] = self.parameters.thinking_enable
 
         kwargs.update(generate_kwargs)
 
@@ -189,6 +192,10 @@ class OllamaChatModel(ChatModelBase):
             return self._parse_stream_response(start_datetime, response)
 
         return await self._parse_completion_response(start_datetime, response)
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Ollama uses a top-level ``think`` option."""
+        return {"think": False}
 
     def _format_tools(
         self,

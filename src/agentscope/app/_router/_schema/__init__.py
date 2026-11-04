@@ -11,7 +11,23 @@ from ._channel import (
     CreateChannelRequest,
     UpdateChannelRequest,
 )
-from ._chat import ChatRequest, ChatTriggerResponse
+from ._chat import (
+    ChatRequest,
+    ChatTriggerResponse,
+    ChatQueueItem,
+    ChatQueueResponse,
+    ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
+    UpdateChatQueueItemRequest,
+)
+from ._asr import (
+    ListASRModelsRequest,
+    ListASRModelsResponse,
+    RealtimeASRStartRequest,
+    RealtimeASRTokenRequest,
+    RealtimeASRTokenResponse,
+    TranscriptionResponse,
+)
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
 from ._hub_mcp import InstallMCPRequest, MCPView, UpdateMCPRequest
@@ -19,7 +35,6 @@ from ._hub_skill import SkillView
 from ._workspace import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
-    AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
     DirectoryListing,
@@ -32,6 +47,13 @@ from ._embedding_model import (
     ListEmbeddingModelsRequest,
 )
 from ._model import ListModelsResponse, ListModelsRequest
+from ._realtime import (
+    ListRealtimeModelsRequest,
+    ListRealtimeModelsResponse,
+    RealtimeConfigResponse,
+    RealtimeOfferRequest,
+    RealtimeOfferResponse,
+)
 from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
 from ._schedule import (
     CreateScheduleRequest,
@@ -98,6 +120,20 @@ from ._session import (
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._voice_profile import (
+    AvailableEnginesResponse,
+    CloneVoiceRequest,
+    CloneVoiceResponse,
+    CreateVoiceProfileRequest,
+    CreateVoiceProfileResponse,
+    CredentialRef,
+    EngineInfo,
+    EngineModelInfo,
+    ListVoiceProfilesResponse,
+    OpenAIConsentRequest,
+    OpenAIConsentResponse,
+    UpdateVoiceProfileRequest,
+)
 
 __all__ = [
     # Health
@@ -112,7 +148,6 @@ __all__ = [
     # Workspace
     "AddFromLibraryRequest",
     "AddFromLibraryResponse",
-    "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
     "DirectoryEntry",
     "DirectoryListing",
@@ -147,6 +182,18 @@ __all__ = [
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",
+    "ChatQueueItem",
+    "ChatQueueResponse",
+    "ReorderChatQueueRequest",
+    "SteerChatQueueItemRequest",
+    "UpdateChatQueueItemRequest",
+    # ASR
+    "ListASRModelsRequest",
+    "ListASRModelsResponse",
+    "RealtimeASRStartRequest",
+    "RealtimeASRTokenRequest",
+    "RealtimeASRTokenResponse",
+    "TranscriptionResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",
@@ -177,6 +224,11 @@ __all__ = [
     "ListEmbeddingModelsResponse",
     "ListModelsRequest",
     "ListModelsResponse",
+    "ListRealtimeModelsRequest",
+    "ListRealtimeModelsResponse",
+    "RealtimeConfigResponse",
+    "RealtimeOfferRequest",
+    "RealtimeOfferResponse",
     # TTS Model
     "ListTTSModelsRequest",
     "ListTTSModelsResponse",
@@ -198,4 +250,17 @@ __all__ = [
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # Voice Profile
+    "AvailableEnginesResponse",
+    "CloneVoiceRequest",
+    "CloneVoiceResponse",
+    "CreateVoiceProfileRequest",
+    "CreateVoiceProfileResponse",
+    "CredentialRef",
+    "EngineInfo",
+    "EngineModelInfo",
+    "ListVoiceProfilesResponse",
+    "OpenAIConsentRequest",
+    "OpenAIConsentResponse",
+    "UpdateVoiceProfileRequest",
 ]

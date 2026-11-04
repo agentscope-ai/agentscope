@@ -14,6 +14,13 @@ class ModelCard(BaseModel):
     type: Literal["chat_model"] = "chat_model"
     """The model card type."""
 
+    model_class: str = Field(
+        default="",
+        description="The model implementation class type (e.g. openai_chat).",
+    )
+    """Discriminator identifying which ChatModelBase subclass owns this card.
+    Set automatically by :meth:`ChatModelBase.list_models`."""
+
     name: str = Field(description="The name of the model")
     """The model name."""
 
