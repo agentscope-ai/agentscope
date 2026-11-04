@@ -14,6 +14,7 @@ dimension supported by their embedding model.
 The collection name is generated as ``kb_<uuid_hex>`` (no user id is
 encoded, since storage does the user-scoped authorisation).
 """
+import asyncio
 from typing import TYPE_CHECKING
 
 from ._base import KnowledgeBaseManagerBase
@@ -94,21 +95,29 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         )
         try:
             return await self._storage.upsert_knowledge_base(user_id, record)
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             # Compensating delete must not shadow the original exception:
             # if the delete itself raises, the caller would be misdirected
             # to investigate the wrong error and the orphan collection
-            # would leave no trace.
-            try:
-                await self._vector_store.delete_collection(
-                    record.data.collection_name,
-                )
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                logger.exception(
-                    "Failed to drop orphan collection %r after "
-                    "upsert_knowledge_base failed; collection leaked.",
-                    record.data.collection_name,
-                )
+            # would leave no trace. CancelledError joins Exception (it is
+            # a BaseException, so `except Exception` alone misses it): a
+            # cancelled upsert must drop the collection as well, or the
+            # vector store keeps a collection no record points at.
+            async def _drop_orphan_collection() -> None:
+                try:
+                    await self._vector_store.delete_collection(
+                        record.data.collection_name,
+                    )
+                except Exception:  # noqa: BLE001 — best-effort cleanup
+                    logger.exception(
+                        "Failed to drop orphan collection %r after "
+                        "upsert_knowledge_base failed; collection leaked.",
+                        record.data.collection_name,
+                    )
+
+            # Shielded so a second cancellation cannot cut the compensating
+            # delete short and leak the collection anyway.
+            await asyncio.shield(_drop_orphan_collection())
             raise
 
     async def delete_knowledge_base(
