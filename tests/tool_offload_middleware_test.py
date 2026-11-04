@@ -3,7 +3,7 @@
 """Unit tests for ToolOffloadMiddleware."""
 import asyncio
 import json
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,7 +16,9 @@ from agentscope.agent import Agent
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.app.middleware import ToolOffloadMiddleware
 from agentscope.app._manager import BackgroundTaskManager
-from agentscope.message import TextBlock, ToolCallBlock
+from agentscope.event import ReplyEndEvent
+from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.model import ChatResponse
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -146,6 +148,113 @@ class FastTool(ToolBase):
         )
 
 
+class _BlockingToolParams(BaseModel):
+    """Parameters for the blocking test tool."""
+
+    tag: str
+
+
+class BlockingTool(ToolBase):
+    """A tool that blocks until it is cancelled and records its calls."""
+
+    name: str = "blocking_tool"
+    description: str = "A blocking tool for testing interruption."
+    input_schema: dict = _BlockingToolParams.model_json_schema()
+    is_concurrency_safe: bool = False
+    is_read_only: bool = True
+    is_state_injected: bool = False
+    is_external_tool: bool = False
+    is_mcp: bool = False
+    mcp_name: str | None = None
+
+    def __init__(self, n_calls: int = 1) -> None:
+        """Initialize the tool.
+
+        Args:
+            n_calls (`int`, defaults to ``1``):
+                The number of calls to wait for before ``started`` is set.
+        """
+        self.records: list[str] = []
+        self.started = asyncio.Event()
+        self._n_calls = n_calls
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input parameters.
+            context (`PermissionContext`):
+                The permission context.
+
+        Returns:
+            `PermissionDecision`:
+                Always ALLOW.
+        """
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed",
+        )
+
+    async def __call__(  # type: ignore[override]
+        self,
+        tag: str,
+    ) -> ToolChunk:
+        """Record the start, then block until cancelled.
+
+        Args:
+            tag (`str`):
+                The label recorded for this call.
+
+        Returns:
+            `ToolChunk`:
+                A chunk containing the tag, never reached in the tests.
+        """
+        self.records.append(f"start {tag}")
+        if len(self.records) == self._n_calls:
+            self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.records.append(f"cancelled {tag}")
+            raise
+        return ToolChunk(content=[TextBlock(text=f"BlockingTool: {tag}")])
+
+
+class ConcurrentBlockingTool(BlockingTool):
+    """A concurrency-safe blocking tool, run in parallel by the agent."""
+
+    name: str = "concurrent_blocking_tool"
+    is_concurrency_safe: bool = True
+
+
+def _interrupted_result(tool_call_id: str, name: str) -> dict:
+    """The tool result the toolkit yields for a cancelled tool call."""
+    return {
+        "type": "tool_result",
+        "id": tool_call_id,
+        "name": name,
+        "output": [
+            {
+                "type": "text",
+                "text": "<system-reminder>The tool call has been "
+                "interrupted by the user.</system-reminder>",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+        ],
+        "state": "interrupted",
+        "metadata": {},
+        "created_at": AnyString(),
+        "finished_at": None,
+    }
+
+
 class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     """Test cases for the ToolOffloadMiddleware."""
 
@@ -198,6 +307,46 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             middlewares=[middleware],
         )
         return agent, middleware
+
+    async def _reply_and_interrupt(
+        self,
+        agent: Agent,
+        tool: BlockingTool,
+        tool_calls: list[ToolCallBlock],
+    ) -> list:
+        """Run a reply that makes the given tool calls, and cancel it once
+        they have all started, as the service's interrupt does.
+
+        Args:
+            agent (`Agent`):
+                The agent to run.
+            tool (`BlockingTool`):
+                The tool the calls go to.
+            tool_calls (`list[ToolCallBlock]`):
+                The tool calls the model makes.
+
+        Returns:
+            `list`:
+                The events of the reply.
+        """
+        self.mock_model.set_responses(
+            [[ChatResponse(content=tool_calls, is_last=True)]],
+        )
+        events: list = []
+
+        async def _drive() -> None:
+            async for evt in agent.reply_stream(
+                UserMsg(name="user", content="Hi"),
+            ):
+                events.append(evt)
+
+        task = asyncio.create_task(_drive())
+        await tool.started.wait()
+        task.cancel()
+        # A tool that isn't cancelled keeps the reply going, so don't wait
+        # for it forever
+        await asyncio.wait([task], timeout=1)
+        return events
 
     # ------------------------------------------------------------------
     # Tests
@@ -410,3 +559,131 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertTrue(asyncio_task.cancelled() or asyncio_task.cancelling())
         # Removed from manager
         self.assertEqual(len(self.bg_manager.tasks), 0)
+
+    async def test_interrupt_cancels_running_tool(self) -> None:
+        """Interrupting the reply cancels the running tool, and the agent
+        gets the interrupted result the toolkit yields for it."""
+
+        tool = BlockingTool()
+        agent, _ = self._make_agent(Toolkit(tools=[tool]), timeout_secs=5.0)
+
+        events = await self._reply_and_interrupt(
+            agent,
+            tool,
+            [
+                ToolCallBlock(
+                    id="call_0",
+                    name=tool.name,
+                    input=json.dumps({"tag": "r0"}),
+                ),
+            ],
+        )
+
+        self.assertListEqual(tool.records, ["start r0", "cancelled r0"])
+        self.assertListEqual(
+            [
+                e.finished_reason
+                for e in events
+                if isinstance(e, ReplyEndEvent)
+            ],
+            ["interrupted"],
+        )
+        self.assertListEqual(
+            [
+                block.model_dump(mode="json")
+                for block in agent.state.context[-1].content
+                if block.type == "tool_result"
+            ],
+            [_interrupted_result("call_0", tool.name)],
+        )
+        self.assertEqual(len(self.bg_manager.tasks), 0)
+
+    async def test_interrupt_parallel_tools_runs_each_once(self) -> None:
+        """Interrupting a parallel round cancels every tool and ends the
+        reply as interrupted, without running the calls again."""
+
+        tool = ConcurrentBlockingTool(n_calls=2)
+        agent, _ = self._make_agent(Toolkit(tools=[tool]), timeout_secs=5.0)
+
+        events = await self._reply_and_interrupt(
+            agent,
+            tool,
+            [
+                ToolCallBlock(
+                    id=f"call_{i}",
+                    name=tool.name,
+                    input=json.dumps({"tag": f"r{i}"}),
+                )
+                for i in range(2)
+            ],
+        )
+
+        self.assertListEqual(
+            tool.records,
+            ["start r0", "start r1", "cancelled r0", "cancelled r1"],
+        )
+        self.assertListEqual(
+            [
+                e.finished_reason
+                for e in events
+                if isinstance(e, ReplyEndEvent)
+            ],
+            ["interrupted"],
+        )
+        self.assertListEqual(
+            [
+                block.model_dump(mode="json")
+                for block in agent.state.context[-1].content
+                if block.type == "tool_result"
+            ],
+            [
+                _interrupted_result("call_0", tool.name),
+                _interrupted_result("call_1", tool.name),
+            ],
+        )
+        self.assertEqual(self.mock_model.cnt, 1)
+        self.assertEqual(len(self.bg_manager.tasks), 0)
+
+    async def test_interrupt_without_interrupted_result_reraises(
+        self,
+    ) -> None:
+        """If the cancelled task yields no interrupted result, because it
+        was cancelled before it reached the toolkit, the cancellation is
+        re-raised instead of swallowed."""
+
+        agent, middleware = self._make_agent(
+            Toolkit(tools=[FastTool()]),
+            timeout_secs=5.0,
+        )
+        entered = asyncio.Event()
+        records: list[str] = []
+
+        async def next_handler(**_kwargs: Any) -> AsyncGenerator:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                records.append("cancelled")
+                raise
+            yield ToolChunk(content=[TextBlock(text="never reached")])
+
+        async def _consume() -> None:
+            async for _ in middleware.on_acting(
+                agent=agent,
+                input_kwargs={
+                    "tool_call": ToolCallBlock(
+                        id="call_early",
+                        name="fast_tool",
+                        input=json.dumps({"value": "hello"}),
+                    ),
+                },
+                next_handler=next_handler,
+            ):
+                pass
+
+        task = asyncio.create_task(_consume())
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertListEqual(records, ["cancelled"])
