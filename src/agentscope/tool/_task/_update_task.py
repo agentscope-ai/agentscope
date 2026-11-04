@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from ._task_tool_base import _TaskToolBase
 from .._response import ToolChunk
-from ...state import AgentState
+from ...state import AgentState, Task
 from ...exception import DeveloperOrientedException
 from ...message import TextBlock, ToolResultState
 
@@ -234,12 +234,15 @@ Set up task dependencies:
                 )
             # Update the status
             updated_fields.append("status")
-            _agent_state.tasks_context.tasks[index].state = status
-            # A completed task no longer blocks its dependents
-            if status == "completed":
-                for task in _agent_state.tasks_context.tasks:
-                    if task_id in task.blocked_by:
-                        task.blocked_by.remove(task_id)
+            updated_task = _agent_state.tasks_context.tasks[index]
+            self._apply_status_to_dependents(
+                task_id,
+                updated_task,
+                updated_task.state,
+                status,
+                _agent_state,
+            )
+            updated_task.state = status
 
         if owner is not None:
             updated_fields.append("owner")
@@ -272,6 +275,49 @@ Set up task dependencies:
             )
 
         return ToolChunk(content=[TextBlock(text=res)])
+
+    @staticmethod
+    def _apply_status_to_dependents(
+        task_id: str,
+        updated_task: Task,
+        previous_state: str,
+        new_state: str,
+        _agent_state: AgentState,
+    ) -> None:
+        """Keep dependents' ``blocked_by`` in sync with a status change.
+
+        Completing a task removes it from every dependent's
+        ``blocked_by``; reopening a completed task (moving it back to
+        ``in_progress`` or ``pending``) restores those links, so the
+        ``blocks`` / ``blocked_by`` graph stays consistent and a
+        reopened blocker's dependents are not left wrongly unblocked.
+
+        Args:
+            task_id (`str`):
+                The id of the task whose status is changing.
+            updated_task (`Task`):
+                The task being updated, read for its ``blocks`` list.
+            previous_state (`str`):
+                The task's state before this update.
+            new_state (`str`):
+                The state being applied.
+            _agent_state (`AgentState`):
+                The agent state to update.
+        """
+        if new_state == "completed":
+            for task in _agent_state.tasks_context.tasks:
+                if task_id in task.blocked_by:
+                    task.blocked_by.remove(task_id)
+        elif previous_state == "completed" and new_state in (
+            "in_progress",
+            "pending",
+        ):
+            for task in _agent_state.tasks_context.tasks:
+                if (
+                    task.id in updated_task.blocks
+                    and task_id not in task.blocked_by
+                ):
+                    task.blocked_by.append(task_id)
 
     @staticmethod
     def _update_block_relation(

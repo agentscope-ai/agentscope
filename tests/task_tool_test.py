@@ -999,6 +999,93 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         }
         self.assertDictEqual(result_dump, expected_result)
 
+    async def test_update_reopen_reblocks_dependents(self) -> None:
+        """Test reopening a completed task restores blocked_by links."""
+        await self.task_create(
+            subject="Task 1",
+            description="First task",
+            _agent_state=self.agent_state,
+        )
+        await self.task_create(
+            subject="Task 2",
+            description="Second task",
+            _agent_state=self.agent_state,
+        )
+        task1_id = self.agent_state.tasks_context.tasks[0].id
+        task2_id = self.agent_state.tasks_context.tasks[1].id
+
+        # Task 1 blocks Task 2
+        await self.task_update(
+            task_id=task1_id,
+            add_blocks=[task2_id],
+            _agent_state=self.agent_state,
+        )
+
+        # Completing Task 1 unblocks Task 2
+        await self.task_update(
+            task_id=task1_id,
+            status="completed",
+            _agent_state=self.agent_state,
+        )
+        self.assertEqual(
+            self.agent_state.tasks_context.tasks[1].blocked_by,
+            [],
+        )
+
+        # Reopening Task 1 must re-block Task 2
+        result = await self.task_update(
+            task_id=task1_id,
+            status="in_progress",
+            _agent_state=self.agent_state,
+        )
+
+        result_dump = result.model_dump(mode="json")
+        expected_result = {
+            "content": [
+                {
+                    "text": f"Update task (id={task1_id}) status.",
+                    "type": "text",
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "running",
+            "is_last": True,
+            "metadata": {},
+            "id": AnyString(),
+        }
+        self.assertDictEqual(result_dump, expected_result)
+
+        tasks_dump = [
+            task.model_dump() for task in self.agent_state.tasks_context.tasks
+        ]
+        expected = [
+            {
+                "subject": "Task 1",
+                "description": "First task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "in_progress",
+                "id": task1_id,
+                "owner": None,
+                "blocks": [task2_id],
+                "blocked_by": [],
+            },
+            {
+                "subject": "Task 2",
+                "description": "Second task",
+                "metadata": {},
+                "created_at": AnyString(),
+                "state": "pending",
+                "id": task2_id,
+                "owner": None,
+                "blocks": [],
+                "blocked_by": [task1_id],
+            },
+        ]
+        self.assertEqual(tasks_dump, expected)
+
     async def test_update_delete_task(self) -> None:
         """Test deleting a task and removing it from blocks/blocked_by."""
         # Create three tasks with dependencies
