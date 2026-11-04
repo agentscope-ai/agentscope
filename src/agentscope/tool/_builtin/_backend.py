@@ -798,12 +798,7 @@ class LocalBackend(BackendBase):
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
-                # Never let children inherit the host's stdin: it is unused
-                # by the non-interactive exec_shell contract, and an
-                # inherited named pipe (e.g. a Node/Electron host using
-                # stdio:'pipe') deadlocks CPython children at interpreter
-                # startup on Windows (fd 0 probe blocks in
-                # NtQueryInformationFile forever).
+                # Inheriting a stdin pipe can hang CPython startup on Windows.
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
