@@ -6,6 +6,7 @@ import json
 import base64
 import hashlib
 import tempfile
+import shutil
 from types import SimpleNamespace
 from typing import Any
 from unittest import skipUnless
@@ -2145,6 +2146,172 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
         self.assertTrue(
             os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
         )
+
+    async def test_failed_skill_copy_can_be_retried(self) -> None:
+        """A partial copy is never listed and cannot poison a later retry."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("existing", "existing"))
+        source = self._make_skill("new", "new")
+        payload = os.path.join(source, "payload.txt")
+        with open(payload, "w", encoding="utf-8") as f:
+            f.write("required payload")
+        initial_entries = os.listdir(self.temp_dir.name)
+        real_copytree = shutil.copytree
+
+        def copy_file(src: str, dst: str) -> str:
+            """Fail on the supporting file while SKILL.md remains copyable."""
+            if os.path.basename(src) == "payload.txt":
+                raise OSError("simulated copy failure")
+            return shutil.copy2(src, dst)
+
+        def partial_copy(src: str, dst: str, **kwargs: Any) -> None:
+            """Exercise copytree's real partial-copy and error behavior."""
+            real_copytree(src, dst, copy_function=copy_file, **kwargs)
+
+        with patch(
+            "agentscope.workspace._local_workspace.shutil.copytree",
+            side_effect=partial_copy,
+        ):
+            with self.assertRaisesRegex(OSError, "simulated copy failure"):
+                await ws.add_skill(source)
+
+        self.assertEqual(
+            [skill.name for skill in await ws.list_skills()],
+            ["existing"],
+        )
+        self.assertCountEqual(os.listdir(self.temp_dir.name), initial_entries)
+        await ws.add_skill(source)
+        skills = {skill.name: skill for skill in await ws.list_skills()}
+        self.assertEqual(set(skills), {"existing", "new"})
+        with open(
+            os.path.join(skills["new"].dir, "payload.txt"),
+            encoding="utf-8",
+        ) as f:
+            self.assertEqual(f.read(), "required payload")
+
+    async def test_failed_skill_rename_cleans_staging(self) -> None:
+        """Publishing errors preserve existing skills and allow retry."""
+        ws = await self._workspace()
+        await ws.add_skill(
+            self._make_skill("existing", "existing"),
+            agent_id="A",
+        )
+        source = self._make_skill("new", "new")
+        initial_entries = os.listdir(self.temp_dir.name)
+        with patch(
+            "agentscope.workspace._local_workspace.os.rename",
+            side_effect=OSError("simulated rename failure"),
+        ):
+            with self.assertRaisesRegex(OSError, "simulated rename failure"):
+                await ws.add_skill(source, agent_id="A")
+
+        self.assertEqual(
+            [skill.name for skill in await ws.list_skills(agent_id="A")],
+            ["existing"],
+        )
+        self.assertCountEqual(os.listdir(self.temp_dir.name), initial_entries)
+        await ws.add_skill(source, agent_id="A")
+        self.assertEqual(
+            {skill.name for skill in await ws.list_skills(agent_id="A")},
+            {"existing", "new"},
+        )
+        self.assertEqual(await ws.list_skills(), [])
+
+    async def test_skill_is_complete_before_publication(self) -> None:
+        """Only a complete, same-filesystem staged skill is published."""
+        ws = await self._workspace()
+        source = self._make_skill("new", "new")
+        with open(
+            os.path.join(source, "payload.txt"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("required payload")
+        real_rename = os.rename
+
+        def publish(staged: str, destination: str) -> None:
+            """Observe the staged files immediately before the real rename."""
+            self.assertNotEqual(
+                os.path.commonpath([staged, self.skills_dir]),
+                self.skills_dir,
+            )
+            self.assertFalse(os.path.exists(destination))
+            self.assertEqual(
+                os.stat(staged).st_dev,
+                os.stat(os.path.dirname(destination)).st_dev,
+            )
+            with open(
+                os.path.join(staged, "payload.txt"),
+                encoding="utf-8",
+            ) as f:
+                self.assertEqual(f.read(), "required payload")
+            real_rename(staged, destination)
+
+        with patch(
+            "agentscope.workspace._local_workspace.os.rename",
+            side_effect=publish,
+        ) as rename:
+            await ws.add_skill(source)
+            rename.assert_called_once()
+        self.assertEqual([s.name for s in await ws.list_skills()], ["new"])
+        self.assertEqual(os.listdir(self.temp_dir.name), ["skills"])
+
+    async def test_skill_install_preserves_unindexed_directory(self) -> None:
+        """A destination created during staging is never replaced."""
+        ws = await self._workspace()
+        await ws.list_skills()
+        real_copytree = shutil.copytree
+        for populated in (False, True):
+            name = f"existing-{populated}"
+            with self.subTest(populated=populated):
+                dest = os.path.join(self.skills_dir, "default", name)
+                source = self._make_skill(name, name)
+                initial_entries = os.listdir(self.temp_dir.name)
+
+                def copy_then_claim_destination(
+                    src: str,
+                    dst: str,
+                    *,
+                    destination: str = dest,
+                    is_populated: bool = populated,
+                    **kwargs: Any,
+                ) -> str:
+                    copied = real_copytree(src, dst, **kwargs)
+                    os.mkdir(destination)
+                    if is_populated:
+                        with open(
+                            os.path.join(destination, "keep.txt"),
+                            "w",
+                            encoding="utf-8",
+                        ) as f:
+                            f.write("keep me")
+                    return copied
+
+                with patch(
+                    "agentscope.workspace._local_workspace.shutil.copytree",
+                    side_effect=copy_then_claim_destination,
+                ):
+                    with self.assertRaises(FileExistsError):
+                        await ws.add_skill(source)
+                self.assertEqual(
+                    os.listdir(dest),
+                    ["keep.txt"] if populated else [],
+                )
+                self.assertCountEqual(
+                    os.listdir(self.temp_dir.name),
+                    initial_entries,
+                )
+                if populated:
+                    with open(
+                        os.path.join(dest, "keep.txt"),
+                        encoding="utf-8",
+                    ) as f:
+                        self.assertEqual(f.read(), "keep me")
+                await ws.add_skill(source)
+                skills = {
+                    skill.name: skill for skill in await ws.list_skills()
+                }
+                self.assertNotEqual(skills[name].dir, dest)
 
     @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
     async def test_add_skill_case_only_directory_collision(self) -> None:
