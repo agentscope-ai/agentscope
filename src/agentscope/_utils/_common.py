@@ -25,8 +25,13 @@ _INSTANCE_VALUE_KEYWORDS = frozenset(
     {"default", "const", "enum", "examples"},
 )
 
-_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
-_timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
+
+def _id_factory() -> str:
+    return uuid.uuid4().hex
+
+
+def _timestamp_factory() -> str:
+    return datetime.now().isoformat()
 
 
 def set_id_factory(factory: Callable[[], str]) -> None:
