@@ -32,6 +32,10 @@ from agentscope.app.storage import (
     SOPStepDataV1,
 )
 from agentscope.app.storage import MCPRecord, SkillRecord
+from agentscope.app.storage import (
+    KnowledgeDocumentData,
+    KnowledgeDocumentRecord,
+)
 from agentscope.credential import OllamaCredential
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.app.storage import AgentData
@@ -2108,3 +2112,46 @@ class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
                 self.assertEqual(record.created_at, created_at)
                 stored = await storage.get_voice_profile("owner", record.id)
                 self.assertEqual(stored.model_dump(), record.model_dump())
+
+
+class TestGlobalIndexTokens(IsolatedAsyncioTestCase):
+    """The global indexes must resolve owners whose id has a ':' in it."""
+
+    async def test_schedule_sweep_finds_a_colon_user_id(self) -> None:
+        """A schedule owned by ``tenant:alice`` is listed for reconcile."""
+        storage = make_storage()
+        self.addAsyncCleanup(storage._client.aclose)
+        user_id = "tenant:alice"
+        record = make_schedule_record(user_id, "agent-1")
+
+        await storage.upsert_schedule(user_id, record)
+
+        self.assertEqual(
+            [_.id for _ in await storage.list_all_schedules()],
+            [record.id],
+        )
+
+    async def test_document_sweep_finds_a_colon_user_id(self) -> None:
+        """An expired lease on ``tenant:alice``'s document is reclaimed."""
+        storage = make_storage()
+        self.addAsyncCleanup(storage._client.aclose)
+        user_id = "tenant:alice"
+        record = KnowledgeDocumentRecord(
+            user_id=user_id,
+            knowledge_base_id="kb-1",
+            processing_node="node-1",
+            status="indexing",
+            lease_expires_at=DateTime(2026, 1, 1),
+            data=KnowledgeDocumentData(
+                filename="a.txt",
+                size=1,
+                blob_uri="local://kb/a",
+            ),
+        )
+
+        await storage.upsert_knowledge_document(user_id, record)
+
+        expired = await storage.list_knowledge_documents_with_expired_lease(
+            now=DateTime(2026, 1, 2),
+        )
+        self.assertEqual([_.id for _ in expired], [record.id])
