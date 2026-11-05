@@ -878,6 +878,51 @@ This skill is added through a tilde path.
         mtime_second = os.path.getmtime(skill_target)
         self.assertEqual(mtime_first, mtime_second)
 
+    async def test_initialize_ignores_non_object_skills_index(self) -> None:
+        """A `.index` whose ``skills`` value is not an object must not crash
+        initialize(); the seed partition simply starts empty."""
+        seed_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
+        os.makedirs(seed_dir)
+        async with aiofiles.open(
+            os.path.join(seed_dir, ".index"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            await f.write(
+                json.dumps({"skills_dir_mtime": 0.0, "skills": ["oops"]}),
+            )
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        self.assertTrue(workspace.is_alive)
+        self.assertEqual(await workspace.list_skills(), [])
+
+    async def test_initialize_ignores_malformed_skill_entry(self) -> None:
+        """An index entry without a string ``hash``/``skill_name`` is dropped
+        instead of raising while initialize() loads the index."""
+        seed_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
+        os.makedirs(seed_dir)
+        async with aiofiles.open(
+            os.path.join(seed_dir, ".index"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            await f.write(
+                json.dumps(
+                    {
+                        "skills_dir_mtime": 0.0,
+                        "skills": {"broken": {"skill_name": "broken"}},
+                    },
+                ),
+            )
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        self.assertTrue(workspace.is_alive)
+        self.assertEqual(await workspace.list_skills(), [])
+
     async def test_initialize_deduplicate_skills(self) -> None:
         """Test that duplicate skills in skill_paths are deduplicated.
 
