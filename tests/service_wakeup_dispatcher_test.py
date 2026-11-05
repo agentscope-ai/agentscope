@@ -27,6 +27,9 @@ from pydantic import ValidationError
 
 from agentscope.app import _bus_ops
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
+from agentscope.app._manager import (
+    _wakeup_dispatcher as wakeup_dispatcher_module,
+)
 from agentscope.app._service import ChatService
 from agentscope.app._bus_ops import (
     ChatQueueBusyError,
@@ -2445,3 +2448,160 @@ class TestEditableChatQueue(IsolatedAsyncioTestCase):
             UserMsg("user", "pending"),
         )
         self.assertEqual(bus.log_appends, [])
+
+
+class TestWakeupDispatcherResubscribe(IsolatedAsyncioTestCase):
+    """The signal subscription must be re-created after it ends.
+
+    The durable queue is only drained from inside the subscription loop, so a
+    dropped pub/sub connection otherwise stops every run trigger until the
+    process restarts.
+    """
+
+    def _dispatcher(
+        self,
+        bus: MessageBus,
+        chat: "_FakeChatService",
+    ) -> WakeupDispatcher:
+        return WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            chat,
+            ChatRunRegistry(),
+        )
+
+    async def _wait_for_calls(
+        self,
+        chat: "_FakeChatService",
+        expected: int,
+    ) -> None:
+        for _ in range(200):
+            if len(chat.calls) >= expected:
+                return
+            await asyncio.sleep(0.01)
+        self.fail(
+            f"expected {expected} dispatched runs, got {len(chat.calls)}",
+        )
+
+    async def test_subscription_ended_cleanly_is_reestablished(self) -> None:
+        """A generator that simply stops yielding is re-subscribed."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        calls: list[str] = []
+        inner = bus.subscribe
+
+        async def subscribe(
+            key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            calls.append(key)
+            async for signal in inner(key, on_ready=on_ready):
+                yield signal
+                if len(calls) == 1:
+                    # Simulate a broker-side drop with no exception.
+                    return
+
+        with patch.object(bus, "subscribe", subscribe), patch.object(
+            wakeup_dispatcher_module,
+            "_RESUBSCRIBE_BACKOFF_SECS",
+            0.01,
+            create=True,
+        ):
+            async with self._dispatcher(bus, chat):
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {"user_id": "u", "session_id": "s1", "agent_id": "a"},
+                )
+                await bus.publish(MessageBusKeys.wakeup_signal(), {})
+                await self._wait_for_calls(chat, 1)
+
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {"user_id": "u", "session_id": "s2", "agent_id": "a"},
+                )
+                await bus.publish(MessageBusKeys.wakeup_signal(), {})
+                await self._wait_for_calls(chat, 2)
+
+        self.assertEqual(
+            [call["session_id"] for call in chat.calls],
+            [
+                "s1",
+                "s2",
+            ],
+        )
+        self.assertGreaterEqual(len(calls), 2)
+
+    async def test_subscription_raising_is_reestablished(self) -> None:
+        """A subscription that raises is retried instead of giving up."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        calls: list[str] = []
+        inner = bus.subscribe
+
+        async def subscribe(
+            key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            calls.append(key)
+            attempts = len(calls)
+            async for signal in inner(key, on_ready=on_ready):
+                yield signal
+                if attempts == 1:
+                    raise ConnectionError("pub/sub connection lost")
+
+        with patch.object(bus, "subscribe", subscribe), patch.object(
+            wakeup_dispatcher_module,
+            "_RESUBSCRIBE_BACKOFF_SECS",
+            0.01,
+            create=True,
+        ):
+            async with self._dispatcher(bus, chat):
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {"user_id": "u", "session_id": "s1", "agent_id": "a"},
+                )
+                await bus.publish(MessageBusKeys.wakeup_signal(), {})
+                await self._wait_for_calls(chat, 1)
+
+                await bus.queue_push(
+                    MessageBusKeys.wakeup_queue(),
+                    {"user_id": "u", "session_id": "s2", "agent_id": "a"},
+                )
+                await bus.publish(MessageBusKeys.wakeup_signal(), {})
+                await self._wait_for_calls(chat, 2)
+
+        self.assertEqual(
+            [call["session_id"] for call in chat.calls],
+            [
+                "s1",
+                "s2",
+            ],
+        )
+        self.assertGreaterEqual(len(calls), 2)
+
+    async def test_reconnect_does_not_resurrect_a_failed_startup(self) -> None:
+        """A subscription that ends during startup still aborts entry."""
+        bus = _FakeBus()
+        calls: list[str] = []
+
+        async def subscribe(
+            key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            calls.append(key)
+            if on_ready is not None:
+                on_ready()
+            return
+            yield {}  # pylint: disable=unreachable
+
+        with patch.object(bus, "subscribe", subscribe):
+            with self.assertRaisesRegex(RuntimeError, "subscription"):
+                await asyncio.wait_for(
+                    self._dispatcher(bus, _FakeChatService()).__aenter__(),
+                    timeout=1,
+                )
+
+        self.assertEqual(len(calls), 1)
