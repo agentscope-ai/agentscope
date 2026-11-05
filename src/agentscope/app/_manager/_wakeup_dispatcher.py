@@ -254,8 +254,6 @@ class WakeupDispatcher:
                     on_ready=_on_ready,
                 ):
                     await self._drain_and_dispatch()
-            except asyncio.CancelledError:
-                raise
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
                     "WakeupDispatcher loop crashed; resubscribing.",
