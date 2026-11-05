@@ -13,6 +13,7 @@ Verifies the four behaviours that callers rely on:
   ``__aenter__`` without waiting for a fresh signal.
 - Sessions that are already running are skipped (no duplicate run).
 - Malformed entries are logged and skipped, not raised.
+- A failure inside one dispatch does not drop the rest of the batch.
 """
 import asyncio
 import json
@@ -557,6 +558,65 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
                 },
             ],
         )
+
+    async def test_dispatch_failure_does_not_drop_drained_batch(
+        self,
+    ) -> None:
+        """A raised ``_dispatch_one`` must not drop later drained entries.
+
+        ``queue_drain`` removes entries before dispatch (Redis
+        ``XRANGE`` + ``XDEL``). One failure has to stay inside that
+        entry so the rest of the already-drained batch is still
+        dispatched and the failure is logged.
+        """
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        entries = [
+            (
+                "1-0",
+                {
+                    "user_id": "u",
+                    "session_id": "s1",
+                    "agent_id": "a",
+                },
+            ),
+            (
+                "2-0",
+                {
+                    "user_id": "u",
+                    "session_id": "s2",
+                    "agent_id": "a",
+                },
+            ),
+        ]
+        dispatch = AsyncMock(
+            side_effect=[RuntimeError("dispatch boom"), None],
+        )
+
+        with (
+            patch.object(
+                bus,
+                "queue_drain",
+                AsyncMock(return_value=entries),
+            ),
+            patch.object(dispatcher, "_dispatch_one", dispatch),
+            patch(
+                "agentscope.app._manager._wakeup_dispatcher.logger",
+            ) as log,
+        ):
+            await dispatcher._drain_and_dispatch()
+
+        self.assertEqual(dispatch.await_count, 2)
+        self.assertEqual(
+            [args.kwargs["session_id"] for args in dispatch.await_args_list],
+            ["s1", "s2"],
+        )
+        log.exception.assert_called_once()
 
     async def test_deleted_session_skipped(self) -> None:
         """A wake-up whose target session no longer exists in storage
