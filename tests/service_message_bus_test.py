@@ -22,6 +22,7 @@ from agentscope.app.message_bus import (
     MessageBus,
     RedisMessageBus,
 )
+from agentscope.app.message_bus._redis_message_bus import _LOCK_RENEW_LUA
 
 
 def _make_bus(
@@ -632,6 +633,46 @@ class TestLockPrimitive(IsolatedAsyncioTestCase):
             await asyncio.sleep(1.05)
             self.assertGreater(await self.fr.ttl("ownership"), 10)
         self.assertEqual(await self.fr.get("ownership"), "replacement")
+
+    async def test_heartbeat_survives_transient_renew_error(self) -> None:
+        """One Redis error on renew must not stop the next renewal."""
+        renewals = 0
+        failed_once = asyncio.Event()
+        renewed_again = asyncio.Event()
+        original = self.fr.eval
+
+        async def flaky_eval(*args: Any, **kwargs: Any) -> Any:
+            nonlocal renewals
+            if args and args[0] == _LOCK_RENEW_LUA:
+                renewals += 1
+                if renewals == 1:
+                    failed_once.set()
+                    raise ConnectionError("transient Redis failure")
+                renewed_again.set()
+            return await original(*args, **kwargs)
+
+        with self.assertLogs("as", level="WARNING") as captured:
+            with patch.object(self.fr, "eval", flaky_eval):
+                async with self.bus.acquire_lock("resilient", ttl_secs=2):
+                    await asyncio.wait_for(failed_once.wait(), timeout=3)
+                    await asyncio.sleep(0)
+                    heartbeat = [
+                        task
+                        for task in asyncio.all_tasks()
+                        if task.get_name() == "lock-heartbeat:resilient"
+                    ]
+                    self.assertEqual(
+                        len(heartbeat),
+                        1,
+                        "heartbeat task died after a transient renew error",
+                    )
+                    self.assertFalse(heartbeat[0].done())
+                    await asyncio.wait_for(renewed_again.wait(), timeout=3)
+        self.assertGreaterEqual(renewals, 2)
+        self.assertIn(
+            "transient Redis failure",
+            "\n".join(captured.output),
+        )
 
 
 class TestSessionRunAutoTrimsLog(IsolatedAsyncioTestCase):
