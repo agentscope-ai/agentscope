@@ -294,18 +294,29 @@ class WakeupDispatcher:
                 )
                 continue
             # Entries from older producers omit ``kind`` — treat as wake.
-            kind = payload.get("kind", MessageBusKeys.WAKEUP_KIND_WAKE)
-            await self._dispatch_one(
-                user_id=user_id,
-                session_id=session_id,
-                agent_id=agent_id,
-                kind=kind,
-                raw_input=payload.get("input"),
-                raw_client_external_tools=payload.get(
-                    "client_external_tools",
-                ),
-                raw_client_builtin_tools=payload.get("client_builtin_tools"),
-            )
+            # ``queue_drain`` already removed this batch (Redis XRANGE +
+            # XDEL), so a failure here must not abandon the rest.
+            try:
+                kind = payload.get("kind", MessageBusKeys.WAKEUP_KIND_WAKE)
+                await self._dispatch_one(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    kind=kind,
+                    raw_input=payload.get("input"),
+                    raw_client_external_tools=payload.get(
+                        "client_external_tools",
+                    ),
+                    raw_client_builtin_tools=payload.get("client_builtin_tools"),
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher: dispatch failed for session %s "
+                    "(agent %s, user %s).",
+                    session_id,
+                    agent_id,
+                    user_id,
+                )
 
     async def _dispatch_one(
         self,
