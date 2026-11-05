@@ -1031,8 +1031,18 @@ class WorkspaceBase:
             )
             return {}
 
+        mcps = data.get("mcps")
+        if mcps is None:
+            return {}
+        if not isinstance(mcps, dict):
+            logger.warning(
+                "%s has a non-object 'mcps'; ignoring it.",
+                self._mcp_file,
+            )
+            return {}
+
         specs: dict[tuple[str, str], list[MCPClient]] = {}
-        for agent_id, by_session in (data.get("mcps") or {}).items():
+        for agent_id, by_session in mcps.items():
             if not isinstance(by_session, dict):
                 continue
             for session_id, cfgs in by_session.items():
