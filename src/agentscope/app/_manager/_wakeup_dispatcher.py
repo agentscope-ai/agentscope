@@ -73,6 +73,12 @@ _RESUME_RETRY_BACKOFF_SECS = 0.1
 # This is a crash/lost-signal safety net, not a per-session hot poll.
 _MESSAGE_FALLBACK_TICK_SECS = 30.0
 
+# Delay before re-subscribing once the signal subscription ends. Doubles
+# per consecutive failed attempt and is capped, so a broker that is down
+# backs off instead of spinning, while a single drop recovers promptly.
+_RESUBSCRIBE_BACKOFF_SECS = 0.5
+_RESUBSCRIBE_BACKOFF_MAX_SECS = 30.0
+
 
 class WakeupDispatcher:
     """One asyncio task per process, draining the shared trigger queue.
@@ -118,6 +124,10 @@ class WakeupDispatcher:
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
         self._fallback_task: asyncio.Task | None = None
+        # True once ``__aenter__`` has reported a live dispatcher. Before
+        # that a subscription that ends is a startup failure; after it,
+        # it is a dropped connection that must be re-established.
+        self._serving = False
         self._chat_queue = ChatInputQueue(message_bus, storage, chat_service)
         # Detached resume timers. Held
         # so they are not garbage-collected mid-await and can be cancelled
@@ -153,6 +163,7 @@ class WakeupDispatcher:
             if self._task.done():
                 raise RuntimeError("Wakeup subscription ended during startup")
             self._chat_queue.schedule_recovery()
+            self._serving = True
         except BaseException:
             # Failed entry does not invoke __aexit__. The listener and
             # fallback may already have spawned retries or recovery work.
@@ -208,21 +219,57 @@ class WakeupDispatcher:
         """Long-lived loop: subscribe to the signal channel and drain
         the queue on every received signal.
 
+        The subscription is re-established when it ends: a broker-side
+        pub/sub drop, a half-open connection that raises, or a generator
+        that finishes cleanly all otherwise leave nobody to drain the
+        durable queue, and triggers pile up until the process restarts.
+        ``_fallback_loop`` already publishes a periodic signal, so a live
+        subscription also gives the timer-driven drain the queue needs;
+        only the reconnection was missing.
+
+        A subscription that ends before ``__aenter__`` reported success is
+        a startup failure, not a transient drop — the loop returns so
+        startup can abort instead of serving a dispatcher that never had a
+        working subscription.
+
         Args:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
                 :meth:`start` blocks on this so callers can publish a
                 trigger immediately after start without racing.
         """
-        try:
-            async for _signal in self._bus.subscribe(
-                MessageBusKeys.wakeup_signal(),
-                on_ready=ready.set,
-            ):
-                await self._drain_and_dispatch()
-        except Exception:  # pylint: disable=broad-except
-            logger.exception(
-                "WakeupDispatcher loop crashed; subscription ended.",
+        backoff = _RESUBSCRIBE_BACKOFF_SECS
+        while True:
+
+            def _on_ready() -> None:
+                nonlocal backoff
+                # A completed SUBSCRIBE is the only evidence the broker is
+                # reachable again.
+                backoff = _RESUBSCRIBE_BACKOFF_SECS
+                ready.set()
+
+            try:
+                async for _signal in self._bus.subscribe(
+                    MessageBusKeys.wakeup_signal(),
+                    on_ready=_on_ready,
+                ):
+                    await self._drain_and_dispatch()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher loop crashed; resubscribing.",
+                )
+            else:
+                logger.warning(
+                    "WakeupDispatcher subscription ended; resubscribing.",
+                )
+            if not self._serving:
+                return
+            await asyncio.sleep(backoff)
+            backoff = min(
+                backoff * 2,
+                _RESUBSCRIBE_BACKOFF_MAX_SECS,
             )
 
     async def _fallback_loop(self) -> None:
