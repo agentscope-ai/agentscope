@@ -589,3 +589,48 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "not connected"):
             await model.push(b"pcm")
+
+
+class DashScopeRealtimeSentenceJoinTest(TestCase):
+    """Sentences must be joined the way the speaker said them."""
+
+    def _model(self) -> DashScopeRealtimeASRModel:
+        return DashScopeRealtimeASRModel(
+            credential=DashScopeCredential(api_key="test-key"),
+        )
+
+    def _commit(self, model: DashScopeRealtimeASRModel, text: str) -> None:
+        """Feed one finished sentence through the result handler."""
+        model._handle_result(  # pylint: disable=protected-access
+            {
+                "payload": {
+                    "output": {
+                        "sentence": {"text": text, "sentence_end": True},
+                    },
+                },
+            },
+        )
+
+    def test_cjk_sentences_are_not_separated_by_a_space(self) -> None:
+        """``'你'.isalnum()`` is true, so the old word-space heuristic put
+        a space between two Chinese sentences that had none."""
+        model = self._model()
+        self._commit(model, "你好")
+        self._commit(model, "世界")
+
+        self.assertEqual(
+            model._complete_text(),  # pylint: disable=protected-access
+            "你好世界",
+        )
+
+    def test_space_delimited_sentences_keep_a_word_separator(self) -> None:
+        """Semantic punctuation ends the sentences, and English still needs
+        the space the old ``isalnum`` check dropped after a period."""
+        model = self._model()
+        self._commit(model, "Hello.")
+        self._commit(model, "World.")
+
+        self.assertEqual(
+            model._complete_text(),  # pylint: disable=protected-access
+            "Hello. World.",
+        )
