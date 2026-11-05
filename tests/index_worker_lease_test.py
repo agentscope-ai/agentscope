@@ -24,6 +24,7 @@ class _LeaseStorage:
 
     def __init__(self) -> None:
         self.acquire_returns: bool = True
+        self.acquired: list[str] = []
         self.renew_results: list[bool] = []
         self.released: list[dict] = []
         self.status_updates: list[dict] = []
@@ -34,7 +35,7 @@ class _LeaseStorage:
         **kwargs: Any,
     ) -> bool:
         """Return the staged ``acquire_returns`` flag."""
-        del kwargs
+        self.acquired.append(kwargs["document_id"])
         return self.acquire_returns
 
     async def renew_knowledge_document_lease(
@@ -134,8 +135,45 @@ class _SlowPipelineWorker(IndexWorker):
             self.heartbeat_stopped = True
 
 
+class _BlockedPipelineWorker(_SlowPipelineWorker):
+    """Hold the first pipeline while another document waits for capacity."""
+
+    def __init__(self, storage: _LeaseStorage) -> None:
+        super().__init__(storage, pipeline_seconds=0)
+        self._sem = asyncio.Semaphore(1)
+        self.release_first = asyncio.Event()
+
+    async def _run_pipeline(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
+        """Wait only on the first document's pipeline."""
+        del user_id, knowledge_base_id
+        if document_id == "first":
+            self.pipeline_started.set()
+            await self.release_first.wait()
+
+
 class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
     """Pipeline-vs-heartbeat race coverage."""
+
+    async def test_queued_document_does_not_acquire_lease(self) -> None:
+        """Waiting for local capacity must not create a leased backlog."""
+        storage = _LeaseStorage()
+        worker = _BlockedPipelineWorker(storage)
+        first = asyncio.create_task(worker.process("u", "kb", "first"))
+        await asyncio.wait_for(worker.pipeline_started.wait(), timeout=1)
+        second = asyncio.create_task(worker.process("u", "kb", "second"))
+        try:
+            await asyncio.sleep(0.01)
+            self.assertEqual(storage.acquired, ["first"])
+        finally:
+            worker.release_first.set()
+            await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+
+        self.assertEqual(storage.acquired, ["first", "second"])
 
     async def test_lost_lease_cancels_pipeline_and_marks_error(self) -> None:
         """Renew returning False mid-pipeline must abort the pipeline.
