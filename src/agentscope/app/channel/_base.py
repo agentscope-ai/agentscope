@@ -656,10 +656,28 @@ class ChannelBase(ABC):
     def _split_long_message(self, text: str) -> list[str]:
         """Split text into chunks within the platform length limit.
 
+        Length is measured in UTF-16 code units, the unit the platform
+        APIs count, so a character outside the basic multilingual plane
+        (an emoji, for example) costs two. Counting code points instead let
+        a reply of 2000 emoji pass the limit check and then be rejected by
+        the platform, losing the whole reply.
+
         Args:
             text (`str`): The text to split.
         """
         limit = self.capabilities.max_message_length
-        if len(text) <= limit:
-            return [text]
-        return [text[i : i + limit] for i in range(0, len(text), limit)]
+        chunks: list[str] = []
+        current: list[str] = []
+        length = 0
+        for char in text:
+            size = 2 if ord(char) > 0xFFFF else 1
+            if current and length + size > limit:
+                chunks.append("".join(current))
+                current = []
+                length = 0
+            current.append(char)
+            length += size
+        if current:
+            chunks.append("".join(current))
+        # An empty or short text is returned as is, including "".
+        return chunks or [text]
