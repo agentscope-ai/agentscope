@@ -2146,6 +2146,126 @@ class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
             os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
         )
 
+    async def test_discover_skill_completed_after_scan(self) -> None:
+        """Discover delayed SKILL.md files, including after a restart."""
+        for agent_id in (None, "A"):
+            for restart in (False, True):
+                with (
+                    self.subTest(agent_id=agent_id, restart=restart),
+                    tempfile.TemporaryDirectory() as workdir,
+                ):
+                    async with LocalWorkspace(workdir=workdir) as ws:
+                        self.assertEqual(
+                            await ws.list_skills(agent_id=agent_id),
+                            [],
+                        )
+                        partition = os.path.join(
+                            workdir,
+                            "skills",
+                            agent_id or "default",
+                        )
+                        skill_dir = os.path.join(partition, "demo")
+                        os.mkdir(skill_dir)
+                        self.assertEqual(
+                            await ws.list_skills(agent_id=agent_id),
+                            [],
+                        )
+                        with open(
+                            os.path.join(partition, ".index"),
+                            encoding="utf-8",
+                        ) as f:
+                            index = json.load(f)
+                        self.assertEqual(index["skills"], {})
+                        self.assertEqual(
+                            index["skills_dir_mtime"],
+                            os.path.getmtime(partition),
+                        )
+                        parent_mtime = os.stat(partition).st_mtime_ns
+                        with open(
+                            os.path.join(skill_dir, "SKILL.md"),
+                            "w",
+                            encoding="utf-8",
+                        ) as f:
+                            f.write(
+                                "---\nname: demo\ndescription: d\n---\nbody\n",
+                            )
+                        self.assertEqual(
+                            os.stat(partition).st_mtime_ns,
+                            parent_mtime,
+                        )
+                        if restart:
+                            await ws.close()
+                            async with LocalWorkspace(
+                                workdir=workdir,
+                            ) as reopened:
+                                skills = await reopened.list_skills(
+                                    agent_id=agent_id,
+                                )
+                        else:
+                            skills = await ws.list_skills(agent_id=agent_id)
+                        self.assertEqual([s.name for s in skills], ["demo"])
+                        self.assertEqual(skills[0].description, "d")
+                        self.assertEqual(skills[0].markdown, "body")
+
+    async def test_discover_skill_after_invalid_file_is_fixed(self) -> None:
+        """Retry unindexed files after metadata or YAML is repaired."""
+        for invalid in (
+            "---\nname: demo\n---\nbody\n",
+            "---\nname: [\n---\nbody\n",
+        ):
+            with (
+                self.subTest(invalid=invalid),
+                tempfile.TemporaryDirectory() as workdir,
+            ):
+                async with LocalWorkspace(workdir=workdir) as ws:
+                    await ws.add_skill(self._make_skill("existing", "demo"))
+                    partition = os.path.join(workdir, "skills", "default")
+                    skill_dir = os.path.join(partition, "repaired")
+                    os.mkdir(skill_dir)
+                    skill_md = os.path.join(skill_dir, "SKILL.md")
+                    with open(skill_md, "w", encoding="utf-8") as f:
+                        f.write(invalid)
+                    self.assertEqual(
+                        [s.name for s in await ws.list_skills()],
+                        ["demo"],
+                    )
+                    parent_mtime = os.stat(partition).st_mtime_ns
+                    with open(skill_md, "w", encoding="utf-8") as f:
+                        f.write(
+                            "---\nname: demo\ndescription: repaired\n"
+                            "---\nbody\n",
+                        )
+                    self.assertEqual(
+                        os.stat(partition).st_mtime_ns,
+                        parent_mtime,
+                    )
+                    self.assertCountEqual(
+                        [s.name for s in await ws.list_skills()],
+                        ["demo", "demo (1)"],
+                    )
+
+    async def test_repeated_skill_listing_preserves_index(self) -> None:
+        """Repeated listing preserves deduplication without index writes."""
+        ws = await self._workspace()
+        source = self._make_skill("source", "demo")
+        await ws.add_skill(source)
+        partition = os.path.join(self.skills_dir, "default")
+        duplicate = os.path.join(partition, "duplicate")
+        os.mkdir(duplicate)
+        with open(os.path.join(source, "SKILL.md"), "rb") as f:
+            content = f.read()
+        with open(os.path.join(duplicate, "SKILL.md"), "wb") as f:
+            f.write(content)
+        self.assertEqual([s.name for s in await ws.list_skills()], ["demo"])
+        with patch.object(
+            ws,
+            "_save_skills_file",
+            wraps=ws._save_skills_file,
+        ) as save_index:
+            skills = await ws.list_skills()
+            self.assertEqual([s.name for s in skills], ["demo"])
+            save_index.assert_not_called()
+
     @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
     async def test_add_skill_case_only_directory_collision(self) -> None:
         """Case-only names get distinct paths without renaming the skills."""
