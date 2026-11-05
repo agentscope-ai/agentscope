@@ -431,7 +431,11 @@ class FeishuChannel(ChannelBase):
             text = (
                 json.loads(message.content or "{}").get("text") or ""
             ).strip()
-            if chat_type == "group" and self._config.only_at_reply:
+            if chat_type == "group":
+                # The mention keys ("@_user_1", ...) are placeholders Feishu
+                # puts in the text, not anything the sender typed; drop them
+                # whether or not only_at_reply is on, otherwise a group the
+                # bot replies to freely still hands them to the agent.
                 for mention in message.mentions or []:
                     text = text.replace(mention.key or "", "").strip()
             content = [TextBlock(text=text)] if text else []
