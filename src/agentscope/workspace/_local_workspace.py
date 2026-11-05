@@ -302,9 +302,31 @@ class LocalWorkspace(WorkspaceBase):
         try:
             raw = await self._backend.read_file(path)
             data = json.loads(raw.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("the index is not a JSON object")
+            skills = data.get("skills", {})
+            if not isinstance(skills, dict):
+                raise ValueError("the 'skills' entry is not a JSON object")
+            entries: dict[str, _SkillEntry] = {}
+            for dir_name, entry in skills.items():
+                if (
+                    isinstance(entry, dict)
+                    and isinstance(entry.get("hash"), str)
+                    and isinstance(entry.get("skill_name"), str)
+                ):
+                    entries[dir_name] = _SkillEntry(
+                        hash=entry["hash"],
+                        skill_name=entry["skill_name"],
+                    )
+                else:
+                    logger.warning(
+                        "Ignoring malformed skill entry %r in %s",
+                        dir_name,
+                        path,
+                    )
             return _SkillsFile(
                 skills_dir_mtime=float(data.get("skills_dir_mtime", 0.0)),
-                skills=data.get("skills", {}),
+                skills=entries,
             )
         except Exception as e:
             logger.warning("Failed to load .skills from %s: %s", path, str(e))
