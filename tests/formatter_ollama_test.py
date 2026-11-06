@@ -9,6 +9,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
+    Msg,
     UserMsg,
     AssistantMsg,
     SystemMsg,
@@ -622,6 +623,39 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
+
+    async def test_multiagent_formatter_image_only_message_kept(self) -> None:
+        """An agent message carrying only an image (no text) is preserved.
+
+        Regression test: the image-only turn used to be dropped because the
+        guard only considered text blocks.
+        """
+        fmt = OllamaMultiAgentFormatter()
+        msgs = [
+            Msg(
+                name="",
+                role="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
