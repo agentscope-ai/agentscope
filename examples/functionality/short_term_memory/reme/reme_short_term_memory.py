@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """ReMe-based short-term memory implementation for AgentScope."""
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, List
 from uuid import uuid4
@@ -106,6 +107,7 @@ class ReMeShortTermMemory(InMemoryMemory):
         self.group_token_threshold = group_token_threshold
         self.keep_recent_count = keep_recent_count
         self.store_dir = store_dir
+        self._managed_prefix: tuple[list[dict], list[dict]] = ([], [])
 
         config_args = []
 
@@ -177,7 +179,13 @@ class ReMeShortTermMemory(InMemoryMemory):
             await self.app.__aexit__(exc_type, exc_val, exc_tb)
         self._app_started = False
 
-    async def get_memory(self) -> list[Msg]:
+    async def get_memory(
+        self,
+        mark: str | None = None,
+        exclude_mark: str | None = None,
+        prepend_summary: bool = True,
+        **kwargs: Any,
+    ) -> list[Msg]:
         """Retrieve and manage working memory with automatic summarization.
 
         This method performs the core working-memory management pipeline:
@@ -194,13 +202,19 @@ class ReMeShortTermMemory(InMemoryMemory):
              LLM into dense summaries.
            - File storage: Offloaded content is written to external
              files for potential retrieval.
-        3. **Update content**: Replaces the internal message list with
-           the managed version, ensuring subsequent operations work with
-           the optimized context.
+        3. **Return managed messages**: Use the compacted messages for the
+           prompt. Keep the original messages and marks in memory so the
+           agent can still select, mark, or delete them by ID.
 
         The operation respects configuration parameters like
         max_total_tokens, keep_recent_count, and working_summary_mode to
         balance context size with information preservation.
+
+        Args:
+            mark: Select stored messages with this mark.
+            exclude_mark: Exclude stored messages with this mark.
+            prepend_summary: Include the agent's saved summary if present.
+            **kwargs: Additional options for the base memory.
 
         Returns:
             List of Msg objects representing the managed working memory,
@@ -213,9 +227,17 @@ class ReMeShortTermMemory(InMemoryMemory):
             contains paths and content for all externally stored
             messages.
         """
-        messages: list[dict[str, Any]] = await self.formatter.format(
-            msgs=self.content,  # type: ignore[has-type]
+        stored = await super().get_memory(
+            mark=mark,
+            exclude_mark=exclude_mark,
+            prepend_summary=prepend_summary,
+            **kwargs,
         )
+        # The agent uses marked reads to update the original message IDs.
+        # ReMe can combine multiple messages into one, losing those IDs.
+        if mark is not None or exclude_mark is not None or not stored:
+            return stored
+        messages: list[dict[str, Any]] = await self.formatter.format(stored)
         for message in messages:
             if isinstance(message.get("content"), list):
                 msg_content = message.get("content")
@@ -225,12 +247,22 @@ class ReMeShortTermMemory(InMemoryMemory):
                 )
                 message["content"] = ""
 
+        # Reuse compacted history on an append. If the agent edited, removed
+        # or restored messages, the formatted prefix can differ.
+        previous, managed = self._managed_prefix
+        if messages[: len(previous)] == previous:
+            if len(messages) == len(previous):
+                return self.list_to_msg(managed)
+            pending = managed + messages[len(previous) :]
+        else:
+            pending = messages
+
         # Execute ReMe's working memory offload pipeline
         # This orchestrates compaction and/or compression based on
         # working_summary_mode
         result: dict = await self.app.async_execute(
             name="summary_working_memory_for_as",
-            messages=messages,
+            messages=deepcopy(pending),
             working_summary_mode=self.working_summary_mode,
             compact_ratio_threshold=self.compact_ratio_threshold,
             max_total_tokens=self.max_total_tokens,
@@ -246,7 +278,7 @@ class ReMeShortTermMemory(InMemoryMemory):
         )
 
         # Extract managed messages and file write operations from result
-        messages = result.get("answer", [])
+        managed = result.get("answer", [])
         write_file_dict: dict = result.get("metadata", {}).get(
             "write_file_dict",
             {},
@@ -261,9 +293,9 @@ class ReMeShortTermMemory(InMemoryMemory):
                     file_dir.mkdir(parents=True, exist_ok=True)
                 await write_text_file(path, content_str)
 
-        # Update internal content with managed messages
-        self.content = self.list_to_msg(messages)
-        return self.content
+        prompt = self.list_to_msg(managed)
+        self._managed_prefix = (messages, managed)
+        return prompt
 
     @staticmethod
     def list_to_msg(messages: list[dict[str, Any]]) -> list[Msg]:
