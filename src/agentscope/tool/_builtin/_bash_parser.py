@@ -141,6 +141,93 @@ FIND_MUTATING_PREDICATES = {
 }
 
 
+def _operand_text(node: Node, command: str) -> Optional[str]:
+    """Return a shell operand's text, quoted or unquoted.
+
+    tree-sitter parses a quoted argument as a ``string`` (double quotes) or
+    ``raw_string`` (single quotes) node — and a quoted prefix followed by
+    more text as ``concatenation`` — never as ``word``. Checking only
+    ``word`` therefore dropped every quoted path.
+
+    Args:
+        node (`Node`): A child of a tree-sitter ``command`` node.
+        command (`str`): The original command string.
+
+    Returns:
+        `Optional[str]`: The operand text, or ``None`` for nodes that are
+        not operands.
+    """
+    if node.type not in ("word", "string", "raw_string", "concatenation"):
+        return None
+    text = command[node.start_byte : node.end_byte]
+    if node.type in ("string", "raw_string") and len(text) >= 2:
+        return text[1:-1]
+    return text
+
+
+def _drop_sed_script(args: List[str]) -> List[str]:
+    """Drop ``sed``'s inline script, which is an argument but not a path.
+
+    ``sed`` takes its script as the first positional argument unless
+    ``-e``/``-f`` supplies it, so a quoted ``'s/old/new/'`` must not be
+    reported as a file target now that quoted operands are visible.
+
+    Args:
+        args (`List[str]`): The argument texts of a ``sed`` command.
+
+    Returns:
+        `List[str]`: The same arguments without an inline script.
+    """
+    kept = []
+    script_seen = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in ("-e", "-f", "--expression", "--file"):
+            # The option's own argument is the script.
+            script_seen = True
+            index += 2
+            continue
+        if arg.startswith(("--expression=", "--file=")):
+            script_seen = True
+        elif not script_seen and not arg.startswith("-"):
+            # The first positional argument is the script.
+            script_seen = True
+        else:
+            kept.append(arg)
+        index += 1
+    return kept
+
+
+def _command_operands(
+    node: Node,
+    command: str,
+) -> Tuple[Optional[str], List[str]]:
+    """Return a ``command`` node's name and its operand texts.
+
+    Args:
+        node (`Node`): A tree-sitter ``command`` node.
+        command (`str`): The original command string.
+
+    Returns:
+        `Tuple[Optional[str], List[str]]`: The command name (``None`` when
+        the node has no ``command_name``) and its operands, with ``sed``'s
+        inline script removed.
+    """
+    cmd_name = None
+    args = []
+    for child in node.children:
+        if child.type == "command_name":
+            cmd_name = command[child.start_byte : child.end_byte]
+        elif cmd_name:
+            arg = _operand_text(child, command)
+            if arg:
+                args.append(arg)
+    if cmd_name == "sed":
+        args = _drop_sed_script(args)
+    return cmd_name, args
+
+
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
 
@@ -322,16 +409,7 @@ class BashCommandParser:
                     paths.append(("redirect", path.strip("'\"")))
         # Check for commands
         if node.type == "command":
-            # Extract command name and arguments
-            cmd_name = None
-            args = []
-
-            for child in node.children:
-                if child.type == "command_name":
-                    cmd_name = command[child.start_byte : child.end_byte]
-                elif child.type == "word" and cmd_name:
-                    arg = command[child.start_byte : child.end_byte]
-                    args.append(arg.strip("'\""))
+            cmd_name, args = _command_operands(node, command)
 
             # Check if this is a file-manipulating command
             if cmd_name in [
