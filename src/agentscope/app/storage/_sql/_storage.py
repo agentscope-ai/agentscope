@@ -17,11 +17,12 @@ timezone, while staying tz-naive so the plain ``DateTime`` columns
 need no dialect-specific timezone handling.
 """
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 import sqlalchemy as sa
 
 from .._base import StorageBase
+from .._model._base import _RecordBase
 from .._model._session import _origin_kwargs
 from .._model import (
     AgentRecord,
@@ -71,6 +72,9 @@ if TYPE_CHECKING:
         AsyncSession,
         async_sessionmaker,
     )
+
+
+_RecordT = TypeVar("_RecordT", bound=_RecordBase)
 
 
 def _utcnow() -> datetime:
@@ -413,6 +417,39 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 ).scalar_one()
             await sess.commit()
         return record
+
+    async def _get_record(
+        self,
+        row_cls: type,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record_id: str,
+    ) -> _RecordT | None:
+        """Fetch a record by id, rejecting records owned by another user."""
+        async with self._session() as sess:
+            row = await sess.get(row_cls, record_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, record_cls)
+
+    async def _list_records(
+        self,
+        row_cls: type,
+        record_cls: type[_RecordT],
+        user_id: str,
+    ) -> list[_RecordT]:
+        """Read all records for one owner, without additional filtering."""
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        sa.select(row_cls).where(row_cls.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(row, record_cls) for row in rows]
 
     # ------------------------------------------------------------------
     # Cascade-delete internals — every ``_delete_*_impl`` runs on the
@@ -785,21 +822,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
 
     async def list_credentials(self, user_id: str) -> list[CredentialRecord]:
         """Return every credential for *user_id*."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(CredentialRow).where(
-                            CredentialRow.user_id == user_id,
-                        ),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, CredentialRecord) for r in rows]
+        return await self._list_records(
+            CredentialRow,
+            CredentialRecord,
+            user_id,
+        )
 
     async def get_credential(
         self,
@@ -807,11 +834,12 @@ class AsyncSQLAlchemyStorage(StorageBase):
         credential_id: str,
     ) -> CredentialRecord | None:
         """Fetch one credential record; enforces owner-scoping."""
-        async with self._session() as sess:
-            row = await sess.get(CredentialRow, credential_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, CredentialRecord)
+        return await self._get_record(
+            CredentialRow,
+            CredentialRecord,
+            user_id,
+            credential_id,
+        )
 
     async def delete_credential(
         self,
@@ -857,27 +885,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
 
     async def list_mcps(self, user_id: str) -> list[MCPRecord]:
         """Return every installed-MCP record for *user_id*."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(MCPRow).where(MCPRow.user_id == user_id),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, MCPRecord) for r in rows]
+        return await self._list_records(MCPRow, MCPRecord, user_id)
 
     async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
         """Fetch one installed-MCP record by id; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(MCPRow, mcp_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, MCPRecord)
+        return await self._get_record(MCPRow, MCPRecord, user_id, mcp_id)
 
     async def get_mcp_by_name(
         self,
@@ -933,19 +945,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
 
     async def list_skills(self, user_id: str) -> list[SkillRecord]:
         """Return every installed-skill record for *user_id*."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(SkillRow).where(SkillRow.user_id == user_id),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, SkillRecord) for r in rows]
+        return await self._list_records(SkillRow, SkillRecord, user_id)
 
     async def get_skill(
         self,
@@ -953,11 +953,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         skill_id: str,
     ) -> SkillRecord | None:
         """Fetch one installed-skill record by id; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(SkillRow, skill_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, SkillRecord)
+        return await self._get_record(SkillRow, SkillRecord, user_id, skill_id)
 
     async def get_skill_by_name(
         self,
@@ -1040,11 +1036,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         agent_id: str,
     ) -> AgentRecord | None:
         """Fetch one agent record; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(AgentRow, agent_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, AgentRecord)
+        return await self._get_record(AgentRow, AgentRecord, user_id, agent_id)
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
         """Delete an agent + cascade sessions, schedules, team refs.
@@ -1070,27 +1062,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
 
     async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
         """Fetch one procedure; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(SOPRow, sop_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, SOPRecord)
+        return await self._get_record(SOPRow, SOPRecord, user_id, sop_id)
 
     async def list_sops(self, user_id: str) -> list[SOPRecord]:
         """Return the user's procedures."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(SOPRow).where(SOPRow.user_id == user_id),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, SOPRecord) for r in rows]
+        return await self._list_records(SOPRow, SOPRecord, user_id)
 
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
         """Delete a procedure, its runs and their sessions atomically."""
@@ -1152,11 +1128,12 @@ class AsyncSQLAlchemyStorage(StorageBase):
         sop_run_id: str,
     ) -> SOPRunRecord | None:
         """Fetch one run; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(SOPRunRow, sop_run_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, SOPRunRecord)
+        return await self._get_record(
+            SOPRunRow,
+            SOPRunRecord,
+            user_id,
+            sop_run_id,
+        )
 
     async def list_sop_runs(
         self,
@@ -1452,32 +1429,19 @@ class AsyncSQLAlchemyStorage(StorageBase):
         schedule_id: str,
     ) -> ScheduleRecord | None:
         """One schedule; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(ScheduleRow, schedule_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, ScheduleRecord)
+        return await self._get_record(
+            ScheduleRow,
+            ScheduleRecord,
+            user_id,
+            schedule_id,
+        )
 
     async def list_schedules(
         self,
         user_id: str,
     ) -> list[ScheduleRecord]:
         """All schedules for a user."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(ScheduleRow).where(
-                            ScheduleRow.user_id == user_id,
-                        ),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, ScheduleRecord) for r in rows]
+        return await self._list_records(ScheduleRow, ScheduleRecord, user_id)
 
     async def delete_schedule(
         self,
@@ -1859,27 +1823,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
         team_id: str,
     ) -> TeamRecord | None:
         """One team; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(TeamRow, team_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, TeamRecord)
+        return await self._get_record(TeamRow, TeamRecord, user_id, team_id)
 
     async def list_teams(self, user_id: str) -> list[TeamRecord]:
         """All teams for a user."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(TeamRow).where(TeamRow.user_id == user_id),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, TeamRecord) for r in rows]
+        return await self._list_records(TeamRow, TeamRecord, user_id)
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Delete a team + role-aware member cleanup.
@@ -1917,32 +1865,23 @@ class AsyncSQLAlchemyStorage(StorageBase):
         knowledge_base_id: str,
     ) -> KnowledgeBaseRecord | None:
         """One KB; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(KnowledgeBaseRow, knowledge_base_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, KnowledgeBaseRecord)
+        return await self._get_record(
+            KnowledgeBaseRow,
+            KnowledgeBaseRecord,
+            user_id,
+            knowledge_base_id,
+        )
 
     async def list_knowledge_bases(
         self,
         user_id: str,
     ) -> list[KnowledgeBaseRecord]:
         """All KBs for a user."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(KnowledgeBaseRow).where(
-                            KnowledgeBaseRow.user_id == user_id,
-                        ),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, KnowledgeBaseRecord) for r in rows]
+        return await self._list_records(
+            KnowledgeBaseRow,
+            KnowledgeBaseRecord,
+            user_id,
+        )
 
     async def delete_knowledge_base(
         self,
@@ -2292,32 +2231,23 @@ class AsyncSQLAlchemyStorage(StorageBase):
         profile_id: str,
     ) -> VoiceProfileRecord | None:
         """Fetch one voice profile; owner-scoped."""
-        async with self._session() as sess:
-            row = await sess.get(VoiceProfileRow, profile_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _to_record(row, VoiceProfileRecord)
+        return await self._get_record(
+            VoiceProfileRow,
+            VoiceProfileRecord,
+            user_id,
+            profile_id,
+        )
 
     async def list_voice_profiles(
         self,
         user_id: str,
     ) -> list[VoiceProfileRecord]:
         """Return all voice profiles for *user_id*."""
-        from sqlalchemy import select
-
-        async with self._session() as sess:
-            rows = (
-                (
-                    await sess.execute(
-                        select(VoiceProfileRow).where(
-                            VoiceProfileRow.user_id == user_id,
-                        ),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-        return [_to_record(r, VoiceProfileRecord) for r in rows]
+        return await self._list_records(
+            VoiceProfileRow,
+            VoiceProfileRecord,
+            user_id,
+        )
 
     async def delete_voice_profile(
         self,
