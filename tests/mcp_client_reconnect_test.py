@@ -149,6 +149,54 @@ class MCPClientReconnectTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(transports), 2)
         self.assertTrue(all(_.enter_count == 1 for _ in transports))
 
+    async def test_rejects_connect_during_handshake(self) -> None:
+        """The first handshake keeps ownership of the only transport."""
+        handshake_started = asyncio.Event()
+        finish_handshake = asyncio.Event()
+        transport = _OneShotTransport()
+
+        class _BlockingClient(_FakeClient):
+            """Hold the first handshake open while another caller connects."""
+
+            async def connect(self) -> None:
+                """Wait for the test to release the first connection."""
+                handshake_started.set()
+                await finish_handshake.wait()
+
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=transport,
+        ) as create_transport, patch(
+            "agentscope.mcp._mcp_client.SDKClient",
+            _BlockingClient,
+        ):
+            client = MCPClient(
+                name="concurrent_connect",
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(command="unused"),
+            )
+            first = asyncio.create_task(client.connect())
+            try:
+                await asyncio.wait_for(handshake_started.wait(), timeout=5)
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "connection is already in progress",
+                ):
+                    await asyncio.wait_for(client.connect(), timeout=5)
+
+                self.assertFalse(first.done())
+                finish_handshake.set()
+                await asyncio.wait_for(first, timeout=5)
+            finally:
+                if not first.done():
+                    first.cancel()
+                    await asyncio.gather(first, return_exceptions=True)
+                if client.is_connected:
+                    await client.close()
+
+        create_transport.assert_called_once()
+        self.assertEqual((transport.enter_count, transport.exit_count), (1, 1))
+
     async def test_client_context_is_closed_by_its_owner_task(self) -> None:
         """Connect and close requests may run in different caller tasks."""
         transport = _OneShotTransport()
