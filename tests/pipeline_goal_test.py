@@ -321,6 +321,22 @@ class GoalPipelineTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(verifier.received), 1)
 
+    async def test_executor_retry_reminder_is_closed(self) -> None:
+        """The retry prompt is a ``<system-reminder>`` block; leaving it
+        unclosed makes the rest of the conversation read as part of it."""
+        executor = StubAgent(
+            "executor",
+            [[_no_output("executor")], [_report()]],
+        )
+        verifier = StubAgent("verifier", [[_verdict("pass")]])
+        pipe = GoalPipeline(executor, verifier)
+
+        await self._run(pipe, self.query)
+
+        reminder = executor.received[1].get_text_content()
+        self.assertTrue(reminder.startswith("<system-reminder>"))
+        self.assertTrue(reminder.endswith("</system-reminder>"))
+
     async def test_gives_up_on_an_executor_that_never_reports(self) -> None:
         """Stop after the initial attempt and the allowed retries."""
         for max_retries in (0, 2):
