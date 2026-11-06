@@ -83,6 +83,37 @@ class BashPermissionSplitTest(unittest.TestCase):
                 self.assertEqual(parser.is_read_only_command(command), False)
 
 
+class BashParserQuotedOperandsTest(unittest.TestCase):
+    """Quoted operands must reach file-path extraction."""
+
+    def test_quoted_operands_are_extracted(self) -> None:
+        """Treat quoted arguments like plain words for mutating commands."""
+        parser = BashCommandParser()
+        cases = [
+            (
+                'cp ./note.txt "./.bashrc"',
+                [("cp", "./note.txt"), ("cp", "./.bashrc")],
+            ),
+            (
+                "mv 'old name.txt' \"new name.txt\"",
+                [
+                    ("mv", "old name.txt"),
+                    ("mv", "new name.txt"),
+                ],
+            ),
+            ('rm -rf "/etc"', [("rm", "/etc")]),
+            # A quoted sed script is an argument but not a target file.
+            ("sed -i 's/old/new/' file.txt", [("sed", "file.txt")]),
+            ("sed -e 's/a/b/' file.txt", [("sed", "file.txt")]),
+        ]
+        for command, expected in cases:
+            with self.subTest(command=command):
+                self.assertEqual(
+                    parser.extract_file_paths(command),
+                    expected,
+                )
+
+
 @unittest.skipIf(
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
@@ -783,11 +814,11 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     async def test_quoted_paths(self) -> None:
         """Test file path extraction with quoted paths."""
         test_cases = [
-            ('rm "file with spaces.txt"', []),  # Quoted paths not extracted
-            ("rm 'file.txt'", []),  # Quoted paths not extracted
+            ('rm "file with spaces.txt"', [("rm", "file with spaces.txt")]),
+            ("rm 'file.txt'", [("rm", "file.txt")]),
             (
                 'mv "old file.txt" "new file.txt"',
-                [],  # Quoted paths not extracted
+                [("mv", "old file.txt"), ("mv", "new file.txt")],
             ),
         ]
         for cmd, expected in test_cases:
