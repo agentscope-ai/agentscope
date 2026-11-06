@@ -337,11 +337,14 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
-                        block,
+                    content_blocks.append(
+                        self._format_openai_data_block(block)
+                        or {
+                            "type": "text",
+                            "text": f"[{block.source.media_type} "
+                            "attached, not supported by this provider]",
+                        },
                     )
-                    if formatted is not None:
-                        content_blocks.append(formatted)
 
                 elif isinstance(block, HintBlock):
                     if content_blocks or tool_calls:
@@ -373,11 +376,15 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": sub.text},
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_openai_data_block(
-                                    sub,
+                                hint_parts.append(
+                                    self._format_openai_data_block(sub)
+                                    or {
+                                        "type": "text",
+                                        "text": f"[{sub.source.media_type} "
+                                        "attached, not supported by this "
+                                        "provider]",
+                                    },
                                 )
-                                if formatted_sub is not None:
-                                    hint_parts.append(formatted_sub)
                         if hint_parts:
                             messages.append(
                                 {"role": "user", "content": hint_parts},
@@ -430,11 +437,15 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_openai_data_block(
-                                    item,
+                                promo_content.append(
+                                    self._format_openai_data_block(item)
+                                    or {
+                                        "type": "text",
+                                        "text": f"[{item.source.media_type} "
+                                        "attached, not supported by this "
+                                        "provider]",
+                                    },
                                 )
-                                if fmt_item is not None:
-                                    promo_content.append(fmt_item)
                         if promo_content:
                             pending_media.append(
                                 {
@@ -593,11 +604,14 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
                     accumulated_text.append(f"{msg.name}: {block.text}")
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
-                        block,
+                    media_blocks.append(
+                        self._format_openai_data_block(block)
+                        or {
+                            "type": "text",
+                            "text": f"[{block.source.media_type} "
+                            "attached, not supported by this provider]",
+                        },
                     )
-                    if formatted is not None:
-                        media_blocks.append(formatted)
 
         if accumulated_text:
             conversation_blocks.append(

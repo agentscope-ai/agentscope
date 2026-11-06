@@ -32,7 +32,9 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestOpenAIFormatter(IsolatedAsyncioTestCase):
+class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for OpenAI Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -1290,6 +1292,119 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "text",
                             "text": "The page is Example Domain.",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_video_keeps_turn(self) -> None:
+        """A video-only user message must not vanish from the history.
+
+        OpenAIChatFormatter cannot send video; instead of dropping the
+        whole turn it should emit a text placeholder (#3112).
+        """
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            media_type="video/mp4",
+                            data="aGVsbG8=",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[video/mp4 attached, not supported "
+                            "by this provider]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_video_in_mixed_message(
+        self,
+    ) -> None:
+        """Unsupported media in a mixed message leaves a placeholder."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Watch this clip:"),
+                    DataBlock(
+                        source=Base64Source(
+                            media_type="video/mp4",
+                            data="aGVsbG8=",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Watch this clip:"},
+                        {
+                            "type": "text",
+                            "text": "[video/mp4 attached, not supported "
+                            "by this provider]",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_unsupported_video_in_hint(self) -> None:
+        """Unsupported media inside a HintBlock keeps the hint visible."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            DataBlock(
+                                source=Base64Source(
+                                    media_type="video/mp4",
+                                    data="aGVsbG8=",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[video/mp4 attached, not supported "
+                            "by this provider]",
                         },
                     ],
                 },
