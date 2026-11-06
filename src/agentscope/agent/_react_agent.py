@@ -1113,12 +1113,20 @@ class ReActAgent(ReActAgentBase):
 
             # Format the compressed memory summary
             if last_chunk is not None and last_chunk.metadata:
-                # Update the compressed summary in the memory storage
-                await self.memory.update_compressed_summary(
-                    self.compression_config.summary_template.format(
+                try:
+                    summary = self.compression_config.summary_template.format(
                         **last_chunk.metadata,
-                    ),
-                )
+                    )
+                except KeyError as exc:
+                    logger.warning(
+                        "Skipping memory compression in agent %s: "
+                        "summary is missing field %s.",
+                        self.name,
+                        exc,
+                    )
+                    return
+
+                await self.memory.update_compressed_summary(summary)
 
                 # Mark the compressed messages in the memory storage
                 await self.memory.update_messages_mark(

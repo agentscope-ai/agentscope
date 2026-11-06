@@ -88,8 +88,8 @@ class MockFormatter(FormatterBase):
 class MemoryCompressionTest(IsolatedAsyncioTestCase):
     """The unittest for memory compression."""
 
-    async def test_empty_compression_stream_preserves_memory(self) -> None:
-        """An empty response preserves prior memory and permits a retry."""
+    async def test_unusable_compression_stream_preserves_memory(self) -> None:
+        """Empty or incomplete responses preserve memory for a later retry."""
         for separate_model in (False, True):
             with self.subTest(separate_model=separate_model):
                 model = MockChatModel("mock-model", stream=True)
@@ -106,7 +106,7 @@ class MemoryCompressionTest(IsolatedAsyncioTestCase):
                         agent_token_counter=CharTokenCounter(),
                         keep_recent=1,
                         compression_model=model if separate_model else None,
-                        summary_template="{task_overview}",
+                        summary_template="{task_overview}: {next_steps}",
                     ),
                 )
                 messages = [
@@ -130,10 +130,21 @@ class MemoryCompressionTest(IsolatedAsyncioTestCase):
                     stream([]),
                     stream(
                         [
+                            ChatResponse(
+                                content=[],
+                                metadata={"task_overview": "Partial summary"},
+                            ),
+                        ],
+                    ),
+                    stream(
+                        [
                             ChatResponse(content=[]),
                             ChatResponse(
                                 content=[],
-                                metadata={"task_overview": "New summary"},
+                                metadata={
+                                    "task_overview": "New summary",
+                                    "next_steps": "Continue",
+                                },
                             ),
                         ],
                     ),
@@ -143,19 +154,21 @@ class MemoryCompressionTest(IsolatedAsyncioTestCase):
                     "__call__",
                     side_effect=responses,
                 ) as model_call:
-                    with self.assertLogs("as", level="WARNING"):
-                        await agent._compress_memory_if_needed()
-                    self.assertEqual(agent.memory.state_dict(), before)
+                    for outcome in ("empty stream", "missing next_steps"):
+                        with self.subTest(outcome=outcome):
+                            with self.assertLogs("as", level="WARNING"):
+                                await agent._compress_memory_if_needed()
+                            self.assertEqual(agent.memory.state_dict(), before)
 
                     await agent._compress_memory_if_needed()
-                    self.assertEqual(model_call.await_count, 2)
+                    self.assertEqual(model_call.await_count, 3)
 
                 remaining = await agent.memory.get_memory(
                     exclude_mark="compressed",
                 )
                 self.assertEqual(
                     [msg.get_text_content() for msg in remaining],
-                    ["New summary", "Keep this recent message."],
+                    ["New summary: Continue", "Keep this recent message."],
                 )
                 self.assertEqual(remaining[-1].id, messages[-1].id)
 
