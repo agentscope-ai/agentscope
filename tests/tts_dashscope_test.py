@@ -1428,6 +1428,32 @@ class TestDashScopeCosyVoiceRealtimeMode(
                 )
                 self.assertTrue(model._cold_start_done)
 
+    async def test_push_retry_after_cold_start_failure_counts_once(
+        self,
+    ) -> None:
+        """Re-sending the delta whose flush failed must not double it."""
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(cold_start_length=10) as model:
+                model._callback.get_audio_response = Mock(
+                    return_value=TTSResponse(content=None),
+                )
+                self.mock_synthesizer.streaming_call = Mock(
+                    side_effect=RuntimeError("socket gone"),
+                )
+                await model.push("Hi there friend!")
+
+                self.mock_synthesizer.streaming_call = Mock()
+                await model.push("Hi there friend!")
+
+                self.mock_synthesizer.streaming_call.assert_called_once_with(
+                    "Hi there friend!",
+                )
+                self.assertEqual(
+                    model._accumulated_text,
+                    "Hi there friend!",
+                )
+                self.assertTrue(model._cold_start_done)
+
     async def test_push_after_cold_start_forwards_directly(self) -> None:
         """Once cold start is done, subsequent deltas bypass the buffer."""
         with patch.dict("sys.modules", self.mock_modules):
