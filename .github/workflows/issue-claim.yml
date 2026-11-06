@@ -54,14 +54,14 @@ jobs:
             echo "verdict=no" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Otherwise the job token is left in .git/config, where the
           # agent's own shell could read it and act as this job.
           persist-credentials: false
         if: steps.gate.outputs.verdict == 'maybe'
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v6
         if: steps.gate.outputs.verdict == 'maybe'
         with:
           version: "0.13.4"
