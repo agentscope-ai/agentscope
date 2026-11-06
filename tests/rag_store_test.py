@@ -80,6 +80,27 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             "This is a test document.",
         )
 
+    async def test_qdrant_custom_metadata_round_trip(self) -> None:
+        """Metadata added by callers should survive indexing and retrieval."""
+        store = QdrantStore(
+            location=":memory:",
+            collection_name="test_custom_metadata",
+            dimensions=2,
+        )
+        metadata = DocMetadata(
+            content=TextBlock(type="text", text="First page"),
+            doc_id="report",
+            chunk_id=0,
+            total_chunks=1,
+        )
+        metadata.setattr("filename", "report.pdf")
+        metadata.setattr("source", {"pages": [1, 2]})
+        await store.add([Document(metadata=metadata, embedding=[1.0, 0.0])])
+
+        (result,) = await store.search(query_embedding=[1.0, 0.0], limit=1)
+        self.assertIsInstance(result.metadata, DocMetadata)
+        self.assertEqual(dict(result.metadata), dict(metadata))
+
     async def test_milvus_lite_store(self) -> None:
         """Test the MilvusLiteStore implementation."""
         if os.name == "nt":
@@ -458,6 +479,7 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             {
                 "vector": [0.1, 0.2, 0.3],
                 "payload": {
+                    "filename": "report.pdf",
                     "doc_id": "doc1",
                     "chunk_id": 0,
                     "total_chunks": 2,
@@ -506,19 +528,21 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             mock_pymongo.AsyncMongoClient.assert_called_once()
 
             # Test add operation
+            metadata = DocMetadata(
+                content=TextBlock(
+                    type="text",
+                    text="This is a test document.",
+                ),
+                doc_id="doc1",
+                chunk_id=0,
+                total_chunks=2,
+            )
+            metadata.setattr("filename", "report.pdf")
             await store.add(
                 [
                     Document(
                         embedding=[0.1, 0.2, 0.3],
-                        metadata=DocMetadata(
-                            content=TextBlock(
-                                type="text",
-                                text="This is a test document.",
-                            ),
-                            doc_id="doc1",
-                            chunk_id=0,
-                            total_chunks=2,
-                        ),
+                        metadata=metadata,
                     ),
                     Document(
                         embedding=[0.9, 0.1, 0.4],
@@ -537,6 +561,8 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
 
             # Verify add operations
             self.assertTrue(mock_collection.bulk_write.called)
+            first_record = mock_replace_one.call_args_list[0].args[1]
+            self.assertEqual(first_record["payload"], dict(metadata))
 
             # Reset mocks for search operation
             mock_collection.reset_mock()
@@ -559,13 +585,7 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             # Verify search results
             self.assertEqual(len(res), 1)
             self.assertAlmostEqual(res[0].score, 0.97, places=2)
-            self.assertEqual(
-                res[0].metadata.content["text"],
-                "This is a test document.",
-            )
-            self.assertEqual(res[0].metadata.doc_id, "doc1")
-            self.assertEqual(res[0].metadata.chunk_id, 0)
-            self.assertEqual(res[0].metadata.total_chunks, 2)
+            self.assertEqual(dict(res[0].metadata), dict(metadata))
 
             # Verify search executed aggregate
             self.assertTrue(mock_collection.aggregate.called)
