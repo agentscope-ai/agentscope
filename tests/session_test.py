@@ -2,7 +2,9 @@
 """Session module tests."""
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional, Union
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
@@ -95,6 +97,49 @@ class SessionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(agent1.name, "Friday")
         self.assertEqual(agent2.sys_prompt, "A helpful assistant.")
+
+    async def test_json_session_confines_reads_and_writes(self) -> None:
+        """Identifiers cannot redirect either operation outside the store."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = JSONSession(str(root / "sessions"))
+            outside = root / "target.json"
+            outside.write_text("{}", encoding="utf-8")
+            for user_id, session_id in [
+                ("", "../target"),
+                ("", str(outside.with_suffix(""))),
+                ("../", "target"),
+                ("", r"..\target"),
+                ("", "C:target"),
+            ]:
+                for operation in (
+                    session.save_session_state,
+                    session.load_session_state,
+                ):
+                    with self.subTest(
+                        user_id=user_id,
+                        session_id=session_id,
+                        operation=operation.__name__,
+                    ), self.assertRaises(ValueError):
+                        await operation(session_id, user_id=user_id)
+
+    async def test_json_session_rejects_escaping_symlink(self) -> None:
+        """A pre-existing session link cannot redirect file access."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = root / "sessions"
+            store.mkdir()
+            outside = root / "target.json"
+            outside.write_text("{}", encoding="utf-8")
+            try:
+                (store / "linked.json").symlink_to(outside)
+            except OSError as error:
+                self.skipTest(f"Cannot create a symlink: {error}")
+            session = JSONSession(str(store))
+            with self.assertRaises(ValueError):
+                await session.load_session_state("linked")
+            with self.assertRaises(ValueError):
+                await session.save_session_state("linked")
 
     async def asyncTearDown(self) -> None:
         """Clean up after the test."""
