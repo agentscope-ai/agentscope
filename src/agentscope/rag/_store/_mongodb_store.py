@@ -218,19 +218,11 @@ class MongoDBStore(VDBStoreBase):
         # Prepare documents for insertion
         docs_to_insert = []
         for doc in documents:
-            # Convert DocMetadata to dict for storage
-            payload = {
-                "doc_id": doc.metadata.doc_id,
-                "chunk_id": doc.metadata.chunk_id,
-                "total_chunks": doc.metadata.total_chunks,
-                "content": doc.metadata.content,
-            }
-
             # Create document record
             doc_record = {
                 "id": f"{doc.metadata.doc_id}_{doc.metadata.chunk_id}",
                 "vector": doc.embedding,
-                "payload": payload,
+                "payload": dict(doc.metadata),
             }
             docs_to_insert.append(doc_record)
 

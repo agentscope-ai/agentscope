@@ -2,6 +2,7 @@
 """The document data structure used in RAG as the data chunk and
 retrieval result."""
 from dataclasses import dataclass, field
+from typing import Any
 
 import shortuuid
 from dashscope.api_entities.dashscope_response import DictMixin
@@ -29,6 +30,24 @@ class DocMetadata(DictMixin):
 
     total_chunks: int
     """The total number of chunks."""
+
+    def __init__(
+        self,
+        /,
+        content: TextBlock | ImageBlock | VideoBlock,
+        doc_id: str,
+        chunk_id: int,
+        total_chunks: int,
+        **extra: Any,
+    ) -> None:
+        """Restore both the required fields and user-defined payload keys."""
+        super().__init__(
+            extra,
+            content=content,
+            doc_id=doc_id,
+            chunk_id=chunk_id,
+            total_chunks=total_chunks,
+        )
 
 
 @dataclass
