@@ -61,7 +61,7 @@ jobs:
           persist-credentials: false
         if: steps.gate.outputs.verdict == 'maybe'
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v5
         if: steps.gate.outputs.verdict == 'maybe'
         with:
           version: "0.13.4"
