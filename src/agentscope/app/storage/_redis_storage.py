@@ -4,11 +4,12 @@
 
 import warnings
 from datetime import datetime, timedelta
-from typing import Any, TYPE_CHECKING, Self
+from typing import Any, ClassVar, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
 
 from ._base import StorageBase
+from ._model._base import _RecordBase, _RecordT
 from ._model._session import _origin_kwargs
 from ._model import (
     AgentRecord,
@@ -155,6 +156,28 @@ class RedisStorage(StorageBase):
         # used by the lease sweeper, never by per-user listing.
         knowledge_document_global_index: str = "agentscope:knowledge_documents"
 
+    # Record key attribute, owner index attribute, record-id placeholder.
+    _record_keys: ClassVar[dict[type[_RecordBase], tuple[str, str, str]]] = {
+        CredentialRecord: ("credential", "credential_index", "credential_id"),
+        MCPRecord: ("mcp", "mcp_index", "mcp_id"),
+        SkillRecord: ("skill", "skill_index", "skill_id"),
+        AgentRecord: ("agent", "agent_index", "agent_id"),
+        SOPRecord: ("sop", "sop_index", "sop_id"),
+        SOPRunRecord: ("sop_run", "sop_run_index", "sop_run_id"),
+        ScheduleRecord: ("schedule", "schedule_index", "schedule_id"),
+        TeamRecord: ("team", "team_index", "team_id"),
+        KnowledgeBaseRecord: (
+            "knowledge_base",
+            "knowledge_base_index",
+            "knowledge_base_id",
+        ),
+        VoiceProfileRecord: (
+            "voice_profile",
+            "voice_profile_index",
+            "profile_id",
+        ),
+    }
+
     def __init__(
         self,
         host: str = "localhost",
@@ -275,6 +298,92 @@ class RedisStorage(StorageBase):
         """Get the underlying Redis client instance."""
         return self._client
 
+    def _record_key(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record_id: str,
+    ) -> str:
+        """Resolve a record key through the caller's KeyConfig templates."""
+        key_attr, _, id_field = self._record_keys[record_cls]
+        return self._key(
+            getattr(self.key_config, key_attr),
+            user_id=user_id,
+            **{id_field: record_id},
+        )
+
+    def _record_index(self, record_cls: type[_RecordT], user_id: str) -> str:
+        """Resolve the owner index through the caller's KeyConfig."""
+        _, index_attr, _ = self._record_keys[record_cls]
+        return self._key(getattr(self.key_config, index_attr), user_id=user_id)
+
+    async def _upsert_record(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record: _RecordT,
+    ) -> _RecordT:
+        """Persist an ordinary record, preserving creation time and TTL."""
+        if record.user_id != user_id:
+            raise ValueError(
+                "record.user_id does not match the given user_id.",
+            )
+        key = self._record_key(record_cls, user_id, record.id)
+        raw = await self._client.get(key)
+        if raw:
+            record.created_at = record_cls.model_validate_json(raw).created_at
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(
+            self._record_index(record_cls, user_id),
+            record.id,
+        )
+        return record
+
+    async def _get_record(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record_id: str,
+    ) -> _RecordT | None:
+        """Read one record from its existing owner-scoped key."""
+        raw = await self._client.get(
+            self._record_key(record_cls, user_id, record_id),
+        )
+        return record_cls.model_validate_json(raw) if raw else None
+
+    async def _list_records(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+    ) -> list[_RecordT]:
+        """Read the owner index, ignoring missing or expired records."""
+        ids = await self._client.smembers(
+            self._record_index(record_cls, user_id),
+        )
+        records = []
+        for record_id in ids:
+            record = await self._get_record(record_cls, user_id, record_id)
+            if record is not None:
+                records.append(record)
+        return records
+
+    async def _delete_record(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record_id: str,
+    ) -> bool:
+        """Delete an ordinary key and its owner index entry, no cascades."""
+        deleted = await self._client.delete(
+            self._record_key(record_cls, user_id, record_id),
+        )
+        await self._client.srem(
+            self._record_index(record_cls, user_id),
+            record_id,
+        )
+        return deleted > 0
+
     async def _generate_credential_name(
         self,
         user_id: str,
@@ -374,79 +483,6 @@ class RedisStorage(StorageBase):
         await self._client.sadd(index_key, record.id)
         return record.id
 
-    async def list_credentials(self, user_id: str) -> list[CredentialRecord]:
-        """Return all credential records belonging to the given user.
-
-        Reads the per-user credential index Set to obtain all ids, then
-        fetches each record individually. Records whose keys have expired or
-        been deleted externally are silently skipped.
-
-        Args:
-            user_id (`str`): The owner user id.
-
-        Returns:
-            `list[CredentialRecord]`: All credential records for the user.
-        """
-        index_key = self._key(
-            self.key_config.credential_index,
-            user_id=user_id,
-        )
-        ids = await self._client.smembers(index_key)
-        records = []
-        for cred_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.credential,
-                    user_id=user_id,
-                    credential_id=cred_id,
-                ),
-            )
-            if raw:
-                records.append(CredentialRecord.model_validate_json(raw))
-        return records
-
-    async def get_credential(
-        self,
-        user_id: str,
-        credential_id: str,
-    ) -> CredentialRecord | None:
-        """Fetch a single credential record by id."""
-        key = self._key(
-            self.key_config.credential,
-            user_id=user_id,
-            credential_id=credential_id,
-        )
-        raw = await self._client.get(key)
-        return CredentialRecord.model_validate_json(raw) if raw else None
-
-    async def delete_credential(
-        self,
-        user_id: str,
-        credential_id: str,
-    ) -> bool:
-        """Delete a credential record and remove it from the user's index.
-
-        Args:
-            user_id (`str`): The owner user id.
-            credential_id (`str`): The id of the credential to delete.
-
-        Returns:
-            `bool`: ``True`` if the record existed and was deleted,
-            ``False`` if it did not exist.
-        """
-        key = self._key(
-            self.key_config.credential,
-            user_id=user_id,
-            credential_id=credential_id,
-        )
-        index_key = self._key(
-            self.key_config.credential_index,
-            user_id=user_id,
-        )
-        deleted = await self._client.delete(key)
-        await self._client.srem(index_key, credential_id)
-        return deleted > 0
-
     async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
         """Create or update an installed-MCP record for the given user.
 
@@ -505,40 +541,6 @@ class RedisStorage(StorageBase):
                 await self._client.hdel(name_key, previous)
 
         return mcp_record.id
-
-    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
-        """Return every installed-MCP record belonging to the user.
-
-        Args:
-            user_id (`str`): The owner user id.
-
-        Returns:
-            `list[MCPRecord]`: All installed-MCP records for the user.
-        """
-        index_key = self._key(self.key_config.mcp_index, user_id=user_id)
-        ids = await self._client.smembers(index_key)
-        records = []
-        for mcp_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.mcp,
-                    user_id=user_id,
-                    mcp_id=mcp_id,
-                ),
-            )
-            if raw:
-                records.append(MCPRecord.model_validate_json(raw))
-        return records
-
-    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
-        """Fetch a single installed-MCP record by id."""
-        key = self._key(
-            self.key_config.mcp,
-            user_id=user_id,
-            mcp_id=mcp_id,
-        )
-        raw = await self._client.get(key)
-        return MCPRecord.model_validate_json(raw) if raw else None
 
     async def get_mcp_by_name(
         self,
@@ -636,44 +638,6 @@ class RedisStorage(StorageBase):
                 await self._client.hdel(name_key, previous)
 
         return skill_record.id
-
-    async def list_skills(self, user_id: str) -> list[SkillRecord]:
-        """Return every installed-skill record belonging to the user.
-
-        Args:
-            user_id (`str`): The owner user id.
-
-        Returns:
-            `list[SkillRecord]`: All installed-skill records for the user.
-        """
-        index_key = self._key(self.key_config.skill_index, user_id=user_id)
-        ids = await self._client.smembers(index_key)
-        records = []
-        for skill_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.skill,
-                    user_id=user_id,
-                    skill_id=skill_id,
-                ),
-            )
-            if raw:
-                records.append(SkillRecord.model_validate_json(raw))
-        return records
-
-    async def get_skill(
-        self,
-        user_id: str,
-        skill_id: str,
-    ) -> SkillRecord | None:
-        """Fetch a single installed-skill record by id."""
-        key = self._key(
-            self.key_config.skill,
-            user_id=user_id,
-            skill_id=skill_id,
-        )
-        raw = await self._client.get(key)
-        return SkillRecord.model_validate_json(raw) if raw else None
 
     async def get_skill_by_name(
         self,
@@ -792,20 +756,6 @@ class RedisStorage(StorageBase):
                 if record.source == "user":
                     records.append(record)
         return records
-
-    async def get_agent(
-        self,
-        user_id: str,
-        agent_id: str,
-    ) -> AgentRecord | None:
-        """Fetch a single agent record by id."""
-        key = self._key(
-            self.key_config.agent,
-            user_id=user_id,
-            agent_id=agent_id,
-        )
-        raw = await self._client.get(key)
-        return AgentRecord.model_validate_json(raw) if raw else None
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
         """Delete an agent record and cascade-delete its sessions,
@@ -1221,42 +1171,6 @@ class RedisStorage(StorageBase):
         )
         return record.id
 
-    async def get_schedule(
-        self,
-        user_id: str,
-        schedule_id: str,
-    ) -> ScheduleRecord | None:
-        """Fetch a single cron task record by id."""
-        key = self._key(
-            self.key_config.schedule,
-            user_id=user_id,
-            schedule_id=schedule_id,
-        )
-        raw = await self._client.get(key)
-        if not raw:
-            return None
-        return ScheduleRecord.model_validate_json(raw)
-
-    async def list_schedules(self, user_id: str) -> list[ScheduleRecord]:
-        """Return all cron task records belonging to the given user."""
-        index_key = self._key(
-            self.key_config.schedule_index,
-            user_id=user_id,
-        )
-        ids = await self._client.smembers(index_key)
-        records = []
-        for schedule_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.schedule,
-                    user_id=user_id,
-                    schedule_id=schedule_id,
-                ),
-            )
-            if raw:
-                records.append(ScheduleRecord.model_validate_json(raw))
-        return records
-
     async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
         """Delete a cron task record, cascade-delete its execution sessions,
         and remove it from the user and global indexes."""
@@ -1656,13 +1570,6 @@ class RedisStorage(StorageBase):
         )
         return record
 
-    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
-        """Fetch one procedure by id."""
-        raw = await self._client.get(
-            self._key(self.key_config.sop, user_id=user_id, sop_id=sop_id),
-        )
-        return SOPRecord.model_validate_json(raw) if raw else None
-
     async def list_sops(self, user_id: str) -> list[SOPRecord]:
         """Return every procedure in the user's index that still exists."""
         ids = await self._client.smembers(
@@ -1723,21 +1630,6 @@ class RedisStorage(StorageBase):
             record.id,
         )
         return record
-
-    async def get_sop_run(
-        self,
-        user_id: str,
-        sop_run_id: str,
-    ) -> SOPRunRecord | None:
-        """Fetch one run by id."""
-        raw = await self._client.get(
-            self._key(
-                self.key_config.sop_run,
-                user_id=user_id,
-                sop_run_id=sop_run_id,
-            ),
-        )
-        return SOPRunRecord.model_validate_json(raw) if raw else None
 
     async def list_sop_runs(
         self,
@@ -1850,65 +1742,6 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
         return record
-
-    async def get_team(
-        self,
-        user_id: str,
-        team_id: str,
-    ) -> TeamRecord | None:
-        """Fetch a single team record by id.
-
-        Args:
-            user_id (`str`):
-                The owner user id.
-            team_id (`str`):
-                The team id to look up.
-
-        Returns:
-            `TeamRecord | None`:
-                The record, or ``None`` if no record exists at the
-                ``(user_id, team_id)`` key (e.g. expired or never created).
-        """
-        key = self._key(
-            self.key_config.team,
-            user_id=user_id,
-            team_id=team_id,
-        )
-        raw = await self._client.get(key)
-        if not raw:
-            return None
-        return TeamRecord.model_validate_json(raw)
-
-    async def list_teams(self, user_id: str) -> list[TeamRecord]:
-        """Return all team records belonging to the given user.
-
-        Reads the per-user team index (a Redis Set of team ids) and fetches
-        each record individually. Records whose keys have expired or been
-        deleted externally are silently skipped.
-
-        Args:
-            user_id (`str`):
-                The owner user id whose teams to list.
-
-        Returns:
-            `list[TeamRecord]`:
-                All team records for the user, in arbitrary order (the
-                index is a Set).
-        """
-        index_key = self._key(self.key_config.team_index, user_id=user_id)
-        ids = await self._client.smembers(index_key)
-        records: list[TeamRecord] = []
-        for team_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.team,
-                    user_id=user_id,
-                    team_id=team_id,
-                ),
-            )
-            if raw:
-                records.append(TeamRecord.model_validate_json(raw))
-        return records
 
     async def set_session_team_id(
         self,
@@ -2036,113 +1869,6 @@ class RedisStorage(StorageBase):
     # ------------------------------------------------------------------
     # Knowledge base persistence
     # ------------------------------------------------------------------
-
-    async def upsert_knowledge_base(
-        self,
-        user_id: str,
-        record: KnowledgeBaseRecord,
-    ) -> KnowledgeBaseRecord:
-        """Persist a knowledge base record and register it in the user index.
-
-        If a record with the same ``id`` already exists it is overwritten
-        and ``updated_at`` is refreshed; ``created_at`` is preserved.
-
-        Args:
-            user_id (`str`):
-                The owner user id.
-            record (`KnowledgeBaseRecord`):
-                The fully-populated record to store.
-
-        Returns:
-            `KnowledgeBaseRecord`:
-                The stored record (with ``updated_at`` refreshed).
-        """
-        if record.user_id != user_id:
-            raise ValueError(
-                "record.user_id does not match the given user_id.",
-            )
-
-        key = self._key(
-            self.key_config.knowledge_base,
-            user_id=user_id,
-            knowledge_base_id=record.id,
-        )
-        existing_raw = await self._client.get(key)
-        if existing_raw:
-            existing = KnowledgeBaseRecord.model_validate_json(existing_raw)
-            record.created_at = existing.created_at
-        record.updated_at = datetime.now()
-
-        index_key = self._key(
-            self.key_config.knowledge_base_index,
-            user_id=user_id,
-        )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
-        return record
-
-    async def get_knowledge_base(
-        self,
-        user_id: str,
-        knowledge_base_id: str,
-    ) -> KnowledgeBaseRecord | None:
-        """Fetch a single knowledge base record by id.
-
-        Args:
-            user_id (`str`):
-                The owner user id.
-            knowledge_base_id (`str`):
-                The knowledge base id.
-
-        Returns:
-            `KnowledgeBaseRecord | None`:
-                The record, or ``None`` if not found.
-        """
-        key = self._key(
-            self.key_config.knowledge_base,
-            user_id=user_id,
-            knowledge_base_id=knowledge_base_id,
-        )
-        raw = await self._client.get(key)
-        return KnowledgeBaseRecord.model_validate_json(raw) if raw else None
-
-    async def list_knowledge_bases(
-        self,
-        user_id: str,
-    ) -> list[KnowledgeBaseRecord]:
-        """List all knowledge base records belonging to the given user.
-
-        Reads the per-user knowledge base index Set to obtain all ids,
-        then fetches each record individually. Records whose keys have
-        expired or been deleted externally are silently skipped.
-
-        Args:
-            user_id (`str`):
-                The owner user id.
-
-        Returns:
-            `list[KnowledgeBaseRecord]`:
-                All knowledge base records for the user.
-        """
-        index_key = self._key(
-            self.key_config.knowledge_base_index,
-            user_id=user_id,
-        )
-        ids = await self._client.smembers(index_key)
-        records: list[KnowledgeBaseRecord] = []
-        for kb_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.knowledge_base,
-                    user_id=user_id,
-                    knowledge_base_id=kb_id,
-                ),
-            )
-            if raw:
-                records.append(
-                    KnowledgeBaseRecord.model_validate_json(raw),
-                )
-        return records
 
     async def delete_knowledge_base(
         self,
@@ -2620,63 +2346,3 @@ class RedisStorage(StorageBase):
         )
         await self._client.sadd(index_key, record.id)
         return record.id
-
-    async def get_voice_profile(
-        self,
-        user_id: str,
-        profile_id: str,
-    ) -> VoiceProfileRecord | None:
-        """Fetch a single voice profile record by id."""
-        key = self._key(
-            self.key_config.voice_profile,
-            user_id=user_id,
-            profile_id=profile_id,
-        )
-        raw = await self._client.get(key)
-        if raw:
-            return VoiceProfileRecord.model_validate_json(raw)
-        return None
-
-    async def list_voice_profiles(
-        self,
-        user_id: str,
-    ) -> list[VoiceProfileRecord]:
-        """List all voice profiles for a given user."""
-        index_key = self._key(
-            self.key_config.voice_profile_index,
-            user_id=user_id,
-        )
-        ids = await self._client.smembers(index_key)
-        records: list[VoiceProfileRecord] = []
-        for profile_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.voice_profile,
-                    user_id=user_id,
-                    profile_id=profile_id,
-                ),
-            )
-            if raw:
-                records.append(
-                    VoiceProfileRecord.model_validate_json(raw),
-                )
-        return records
-
-    async def delete_voice_profile(
-        self,
-        user_id: str,
-        profile_id: str,
-    ) -> bool:
-        """Delete a voice profile record."""
-        key = self._key(
-            self.key_config.voice_profile,
-            user_id=user_id,
-            profile_id=profile_id,
-        )
-        index_key = self._key(
-            self.key_config.voice_profile_index,
-            user_id=user_id,
-        )
-        deleted = await self._client.delete(key)
-        await self._client.srem(index_key, profile_id)
-        return deleted > 0
