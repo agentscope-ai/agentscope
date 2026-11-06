@@ -2,6 +2,8 @@
 """The JSON session class."""
 import json
 import os
+from pathlib import Path, PureWindowsPath
+
 import aiofiles
 
 from ._session_base import SessionBase
@@ -37,12 +39,20 @@ class JSONSession(SessionBase):
             `str`:
                 The path to save the session state.
         """
-        os.makedirs(self.save_dir, exist_ok=True)
+        for identifier in (user_id, session_id):
+            if PureWindowsPath(identifier).name != identifier:
+                raise ValueError("Session and user IDs must be file names.")
+
+        directory = Path(self.save_dir).resolve()
+        directory.mkdir(parents=True, exist_ok=True)
         if user_id:
             file_path = f"{user_id}_{session_id}.json"
         else:
             file_path = f"{session_id}.json"
-        return os.path.join(self.save_dir, file_path)
+        path = (directory / file_path).resolve()
+        if path.parent != directory:
+            raise ValueError("Session file is outside the save directory.")
+        return str(path)
 
     async def save_session_state(
         self,
