@@ -747,10 +747,15 @@ class FeishuChannel(ChannelBase):
             text (`str`): The complete reply text.
         """
         if ref is not None:
-            await self._card_push(ref, text)
+            updated = await self._card_push(ref, text)
             await self._close_stream(ref)
             self._stream_seq.pop(ref, None)
-        elif text:
+            if updated:
+                return
+            # The card never showed the reply — a token that expired mid-run,
+            # a rate limit, a card the user closed. Fall through to a text
+            # message so a broken stream cannot swallow the answer.
+        if text:
             for part in self._split_long_message(text):
                 await self._send(
                     event.channel_message_id,
@@ -809,21 +814,25 @@ class FeishuChannel(ChannelBase):
         self._stream_seq[card_id] = 0
         return card_id
 
-    async def _card_push(self, card_id: str, text: str) -> None:
+    async def _card_push(self, card_id: str, text: str) -> bool:
         """Write the current text to the card with a rising sequence.
 
         Args:
             card_id (`str`): The streaming card id.
             text (`str`): Text to render.
+
+        Returns:
+            `bool`: Whether the platform accepted the update.
         """
         seq = self._stream_seq.get(card_id, 0) + 1
         self._stream_seq[card_id] = seq
-        await self._api(
+        updated = await self._api(
             "PUT",
             f"{_API}/cardkit/v1/cards/{card_id}/elements/"
             f"{_STREAM_ELEMENT_ID}/content",
             {"content": text, "sequence": seq},
         )
+        return bool(updated) and updated.get("code") == 0
 
     async def _close_stream(self, card_id: str) -> None:
         """End streaming mode so the card stops showing "generating…".
