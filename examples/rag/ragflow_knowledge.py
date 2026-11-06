@@ -28,10 +28,6 @@ from agentscope.message import TextBlock
 from agentscope.rag import RAGFlowConfig, RAGFlowKnowledgeBase
 
 
-# RAGFlow document parse states that mean "finished" (or can never finish).
-_TERMINAL_RUN = {"DONE", "FAIL", "CANCEL"}
-
-
 async def wait_until_indexed(
     knowledge: RAGFlowKnowledgeBase,
     document_id: str,
@@ -43,7 +39,8 @@ async def wait_until_indexed(
     RAGFlow indexing is asynchronous: ``upload_document`` returns as soon as
     the upload is accepted.  ``search`` only sees a document once RAGFlow has
     finished parsing/chunking it, so callers that want to search right away
-    should wait for the parse to complete.
+    should wait for the parse to complete. Failure or cancellation raises
+    ``RuntimeError``; exceeding the overall deadline raises ``TimeoutError``.
 
     Args:
         knowledge (`RAGFlowKnowledgeBase`): The handle used to poll.
@@ -51,24 +48,23 @@ async def wait_until_indexed(
         timeout_sec (`float`): Give up after this many seconds.
         poll_interval_sec (`float`): Seconds between polls.
     """
-    elapsed = 0.0
-    while elapsed < timeout_sec:
-        for summary in await knowledge.list_documents():
-            if summary.document_id != document_id:
-                continue
-            run = summary.metadata.get("run", "")
-            if str(run).upper() in _TERMINAL_RUN:
-                return
-            # ``progress`` reaches 1.0 (100%) on completion.
-            progress = summary.metadata.get("progress", 0.0)
-            if float(progress) >= 1.0:
-                return
-        await asyncio.sleep(poll_interval_sec)
-        elapsed += poll_interval_sec
-    print(
-        f"  WARNING: document {document_id!r} not indexed within "
-        f"{timeout_sec}s; search results may be incomplete.",
-    )
+    # Include time spent in HTTP calls, not only the sleep between polls.
+    async with asyncio.timeout(timeout_sec):
+        while True:
+            for summary in await knowledge.list_documents():
+                if summary.document_id != document_id:
+                    continue
+                run = str(summary.metadata.get("run", "")).upper()
+                if run in {"FAIL", "CANCEL"}:
+                    raise RuntimeError(
+                        f"RAGFlow indexing {run}: document {document_id!r}.",
+                    )
+                if run == "DONE":
+                    return
+                # Some responses report completion through progress alone.
+                if float(summary.metadata.get("progress", 0.0)) >= 1.0:
+                    return
+            await asyncio.sleep(poll_interval_sec)
 
 
 async def search_and_print(
@@ -124,29 +120,31 @@ async def main() -> None:
         ),
     )
 
-    # RAGFlow parses/chunks/indexes the uploaded bytes on the server,
-    # *asynchronously*.  The returned document id is yours to keep for
-    # delete_document.
-    document_id = await knowledge.upload_document(
-        b"# Cats\n\nCats are small carnivorous mammals. They are popular "
-        b"as pets for their playful and affectionate nature.\n",
-        filename="cats.md",
-    )
-    print(f"Uploaded document_id={document_id}; waiting for indexing ...")
-    await wait_until_indexed(knowledge, document_id)
-
-    await search_and_print(knowledge, "What are cats known for?")
-
-    print("\nDocuments in the dataset:")
-    for summary in await knowledge.list_documents():
-        print(
-            f"  - {summary.source!r} "
-            f"(id={summary.document_id}, chunks={summary.chunk_count})",
+    try:
+        # RAGFlow parses/chunks/indexes the uploaded bytes on the server,
+        # *asynchronously*.  The returned document id is yours to keep for
+        # delete_document.
+        document_id = await knowledge.upload_document(
+            b"# Cats\n\nCats are small carnivorous mammals. They are popular "
+            b"as pets for their playful and affectionate nature.\n",
+            filename="cats.md",
         )
+        print(f"Uploaded document_id={document_id}; waiting for indexing ...")
+        await wait_until_indexed(knowledge, document_id)
 
-    # Uncomment to remove the uploaded document.
-    # await knowledge.delete_document(document_id)
-    await knowledge.aclose()
+        await search_and_print(knowledge, "What are cats known for?")
+
+        print("\nDocuments in the dataset:")
+        for summary in await knowledge.list_documents():
+            print(
+                f"  - {summary.source!r} "
+                f"(id={summary.document_id}, chunks={summary.chunk_count})",
+            )
+
+        # Uncomment to remove the uploaded document.
+        # await knowledge.delete_document(document_id)
+    finally:
+        await knowledge.aclose()
 
 
 if __name__ == "__main__":
