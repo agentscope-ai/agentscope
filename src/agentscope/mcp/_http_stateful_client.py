@@ -3,9 +3,9 @@
 from typing import Any, Literal
 
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
 
 from ._stateful_client_base import StatefulClientBase
+from ._streamable_http import open_streamable_http
 
 
 class HttpStatefulClient(StatefulClientBase):
@@ -67,7 +67,7 @@ class HttpStatefulClient(StatefulClientBase):
         self.transport = transport
 
         if self.transport == "streamable_http":
-            self.client = streamablehttp_client(
+            self.client = open_streamable_http(
                 url=url,
                 headers=headers,
                 timeout=timeout,
