@@ -234,7 +234,36 @@ class GitHubMCPHub(MCPHubBase):
                     "is_secret": header.get("is_secret", True),
                 }
 
-        config: dict = {"type": "http_mcp", "url": remote["url"]}
+        url = remote["url"]
+        # The registry declares ``{var}`` URL template variables under
+        # ``variables`` (description, isRequired, isSecret, choices,
+        # default). Rewrite them into the ``${var}`` form the renderer
+        # understands and declare them as install inputs, exactly as
+        # header placeholders are handled. Leaving a raw ``{var}`` in the
+        # URL produces a literal, unresolvable endpoint.
+        config: dict = {"type": "http_mcp", "url": _substitute(url)}
+        for name, spec in (remote.get("variables") or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            inputs.setdefault(
+                name,
+                {
+                    "description": spec.get("description") or "",
+                    "is_required": spec.get("isRequired", True),
+                    "is_secret": spec.get("isSecret", False),
+                    "choices": spec.get("choices"),
+                    "default": spec.get("default"),
+                },
+            )
+        for match in _PLACEHOLDER.finditer(url):
+            inputs.setdefault(
+                match.group(1),
+                {
+                    "description": "",
+                    "is_required": True,
+                    "is_secret": False,
+                },
+            )
         if headers:
             config["headers"] = headers
         return config, inputs
