@@ -32,7 +32,9 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestOpenAIFormatter(IsolatedAsyncioTestCase):
+class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for OpenAI Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -1296,7 +1298,6 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
-
 
     async def test_chat_formatter_unsupported_video_keeps_turn(self) -> None:
         """A video-only user message must not vanish from the history.
