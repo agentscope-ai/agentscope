@@ -20,6 +20,8 @@ class TaskGet(_TaskToolBase):
 
     name: str = "TaskGet"
 
+    is_read_only: bool = True
+
     description: str = """Use this tool to retrieve a task by its ID from the task list.
 
 ## When to Use This Tool

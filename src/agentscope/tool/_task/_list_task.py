@@ -18,6 +18,8 @@ class TaskList(_TaskToolBase):
 
     name: str = "TaskList"
 
+    is_read_only: bool = True
+
     # pylint: disable=line-too-long
     description: str = """Use this tool to list all tasks in the task list.
 
