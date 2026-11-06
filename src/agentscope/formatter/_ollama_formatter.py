@@ -494,7 +494,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
             user_message["images"] = images
 
         formatted_msgs = []
-        if conversation_blocks:
+        if conversation_blocks or images:
             formatted_msgs.append(user_message)
 
         return formatted_msgs
