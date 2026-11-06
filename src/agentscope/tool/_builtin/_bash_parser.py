@@ -228,14 +228,11 @@ class BashCommandParser:
                 return False
             args = tokens[1:]
             if tokens[0] == "rg" and any(
-                tok == "--pre" or tok.startswith("--pre=")
-                for tok in args
+                tok == "--pre" or tok.startswith("--pre=") for tok in args
             ):
                 return False
             if tokens[0] == "tree" and any(
-                tok.startswith("-")
-                and not tok.startswith("--")
-                and "o" in tok
+                tok.startswith("-") and not tok.startswith("--") and "o" in tok
                 for tok in args
             ):
                 return False

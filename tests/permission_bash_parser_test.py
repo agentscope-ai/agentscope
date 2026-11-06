@@ -1689,7 +1689,6 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
-
 class BashParserReadOnlyOptionTest(unittest.TestCase):
     """Read-only classification of ``rg`` / ``tree`` options (#3249).
 
