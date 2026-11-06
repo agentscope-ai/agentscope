@@ -3,17 +3,15 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Callable
+from functools import partial
+from typing import Any
 
-import jsonschema
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import (
     FunctionTool,
     ToolBase,
-    ToolChunk,
-    ToolMiddlewareBase,
+    ToolValidationMiddleware,
 )
 
 
@@ -35,48 +33,24 @@ class NotificationParams(BaseModel):
     message: str = Field(min_length=1, max_length=200)
 
 
-class NotificationValidationMiddleware(ToolMiddlewareBase):
-    """Apply this example's policy as the LAST middleware of the tool."""
-
-    def __init__(self, context: ExecutionContext) -> None:
-        self.context = context
-
-    async def on_tool_call(
-        self,
-        tool: ToolBase,
-        input_kwargs: dict[str, Any],
-        next_handler: Callable[..., AsyncGenerator[ToolChunk, None]],
-    ) -> AsyncGenerator[ToolChunk, None]:
-        """Reject before invoking the function, or pass through its output."""
-        reason = None
-        try:
-            # Agent-side schema checks run before input-rewriting middleware.
-            jsonschema.validate(input_kwargs, tool.input_schema)
-        except jsonschema.ValidationError:
-            reason = "The final tool arguments do not match the schema."
-
-        if reason is None:
-            if (
-                self.context.agent_id != "support-agent"
-                or self.context.workflow_id != "ticket-42"
-            ):
-                reason = "The host context is not authorized."
-            elif not datetime.now(timezone.utc) < self.context.valid_until:
-                reason = "The host context has expired."
-            elif tool.name != "send_notification":
-                reason = "The action is not authorized."
-            elif input_kwargs["recipient"] != "support@example.com":
-                reason = "The recipient is not authorized."
-
-        if reason is not None:
-            yield ToolChunk(
-                content=[TextBlock(text=reason)],
-                state=ToolResultState.DENIED,
-            )
-            return
-
-        async for chunk in next_handler(**input_kwargs):
-            yield chunk
+def validate_notification(
+    context: ExecutionContext,
+    tool: ToolBase,
+    input_kwargs: dict[str, Any],
+) -> str | None:
+    """Return a rejection reason, or permit this host-authorized action."""
+    if (
+        context.agent_id != "support-agent"
+        or context.workflow_id != "ticket-42"
+    ):
+        return "The host context is not authorized."
+    if not datetime.now(timezone.utc) < context.valid_until:
+        return "The host context has expired."
+    if tool.name != "send_notification":
+        return "The action is not authorized."
+    if input_kwargs["recipient"] != "support@example.com":
+        return "The recipient is not authorized."
+    return None
 
 
 async def main() -> None:
@@ -96,7 +70,9 @@ async def main() -> None:
     tool = FunctionTool(
         send_notification,
         input_schema=NotificationParams,
-        middlewares=[NotificationValidationMiddleware(context)],
+        middlewares=[
+            ToolValidationMiddleware(partial(validate_notification, context)),
+        ],
     )
     for label, payload in [
         (
