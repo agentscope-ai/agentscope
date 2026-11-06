@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """Tests for the ReMe short-term memory example."""
+import runpy
 import sys
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
-from examples.functionality.short_term_memory.reme import (
-    reme_short_term_memory,
-)
 
 
 class ReMeShortTermMemoryTest(IsolatedAsyncioTestCase):
@@ -23,8 +22,14 @@ class ReMeShortTermMemoryTest(IsolatedAsyncioTestCase):
         reme = MagicMock()
         reme.ReMeApp.return_value = backend
         model = DashScopeChatModel("test-model", api_key="test-key")
+        example = (
+            Path(__file__).resolve().parents[1]
+            / "examples/functionality/short_term_memory/reme"
+            / "reme_short_term_memory.py"
+        )
+        memory_cls = runpy.run_path(str(example))["ReMeShortTermMemory"]
         with patch.dict(sys.modules, {"reme_ai": reme}):
-            memory = reme_short_term_memory.ReMeShortTermMemory(model=model)
+            memory = memory_cls(model=model)
         old = Msg("user", "old message", "user")
         recent = Msg("user", "recent message", "user")
         await memory.add(old, marks="compressed")
