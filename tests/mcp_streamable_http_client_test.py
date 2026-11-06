@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """The MCP client test module in agentscope."""
 import asyncio
+import warnings
 from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import Mock
 
+import httpx
 import mcp.types
 from mcp.server import FastMCP
 from mcp.types import EmbeddedResource, TextResourceContents
@@ -11,6 +14,48 @@ from mcp.types import EmbeddedResource, TextResourceContents
 from agentscope.mcp import HttpStatelessClient, HttpStatefulClient
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
+
+
+class StreamableHttpOptionsTest(IsolatedAsyncioTestCase):
+    """Check transport construction without connecting to an MCP server."""
+
+    async def test_transport_options_and_lifetime(self) -> None:
+        """Both clients preserve the HTTP options and close the transport."""
+        for client_cls in (HttpStatefulClient, HttpStatelessClient):
+            with self.subTest(client=client_cls.__name__):
+                http_client = httpx.AsyncClient()
+                factory = Mock(return_value=http_client)
+                auth = httpx.BasicAuth("user", "password")
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "error",
+                        message=".*streamable_http_client.*",
+                        category=DeprecationWarning,
+                    )
+                    client = client_cls(
+                        name="test",
+                        transport="streamable_http",
+                        url="http://localhost/mcp",
+                        headers={"X-Test": "value"},
+                        timeout=7,
+                        sse_read_timeout=11,
+                        httpx_client_factory=factory,
+                        auth=auth,
+                        terminate_on_close=False,
+                    )
+                    transport = (
+                        client.client
+                        if isinstance(client, HttpStatefulClient)
+                        else client.get_client()
+                    )
+                    async with transport:
+                        self.assertFalse(http_client.is_closed)
+                        config = factory.call_args.kwargs
+                        self.assertEqual(config["headers"]["X-Test"], "value")
+                        self.assertIs(config["auth"], auth)
+                        self.assertEqual(config["timeout"].connect, 7)
+                        self.assertEqual(config["timeout"].read, 11)
+                self.assertTrue(http_client.is_closed)
 
 
 async def tool_1(arg1: str, arg2: list[int]) -> str:

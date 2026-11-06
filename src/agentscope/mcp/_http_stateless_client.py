@@ -6,10 +6,10 @@ from typing import Any, Callable, Awaitable, Literal, List
 import mcp.types
 from mcp import ClientSession
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
 
 from . import MCPToolFunction
 from ._client_base import MCPClientBase
+from ._streamable_http import open_streamable_http
 from ..tool import ToolResponse
 
 
@@ -82,7 +82,7 @@ class HttpStatelessClient(MCPClientBase):
             return sse_client(**self.client_config)
 
         if self.transport == "streamable_http":
-            return streamablehttp_client(**self.client_config)
+            return open_streamable_http(**self.client_config)
 
         raise ValueError(
             f"Unsupported transport type: {self.transport}. "
