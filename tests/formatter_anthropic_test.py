@@ -1500,7 +1500,6 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
-
     async def test_unsupported_audio_only_message_is_kept(self) -> None:
         """An audio-only user message must not vanish (#3105).
 

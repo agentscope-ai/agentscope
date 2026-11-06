@@ -276,8 +276,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
             fallback = f"[{main_type} file returned, URL: {source.url}]"
         else:
             fallback = (
-                f"[{main_type} file returned, "
-                f"type: {source.media_type}]"
+                f"[{main_type} file returned, " f"type: {source.media_type}]"
             )
         return {"type": "text", "text": fallback}
 
