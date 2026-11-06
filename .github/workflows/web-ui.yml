@@ -22,7 +22,7 @@ jobs:
       run:
         working-directory: examples/web_ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
