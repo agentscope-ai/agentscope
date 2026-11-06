@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Self
 
 
+from ._model._base import _RecordT
 from ._model import (
     AgentRecord,
     ChannelRecord,
@@ -49,6 +50,52 @@ class StorageBase(ABC):
     async def aclose(self) -> None:
         """Release underlying connection resources. Default is a no-op."""
 
+    async def _upsert_record(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record: _RecordT,
+    ) -> _RecordT:
+        """Persist an ordinary owner-scoped record using backend metadata.
+
+        Preserves the stored creation time and refreshes the update time.
+        Specialized write paths (secrets, unique indexes, or different TTL
+        and timestamp policies) must keep their explicit implementations.
+        SQL rejects an id owned by another user; Redis ids are scoped by
+        owner. These primitives are non-abstract for existing backends.
+        """
+        raise NotImplementedError("This backend does not support record CRUD.")
+
+    async def _get_record(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record_id: str,
+    ) -> _RecordT | None:
+        """Read one ordinary record, or None when missing/not owned."""
+        raise NotImplementedError("This backend does not support record CRUD.")
+
+    async def _list_records(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+    ) -> list[_RecordT]:
+        """List ordinary records for one owner, without extra filters."""
+        raise NotImplementedError("This backend does not support record CRUD.")
+
+    async def _delete_record(
+        self,
+        record_cls: type[_RecordT],
+        user_id: str,
+        record_id: str,
+    ) -> bool:
+        """Delete only a record and its basic index, without cascades.
+
+        Callers must use the typed delete method for entities with related
+        data, name indexes, leases, or other cleanup requirements.
+        """
+        raise NotImplementedError("This backend does not support record CRUD.")
+
     @abstractmethod
     async def upsert_credential(
         self,
@@ -68,7 +115,6 @@ class StorageBase(ABC):
                 The credential id.
         """
 
-    @abstractmethod
     async def list_credentials(self, user_id: str) -> list[CredentialRecord]:
         """List all credentials for a given user.
 
@@ -80,8 +126,8 @@ class StorageBase(ABC):
             `list[CredentialRecord]`:
                 List of all credentials for a given user.
         """
+        return await self._list_records(CredentialRecord, user_id)
 
-    @abstractmethod
     async def get_credential(
         self,
         user_id: str,
@@ -96,8 +142,8 @@ class StorageBase(ABC):
         Returns:
             `CredentialRecord | None`: The record, or ``None`` if not found.
         """
+        return await self._get_record(CredentialRecord, user_id, credential_id)
 
-    @abstractmethod
     async def delete_credential(
         self,
         user_id: str,
@@ -115,6 +161,11 @@ class StorageBase(ABC):
             `bool`:
                 True if deleted, False if not found.
         """
+        return await self._delete_record(
+            CredentialRecord,
+            user_id,
+            credential_id,
+        )
 
     @abstractmethod
     async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
@@ -139,7 +190,6 @@ class StorageBase(ABC):
                 When another record of this user already uses the name.
         """
 
-    @abstractmethod
     async def list_mcps(self, user_id: str) -> list[MCPRecord]:
         """List every MCP a user has installed, enabled or not.
 
@@ -151,8 +201,8 @@ class StorageBase(ABC):
             `list[MCPRecord]`:
                 All installed-MCP records for the user.
         """
+        return await self._list_records(MCPRecord, user_id)
 
-    @abstractmethod
     async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
         """Fetch a single installed-MCP record by id.
 
@@ -166,6 +216,7 @@ class StorageBase(ABC):
             `MCPRecord | None`:
                 The record, or ``None`` if not found.
         """
+        return await self._get_record(MCPRecord, user_id, mcp_id)
 
     @abstractmethod
     async def get_mcp_by_name(
@@ -230,7 +281,6 @@ class StorageBase(ABC):
                 When another record of this user already uses the name.
         """
 
-    @abstractmethod
     async def list_skills(self, user_id: str) -> list[SkillRecord]:
         """List every skill a user has installed, enabled or not.
 
@@ -245,8 +295,8 @@ class StorageBase(ABC):
             `list[SkillRecord]`:
                 All installed-skill records for the user.
         """
+        return await self._list_records(SkillRecord, user_id)
 
-    @abstractmethod
     async def get_skill(
         self,
         user_id: str,
@@ -264,6 +314,7 @@ class StorageBase(ABC):
             `SkillRecord | None`:
                 The record, or ``None`` if not found.
         """
+        return await self._get_record(SkillRecord, user_id, skill_id)
 
     @abstractmethod
     async def get_skill_by_name(
@@ -335,7 +386,6 @@ class StorageBase(ABC):
                 List of all agents for a given user.
         """
 
-    @abstractmethod
     async def get_agent(
         self,
         user_id: str,
@@ -350,6 +400,7 @@ class StorageBase(ABC):
         Returns:
             `AgentRecord | None`: The record, or ``None`` if not found.
         """
+        return await self._get_record(AgentRecord, user_id, agent_id)
 
     @abstractmethod
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
@@ -554,7 +605,6 @@ class StorageBase(ABC):
             `str`: The id of the stored record.
         """
 
-    @abstractmethod
     async def get_schedule(
         self,
         user_id: str,
@@ -569,8 +619,8 @@ class StorageBase(ABC):
         Returns:
             `ScheduleRecord | None`: The record, or ``None`` if not found.
         """
+        return await self._get_record(ScheduleRecord, user_id, schedule_id)
 
-    @abstractmethod
     async def list_schedules(
         self,
         user_id: str,
@@ -583,6 +633,7 @@ class StorageBase(ABC):
         Returns:
             `list[ScheduleRecord]`: All cron task records for the user.
         """
+        return await self._list_records(ScheduleRecord, user_id)
 
     @abstractmethod
     async def delete_schedule(
@@ -851,7 +902,7 @@ class StorageBase(ABC):
             `SOPRecord | None`:
                 The record, or ``None`` if the user has no such one.
         """
-        raise NotImplementedError
+        return await self._get_record(SOPRecord, user_id, sop_id)
 
     async def list_sops(self, user_id: str) -> list[SOPRecord]:
         """List the user's procedures.
@@ -864,7 +915,7 @@ class StorageBase(ABC):
             `list[SOPRecord]`:
                 Every procedure the user owns.
         """
-        raise NotImplementedError
+        return await self._list_records(SOPRecord, user_id)
 
     async def delete_sop(self, user_id: str, sop_id: str) -> bool:
         """Delete a procedure, every run of it, and their conversations.
@@ -917,7 +968,7 @@ class StorageBase(ABC):
             `SOPRunRecord | None`:
                 The record, or ``None`` if the user has no such one.
         """
-        raise NotImplementedError
+        return await self._get_record(SOPRunRecord, user_id, sop_run_id)
 
     async def list_sop_runs(
         self,
@@ -1003,7 +1054,6 @@ class StorageBase(ABC):
             `TeamRecord`: The stored record (with ``updated_at`` refreshed).
         """
 
-    @abstractmethod
     async def get_team(
         self,
         user_id: str,
@@ -1018,8 +1068,8 @@ class StorageBase(ABC):
         Returns:
             `TeamRecord | None`: The record, or ``None`` if not found.
         """
+        return await self._get_record(TeamRecord, user_id, team_id)
 
-    @abstractmethod
     async def list_teams(self, user_id: str) -> list[TeamRecord]:
         """List all teams owned by a given user.
 
@@ -1029,6 +1079,7 @@ class StorageBase(ABC):
         Returns:
             `list[TeamRecord]`: All team records belonging to the user.
         """
+        return await self._list_records(TeamRecord, user_id)
 
     @abstractmethod
     async def delete_team(self, user_id: str, team_id: str) -> bool:
@@ -1074,7 +1125,6 @@ class StorageBase(ABC):
     # Knowledge base persistence
     # ------------------------------------------------------------------
 
-    @abstractmethod
     async def upsert_knowledge_base(
         self,
         user_id: str,
@@ -1097,8 +1147,8 @@ class StorageBase(ABC):
             `KnowledgeBaseRecord`:
                 The stored record (with ``updated_at`` refreshed).
         """
+        return await self._upsert_record(KnowledgeBaseRecord, user_id, record)
 
-    @abstractmethod
     async def get_knowledge_base(
         self,
         user_id: str,
@@ -1117,8 +1167,12 @@ class StorageBase(ABC):
                 The record, or ``None`` if not found or not owned by
                 the given user.
         """
+        return await self._get_record(
+            KnowledgeBaseRecord,
+            user_id,
+            knowledge_base_id,
+        )
 
-    @abstractmethod
     async def list_knowledge_bases(
         self,
         user_id: str,
@@ -1133,6 +1187,7 @@ class StorageBase(ABC):
             `list[KnowledgeBaseRecord]`:
                 All knowledge base records belonging to the user.
         """
+        return await self._list_records(KnowledgeBaseRecord, user_id)
 
     @abstractmethod
     async def delete_knowledge_base(
@@ -1470,7 +1525,6 @@ class StorageBase(ABC):
                 The id of the stored voice profile.
         """
 
-    @abstractmethod
     async def get_voice_profile(
         self,
         user_id: str,
@@ -1488,8 +1542,8 @@ class StorageBase(ABC):
             `VoiceProfileRecord | None`:
                 The record, or ``None`` if not found.
         """
+        return await self._get_record(VoiceProfileRecord, user_id, profile_id)
 
-    @abstractmethod
     async def list_voice_profiles(
         self,
         user_id: str,
@@ -1504,8 +1558,8 @@ class StorageBase(ABC):
             `list[VoiceProfileRecord]`:
                 All voice profile records for the user.
         """
+        return await self._list_records(VoiceProfileRecord, user_id)
 
-    @abstractmethod
     async def delete_voice_profile(
         self,
         user_id: str,
@@ -1523,3 +1577,8 @@ class StorageBase(ABC):
             `bool`:
                 ``True`` if deleted, ``False`` if not found.
         """
+        return await self._delete_record(
+            VoiceProfileRecord,
+            user_id,
+            profile_id,
+        )
