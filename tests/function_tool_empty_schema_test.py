@@ -48,6 +48,8 @@ class ExplicitEmptySchemaTest(TestCase):
         """A BaseModel subclass is converted, not re-inferred (control)."""
 
         class Params(BaseModel):
+            """Minimal parameter model used to verify schema conversion."""
+
             q: str = Field(description="query")
 
         tool = FunctionTool(_with_arg_tool, input_schema=Params)
