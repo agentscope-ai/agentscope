@@ -2245,6 +2245,11 @@ class RedisStorage(StorageBase):
         overwritten and ``updated_at`` refreshed; ``created_at`` is
         preserved.
 
+        The record value, its optional TTL and both index memberships
+        are published in one ``MULTI``/``EXEC`` transaction, so an
+        interrupted call can never leave a durable record outside the
+        indexes that listing and the pending recovery scan rely on.
+
         Args:
             user_id (`str`):
                 The owner user id.  Must match ``record.user_id``.
@@ -2273,19 +2278,26 @@ class RedisStorage(StorageBase):
             record.created_at = existing.created_at
         record.updated_at = datetime.now()
 
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(
-            self._document_index_key(user_id, record.knowledge_base_id),
-            record.id,
-        )
-        await self._client.sadd(
-            self.key_config.knowledge_document_global_index,
-            self._document_global_token(
-                user_id,
-                record.knowledge_base_id,
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json())
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+            pipe.sadd(
+                self._document_index_key(
+                    user_id,
+                    record.knowledge_base_id,
+                ),
                 record.id,
-            ),
-        )
+            )
+            pipe.sadd(
+                self.key_config.knowledge_document_global_index,
+                self._document_global_token(
+                    user_id,
+                    record.knowledge_base_id,
+                    record.id,
+                ),
+            )
+            await pipe.execute()
         return record
 
     async def get_knowledge_document(
