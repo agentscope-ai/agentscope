@@ -405,7 +405,14 @@ class WorkspaceService:
             )
 
         root = roots.pop()
-        if not any(e.path == f"{root}/SKILL.md" for e in manifest.entries):
+        # The safety checks above normalise Windows separators; the
+        # SKILL.md lookup must use the same normalised path, otherwise a
+        # manifest written with backslashes is rejected with a misleading
+        # "No SKILL.md" error even though the file is present.
+        if not any(
+            e.path.replace("\\", "/") == f"{root}/SKILL.md"
+            for e in manifest.entries
+        ):
             raise SkillUploadError(f"No SKILL.md at the root of {root!r}.")
         return root
 
