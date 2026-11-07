@@ -109,6 +109,23 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
                 result = self.parser.extract_command_prefixes(command)
                 self.assertEqual(result, expected)
 
+    async def test_non_ascii_argument_keeps_prefix_boundary(self) -> None:
+        """A non-ASCII argument must not bleed into the extracted prefix."""
+        test_cases = [
+            ("sudo 中文字 cp a b", ["sudo 中文字"]),
+            ("sudo ✓ ls", ["sudo ✓"]),
+            ("env 中文=1 ls -la", ["env 中文=1"]),
+            (
+                "sudo 中文字 ls && git commit -m 中文",
+                ["sudo 中文字", "git commit"],
+            ),
+        ]
+
+        for command, expected in test_cases:
+            with self.subTest(command=command):
+                result = self.parser.extract_command_prefixes(command)
+                self.assertEqual(result, expected)
+
     async def test_single_command_without_prefix(self) -> None:
         """Test single commands that cannot extract prefixes."""
         test_cases = [
