@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
+
 import asyncio
 import base64
 import copy
@@ -14,7 +15,6 @@ from typing import Any, Callable
 
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
-
 
 # These mappings use property names as keys and schemas as values.
 _SCHEMA_MAP_KEYWORDS = frozenset(
@@ -344,7 +344,8 @@ def _flatten_json_schema(schema: dict) -> dict:
     Circular references are detected and replaced with a fallback object
     schema to avoid infinite recursion.  Only local references of the
     form ``#/$defs/<name>`` or ``#/definitions/<name>`` are expanded;
-    external ``$ref`` URLs are left unchanged.
+    external ``$ref`` URLs are left unchanged. Definition lookup and cycle
+    detection keep the two namespaces distinct, even for identical names.
 
     Args:
         schema (`dict`):
@@ -363,11 +364,15 @@ def _flatten_json_schema(schema: dict) -> dict:
         return schema
 
     schema = copy.deepcopy(schema)
-    defs: dict[str, Any] = {}
-    if isinstance(schema.get("$defs"), dict):
-        defs.update(schema.pop("$defs"))
-    if isinstance(schema.get("definitions"), dict):
-        defs.update(schema.pop("definitions"))
+    defs: dict[tuple[str, str], Any] = {}
+    for keyword in ("$defs", "definitions"):
+        if isinstance(schema.get(keyword), dict):
+            defs.update(
+                {
+                    (keyword, name): value
+                    for name, value in schema.pop(keyword).items()
+                },
+            )
 
     if not defs:
         return schema
@@ -389,7 +394,8 @@ def _flatten_json_schema(schema: dict) -> dict:
             def_name = ref_path.split("/")[-1]
             # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
             def_name = def_name.replace("~1", "/").replace("~0", "~")
-            if def_name in visited:
+            definition_key = (ref_path.split("/")[1], def_name)
+            if definition_key in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
                     def_name,
@@ -398,11 +404,11 @@ def _flatten_json_schema(schema: dict) -> dict:
                     "type": "object",
                     "description": f"(circular: {def_name})",
                 }
-            if def_name not in defs:
+            if definition_key not in defs:
                 return obj
 
-            visited = visited | {def_name}
-            resolved = _resolve_ref(defs[def_name], visited)
+            visited = visited | {definition_key}
+            resolved = _resolve_ref(defs[definition_key], visited)
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
@@ -414,7 +420,7 @@ def _flatten_json_schema(schema: dict) -> dict:
                 if isinstance(mapping, dict) and any(
                     isinstance(ref, str)
                     and ref.startswith(("#/$defs/", "#/definitions/"))
-                    and ref.rsplit("/", 1)[-1] in defs
+                    and (ref.split("/")[1], ref.rsplit("/", 1)[-1]) in defs
                     for ref in mapping.values()
                 ):
                     continue
