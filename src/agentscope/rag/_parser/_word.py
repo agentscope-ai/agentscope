@@ -50,7 +50,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     ``mc:Fallback`` copy of a text box as a second occurrence of the same text.
     Each ``mc:AlternateContent`` containing a text box uses the first branch
     with readable Word text, retaining the fallback when its choices cannot
-    supply any text. Run-level tabs and soft line breaks are preserved in
+    supply any text. Every ``w:tab``, ``w:cr``, ``w:br`` and
+    ``w:noBreakHyphen`` run child is preserved as its rendered character in
     both the paragraph and its text boxes. Paragraph boundaries within each
     text box are retained.
 
@@ -71,6 +72,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     run_tag = qn("w:r")
     tab_tag = qn("w:tab")
     carriage_return_tag = qn("w:cr")
+    no_break_hyphen_tag = qn("w:noBreakHyphen")
     separator_tags = {tab_tag, carriage_return_tag, qn("w:br")}
     root = para._element
 
@@ -79,7 +81,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
         if element.tag == deleted_tag:
             # Deleted runs must not contribute text or inline separators.
             return
-        if element.tag == text_tag or (
+        if element.tag in (text_tag, no_break_hyphen_tag) or (
             element.tag in separator_tags
             and element.getparent().tag == run_tag
         ):
@@ -107,6 +109,10 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     for element in iter_text(root):
         if element.tag == text_tag:
             value = element.text or ""
+        elif element.tag == no_break_hyphen_tag:
+            # Word renders the non-breaking hyphen as "-", as does
+            # python-docx's ``Paragraph.text``.
+            value = "-"
         elif element.tag == tab_tag:
             value = "\t"
         elif element.tag == carriage_return_tag:
@@ -139,7 +145,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
         for paragraphs in text_boxes.values()
         for parts in paragraphs.values()
     ):
-        # Separator-only extraction must not hide w:noBreakHyphen, etc.
+        # Separator-only extraction must not hide other non-w:t content.
         own_text = para.text
     blocks = [
         own_text,
@@ -206,6 +212,7 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     from docx.oxml.ns import qn
 
     text_tag = qn("w:t")
+    no_break_hyphen_tag = qn("w:noBreakHyphen")
     break_tags = {qn("w:br"), qn("w:cr")}
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
@@ -221,6 +228,8 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                 for element in p_elem.iter():
                     if element.tag == text_tag and element.text:
                         text_parts.append(element.text)
+                    elif element.tag == no_break_hyphen_tag:
+                        text_parts.append("-")
                     elif element.tag in break_tags:
                         text_parts.append("\n")
                 para_text = "".join(text_parts)
