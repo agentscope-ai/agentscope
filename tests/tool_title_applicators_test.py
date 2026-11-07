@@ -90,7 +90,7 @@ class RemoveTitleApplicatorsTest(TestCase):
                 Annotated[int, Field(title="First")],
                 Annotated[str, Field(title="Second")],
             ],
-        ):
+        ) -> Union[int, str]:
             """A tool.
 
             Args:
