@@ -1669,6 +1669,41 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn("chmod", result)
 
+    async def test_rm_force_recursive_in_any_spelling(self) -> None:
+        """Test that rm is flagged by its options, not by its flag order."""
+        test_cases = [
+            "rm -fr /tmp/test",
+            "rm -Rf /tmp/test",
+            "rm -fR /tmp/test",
+            "rm -r -f /tmp/test",
+            "rm -f -r /tmp/test",
+            "rm --recursive --force /tmp/test",
+            "rm --force --recursive /tmp/test",
+            "ls;rm -fr /tmp/test",
+            "find . -exec rm -fr {} +",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "rm -rf",
+                )
+
+    async def test_rm_without_both_options_is_not_rm_rf(self) -> None:
+        """Test that force alone or recursion alone is not flagged."""
+        for cmd in ["rm -f temp.log", "rm -r build", "rm temp.log"]:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(
+                    self.parser.check_dangerous_command(cmd),
+                    f"Expected '{cmd}' to be safe",
+                )
+
+    async def test_rm_options_after_double_dash_are_operands(self) -> None:
+        """Test that flags after ``--`` are file names, not options."""
+        for cmd in ["rm -- -rf", "rm -- -f -r"]:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.parser.check_dangerous_command(cmd))
+
     async def test_safe_commands(self) -> None:
         """Test that safe commands are not flagged."""
         safe_commands = [
