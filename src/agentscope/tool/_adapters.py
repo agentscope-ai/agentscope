@@ -107,7 +107,11 @@ class FunctionTool(ToolBase):
             input_schema = _remove_title_field(
                 input_schema.model_json_schema(),
             )
-        self.input_schema = input_schema or _extract_input_schema(func)
+        # ``{}`` is a valid custom schema for a no-argument tool; only an
+        # omitted schema should be inferred from the function signature.
+        if input_schema is None:
+            input_schema = _extract_input_schema(func)
+        self.input_schema = input_schema
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
         self.is_state_injected = is_state_injected
