@@ -62,6 +62,27 @@ SAFE_ENV_VARS = {
     "CLICOLOR_FORCE",
 }
 
+
+def _is_skippable_env_assignment(token: str) -> bool:
+    """Whether a leading token is an environment assignment that cannot
+    change the program that runs.
+
+    Assignments named here are skipped when classifying a command as
+    read-only. ``PATH`` and the loader variables (``LD_*``, ``DYLD_*``)
+    are deliberately excluded even though ``PATH`` itself is allowlisted:
+    they change which binary executes or how it is loaded, so a command
+    prefixed with one of them must go through the normal checks (e.g.
+    ``LD_PRELOAD=… grep`` must not be auto-allowed just because ``grep``
+    is in :data:`SAFE_COMMANDS`).
+    """
+    name, sep, _ = token.partition("=")
+    if not sep or not name:
+        return False
+    if name == "PATH" or name.startswith(("LD_", "DYLD_")):
+        return False
+    return name in SAFE_ENV_VARS
+
+
 # Read-only git commands
 GIT_READ_ONLY_COMMANDS = {
     "git status",
@@ -227,9 +248,10 @@ class BashCommandParser:
         tokens = cmd.split()
         if tokens:
             base_cmd = tokens[0]
-            # Skip environment variables
+            # Skip environment variables that cannot change the program
+            # that runs
             i = 0
-            while i < len(tokens) and "=" in tokens[i]:
+            while i < len(tokens) and _is_skippable_env_assignment(tokens[i]):
                 i += 1
             if i < len(tokens):
                 base_cmd = tokens[i]
