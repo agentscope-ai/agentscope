@@ -398,7 +398,7 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
             "role": "user",
             "parts": [
                 {
-                    "text": msg.get_text_content(),
+                    "text": msg.get_text_content() or "",
                 },
             ],
         }

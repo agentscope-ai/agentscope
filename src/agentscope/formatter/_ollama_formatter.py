@@ -329,7 +329,7 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
         """Format system message for the Ollama API."""
         return {
             "role": "system",
-            "content": msg.get_text_content(),
+            "content": msg.get_text_content() or "",
         }
 
     async def _format_tool_sequence(
