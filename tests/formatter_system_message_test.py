@@ -39,6 +39,7 @@ class _SystemMessageAssertions:
         formatter: Any,
         turn: dict,
     ) -> None:
+        """A textless system message must format to an empty string."""
         res = await formatter.format(_empty_system_and_user())
         self.assertEqual(res[0], turn)
 
@@ -47,6 +48,7 @@ class _SystemMessageAssertions:
         formatter: Any,
         turn: dict,
     ) -> None:
+        """A non-empty system prompt must be formatted unchanged."""
         res = await formatter.format(_system_and_user())
         self.assertEqual(res[0], turn)
 
@@ -58,12 +60,14 @@ class DashScopeMultiAgentSystemMessageTest(
     """DashScope multi-agent formatter system turn."""
 
     async def test_empty_system_emits_empty_string(self) -> None:
+        """A textless system message emits an empty string, not null."""
         await self._assert_empty_emits_empty_string(
             DashScopeMultiAgentFormatter(),
             {"role": "system", "content": ""},
         )
 
     async def test_non_empty_system_unchanged(self) -> None:
+        """A non-empty DashScope system prompt is unchanged."""
         await self._assert_non_empty_unchanged(
             DashScopeMultiAgentFormatter(),
             {"role": "system", "content": "be brief"},
@@ -77,12 +81,14 @@ class OllamaMultiAgentSystemMessageTest(
     """Ollama multi-agent formatter system turn."""
 
     async def test_empty_system_emits_empty_string(self) -> None:
+        """A textless system message emits an empty string, not null."""
         await self._assert_empty_emits_empty_string(
             OllamaMultiAgentFormatter(),
             {"role": "system", "content": ""},
         )
 
     async def test_non_empty_system_unchanged(self) -> None:
+        """A non-empty Ollama system prompt is unchanged."""
         await self._assert_non_empty_unchanged(
             OllamaMultiAgentFormatter(),
             {"role": "system", "content": "be brief"},
@@ -96,12 +102,14 @@ class GeminiMultiAgentSystemMessageTest(
     """Gemini multi-agent formatter system turn."""
 
     async def test_empty_system_emits_empty_string(self) -> None:
+        """A textless system message emits an empty string, not null."""
         await self._assert_empty_emits_empty_string(
             GeminiMultiAgentFormatter(),
             {"role": "user", "parts": [{"text": ""}]},
         )
 
     async def test_non_empty_system_unchanged(self) -> None:
+        """A non-empty Gemini system prompt is unchanged."""
         await self._assert_non_empty_unchanged(
             GeminiMultiAgentFormatter(),
             {"role": "user", "parts": [{"text": "be brief"}]},
