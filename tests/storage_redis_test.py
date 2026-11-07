@@ -2108,3 +2108,64 @@ class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
                 self.assertEqual(record.created_at, created_at)
                 stored = await storage.get_voice_profile("owner", record.id)
                 self.assertEqual(stored.model_dump(), record.model_dump())
+
+
+class TestRecordKeyTTL(IsolatedAsyncioTestCase):
+    """Record writes store the value and its TTL in one SET command."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.addAsyncCleanup(self.storage._client.aclose)
+
+    async def _value_and_ttl(self, key: str) -> tuple[str | None, int]:
+        """Read back a key's value and remaining TTL."""
+        client = self.storage._client
+        return await client.get(key), await client.ttl(key)
+
+    async def test_first_write_expires(self) -> None:
+        """A new key is written with the configured TTL."""
+        self.storage.key_ttl = 60
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        value, ttl = await self._value_and_ttl("probe")
+        self.assertEqual(value, "new")
+        self.assertTrue(0 < ttl <= 60)
+
+    async def test_overwrite_keeps_key_expiring(self) -> None:
+        """Overwriting an expiring or persistent key leaves it expiring."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("expiring", "old", ex=5)
+        await self.storage._client.set("persistent", "old")
+
+        for key in ("expiring", "persistent"):
+            with self.subTest(key=key):
+                await self.storage._set_with_ttl(key, "new")
+                value, ttl = await self._value_and_ttl(key)
+                self.assertEqual(value, "new")
+                self.assertTrue(5 < ttl <= 60)
+
+    async def test_no_ttl_configured_keeps_key_persistent(self) -> None:
+        """With key_ttl None, records are written without an expiry."""
+        self.storage.key_ttl = None
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_failure_after_set_cannot_drop_ttl(self) -> None:
+        """A failing EXPIRE cannot leave the rewritten key persistent."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("probe", "old", ex=60)
+
+        with patch.object(
+            self.storage._client,
+            "expire",
+            side_effect=ConnectionError("injected"),
+        ):
+            await self.storage._set_with_ttl("probe", "new")
+
+        value, ttl = await self._value_and_ttl("probe")
+        self.assertEqual(value, "new")
+        self.assertTrue(0 < ttl <= 60)
