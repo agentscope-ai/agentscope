@@ -290,6 +290,7 @@ def _get_bytes_from_web_url(
     """
     import requests
 
+    response = None
     for _ in range(max_retries):
         try:
             response = requests.get(url)
@@ -297,7 +298,13 @@ def _get_bytes_from_web_url(
             return response.content.decode("utf-8")
 
         except UnicodeDecodeError:
-            return base64.b64encode(response.content).decode("ascii")
+            if response is not None:
+                return base64.b64encode(response.content).decode("ascii")
+            logger.info(
+                "Failed to fetch bytes from URL %s. UnicodeDecodeError "
+                "with no response object. Retrying...",
+                url,
+            )
 
         except Exception as e:
             logger.info(
