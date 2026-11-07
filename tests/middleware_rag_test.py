@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack, aclosing
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
@@ -238,6 +239,38 @@ async def _drain(generator: AsyncGenerator) -> list:
             All yielded items.
     """
     return [item async for item in generator]
+
+
+class KnowledgeBaseTest(IsolatedAsyncioTestCase):
+    """Tests for the :class:`KnowledgeBase` search boundary."""
+
+    async def test_knowledge_search_non_positive_top_k_skips_work(
+        self,
+    ) -> None:
+        """A non-positive result limit must not run a vector search."""
+        embedding_model = _StubEmbeddingModel([1.0, 0.0, 0.0])
+        vector_store: Any = SimpleNamespace()
+        knowledge = KnowledgeBase(
+            name="kb",
+            description="Knowledge base for testing.",
+            embedding_model=embedding_model,
+            vector_store=vector_store,
+            collection="kb-1",
+        )
+        for top_k in (0, -1):
+            with self.subTest(top_k=top_k):
+                with patch.object(
+                    knowledge,
+                    "ensure_collection",
+                ) as ensure_collection:
+                    results = await knowledge.search(
+                        ["Where is Paris?"],
+                        top_k=top_k,
+                    )
+
+                self.assertEqual(results, [])
+                self.assertEqual(embedding_model.calls, [])
+                ensure_collection.assert_not_awaited()
 
 
 class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
