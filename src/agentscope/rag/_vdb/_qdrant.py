@@ -22,6 +22,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
 )
 from .._document import Chunk
 
@@ -184,6 +185,7 @@ class QdrantStore(VectorStoreBase):
         self,
         collection: str,
         records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Insert records into a collection.
 
@@ -193,9 +195,10 @@ class QdrantStore(VectorStoreBase):
         can remove all records of one document.
 
         Point IDs are derived deterministically from
-        ``(document_id, chunk_index)`` so that re-indexing the same
-        document after a mid-pipeline crash upserts over the previous
-        records instead of duplicating them.
+        ``(document_id, chunk_index)`` (and ``metadata_filter`` when
+        scoped) so that re-indexing the same document after a
+        mid-pipeline crash upserts over the previous records instead of
+        duplicating them, without colliding across scopes.
 
         Args:
             collection (`str`):
@@ -203,6 +206,8 @@ class QdrantStore(VectorStoreBase):
             records (`list[VectorRecord]`):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Optional scope filter included in point ID derivation.
         """
 
         from qdrant_client import models
@@ -213,7 +218,7 @@ class QdrantStore(VectorStoreBase):
             collection_name=collection,
             points=[
                 models.PointStruct(
-                    id=self._point_id(record),
+                    id=self._point_id(record, metadata_filter),
                     vector=record.vector,
                     payload={
                         "document_id": record.document_id,
@@ -225,8 +230,11 @@ class QdrantStore(VectorStoreBase):
         )
 
     @staticmethod
-    def _point_id(record: VectorRecord) -> str:
-        """Deterministic point ID for ``(document_id, chunk_index)``.
+    def _point_id(
+        record: VectorRecord,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> str:
+        """Deterministic point ID for ``(document_id, chunk_index[, metadata_filter])``.
 
         ``\0`` separates the fields because it cannot occur in either,
         so no pair can collide with another. Re-inserting the same
@@ -236,12 +244,14 @@ class QdrantStore(VectorStoreBase):
         Args:
             record (`VectorRecord`):
                 The record to derive an ID for.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Optional scope filter to isolate IDs across scopes.
 
         Returns:
             `str`:
                 A UUIDv5 string (Qdrant requires UUID-shaped IDs).
         """
-        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        raw = _record_identity_key(record, metadata_filter)
         return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
     async def delete(
