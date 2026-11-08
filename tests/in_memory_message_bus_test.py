@@ -168,6 +168,31 @@ class TestLogPrimitive(IsolatedAsyncioTestCase):
             [p["i"] for _id, p in r2],
         )
 
+    async def test_append_snapshots_the_payload(self) -> None:
+        """Mutating the caller's dict after append leaves the stored
+        replay entry unchanged."""
+        event = {"delta": {"text": "original"}}
+        await self.bus.log_append("k", event)
+        event["delta"]["text"] = "changed after append"
+        entries = await self.bus.log_read("k")
+        self.assertEqual(entries[0][1]["delta"]["text"], "original")
+
+    async def test_read_returns_deep_copies(self) -> None:
+        """Mutating a returned payload does not affect later reads, with
+        and without a cursor."""
+        await self.bus.log_append("k", {"delta": {"text": "a"}})
+        await self.bus.log_append("k", {"delta": {"text": "b"}})
+        entries = await self.bus.log_read("k")
+        entries[0][1]["delta"]["text"] = "mutated"
+        again = await self.bus.log_read("k")
+        self.assertEqual(again[0][1]["delta"]["text"], "a")
+
+        cursor = entries[0][0]
+        tail = await self.bus.log_read("k", since=cursor)
+        tail[0][1]["delta"]["text"] = "mutated"
+        again = await self.bus.log_read("k", since=cursor)
+        self.assertEqual(again[0][1]["delta"]["text"], "b")
+
     async def test_read_empty_log(self) -> None:
         """Reading a log that never had entries returns ``[]``."""
         self.assertEqual(await self.bus.log_read("nope"), [])
@@ -283,6 +308,44 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         await asyncio.wait_for(t2, timeout=2.0)
         self.assertEqual(r1, [{"x": 42}])
         self.assertEqual(r2, [{"x": 42}])
+
+    async def test_subscribers_receive_independent_copies(self) -> None:
+        """Each subscriber gets its own copy; mutating the first
+        consumer's payload leaves the second's intact."""
+        ready1 = asyncio.Event()
+        ready2 = asyncio.Event()
+        r1: list[dict] = []
+        r2: list[dict] = []
+
+        async def _c1() -> None:
+            async for payload in self.bus.subscribe(
+                "ch",
+                on_ready=ready1.set,
+            ):
+                r1.append(payload)
+                break
+
+        async def _c2() -> None:
+            async for payload in self.bus.subscribe(
+                "ch",
+                on_ready=ready2.set,
+            ):
+                r2.append(payload)
+                break
+
+        t1 = asyncio.create_task(_c1())
+        t2 = asyncio.create_task(_c2())
+        await asyncio.wait_for(ready1.wait(), timeout=2.0)
+        await asyncio.wait_for(ready2.wait(), timeout=2.0)
+
+        published = {"delta": {"text": "original"}}
+        await self.bus.publish("ch", published)
+        published["delta"]["text"] = "changed after publish"
+
+        await asyncio.wait_for(t1, timeout=2.0)
+        await asyncio.wait_for(t2, timeout=2.0)
+        r1[0]["delta"]["text"] = "mutated by first subscriber"
+        self.assertEqual(r2[0]["delta"]["text"], "original")
 
 
 class TestLockPrimitive(IsolatedAsyncioTestCase):
