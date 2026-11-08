@@ -998,6 +998,22 @@ class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
         # Exactly one placeholder is fine.
         RAGMiddleware.Parameters(hint_template="wrapped: {context}.")
 
+    async def test_hint_template_rejects_unknown_placeholders(self) -> None:
+        """:class:`SearchConfig` rejects a template whose remaining
+        placeholders cannot be rendered — :func:`_wrap_hint` substitutes
+        with ``str.format`` on the text-only path, so an unknown
+        placeholder would crash the reply at search time."""
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(
+                hint_template="cite it as {cite}: {context}",
+            )
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="{context} {0}")
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="broken {context} {")
+        # Escaped literal braces are fine.
+        RAGMiddleware.Parameters(hint_template="{{ literal }} {context}")
+
     async def test_rerank_parameters_validation(self) -> None:
         """The candidate set widens retrieval, the template needs a
         query."""

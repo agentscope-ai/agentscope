@@ -788,13 +788,27 @@ class RAGMiddleware(MiddlewareBase):
             """Reject templates with anything other than exactly one
             ``{context}`` placeholder — :func:`_wrap_hint` substitutes on
             the first occurrence, so zero placeholders silently drop the
-            matched content and multiple placeholders duplicate it."""
+            matched content and multiple placeholders duplicate it.
+
+            Rendering the template with placeholder arguments also
+            rejects unknown placeholders and malformed braces: the
+            text-only branch of :func:`_wrap_hint` calls
+            ``str.format(context=...)``, so they would otherwise crash
+            the reply at search time (the multimodal branch splits on
+            ``{context}`` and would silently tolerate them)."""
             count = value.count("{context}")
             if count != 1:
                 raise ValueError(
                     "hint_template must contain exactly one '{context}' "
                     f"placeholder; found {count}.",
                 )
+            try:
+                value.format(context="")
+            except (IndexError, KeyError, ValueError) as e:
+                raise ValueError(
+                    f"hint_template has an unknown or malformed "
+                    f"placeholder: {e}.",
+                ) from e
             return value
 
     def __init__(
