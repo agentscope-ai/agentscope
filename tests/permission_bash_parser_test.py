@@ -1684,6 +1684,41 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 result = self.parser.check_dangerous_command(cmd)
                 self.assertIsNone(result, f"Expected '{cmd}' to be safe")
 
+    async def test_quoted_dangerous_patterns(self) -> None:
+        """Shell quoting must not hide a dangerous pattern.
+
+        The shell removes quoting before executing the command, so every
+        quoted spelling below runs exactly like its unquoted form.
+        """
+        test_cases = [
+            ("chmod '777' /tmp/x", "chmod 777"),
+            ("chmod '-R' 777 /tmp/x", "chmod -R 777"),
+            ('chmod "777" /tmp/x', "chmod 777"),
+            ("chown '-R' root /tmp/x", "chown -R"),
+            ("kill '-9' 1", "kill -9"),
+            ("echo x > '/dev/sda'", "> /dev/"),
+            ("rm '-rf' /tmp/x", "rm -rf"),
+            ("sudo 'rm' file.txt", "sudo rm"),
+            (r"chmod \777 /tmp/x", "chmod 777"),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_quoted_safe_commands(self) -> None:
+        """Quoting alone must not turn a safe command into a dangerous one."""
+        safe_commands = [
+            "chmod '644' file.txt",
+            "chmod '+x' script.sh",
+            "kill '-l'",
+            "echo 'hello world'",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.parser = None

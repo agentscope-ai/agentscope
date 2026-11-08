@@ -692,7 +692,9 @@ class BashCommandParser:
         """Check if command contains dangerous patterns.
 
         Uses word-boundary aware matching to avoid false positives like
-        'git add' matching 'dd' pattern.
+        'git add' matching 'dd' pattern. Matching runs against both the raw
+        command and its unquoted spelling, because the shell removes quoting
+        before executing: ``chmod '777' x`` runs exactly like ``chmod 777 x``.
 
         Args:
             command (`str`):
@@ -706,6 +708,11 @@ class BashCommandParser:
         # Normalize command for matching
         normalized = " ".join(command.split())
 
+        # Shell quoting is removed before execution, so a pattern must also
+        # be matched against the unquoted spelling: `chmod '777' x` and
+        # `echo x > '/dev/sda'` run like their unquoted forms.
+        unquoted = self._strip_shell_quotes(normalized)
+
         # Check each dangerous pattern
         for pattern in DANGEROUS_COMMANDS:
             # For single-word patterns like "dd", use word boundary matching
@@ -713,14 +720,58 @@ class BashCommandParser:
             if " " not in pattern and len(pattern) <= 4:
                 # Single word pattern - use word boundaries
                 regex = r"\b" + re.escape(pattern) + r"\b"
-                if re.search(regex, normalized):
+                if re.search(regex, normalized) or (
+                    unquoted != normalized and re.search(regex, unquoted)
+                ):
                     return pattern
             else:
                 # Multi-word pattern or longer pattern - use substring match
-                if pattern in normalized:
+                if pattern in normalized or (
+                    unquoted != normalized and pattern in unquoted
+                ):
                     return pattern
 
         return None
+
+    @staticmethod
+    def _strip_shell_quotes(command: str) -> str:
+        """Remove shell quoting so patterns match what the shell executes.
+
+        Handles single quotes, double quotes and backslash escapes. Quotes
+        with no closing partner are dropped as well, so a truncated command
+        cannot use them to hide a pattern. The result is concatenated without
+        adding spaces, which is what the shell does with adjacent fragments
+        such as ``chmod '-R'777 x``.
+
+        Args:
+            command (`str`):
+                The command to strip quoting from
+
+        Returns:
+            `str`:
+                The command with quoting removed
+        """
+
+        stripped = []
+        quote: Optional[str] = None
+        for char in command:
+            if quote is None:
+                if char in ("'", '"'):
+                    quote = char
+                elif char == "\\":
+                    # Skip the escape marker; the next character is literal.
+                    quote = "\\"
+                else:
+                    stripped.append(char)
+            elif quote == "\\":
+                stripped.append(char)
+                quote = None
+            elif char == quote:
+                quote = None
+            else:
+                stripped.append(char)
+
+        return "".join(stripped)
 
     # pylint: disable=too-many-return-statements, too-many-branches
     def check_sed_constraints(

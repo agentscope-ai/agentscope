@@ -904,6 +904,33 @@ class PermissionEngineSafetyCheckAllowRuleImmuneTest(
             or "dangerous pattern" in decision.message,
         )
 
+    async def test_quoted_dangerous_command_not_bypassed_by_allow_rule(
+        self,
+    ) -> None:
+        """Allow rule for ``chmod:*`` does not authorize ``chmod '777'``.
+
+        Quoting is removed by the shell, so the quoted spelling runs the
+        same command as the unquoted one and must stay bypass-immune.
+        """
+        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        engine = PermissionEngine(context)
+        engine.add_rule(
+            PermissionRule(
+                tool_name="Bash",
+                rule_content="chmod:*",
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+
+        decision = await engine.check_permission(
+            Bash(),
+            {"command": "chmod '777' /tmp/x"},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertTrue(decision.bypass_immune)
+        self.assertIn("chmod 777", decision.message)
+
 
 # ---------------------------------------------------------------------------
 # bypass_immune field mechanism
