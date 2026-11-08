@@ -420,3 +420,19 @@ class AutoNameSessionTest(IsolatedAsyncioTestCase):
 
         self.assertListEqual(self.storage.written_configs, [])
         self.assertListEqual(await self._published(), [])
+
+    async def test_whitespace_only_turn_is_left_for_later(self) -> None:
+        """A turn carrying no real text must not name the session."""
+        await self._name(_Model("a title"), "   \n  ")
+
+        self.assertListEqual(self.storage.written_configs, [])
+        self.assertListEqual(await self._published(), [])
+
+    async def test_fallback_excerpt_is_a_single_line(self) -> None:
+        """The fallback excerpt never leaks newlines into the name."""
+        await self._name(_Model(), "\n  draft the\n v2 notes  \n")
+
+        self.assertListEqual(
+            [(c.name, c.naming.auto) for c in self.storage.written_configs],
+            [("draft the v2 notes", False)],
+        )
