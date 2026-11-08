@@ -220,7 +220,7 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
 
         self.assertIsNone(await load_approval(self.bus, approvals[self.sid]))
         self.assertIsNotNone(
-            await load_approval(self.bus, approvals["other-session"])
+            await load_approval(self.bus, approvals["other-session"]),
         )
         self.assertEqual(
             await load_reply_requester(
@@ -249,7 +249,7 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
         service._purge_session_bus = AsyncMock()
 
         async with self.bus.acquire_lock(
-            MessageBusKeys.session_lock("z-worker")
+            MessageBusKeys.session_lock("z-worker"),
         ):
             with self.assertRaises(SessionBusyError):
                 await asyncio.wait_for(
@@ -258,12 +258,12 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
                 )
             self.assertFalse(
                 await self.bus.is_locked(
-                    MessageBusKeys.session_lock(self.sid)
+                    MessageBusKeys.session_lock(self.sid),
                 ),
             )
             self.assertTrue(
                 await self.bus.is_locked(
-                    MessageBusKeys.session_lock("z-worker")
+                    MessageBusKeys.session_lock("z-worker"),
                 ),
             )
         storage.delete_session.assert_not_awaited()

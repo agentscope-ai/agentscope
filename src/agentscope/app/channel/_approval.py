@@ -227,7 +227,7 @@ async def prune_session_approvals(
 async def purge_session_approvals(bus: MessageBus, session_id: str) -> None:
     """Drop the session's approval and requester namespaces under its lock."""
     await bus.registry_drop(
-        MessageBusKeys.channel_session_approvals(session_id)
+        MessageBusKeys.channel_session_approvals(session_id),
     )
     await bus.registry_drop(
         MessageBusKeys.channel_session_requesters(session_id),

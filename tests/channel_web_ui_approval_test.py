@@ -32,13 +32,16 @@ class WebUIApprovalNoticeTest(IsolatedAsyncioTestCase):
         discord = DiscordChannel(
             "channel-1",
             DiscordChannel.Credentials(
-                bot_token="token", application_id="app"
+                bot_token="token",
+                application_id="app",
             ),
             DiscordChannel.Config(),
         )
         destination = AsyncMock()
         with patch.object(
-            discord, "_channel", AsyncMock(return_value=destination)
+            discord,
+            "_channel",
+            AsyncMock(return_value=destination),
         ):
             await discord._present_confirm(event, request)
         destination.send.assert_awaited_once_with(WEB_UI_APPROVAL_NOTICE)
@@ -60,7 +63,8 @@ class WebUIApprovalNoticeTest(IsolatedAsyncioTestCase):
         dingtalk = DingTalkChannel(
             "channel-1",
             DingTalkChannel.Credentials(
-                client_id="app", client_secret="secret"
+                client_id="app",
+                client_secret="secret",
             ),
             DingTalkChannel.Config(),
         )
@@ -69,6 +73,7 @@ class WebUIApprovalNoticeTest(IsolatedAsyncioTestCase):
         with patch.object(dingtalk, "_api", return_value=api):
             await dingtalk._present_confirm(event, request, "agent")
         api.send_text.assert_awaited_once_with(
-            "chat-1", WEB_UI_APPROVAL_NOTICE
+            "chat-1",
+            WEB_UI_APPROVAL_NOTICE,
         )
         api.create_approval_card.assert_not_awaited()

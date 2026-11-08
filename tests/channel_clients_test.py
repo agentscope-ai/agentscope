@@ -136,9 +136,9 @@ class _Storage:
                             name="Bash",
                             input="{}",
                             state="asking",
-                        )
+                        ),
                     ],
-                )
+                ),
             ],
         )
 
@@ -543,7 +543,9 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             await load_reply_requester(
-                bus, session_id="s-1", reply_id="reply-1"
+                bus,
+                session_id="s-1",
+                reply_id="reply-1",
             ),
             "requester-1",
         )
@@ -612,7 +614,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                         **raw["metadata"],
                         "channel_approval_ids": {},
                     },
-                }
+                },
             ],
         )
 

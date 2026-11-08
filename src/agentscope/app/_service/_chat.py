@@ -1621,7 +1621,8 @@ class ChatService:
                                 state=agent.state,
                             )
                             if isinstance(
-                                session_record.origin, ChannelOrigin
+                                session_record.origin,
+                                ChannelOrigin,
                             ):
                                 try:
                                     await prune_session_approvals(
