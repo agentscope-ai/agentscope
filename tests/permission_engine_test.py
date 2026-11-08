@@ -789,6 +789,61 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         self.assertIn("safety", decision.decision_reason.lower())
 
+    async def test_tee_into_dangerous_file_asks(self) -> None:
+        """A ``tee`` write into a protected file must trigger the same
+        bypass-immune ASK as the equivalent ``>`` redirection.
+
+        ``tee`` writes only to its own operands, and ``|`` is not a
+        redirection, so nothing else in the command names a file. If the
+        operands are not extracted, the dangerous-path check is blind to
+        the write and a user allow rule can clear it silently.
+        """
+        for command in (
+            "echo x | tee ~/.bashrc",
+            "echo x | tee -a ~/.zshrc",
+            "echo key | tee -a ~/.ssh/authorized_keys",
+        ):
+            with self.subTest(command=command):
+                decision = await self.engine.check_permission(
+                    Bash(),
+                    {"command": command},
+                )
+                self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+                self.assertTrue(decision.bypass_immune)
+
+    async def test_tee_allow_rule_cannot_clear_dangerous_write(self) -> None:
+        """An allow rule covering ``tee`` must not clear the safety ASK."""
+        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        engine = PermissionEngine(context)
+        engine.add_rule(
+            PermissionRule(
+                tool_name="Bash",
+                rule_content="tee:*",
+                behavior=PermissionBehavior.ALLOW,
+                source="user",
+            ),
+        )
+
+        decision = await engine.check_permission(
+            Bash(),
+            {"command": "echo x | tee ~/.bashrc"},
+        )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertTrue(decision.bypass_immune)
+
+    async def test_tee_into_ordinary_file_is_unchanged(self) -> None:
+        """A ``tee`` write to an unprotected path keeps the normal flow."""
+        decision = await self.engine.check_permission(
+            Bash(),
+            {"command": "echo x | tee out.txt"},
+        )
+
+        self.assertNotEqual(
+            decision.behavior,
+            PermissionBehavior.ALLOW,
+        )
+
     async def test_compound_command_all_read_only(self) -> None:
         """Test compound command with all read-only operations."""
         # Both ls and cat are read-only

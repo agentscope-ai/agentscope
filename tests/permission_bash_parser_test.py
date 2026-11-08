@@ -714,6 +714,61 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 result = self.parser.extract_file_paths(cmd)
                 self.assertEqual(result, expected)
 
+    async def test_tee_command(self) -> None:
+        """Test file path extraction from tee commands.
+
+        ``tee`` writes to each of its file operands and to nothing else. In
+        ``echo <key> | tee -a <file>`` the pipe is not a redirection and no
+        other word names a file, so without the ``tee`` operands the command
+        yields no path at all and the dangerous-path check cannot see the
+        write target.
+        """
+        test_cases = [
+            ("tee out.txt", [("tee", "out.txt")]),
+            ("tee -a out.txt", [("tee", "out.txt")]),
+            ("tee --append out.txt", [("tee", "out.txt")]),
+            ("tee -ai out.txt", [("tee", "out.txt")]),
+            (
+                "tee --append a.txt b.txt",
+                [("tee", "a.txt"), ("tee", "b.txt")],
+            ),
+            (
+                "echo key | tee -a /etc/crontab",
+                [("tee", "/etc/crontab")],
+            ),
+            (
+                "cat f | tee -a a.txt b.txt",
+                [("tee", "a.txt"), ("tee", "b.txt")],
+            ),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_tee_command_reads_are_unchanged(self) -> None:
+        """``tee``'s stdin operand is a read, not a write target."""
+        test_cases = [
+            ("tee", []),
+            ("tee < input.txt", [("redirect", "input.txt")]),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
+    async def test_tee_command_fallback_parser(self) -> None:
+        """The token fallback must extract tee targets too."""
+        test_cases = [
+            ("echo hi | tee /etc/crontab", [("tee", "/etc/crontab")]),
+            ("tee -a a.txt b.txt", [("tee", "a.txt"), ("tee", "b.txt")]),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                # pylint: disable=protected-access
+                result = self.parser._extract_paths_fallback(cmd)
+                self.assertEqual(result, expected)
+
     async def test_ln_command(self) -> None:
         """Test file path extraction from ln commands."""
         test_cases = [
