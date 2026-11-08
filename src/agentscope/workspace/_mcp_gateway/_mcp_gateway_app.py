@@ -69,7 +69,7 @@ async def _build_client(
     try:
         await client.list_raw_tools()
     except BaseException:
-        # Until discovery succeeds the registry cannot own or close this client.
+        # Until discovery succeeds the registry cannot close this client.
         if client.is_stateful and client.is_connected:
             await client.close()
         raise
