@@ -115,6 +115,7 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
             ("sudo 中文字 cp a b", ["sudo 中文字"]),
             ("sudo ✓ ls", ["sudo ✓"]),
             ("env 中文=1 ls -la", ["env 中文=1"]),
+            ("NODE_ENV=测试 npm run build", ["npm run"]),
             (
                 "sudo 中文字 ls && git commit -m 中文",
                 ["sudo 中文字", "git commit"],
