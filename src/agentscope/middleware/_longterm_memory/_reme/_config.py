@@ -63,11 +63,6 @@ def _dream_steps() -> list[dict[str, Any]]:
         },
         {"backend": "dream_integrate_step"},
         {
-            "backend": "dream_topics_step",
-            "topic_count": 3,
-            "topic_diversity_days": 7,
-        },
-        {
             "backend": "dream_finish_step",
             "file_catalog": "dream",
         },

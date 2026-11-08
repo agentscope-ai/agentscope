@@ -11,9 +11,12 @@ AgentScope and ReMe. No real ReMe application is built.
 middleware internals (``mw._app``, ``mw._search``, ``mw._session_id_of``)
 to inspect what the public API just did.
 """
-import sys
-import types
 import asyncio
+import importlib.util
+import sys
+import tempfile
+import types
+import unittest
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Any
@@ -521,6 +524,14 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             captured["jobs"]["auto_dream"]["steps"],
         )
         self.assertEqual(
+            [s["backend"] for s in captured["jobs"]["auto_dream"]["steps"]],
+            [
+                "dream_extract_step",
+                "dream_integrate_step",
+                "dream_finish_step",
+            ],
+        )
+        self.assertEqual(
             captured["jobs"]["index_update_loop"]["watch_dirs"],
             ["daily_dir", "digest_dir"],
         )
@@ -642,6 +653,28 @@ class TestAppLifecycle(IsolatedAsyncioTestCase):
         self.assertEqual(app.start_count, 1)
         self.assertTrue(mw._started)
         self.assertIs(mw._app, app)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("reme") is not None,
+        "reme-ai is not installed",
+    )
+    async def test_real_reme_app_starts_and_closes(self) -> None:
+        """Smoke-test that the embedded config resolves against real ReMe."""
+        from reme import ReMe
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "LLM_API_KEY": "test-key",
+                    "LLM_BASE_URL": "https://example.test/v1",
+                },
+            ),
+        ):
+            app = ReMe(**_build_reme_app_config(workspace_dir=tmpdir))
+            await app.start()
+            await app.close()
 
 
 # ----------------------------------------------------------------------
