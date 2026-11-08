@@ -1670,14 +1670,29 @@ class RedisStorage(StorageBase):
     async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
         """Persist a procedure and index it under the user."""
         record.updated_at = datetime.now()
-        await self._set_with_ttl(
-            self._key(self.key_config.sop, user_id=user_id, sop_id=record.id),
-            record.model_dump_json(),
-        )
-        await self._client.sadd(
-            self._key(self.key_config.sop_index, user_id=user_id),
-            record.id,
-        )
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(
+                self._key(
+                    self.key_config.sop,
+                    user_id=user_id,
+                    sop_id=record.id,
+                ),
+                record.model_dump_json(),
+            )
+            if self.key_ttl is not None:
+                pipe.expire(
+                    self._key(
+                        self.key_config.sop,
+                        user_id=user_id,
+                        sop_id=record.id,
+                    ),
+                    self.key_ttl,
+                )
+            pipe.sadd(
+                self._key(self.key_config.sop_index, user_id=user_id),
+                record.id,
+            )
+            await pipe.execute()
         return record
 
     async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
@@ -1726,26 +1741,28 @@ class RedisStorage(StorageBase):
     ) -> SOPRunRecord:
         """Persist a run and index it under the user and its procedure."""
         record.updated_at = datetime.now()
-        await self._set_with_ttl(
-            self._key(
-                self.key_config.sop_run,
-                user_id=user_id,
-                sop_run_id=record.id,
-            ),
-            record.model_dump_json(),
+        run_key = self._key(
+            self.key_config.sop_run,
+            user_id=user_id,
+            sop_run_id=record.id,
         )
-        await self._client.sadd(
-            self._key(self.key_config.sop_run_index, user_id=user_id),
-            record.id,
-        )
-        await self._client.sadd(
-            self._key(
-                self.key_config.sop_run_sop_index,
-                user_id=user_id,
-                sop_id=record.sop_id,
-            ),
-            record.id,
-        )
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(run_key, record.model_dump_json())
+            if self.key_ttl is not None:
+                pipe.expire(run_key, self.key_ttl)
+            pipe.sadd(
+                self._key(self.key_config.sop_run_index, user_id=user_id),
+                record.id,
+            )
+            pipe.sadd(
+                self._key(
+                    self.key_config.sop_run_sop_index,
+                    user_id=user_id,
+                    sop_id=record.sop_id,
+                ),
+                record.id,
+            )
+            await pipe.execute()
         return record
 
     async def get_sop_run(
@@ -1871,8 +1888,12 @@ class RedisStorage(StorageBase):
             team_id=record.id,
         )
         index_key = self._key(self.key_config.team_index, user_id=user_id)
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json())
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+            pipe.sadd(index_key, record.id)
+            await pipe.execute()
         return record
 
     async def get_team(
@@ -2642,8 +2663,10 @@ class RedisStorage(StorageBase):
             self.key_config.voice_profile_index,
             user_id=user_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
+            pipe.sadd(index_key, record.id)
+            await pipe.execute()
         return record.id
 
     async def get_voice_profile(

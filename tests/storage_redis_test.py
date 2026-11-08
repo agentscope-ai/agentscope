@@ -2367,3 +2367,23 @@ class TestUpsertIndexAtomicity(IsolatedAsyncioTestCase):
         self.assertIsNone(
             await self.storage.get_skill_by_name("user-1", "old-name"),
         )
+
+    async def test_interrupted_team_upsert_is_invisible(self) -> None:
+        """An interrupted team upsert leaves nothing behind."""
+        record = make_team_record("user-1")
+        self._break_pipelines()
+        with self.assertRaises(ConnectionError):
+            await self.storage.upsert_team("user-1", record)
+        self._restore_client()
+
+        self.assertIsNone(await self.storage.get_team("user-1", record.id))
+        self.assertEqual(await self.storage.list_teams("user-1"), [])
+
+    async def test_successful_team_upsert_reaches_the_index(self) -> None:
+        """A successful team upsert lands in the per-user index."""
+        record = make_team_record("user-1")
+        await self.storage.upsert_team("user-1", record)
+        self.assertEqual(
+            [item.id for item in await self.storage.list_teams("user-1")],
+            [record.id],
+        )
