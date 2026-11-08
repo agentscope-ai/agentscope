@@ -17,6 +17,8 @@ exit path.
 import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 from agentscope.app._bus_ops import (
     abandon_inbox_consumer,
@@ -25,6 +27,15 @@ from agentscope.app._bus_ops import (
     register_inbox_consumer,
 )
 from agentscope.app._service import SessionService
+from agentscope.app._service._session import SessionBusyError
+from agentscope.app.channel._approval import (
+    ChannelApprovalRecord,
+    load_approval,
+    new_approval_id,
+    load_reply_requester,
+    remember_reply_requester,
+    store_approval,
+)
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 
 
@@ -174,3 +185,111 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
         self.assertEqual(len(await self._wakeups()), 1)
         entries = await self.bus.queue_drain(MessageBusKeys.inbox(self.sid))
         self.assertEqual([p["hint"] for _i, p in entries], ["after delete"])
+
+    async def test_session_purge_removes_only_its_channel_approval_state(
+        self,
+    ) -> None:
+        service = SessionService(storage=None, message_bus=self.bus)
+        approvals = {
+            session_id: new_approval_id(session_id)
+            for session_id in (self.sid, "other-session")
+        }
+        for session_id in approvals:
+            await remember_reply_requester(
+                self.bus,
+                session_id=session_id,
+                reply_id="reply",
+                requester_id="requester",
+            )
+            await store_approval(
+                self.bus,
+                approvals[session_id],
+                ChannelApprovalRecord(
+                    channel_id="channel",
+                    chat_id="chat",
+                    agent_id="agent",
+                    session_id=session_id,
+                    reply_id="reply",
+                    tool_call_id="call",
+                    requester_id="requester",
+                ),
+            )
+
+        await service._purge_session_bus(self.sid)
+
+        self.assertIsNone(await load_approval(self.bus, approvals[self.sid]))
+        self.assertIsNotNone(
+            await load_approval(self.bus, approvals["other-session"])
+        )
+        self.assertEqual(
+            await load_reply_requester(
+                self.bus,
+                session_id=self.sid,
+                reply_id="reply",
+            ),
+            "",
+        )
+
+    async def test_delete_lock_timeout_releases_prior_locks(self) -> None:
+        storage = SimpleNamespace(
+            get_session=AsyncMock(
+                return_value=SimpleNamespace(
+                    config=SimpleNamespace(workspace_id=None),
+                ),
+            ),
+            delete_session=AsyncMock(return_value=True),
+        )
+        service = SessionService(storage=storage, message_bus=self.bus)
+        service._DELETE_LOCK_WAIT_SECS = 0.02
+        service._team_worker_session_ids = AsyncMock(return_value=["z-worker"])
+        service.cancel_session_run = AsyncMock(return_value=False)
+        service._purge_subagent_hitl = AsyncMock()
+        service._purge_session_bus = AsyncMock()
+
+        async with self.bus.acquire_lock(
+            MessageBusKeys.session_lock("z-worker")
+        ):
+            with self.assertRaises(SessionBusyError):
+                await asyncio.wait_for(
+                    service.delete_session("u", "a", self.sid),
+                    timeout=1.0,
+                )
+            self.assertFalse(
+                await self.bus.is_locked(
+                    MessageBusKeys.session_lock(self.sid)
+                ),
+            )
+            self.assertTrue(
+                await self.bus.is_locked(
+                    MessageBusKeys.session_lock("z-worker")
+                ),
+            )
+        storage.delete_session.assert_not_awaited()
+        service._purge_subagent_hitl.assert_not_awaited()
+        service._purge_session_bus.assert_not_awaited()
+
+    async def test_delete_lock_budget_does_not_timeout_deletion(self) -> None:
+        async def slow_delete(*_args: object) -> bool:
+            await asyncio.sleep(0.04)
+            return True
+
+        storage = SimpleNamespace(
+            get_session=AsyncMock(
+                return_value=SimpleNamespace(
+                    config=SimpleNamespace(workspace_id=None),
+                ),
+            ),
+            delete_session=AsyncMock(side_effect=slow_delete),
+        )
+        service = SessionService(storage=storage, message_bus=self.bus)
+        service._DELETE_LOCK_WAIT_SECS = 0.01
+        service._team_worker_session_ids = AsyncMock(return_value=[])
+        service.cancel_session_run = AsyncMock(return_value=True)
+        service._purge_subagent_hitl = AsyncMock()
+        service._purge_session_bus = AsyncMock()
+
+        self.assertTrue(await service.delete_session("u", "a", self.sid))
+        service._purge_session_bus.assert_awaited_once_with(self.sid)
+        self.assertFalse(
+            await self.bus.is_locked(MessageBusKeys.session_lock(self.sid)),
+        )

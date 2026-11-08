@@ -26,7 +26,10 @@ from agentscope.app.channel import (
     ChannelTypeRegistry,
     ChatKind,
 )
-from agentscope.app.channel._approval import load_reply_requester
+from agentscope.app.channel._approval import (
+    load_reply_requester,
+    remember_reply_requester,
+)
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.event import ReplyEndEvent, ReplyStartEvent
 from agentscope.types import ReplyFinishedReason
@@ -207,11 +210,24 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
         )
         return user_id, agent, session, channel
 
-    async def _run(self, source: SessionOrigin) -> ChannelClients:
+    async def _run(
+        self,
+        source: SessionOrigin,
+        *,
+        channel_enabled: bool = True,
+    ) -> ChannelClients:
         """Drive one run to completion and return the channel runtime."""
         user_id, agent, session, channel = self._fixture(source)
+        channel.enabled = channel_enabled
         storage = _Storage(session, agent, channel)
         bus = InMemoryMessageBus()
+        if isinstance(source, ChannelOrigin):
+            await remember_reply_requester(
+                bus,
+                session_id=session.id,
+                reply_id="r-1",
+                requester_id="u",
+            )
         clients = ChannelClients(
             storage=storage,
             message_bus=bus,
@@ -298,7 +314,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                     session_id="session-1",
                     reply_id="r-1",
                 ),
-                "u",
+                "",
             )
 
             assert channel.target is not None
@@ -318,6 +334,26 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
                     },
                     "events": ["REPLY_START", "REPLY_END"],
                 },
+            )
+        finally:
+            await clients.__aexit__(None, None, None)
+
+    async def test_completed_reply_cleans_requester_without_delivery(
+        self,
+    ) -> None:
+        clients = await self._run(
+            ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
+            channel_enabled=False,
+        )
+        try:
+            self.assertListEqual(_RecordingChannel.instances, [])
+            self.assertEqual(
+                await load_reply_requester(
+                    clients._bus,
+                    session_id="session-1",
+                    reply_id="r-1",
+                ),
+                "",
             )
         finally:
             await clients.__aexit__(None, None, None)

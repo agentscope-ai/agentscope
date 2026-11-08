@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
 from ....message import Base64Source, DataBlock, Msg, TextBlock
-from .._approval import approval_id_for
+from .._approval import WEB_UI_APPROVAL_NOTICE, approval_id_for
 from .._base import (
     _EVENT_ADAPTER,
     ChannelBase,
@@ -417,12 +417,7 @@ class DiscordChannel(ChannelBase):
         for tool in req.tool_calls:
             approval_id = approval_id_for(req, tool.id)
             if not approval_id:
-                logger.error(
-                    "Discord '%s' cannot present approval for tool call '%s' "
-                    "without an approval id",
-                    self._channel_id,
-                    tool.id,
-                )
+                await channel.send(WEB_UI_APPROVAL_NOTICE)
                 continue
             await channel.send(
                 content="🛡️ Tool execution needs approval\n"

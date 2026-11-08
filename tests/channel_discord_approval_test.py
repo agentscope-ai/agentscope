@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app.channel import DiscordChannel
+from agentscope.app.channel._approval import new_approval_id
 from agentscope.app.channel._base import (
     ChannelConfirmationResultEvent,
     ChannelDecisionStatus,
@@ -62,6 +63,16 @@ def _interaction() -> SimpleNamespace:
 
 class DiscordApprovalTest(IsolatedAsyncioTestCase):
     """Discord routes persistent component ids through the listener."""
+
+    async def test_session_token_fits_and_round_trips(self) -> None:
+        token = new_approval_id("b6c95c77-e5a1-4c8c-972c-96e50ecba431")
+        for approved in (True, False):
+            custom_id = _approval_custom_id(token, approved)
+            self.assertLessEqual(len(custom_id), 100)
+            self.assertEqual(
+                _parse_approval_custom_id(custom_id),
+                (token, approved),
+            )
 
     async def test_listener_parses_opaque_component_and_emits_actor(
         self,

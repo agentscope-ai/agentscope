@@ -7,6 +7,7 @@ the source of truth for the tool call itself.
 """
 import asyncio
 
+from ..._logging import logger
 from ...event import ConfirmResult, UserConfirmResultEvent
 from ...message import ToolCallBlock, ToolCallState
 from .._bus_ops import enqueue_run_trigger
@@ -113,15 +114,25 @@ async def resume_after_decision(
                     ConfirmResult(confirmed=approved, tool_call=tool_call),
                 ],
             ),
+            signal=False,
         )
-        return True
     except asyncio.CancelledError:
-        # The claim was introduced by the channel approval flow, so task
-        # cancellation must not strand it until its lease expires. Shield
-        # the cleanup from the cancellation already being propagated, then
-        # preserve the caller's cancellation semantics.
+        # Cancellation before submission completes must not strand the
+        # claim until its lease expires. Shield cleanup, then propagate.
         await asyncio.shield(bus.unlock(claim_key))
         raise
     except Exception:
         await bus.unlock(claim_key)
         raise
+
+    # Submission has succeeded. Notification failure or cancellation must
+    # not release the claim and allow another decision into the queue.
+    # The dispatcher's periodic signal recovers a missed notification.
+    try:
+        await bus.publish(MessageBusKeys.wakeup_signal(), {})
+    except Exception:  # pylint: disable=broad-except
+        logger.exception(
+            "Approval '%s' was queued but its wakeup signal failed",
+            approval_id,
+        )
+    return True

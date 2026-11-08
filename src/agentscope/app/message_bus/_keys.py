@@ -571,14 +571,14 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
 
     @classmethod
-    def channel_reply_requester(cls, session_id: str, reply_id: str) -> str:
-        """Registry namespace holding one reply's originating user."""
-        return f"agentscope:channel:reply:{session_id}:{reply_id}"
+    def channel_session_requesters(cls, session_id: str) -> str:
+        """Registry mapping reply IDs to their platform requester."""
+        return f"agentscope:channel:requesters:{session_id}"
 
     @classmethod
-    def channel_approval(cls, approval_id: str) -> str:
-        """Registry namespace holding one pending channel approval."""
-        return f"agentscope:channel:approval:{approval_id}"
+    def channel_session_approvals(cls, session_id: str) -> str:
+        """Registry mapping approval tokens to complete records for a session."""
+        return f"agentscope:channel:approvals:{session_id}"
 
     @classmethod
     def channel_approval_claim(

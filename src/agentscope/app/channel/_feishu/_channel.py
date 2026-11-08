@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from ...._logging import logger
 from ....event import ReplyEndEvent, RequireUserConfirmEvent
 from ....message import Base64Source, DataBlock, Msg, TextBlock
-from .._approval import approval_id_for
+from .._approval import WEB_UI_APPROVAL_NOTICE, approval_id_for
 from .._base import (
     ChannelBase,
     ChannelAuthConfirmationResultEvent,
@@ -921,10 +921,11 @@ class FeishuChannel(ChannelBase):
         for tool in req.tool_calls:
             approval_id = approval_id_for(req, tool.id)
             if not approval_id:
-                logger.warning(
-                    "Feishu approval card skipped: tool '%s' has no "
-                    "approval id",
-                    tool.id,
+                await self._send(
+                    event.channel_message_id,
+                    event.chat_id,
+                    "text",
+                    json.dumps({"text": WEB_UI_APPROVAL_NOTICE}),
                 )
                 continue
             await self._send(

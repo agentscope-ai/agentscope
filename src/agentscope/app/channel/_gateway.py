@@ -34,6 +34,7 @@ from ..storage import (
 )
 from ..workspace_manager import WorkspaceManagerBase
 from ._approval import (
+    CHANNEL_APPROVAL_UNAVAILABLE,
     ChannelApprovalRecord,
     forget_approval,
     load_approval,
@@ -249,7 +250,15 @@ class ChannelGateway:
             session_id=session_id,
             agent_id=agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_MESSAGE,
-            inputs=UserMsg(name=event.channel_user_id, content=content),
+            inputs=UserMsg(
+                name=event.channel_user_id,
+                content=content,
+                metadata=(
+                    {CHANNEL_APPROVAL_UNAVAILABLE: True}
+                    if event.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True
+                    else None
+                ),
+            ),
         )
 
     async def _aggregate_media(

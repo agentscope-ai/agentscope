@@ -20,6 +20,8 @@ from agentscope.app._bus_ops import (
     has_pending_inbox_or_release,
     register_inbox_consumer,
 )
+from agentscope.app.channel import ChannelClients, ChannelTypeRegistry
+from agentscope.app.channel._dingtalk._channel import DingTalkChannel
 from agentscope.app.channel._base import (
     ChannelBase,
     ChannelAuthConfirmationResultEvent,
@@ -31,6 +33,7 @@ from agentscope.app.channel._base import (
 from agentscope.app.channel._approval import (
     ChannelApprovalRecord,
     load_approval,
+    new_approval_id,
     store_approval,
 )
 from agentscope.app.channel._gateway import ChannelGateway
@@ -543,6 +546,59 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(queued), 1)
         self.assertNotIn("channel_user_id", queued[0][1])
 
+    async def test_dingtalk_requester_requires_staff_id(self) -> None:
+        for staff_id in ("staff-1", ""):
+            with self.subTest(staff_id=staff_id):
+                record = _channel_record("owner-1")
+                storage = _InboundStorage(record)
+                bus = InMemoryMessageBus()
+                gateway = ChannelGateway(
+                    storage=storage,
+                    message_bus=bus,
+                    workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+                )
+                clients = ChannelClients(
+                    storage,
+                    bus,
+                    ChannelTypeRegistry([DingTalkChannel]),
+                )
+                channel = DingTalkChannel(
+                    record.id,
+                    DingTalkChannel.Credentials(
+                        client_id="app",
+                        client_secret="secret",
+                    ),
+                    DingTalkChannel.Config(),
+                )
+
+                async def emit(event: ChannelEvent) -> None:
+                    await gateway.process(event)
+
+                channel._emit = emit
+                payload = {
+                    "conversationType": "2",
+                    "conversationId": "cid-1",
+                    "senderId": "encrypted-sender-1",
+                    "msgtype": "text",
+                    "text": {"content": "hello"},
+                }
+                if staff_id:
+                    payload["senderStaffId"] = staff_id
+                await channel._on_callback(payload)
+
+                [(_, trigger)] = await bus.queue_drain(
+                    MessageBusKeys.wakeup_queue(),
+                )
+                message = Msg.model_validate(trigger["input"])
+                self.assertEqual(message.name, staff_id or payload["senderId"])
+                self.assertEqual(
+                    await clients._requester_for_input(
+                        trigger["session_id"],
+                        message,
+                    ),
+                    staff_id,
+                )
+
 
 class FeishuPostParseTest(IsolatedAsyncioTestCase):
     """Feishu rich-text ``post`` flattens to ordered text + data blocks."""
@@ -711,7 +767,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
 
     @staticmethod
     async def _approval(bus: InMemoryMessageBus) -> str:
-        approval_id = "approval-1"
+        approval_id = new_approval_id("the-parked-session")
         await store_approval(
             bus,
             approval_id,
@@ -826,7 +882,7 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
         record = _channel_record("user-1")
         storage = _AwaitingStorage(record, "the-parked-session")
         bus = InMemoryMessageBus()
-        approval_id = "approval-without-requester"
+        approval_id = new_approval_id("the-parked-session")
         await store_approval(
             bus,
             approval_id,
@@ -929,6 +985,56 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
             ),
         )
         self.assertIsNotNone(await load_approval(bus, approval_id))
+
+    async def test_signal_failure_preserves_submitted_decision(self) -> None:
+        for error in (
+            RuntimeError("signal unavailable"),
+            asyncio.CancelledError(),
+        ):
+            with self.subTest(error=type(error).__name__):
+                record = _channel_record("user-1")
+                storage = _AwaitingStorage(record, "the-parked-session")
+                bus = InMemoryMessageBus()
+                approval_id = await self._approval(bus)
+                gw = ChannelGateway(
+                    storage=storage,
+                    message_bus=bus,
+                    workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+                )
+                bus.publish = AsyncMock(  # type: ignore[method-assign]
+                    side_effect=error,
+                )
+                event = ChannelConfirmationResultEvent(
+                    channel_id="chan-1",
+                    chat_id="group:cid-1",
+                    channel_user_id="requester-1",
+                    approved=True,
+                    actor="requester-1",
+                    approval_id=approval_id,
+                )
+                if isinstance(error, asyncio.CancelledError):
+                    with self.assertRaises(asyncio.CancelledError):
+                        await gw.process(event)
+                else:
+                    with self.assertLogs("as", level="ERROR"):
+                        status = await gw.process(event)
+                    self.assertIs(status, ChannelDecisionStatus.ACCEPTED)
+
+                self.assertTrue(
+                    await bus.is_locked(
+                        MessageBusKeys.channel_approval_claim(approval_id),
+                    ),
+                )
+                # Even an opposite decision cannot be submitted again.
+                status = await gw.process(
+                    event.model_copy(update={"approved": False}),
+                )
+                self.assertIs(status, ChannelDecisionStatus.STALE)
+                queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+                self.assertEqual(len(queued), 1)
+                self.assertTrue(
+                    queued[0][1]["input"]["confirm_results"][0]["confirmed"],
+                )
 
     async def test_cancellation_releases_decision_claim(self) -> None:
         record = _channel_record("user-1")

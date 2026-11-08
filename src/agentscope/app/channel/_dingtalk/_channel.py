@@ -29,7 +29,11 @@ from ....message import (
     ToolCallBlock,
     ToolResultBlock,
 )
-from .._approval import approval_id_for
+from .._approval import (
+    CHANNEL_APPROVAL_UNAVAILABLE,
+    WEB_UI_APPROVAL_NOTICE,
+    approval_id_for,
+)
 from .._base import (
     _EVENT_ADAPTER,
     ChannelBase,
@@ -940,21 +944,31 @@ class DingTalkChannel(ChannelBase):
         request: RequireUserConfirmEvent,
         agent_name: str,
     ) -> None:
-        """Create one approval card for each pending tool call.
+        """Present channel approval cards or a Web UI approval notice.
 
         Args:
             event (`ChannelEvent`): Chat receiving the cards.
             request (`RequireUserConfirmEvent`): Pending tool calls.
             agent_name (`str`): The agent that asked for approval.
         """
+        # Web UI/background runs, or DingTalk messages without staffId,
+        # still require confirmation but have no channel approval token.
+        approvals = []
+        for tool in request.tool_calls:
+            approval_id = approval_id_for(request, tool.id)
+            if approval_id:
+                approvals.append((tool, approval_id))
+        if len(approvals) != len(request.tool_calls):
+            await self._api().send_text(event.chat_id, WEB_UI_APPROVAL_NOTICE)
+        if not approvals:
+            return
+
         template_id = self._config.approval_card_template_id
         if not template_id:
             logger.error(
                 "DingTalk '%s' cannot deliver tool approval cards",
                 self._channel_id,
             )
-            # The run is parked on an approval nobody can give. Say so
-            # here, or the chat simply goes quiet.
             await self._api().send_text(
                 event.chat_id,
                 "无法展示工具审批卡片：审批卡片模板为空，请管理员配置。",
@@ -965,16 +979,7 @@ class DingTalkChannel(ChannelBase):
             if event.chat_id.startswith("user:")
             else ""
         )
-        for tool in request.tool_calls:
-            approval_id = approval_id_for(request, tool.id)
-            if not approval_id:
-                logger.error(
-                    "DingTalk '%s' cannot present approval for tool call '%s' "
-                    "without an approval id",
-                    self._channel_id,
-                    tool.id,
-                )
-                continue
+        for tool, approval_id in approvals:
             out_track_id = await self._api().create_approval_card(
                 event.chat_id,
                 approver_id,
@@ -1057,9 +1062,8 @@ class DingTalkChannel(ChannelBase):
         ):
             return
 
-        user_id = str(
-            payload.get("senderStaffId") or payload.get("senderId") or "",
-        )
+        staff_id = str(payload.get("senderStaffId") or "")
+        user_id = staff_id or str(payload.get("senderId") or "")
         conversation_id = str(payload.get("conversationId") or "")
         target_id = conversation_id if is_group else user_id
         if not user_id or not target_id:
@@ -1089,6 +1093,10 @@ class DingTalkChannel(ChannelBase):
                 metadata={
                     "chat_type": "group" if is_group else "private",
                     "conversation_type": conversation_type,
+                    # senderId can route inbound messages, but card callbacks
+                    # identify the clicker by enterprise userid. Without
+                    # senderStaffId, direct tool approvals to the Web UI.
+                    CHANNEL_APPROVAL_UNAVAILABLE: not staff_id,
                 },
             ),
         )

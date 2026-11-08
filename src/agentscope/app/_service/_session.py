@@ -46,9 +46,11 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+from contextlib import AsyncExitStack
 from enum import StrEnum
 
 from .._chat_input_store import cleanup_session
+from ..channel._approval import purge_session_approvals
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ..workspace_manager import WorkspaceManagerBase
@@ -57,6 +59,10 @@ from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ..._logging import logger
 from ...message import ToolCallState
+
+
+class SessionBusyError(RuntimeError):
+    """A session deletion could not acquire its run locks in time."""
 
 
 class SessionStatus(StrEnum):
@@ -113,6 +119,9 @@ class SessionService:
             Live message bus. Owns transient per-session state (events
             log, inbox, run-lock, cancel channel).
     """
+
+    _DELETE_LOCK_WAIT_SECS: float = 2.0
+    """Total contention budget for all locks needed by one session deletion."""
 
     _CANCEL_POLL_INTERVAL_SECS: float = 0.1
     """Interval between :meth:`MessageBus.session_is_running` polls
@@ -380,21 +389,42 @@ class SessionService:
         record = await self._storage.get_session(user_id, agent_id, session_id)
         workspace_id = record.config.workspace_id if record else None
 
-        # Clean leader-side subagent HITL projections before storage
-        # cascades remove the records we need to resolve roles from.
-        await self._purge_subagent_hitl(user_id, agent_id, session_id)
-
         await asyncio.gather(
             *(self.cancel_session_run(sid) for sid in all_sids),
         )
-        deleted = await self._storage.delete_session(
-            user_id,
-            agent_id,
-            session_id,
-        )
-        await asyncio.gather(
-            *(self._purge_session_bus(sid) for sid in all_sids),
-        )
+        async with AsyncExitStack() as locks:
+            # Match approval creation and run persistence. Ordered locking
+            # also covers worker sessions removed by the storage cascade.
+            deadline = (
+                asyncio.get_running_loop().time() + self._DELETE_LOCK_WAIT_SECS
+            )
+            try:
+                for sid in sorted(set(all_sids)):
+                    await locks.enter_async_context(
+                        self._bus.acquire_lock_bounded(
+                            MessageBusKeys.session_lock(sid),
+                            timeout_secs=max(
+                                0.0,
+                                deadline - asyncio.get_running_loop().time(),
+                            ),
+                        ),
+                    )
+            except TimeoutError as exc:
+                raise SessionBusyError(
+                    "The session is still busy. Please retry deletion shortly.",
+                ) from exc
+
+            # Only mutate projections after all required locks are held.
+            await self._purge_subagent_hitl(user_id, agent_id, session_id)
+            deleted = await self._storage.delete_session(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            # Retrying a committed deletion must retry bus cleanup too.
+            await asyncio.gather(
+                *(self._purge_session_bus(sid) for sid in all_sids),
+            )
 
         # Best-effort: a workspace that cannot be resolved (backend
         # down, sandbox gone) must not fail a committed deletion.
@@ -653,6 +683,7 @@ class SessionService:
 
     async def _purge_session_bus(self, session_id: str) -> None:
         """Drop all per-session bus state for one session."""
+        await purge_session_approvals(self._bus, session_id)
         await self._bus.log_trim(
             MessageBusKeys.session_events(session_id),
         )

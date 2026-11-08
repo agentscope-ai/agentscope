@@ -44,13 +44,15 @@ from ...event import (
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
-from ...message import Msg
+from ...message import Msg, ToolCallState
 from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ._approval import (
+    CHANNEL_APPROVAL_UNAVAILABLE,
     ChannelApprovalRecord,
     load_reply_requester,
     new_approval_id,
+    approval_session,
     remember_reply_requester,
     store_approval,
     with_approval_ids,
@@ -292,11 +294,15 @@ class ChannelClients:
             `str`: Platform requester id, or an empty string when the run has
             no requester.
         """
-        if isinstance(input_msg, Msg):
-            return input_msg.name
         if isinstance(input_msg, list) and input_msg:
-            first = input_msg[0]
-            return first.name if isinstance(first, Msg) else ""
+            input_msg = input_msg[0]
+        if isinstance(input_msg, Msg):
+            if input_msg.metadata.get(CHANNEL_APPROVAL_UNAVAILABLE) is True:
+                return ""
+            # Short-term compatibility: the Web UI uses the name "user",
+            # whereas channel messages use the platform user id. Replace
+            # this convention with explicit trusted provenance when available.
+            return "" if input_msg.name == "user" else input_msg.name
         if not isinstance(
             input_msg,
             (
@@ -324,7 +330,7 @@ class ChannelClients:
     ) -> AsyncIterator[dict]:
         """Persist approval context and attach opaque ids to the stream.
 
-        The requester is retained at reply start because a reply may be
+        The requester is retained when the run pauses because a reply may be
         continued by a background resume that no longer carries the original
         channel event. For every confirmation request, this method stores the
         requester together with the exact agent, session, reply, and tool call
@@ -347,46 +353,72 @@ class ChannelClients:
         current_requester = requester_id
         async for raw in events:
             event_type = raw.get("type")
-            if event_type == EventType.REPLY_START:
-                reply_id = raw["reply_id"]
-                if current_requester:
-                    await remember_reply_requester(
-                        self._bus,
-                        session_id=session_id,
-                        reply_id=reply_id,
-                        requester_id=current_requester,
-                    )
-                else:
-                    current_requester = await load_reply_requester(
-                        self._bus,
-                        session_id=session_id,
-                        reply_id=reply_id,
-                    )
-            elif event_type == EventType.REQUIRE_USER_CONFIRM:
-                reply_id = raw["reply_id"]
-                if not current_requester:
-                    current_requester = await load_reply_requester(
-                        self._bus,
-                        session_id=session_id,
-                        reply_id=reply_id,
-                    )
-                approval_ids: dict[str, str] = {}
-                for tool_call in raw["tool_calls"]:
-                    tool_call_id = tool_call["id"]
-                    approval_id = new_approval_id()
-                    await store_approval(
-                        self._bus,
-                        approval_id,
-                        ChannelApprovalRecord(
-                            channel_id=channel_id,
-                            chat_id=chat_id,
-                            agent_id=agent_id,
+            reply_id = raw.get("reply_id", "")
+            if event_type in (
+                EventType.REQUIRE_USER_CONFIRM,
+                EventType.REQUIRE_EXTERNAL_EXECUTION,
+            ):
+                # Paused runs release the session lock after saving state.
+                # Only pause handling waits here, so text can stream freely.
+                async with approval_session(
+                    self._bus,
+                    self._storage,
+                    channel_id=channel_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                ) as saved:
+                    if saved is None or saved[0].reply_id != reply_id:
+                        return
+                    state, agent_name = saved
+                    awaiting = state.get_awaiting_tool_calls(agent_name)
+                    if not awaiting:
+                        return
+                    if not current_requester:
+                        current_requester = await load_reply_requester(
+                            self._bus,
                             session_id=session_id,
                             reply_id=reply_id,
-                            tool_call_id=tool_call_id,
+                        )
+                    if current_requester:
+                        await remember_reply_requester(
+                            self._bus,
+                            session_id=session_id,
+                            reply_id=reply_id,
                             requester_id=current_requester,
-                        ),
-                    )
-                    approval_ids[tool_call_id] = approval_id
-                raw = with_approval_ids(raw, approval_ids)
+                        )
+                    if event_type == EventType.REQUIRE_USER_CONFIRM:
+                        pending = {
+                            call.id
+                            for call in awaiting
+                            if call.state == ToolCallState.ASKING
+                        }
+                        tools = [
+                            tool
+                            for tool in raw["tool_calls"]
+                            if tool["id"] in pending
+                        ]
+                        if not tools:
+                            return
+                        approval_ids = {}
+                        if current_requester:
+                            for tool in tools:
+                                approval_id = new_approval_id(session_id)
+                                await store_approval(
+                                    self._bus,
+                                    approval_id,
+                                    ChannelApprovalRecord(
+                                        channel_id=channel_id,
+                                        chat_id=chat_id,
+                                        agent_id=agent_id,
+                                        session_id=session_id,
+                                        reply_id=reply_id,
+                                        tool_call_id=tool["id"],
+                                        requester_id=current_requester,
+                                    ),
+                                )
+                                approval_ids[tool["id"]] = approval_id
+                        raw = with_approval_ids(
+                            {**raw, "tool_calls": tools},
+                            approval_ids,
+                        )
             yield raw

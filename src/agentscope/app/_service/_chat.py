@@ -31,6 +31,7 @@ from .._bus_ops import (
 from ..message_bus import MessageBus, MessageBusKeys
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
+from ..channel._approval import prune_session_approvals
 from ..storage import (
     StorageBase,
     AgentRecord,
@@ -1619,6 +1620,29 @@ class ChatService:
                                 session_id=session_id,
                                 state=agent.state,
                             )
+                            if isinstance(
+                                session_record.origin, ChannelOrigin
+                            ):
+                                try:
+                                    await prune_session_approvals(
+                                        self._message_bus,
+                                        session_id,
+                                        agent.state,
+                                        agent_record.data.name,
+                                        completed_reply_ids=(
+                                            msg.id
+                                            for msg in reply_msgs
+                                            if msg.finished_reason is not None
+                                        ),
+                                    )
+                                except (
+                                    Exception
+                                ):  # pylint: disable=broad-except
+                                    logger.exception(
+                                        "Failed to clean up channel approvals "
+                                        "for session '%s'",
+                                        session_id,
+                                    )
                             if checkpoint_cursor is not None:
                                 await self._message_bus.registry_set(
                                     MessageBusKeys.session_event_checkpoint(
