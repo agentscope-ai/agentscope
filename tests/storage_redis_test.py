@@ -2108,3 +2108,57 @@ class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
                 self.assertEqual(record.created_at, created_at)
                 stored = await storage.get_voice_profile("owner", record.id)
                 self.assertEqual(stored.model_dump(), record.model_dump())
+
+
+class TestAtomicUpserts(IsolatedAsyncioTestCase):
+    """Upserts write the record and its index entries in one transaction:
+    a failure mid-sequence must leave neither behind (issue #3840)."""
+
+    async def test_failed_index_write_rolls_back_record(self) -> None:
+        storage = make_storage()
+        record = ScheduleRecord(
+            user_id="alice",
+            agent_id="agent",
+            data=ScheduleData(
+                name="nightly",
+                cron_expression="0 2 * * *",
+                started_at="2026-01-01T00:00:00",
+                chat_model_config=ChatModelConfig(
+                    type="openai",
+                    credential_id="cred-1",
+                    model="gpt-4",
+                    parameters={},
+                ),
+            ),
+        )
+
+        # Make the pipeline itself fail on execute (as a mid-sequence connection
+        # loss would): the whole transaction must roll back, leaving neither the
+        # record nor the index entry.
+        original_atomic = storage._atomic
+
+        def failing_atomic():
+            pipeline = original_atomic()
+            async def failing_execute():
+                raise ConnectionError("redis connection lost mid-transaction")
+
+            pipeline.execute = failing_execute
+            return pipeline
+
+        storage._atomic = failing_atomic
+        try:
+            with self.assertRaises(ConnectionError):
+                await storage.upsert_schedule("alice", record)
+        finally:
+            storage._atomic = original_atomic
+
+        # The whole transaction rolled back: neither the record nor the
+        # index entry may exist.
+        key = storage._key(
+            storage.key_config.schedule,
+            user_id="alice",
+            schedule_id=record.id,
+        )
+        self.assertIsNone(await storage._client.get(key))
+        index_key = storage._key(storage.key_config.schedule_index, user_id="alice")
+        self.assertEqual(await storage._client.smembers(index_key), set())

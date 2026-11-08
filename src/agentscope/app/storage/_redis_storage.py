@@ -220,6 +220,16 @@ class RedisStorage(StorageBase):
         if self.key_ttl is not None:
             await self._client.expire(key, self.key_ttl)
 
+    def _atomic(self):
+        """Return a transactional pipeline for multi-key upserts.
+
+        Record writes, sliding TTLs, and index updates must land together:
+        with separate awaited round trips a failure in between leaves the
+        durable record outside every index (issue #3840). Callers populate
+        the pipeline and ``await pipeline.execute()``.
+        """
+        return self._client.pipeline(transaction=True)
+
     async def __aenter__(self) -> Self:
         """Create the connection pool and Redis client.
 
@@ -370,8 +380,12 @@ class RedisStorage(StorageBase):
             self.key_config.credential_index,
             user_id=user_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, record.id)
+        await pipeline.execute()
         return record.id
 
     async def list_credentials(self, user_id: str) -> list[CredentialRecord]:
@@ -488,12 +502,15 @@ class RedisStorage(StorageBase):
         if raw:
             mcp_record.updated_at = datetime.now()
 
-        await self._set_with_ttl(key, mcp_record.model_dump_json())
-        await self._client.sadd(
+        pipeline = self._atomic()
+        pipeline.set(key, mcp_record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(
             self._key(self.key_config.mcp_index, user_id=user_id),
             mcp_record.id,
         )
-        await self._client.hset(
+        pipeline.hset(
             name_key,
             mcp_record.client.name,
             mcp_record.id,
@@ -502,8 +519,9 @@ class RedisStorage(StorageBase):
         if raw:
             previous = MCPRecord.model_validate_json(raw).client.name
             if previous != mcp_record.client.name:
-                await self._client.hdel(name_key, previous)
+                pipeline.hdel(name_key, previous)
 
+        await pipeline.execute()
         return mcp_record.id
 
     async def list_mcps(self, user_id: str) -> list[MCPRecord]:
@@ -623,18 +641,22 @@ class RedisStorage(StorageBase):
         if raw:
             skill_record.updated_at = datetime.now()
 
-        await self._set_with_ttl(key, skill_record.model_dump_json())
-        await self._client.sadd(
+        pipeline = self._atomic()
+        pipeline.set(key, skill_record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(
             self._key(self.key_config.skill_index, user_id=user_id),
             skill_record.id,
         )
-        await self._client.hset(name_key, skill_record.name, skill_record.id)
+        pipeline.hset(name_key, skill_record.name, skill_record.id)
 
         if raw:
             previous = SkillRecord.model_validate_json(raw).name
             if previous != skill_record.name:
-                await self._client.hdel(name_key, previous)
+                pipeline.hdel(name_key, previous)
 
+        await pipeline.execute()
         return skill_record.id
 
     async def list_skills(self, user_id: str) -> list[SkillRecord]:
@@ -753,8 +775,12 @@ class RedisStorage(StorageBase):
             agent_id=agent_record.id,
         )
         index_key = self._key(self.key_config.agent_index, user_id=user_id)
-        await self._set_with_ttl(key, agent_record.model_dump_json())
-        await self._client.sadd(index_key, agent_record.id)
+        pipeline = self._atomic()
+        pipeline.set(key, agent_record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, agent_record.id)
+        await pipeline.execute()
         return agent_record.id
 
     async def list_agents(self, user_id: str) -> list[AgentRecord]:
@@ -951,8 +977,11 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, record.id)
 
         if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
@@ -960,7 +989,7 @@ class RedisStorage(StorageBase):
                 user_id=user_id,
                 schedule_id=record.origin.schedule_id,
             )
-            await self._client.sadd(schedule_session_key, record.id)
+            pipeline.sadd(schedule_session_key, record.id)
 
         if isinstance(record.origin, ChannelOrigin):
             channel_session_key = self._key(
@@ -968,8 +997,9 @@ class RedisStorage(StorageBase):
                 user_id=user_id,
                 channel_id=record.origin.channel_id,
             )
-            await self._client.sadd(channel_session_key, record.id)
+            pipeline.sadd(channel_session_key, record.id)
 
+        await pipeline.execute()
         return record
 
     async def update_session_state(
@@ -1213,12 +1243,16 @@ class RedisStorage(StorageBase):
             schedule_id=record.id,
         )
         index_key = self._key(self.key_config.schedule_index, user_id=user_id)
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
-        await self._client.sadd(
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, record.id)
+        pipeline.sadd(
             self.key_config.schedule_global_index,
             f"{user_id}:{record.id}",
         )
+        await pipeline.execute()
         return record.id
 
     async def get_schedule(
@@ -1344,10 +1378,16 @@ class RedisStorage(StorageBase):
             self.key_config.channel_botid_index,
             platform_bot_id=platform_bot_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
-        await self._client.sadd(self.key_config.channel_all_index, record.id)
-        await self._set_with_ttl(botid_key, record.id)
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, record.id)
+        pipeline.sadd(self.key_config.channel_all_index, record.id)
+        pipeline.set(botid_key, record.id)
+        if self.key_ttl is not None:
+            pipeline.expire(botid_key, self.key_ttl)
+        await pipeline.execute()
         return record.id
 
     async def get_channel(
@@ -1646,14 +1686,21 @@ class RedisStorage(StorageBase):
     async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
         """Persist a procedure and index it under the user."""
         record.updated_at = datetime.now()
-        await self._set_with_ttl(
+        pipeline = self._atomic()
+        pipeline.set(
             self._key(self.key_config.sop, user_id=user_id, sop_id=record.id),
             record.model_dump_json(),
         )
-        await self._client.sadd(
+        if self.key_ttl is not None:
+            pipeline.expire(
+                self._key(self.key_config.sop, user_id=user_id, sop_id=record.id),
+                self.key_ttl,
+            )
+        pipeline.sadd(
             self._key(self.key_config.sop_index, user_id=user_id),
             record.id,
         )
+        await pipeline.execute()
         return record
 
     async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
@@ -1702,19 +1749,20 @@ class RedisStorage(StorageBase):
     ) -> SOPRunRecord:
         """Persist a run and index it under the user and its procedure."""
         record.updated_at = datetime.now()
-        await self._set_with_ttl(
-            self._key(
-                self.key_config.sop_run,
-                user_id=user_id,
-                sop_run_id=record.id,
-            ),
-            record.model_dump_json(),
+        sop_run_key = self._key(
+            self.key_config.sop_run,
+            user_id=user_id,
+            sop_run_id=record.id,
         )
-        await self._client.sadd(
+        pipeline = self._atomic()
+        pipeline.set(sop_run_key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(sop_run_key, self.key_ttl)
+        pipeline.sadd(
             self._key(self.key_config.sop_run_index, user_id=user_id),
             record.id,
         )
-        await self._client.sadd(
+        pipeline.sadd(
             self._key(
                 self.key_config.sop_run_sop_index,
                 user_id=user_id,
@@ -1722,6 +1770,7 @@ class RedisStorage(StorageBase):
             ),
             record.id,
         )
+        await pipeline.execute()
         return record
 
     async def get_sop_run(
@@ -1847,8 +1896,12 @@ class RedisStorage(StorageBase):
             team_id=record.id,
         )
         index_key = self._key(self.key_config.team_index, user_id=user_id)
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, record.id)
+        await pipeline.execute()
         return record
 
     async def get_team(
@@ -2077,8 +2130,12 @@ class RedisStorage(StorageBase):
             self.key_config.knowledge_base_index,
             user_id=user_id,
         )
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(index_key, record.id)
+        await pipeline.execute()
         return record
 
     async def get_knowledge_base(
@@ -2273,12 +2330,15 @@ class RedisStorage(StorageBase):
             record.created_at = existing.created_at
         record.updated_at = datetime.now()
 
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(
+        pipeline = self._atomic()
+        pipeline.set(key, record.model_dump_json())
+        if self.key_ttl is not None:
+            pipeline.expire(key, self.key_ttl)
+        pipeline.sadd(
             self._document_index_key(user_id, record.knowledge_base_id),
             record.id,
         )
-        await self._client.sadd(
+        pipeline.sadd(
             self.key_config.knowledge_document_global_index,
             self._document_global_token(
                 user_id,
@@ -2286,6 +2346,7 @@ class RedisStorage(StorageBase):
                 record.id,
             ),
         )
+        await pipeline.execute()
         return record
 
     async def get_knowledge_document(
