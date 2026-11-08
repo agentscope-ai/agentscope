@@ -368,7 +368,14 @@ class KnowledgeBase:
             )
             for vector, chunk in zip(response.embeddings, chunks)
         ]
-        await self._vector_store.insert(self._collection, records)
+        if self._metadata_filter:
+            await self._vector_store.insert(
+                self._collection,
+                records,
+                metadata_filter=self._metadata_filter,
+            )
+        else:
+            await self._vector_store.insert(self._collection, records)
         return document_id
 
     async def delete_document(self, document_id: str) -> None:

@@ -164,3 +164,46 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
             [chunk.model_dump() for chunk in self.chunks],
             before,
         )
+
+    async def test_scoped_inserts_with_overlapping_document_id_do_not_overwrite(
+        self,
+    ) -> None:
+        """Scoped KnowledgeBase instances sharing a collection keep overlapping document_ids isolated."""
+        kb_a = self._knowledge("A")
+        kb_b = self._knowledge("B")
+        chunks_a = [
+            Chunk(
+                content=TextBlock(text="Alpha document"),
+                source="alpha.txt",
+                chunk_index=0,
+                total_chunks=1,
+                metadata={"page": 1},
+            ),
+        ]
+        chunks_b = [
+            Chunk(
+                content=TextBlock(text="Beta document"),
+                source="beta.txt",
+                chunk_index=0,
+                total_chunks=1,
+                metadata={"page": 2},
+            ),
+        ]
+
+        await kb_a.insert_document(chunks_a, document_id="shared-doc")
+        await kb_b.insert_document(chunks_b, document_id="shared-doc")
+
+        stored_a = await kb_a.list_chunks("shared-doc")
+        stored_b = await kb_b.list_chunks("shared-doc")
+        self.assertEqual(len(stored_a), 1)
+        self.assertEqual(len(stored_b), 1)
+        self.assertEqual(stored_a[0].content["text"], "Alpha document")
+        self.assertEqual(stored_a[0].metadata["corpus"], "A")
+        self.assertEqual(stored_b[0].content["text"], "Beta document")
+        self.assertEqual(stored_b[0].metadata["corpus"], "B")
+
+        await kb_a.delete_document("shared-doc")
+        self.assertEqual(await kb_a.list_chunks("shared-doc"), [])
+        remaining_b = await kb_b.list_chunks("shared-doc")
+        self.assertEqual(len(remaining_b), 1)
+        self.assertEqual(remaining_b[0].content["text"], "Beta document")

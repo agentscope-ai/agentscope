@@ -13,6 +13,7 @@ through the constructor arguments:
   (MongoDB 7.0+ with Vector Search enabled)
 """
 import asyncio
+import hashlib
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -21,6 +22,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
 )
 from .._document import Chunk
 
@@ -253,6 +255,7 @@ class MongoDBStore(VectorStoreBase):
         self,
         collection: str,
         records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Insert records into a collection.
 
@@ -267,6 +270,10 @@ class MongoDBStore(VectorStoreBase):
             records (`list[VectorRecord]`):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Optional scope filter included in ``_id`` derivation so
+                scoped ``KnowledgeBase`` instances sharing a collection
+                do not overwrite another scope's records.
         """
         if not records:
             return
@@ -276,9 +283,9 @@ class MongoDBStore(VectorStoreBase):
         col = self._col(collection)
         operations = [
             ReplaceOne(
-                {"_id": f"{record.document_id}_{record.chunk.chunk_index}"},
+                {"_id": self._record_id(record, metadata_filter)},
                 {
-                    "_id": f"{record.document_id}_{record.chunk.chunk_index}",
+                    "_id": self._record_id(record, metadata_filter),
                     "document_id": record.document_id,
                     "vector": record.vector,
                     "chunk": record.chunk.model_dump(mode="json"),
@@ -288,6 +295,23 @@ class MongoDBStore(VectorStoreBase):
             for record in records
         ]
         await col.bulk_write(operations, ordered=False)
+
+    @staticmethod
+    def _record_id(
+        record: VectorRecord,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> str:
+        """Deterministic MongoDB ``_id`` for ``(document_id, chunk_index[, metadata_filter])``.
+
+        Preserves the legacy ``f"{record.document_id}_{record.chunk.chunk_index}"``
+        format when unscoped, and returns a SHA-256 hex digest of the
+        scoped identity key when ``metadata_filter`` is non-empty so
+        scoped inserts cannot collide across scopes or with unscoped IDs.
+        """
+        if not metadata_filter:
+            return f"{record.document_id}_{record.chunk.chunk_index}"
+        raw = _record_identity_key(record, metadata_filter)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def delete(
         self,

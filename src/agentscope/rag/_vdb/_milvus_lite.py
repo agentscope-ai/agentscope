@@ -16,6 +16,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
 )
 from .._document import Chunk
 
@@ -202,6 +203,7 @@ class MilvusLiteStore(VectorStoreBase):
         self,
         collection: str,
         records: list[VectorRecord],
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Insert records into a collection.
 
@@ -211,9 +213,11 @@ class MilvusLiteStore(VectorStoreBase):
         flat equality filtering.
 
         Entity IDs are derived deterministically from
-        ``(document_id, chunk_index)`` and written via ``upsert`` so
-        that re-indexing the same document after a mid-pipeline crash
-        replaces the previous records instead of duplicating them.
+        ``(document_id, chunk_index)`` (and ``metadata_filter`` when
+        scoped) and written via ``upsert`` so that re-indexing the same
+        document after a mid-pipeline crash replaces the previous
+        records instead of duplicating them, without colliding across
+        scopes.
 
         Args:
             collection (`str`):
@@ -221,6 +225,8 @@ class MilvusLiteStore(VectorStoreBase):
             records (`list[VectorRecord]`):
                 The records to insert, each carrying a
                 :class:`Chunk` and its embedding vector.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Optional scope filter included in entity ID derivation.
         """
         if not records:
             return
@@ -232,7 +238,7 @@ class MilvusLiteStore(VectorStoreBase):
                 collection_name=collection,
                 data=[
                     {
-                        "id": self._record_id(record),
+                        "id": self._record_id(record, metadata_filter),
                         "vector": record.vector,
                         "document_id": record.document_id,
                         "chunk": record.chunk.model_dump(mode="json"),
@@ -243,23 +249,28 @@ class MilvusLiteStore(VectorStoreBase):
             )
 
     @staticmethod
-    def _record_id(record: VectorRecord) -> str:
-        """Deterministic entity ID for ``(document_id, chunk_index)``.
+    def _record_id(
+        record: VectorRecord,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> str:
+        """Deterministic entity ID for ``(document_id, chunk_index[, metadata_filter])``.
 
         Mirrors the Elasticsearch backend's recipe: a SHA-256 over the
-        ``\0``-joined pair, whose 64 hex chars exactly fit the
+        ``\0``-joined identity key, whose 64 hex chars exactly fit the
         ``VARCHAR(64)`` primary key. Stable IDs make indexing retries
         idempotent (via ``upsert``).
 
         Args:
             record (`VectorRecord`):
                 The record to derive an ID for.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Optional scope filter to isolate IDs across scopes.
 
         Returns:
             `str`:
                 The 64-character hex digest.
         """
-        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        raw = _record_identity_key(record, metadata_filter)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def delete(
