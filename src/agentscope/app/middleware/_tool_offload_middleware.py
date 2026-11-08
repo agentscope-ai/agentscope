@@ -6,7 +6,10 @@ When a tool times out, this middleware:
 - Lets the underlying asyncio task keep running via
   :class:`BackgroundTaskManager` (the task is **never cancelled**).
 - Yields a synthetic placeholder :class:`ToolResponse` so the agent
-  loop unblocks immediately.
+  loop unblocks immediately. The placeholder carries structured
+  metadata (``background_task_id`` / ``tool_name`` / ``tool_state`` /
+  ``offloaded_at``) so downstream consumers can distinguish it from a
+  real tool success without parsing the placeholder text.
 - On task completion, pushes the real result as a
   :class:`HintBlock` to the session's inbox via the message bus and
   enqueues a wakeup. From there the result follows the same path as a
@@ -21,6 +24,7 @@ bus/wakeup infrastructure, which works correctly across processes.
 """
 import asyncio
 import json
+import time
 from copy import deepcopy
 from typing import Any, AsyncGenerator, Callable
 
@@ -446,13 +450,25 @@ any tool, which ends the current reasoning loop — just do nothing and end \
 this run.
 </system-reminder>"""
 
+        # Machine-readable marker: downstream consumers (UIs, gate
+        # middlewares, user code) can distinguish this placeholder from
+        # a real tool success without parsing the placeholder text.
+        offload_metadata = {
+            "background_task_id": task_id,
+            "tool_name": tool_name,
+            "tool_state": "running",
+            "offloaded_at": time.time(),
+        }
+
         yield ToolChunk(
             content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
+            metadata=dict(offload_metadata),
         )
 
         yield ToolResponse(
             content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
             id=tool_call.id,
+            metadata=dict(offload_metadata),
         )

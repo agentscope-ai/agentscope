@@ -256,8 +256,10 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # Should yield a synthetic ToolResponse immediately
         responses = [r for r in results if isinstance(r, ToolResponse)]
         self.assertEqual(len(responses), 1)
+        dump = responses[0].model_dump()
+        metadata = dump.pop("metadata")
         self.assertDictEqual(
-            responses[0].model_dump(),
+            dump,
             {
                 "content": [
                     {
@@ -269,10 +271,20 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "metadata": {},
                 "id": "call_slow",
             },
         )
+        # The placeholder is machine-readable: it carries structured
+        # metadata identifying it as a still-running offloaded call.
+        task_id = next(iter(self.bg_manager.tasks))
+        self.assertEqual(
+            sorted(metadata),
+            ["background_task_id", "offloaded_at", "tool_name", "tool_state"],
+        )
+        self.assertEqual(metadata["background_task_id"], task_id)
+        self.assertEqual(metadata["tool_name"], "slow_tool")
+        self.assertEqual(metadata["tool_state"], "running")
+        self.assertIsInstance(metadata["offloaded_at"], float)
         text = responses[0].content[0].text  # type: ignore[union-attr]
         self.assertIn("background", text)
         self.assertIn("id=", text)
