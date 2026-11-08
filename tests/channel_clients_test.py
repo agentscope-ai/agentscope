@@ -539,6 +539,21 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             await load_reply_requester(
                 bus, session_id="s-1", reply_id="reply-1"
             ),
+            "requester-1",
+        )
+        await prune_session_approvals(
+            bus,
+            "s-1",
+            AgentState(),
+            "assistant",
+            completed_reply_ids=["reply-1"],
+        )
+        self.assertEqual(
+            await load_reply_requester(
+                bus,
+                session_id="s-1",
+                reply_id="reply-1",
+            ),
             "",
         )
 
