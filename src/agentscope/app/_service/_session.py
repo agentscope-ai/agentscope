@@ -411,7 +411,8 @@ class SessionService:
                     )
             except TimeoutError as exc:
                 raise SessionBusyError(
-                    "The session is still busy. Please retry deletion shortly.",
+                    "The session is still busy. "
+                    "Please retry deletion shortly.",
                 ) from exc
 
             # Only mutate projections after all required locks are held.

@@ -341,6 +341,7 @@ class ChannelDeliveryFromTheRunTest(IsolatedAsyncioTestCase):
     async def test_completed_reply_cleans_requester_without_delivery(
         self,
     ) -> None:
+        """Clean completed requesters even when the channel is disabled."""
         clients = await self._run(
             ChannelOrigin(channel_id="chan-1", chat_id="chat-1"),
             channel_enabled=False,

@@ -577,7 +577,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @classmethod
     def channel_session_approvals(cls, session_id: str) -> str:
-        """Registry mapping approval tokens to complete records for a session."""
+        """Map approval tokens to complete records within one session."""
         return f"agentscope:channel:approvals:{session_id}"
 
     @classmethod

@@ -571,10 +571,7 @@ class TrustedChannelIdentityTest(IsolatedAsyncioTestCase):
                     DingTalkChannel.Config(),
                 )
 
-                async def emit(event: ChannelEvent) -> None:
-                    await gateway.process(event)
-
-                channel._emit = emit
+                channel._emit = gateway.process
                 payload = {
                     "conversationType": "2",
                     "conversationId": "cid-1",

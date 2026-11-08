@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Channel adapters direct approvals without platform identities to the Web UI."""
+"""Approvals without platform identities are directed to the Web UI."""
 # pylint: disable=protected-access,missing-function-docstring
 import json
 from unittest import IsolatedAsyncioTestCase
@@ -17,6 +17,8 @@ from agentscope.message import ToolCallBlock
 
 
 class WebUIApprovalNoticeTest(IsolatedAsyncioTestCase):
+    """Missing platform identities produce notices instead of buttons."""
+
     async def test_adapters_send_notice_without_actionable_cards(self) -> None:
         event = ChannelEvent(
             channel_id="channel-1",

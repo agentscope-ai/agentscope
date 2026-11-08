@@ -189,6 +189,7 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
     async def test_session_purge_removes_only_its_channel_approval_state(
         self,
     ) -> None:
+        """Remove only the deleted session's approval and requester state."""
         service = SessionService(storage=None, message_bus=self.bus)
         approvals = {
             session_id: new_approval_id(session_id)
@@ -231,6 +232,7 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
         )
 
     async def test_delete_lock_timeout_releases_prior_locks(self) -> None:
+        """Release acquired locks without deleting on acquisition timeout."""
         storage = SimpleNamespace(
             get_session=AsyncMock(
                 return_value=SimpleNamespace(
@@ -269,6 +271,8 @@ class TestInboxHandoff(IsolatedAsyncioTestCase):
         service._purge_session_bus.assert_not_awaited()
 
     async def test_delete_lock_budget_does_not_timeout_deletion(self) -> None:
+        """Limit lock acquisition time without timing out the deletion body."""
+
         async def slow_delete(*_args: object) -> bool:
             await asyncio.sleep(0.04)
             return True

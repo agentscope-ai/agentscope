@@ -274,6 +274,9 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
 class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     """Deliveries run in the background but stay owned."""
 
+    # These tests exercise the client's internal delivery and storage paths.
+    # pylint: disable=protected-access
+
     def _clients(self, bus: InMemoryMessageBus) -> ChannelClients:
         return ChannelClients(
             storage=_Storage(_record()),
@@ -413,6 +416,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     async def test_approval_creation_uses_saved_state_under_session_lock(
         self,
     ) -> None:
+        """Create approvals only from saved state under the session lock."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
         calls = [
@@ -474,6 +478,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     async def test_external_pause_keeps_requester_for_later_approval(
         self,
     ) -> None:
+        """Retain the requester while waiting for external execution."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
         clients._storage.state.context[-1].content[
@@ -513,6 +518,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     async def test_reply_end_waits_for_persistence_to_remove_requester(
         self,
     ) -> None:
+        """Leave completion cleanup to the state persistence path."""
         bus = InMemoryMessageBus()
         clients = self._clients(bus)
         await remember_reply_requester(
@@ -560,6 +566,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     async def test_web_and_background_inputs_have_no_channel_requester(
         self,
     ) -> None:
+        """Web UI and background runs have no platform requester identity."""
         clients = self._clients(InMemoryMessageBus())
         message = UserMsg(name="user", content="hello")
         for run_input in (None, message, [message], []):
@@ -570,6 +577,7 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
                 )
 
     async def test_missing_requester_creates_no_approval_records(self) -> None:
+        """Deliver identity-free confirmations without approval records."""
         clients = self._clients(InMemoryMessageBus())
         raw = RequireUserConfirmEvent(
             reply_id="reply-1",
@@ -772,6 +780,7 @@ class ApprovalTokenStorageTest(IsolatedAsyncioTestCase):
     async def test_session_namespace_contains_the_complete_record(
         self,
     ) -> None:
+        """Store each complete approval once within its session."""
         bus = InMemoryMessageBus()
         session_id = "session:with/slash.中文"
         token = new_approval_id(session_id)
@@ -803,6 +812,7 @@ class ApprovalTokenStorageTest(IsolatedAsyncioTestCase):
         self.assertIsNone(await load_approval(bus, token))
 
     async def test_malformed_tokens_are_rejected(self) -> None:
+        """Reject malformed tokens without reading another namespace."""
         bus = InMemoryMessageBus()
         for token in (
             "old-random-token",
@@ -815,6 +825,7 @@ class ApprovalTokenStorageTest(IsolatedAsyncioTestCase):
                 await forget_approval(bus, token)
 
     async def test_purge_keeps_other_sessions(self) -> None:
+        """Purging one session preserves approvals in other sessions."""
         bus = InMemoryMessageBus()
         tokens = {}
         for session_id in ("session-a", "session-b"):

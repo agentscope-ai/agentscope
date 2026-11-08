@@ -178,7 +178,7 @@ async def approval_session(
     agent_id: str,
     session_id: str,
 ) -> AsyncIterator[tuple[AgentState, str] | None]:
-    """Serialize approval creation with run persistence and session deletion."""
+    """Serialize approval creation, run persistence, and session deletion."""
     async with bus.acquire_lock(MessageBusKeys.session_lock(session_id)):
         channel = await storage.get_channel(channel_id)
         if channel is None:
@@ -204,7 +204,7 @@ async def prune_session_approvals(
     *,
     completed_reply_ids: Iterable[str] = (),
 ) -> None:
-    """Clean up saved channel replies while the caller holds the session lock."""
+    """Clean up channel replies while the caller holds the session lock."""
     # Completion comes from persisted REPLY_END messages, independently of
     # whether a platform delivery consumed the end event.
     for reply_id in completed_reply_ids:
