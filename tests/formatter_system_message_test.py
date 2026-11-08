@@ -6,17 +6,21 @@ system message.
 text block, but an empty system message (``Msg(..., [], "system")``) is a
 valid input. Copying that ``None`` into the provider payload makes the
 first request fail: OpenAI-compatible endpoints reject a non-assistant
-message whose ``content`` is null, and the Gemini API rejects a ``text``
-part that is null. These regressions pin the empty string, which those
-APIs accept, and keep the ordinary non-empty system prompt unchanged.
+message whose ``content`` is null, the formatters that read the text
+blocks directly inherit a base that emits an empty content array, which
+those endpoints also reject, and the Gemini API rejects a ``text`` part
+that is null. These regressions pin the empty string, which those APIs
+accept, and keep the ordinary non-empty system prompt unchanged.
 """
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.formatter import (
     DashScopeMultiAgentFormatter,
+    DeepSeekMultiAgentFormatter,
     GeminiMultiAgentFormatter,
     OllamaMultiAgentFormatter,
+    OpenAIMultiAgentFormatter,
 )
 from agentscope.message import Msg
 
@@ -74,6 +78,27 @@ class DashScopeMultiAgentSystemMessageTest(
         )
 
 
+class DeepSeekMultiAgentSystemMessageTest(
+    _SystemMessageAssertions,
+    IsolatedAsyncioTestCase,
+):
+    """DeepSeek multi-agent formatter system turn."""
+
+    async def test_empty_system_emits_empty_string(self) -> None:
+        """A textless system message emits an empty string, not an array."""
+        await self._assert_empty_emits_empty_string(
+            DeepSeekMultiAgentFormatter(),
+            {"role": "system", "content": ""},
+        )
+
+    async def test_non_empty_system_unchanged(self) -> None:
+        """A non-empty DeepSeek system prompt keeps its text blocks."""
+        await self._assert_non_empty_unchanged(
+            DeepSeekMultiAgentFormatter(),
+            {"role": "system", "content": [{"type": "text", "text": "be brief"}]},
+        )
+
+
 class OllamaMultiAgentSystemMessageTest(
     _SystemMessageAssertions,
     IsolatedAsyncioTestCase,
@@ -113,4 +138,25 @@ class GeminiMultiAgentSystemMessageTest(
         await self._assert_non_empty_unchanged(
             GeminiMultiAgentFormatter(),
             {"role": "user", "parts": [{"text": "be brief"}]},
+        )
+
+
+class OpenAIMultiAgentSystemMessageTest(
+    _SystemMessageAssertions,
+    IsolatedAsyncioTestCase,
+):
+    """OpenAI multi-agent formatter system turn."""
+
+    async def test_empty_system_emits_empty_string(self) -> None:
+        """A textless system message emits an empty string, not an array."""
+        await self._assert_empty_emits_empty_string(
+            OpenAIMultiAgentFormatter(),
+            {"role": "system", "content": ""},
+        )
+
+    async def test_non_empty_system_unchanged(self) -> None:
+        """A non-empty OpenAI system prompt keeps its text blocks."""
+        await self._assert_non_empty_unchanged(
+            OpenAIMultiAgentFormatter(),
+            {"role": "system", "content": [{"type": "text", "text": "be brief"}]},
         )
