@@ -95,7 +95,10 @@ class DeepSeekMultiAgentSystemMessageTest(
         """A non-empty DeepSeek system prompt keeps its text blocks."""
         await self._assert_non_empty_unchanged(
             DeepSeekMultiAgentFormatter(),
-            {"role": "system", "content": [{"type": "text", "text": "be brief"}]},
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "be brief"}],
+            },
         )
 
 
@@ -158,5 +161,8 @@ class OpenAIMultiAgentSystemMessageTest(
         """A non-empty OpenAI system prompt keeps its text blocks."""
         await self._assert_non_empty_unchanged(
             OpenAIMultiAgentFormatter(),
-            {"role": "system", "content": [{"type": "text", "text": "be brief"}]},
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "be brief"}],
+            },
         )
