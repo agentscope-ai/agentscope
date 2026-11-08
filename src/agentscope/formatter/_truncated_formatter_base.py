@@ -123,7 +123,7 @@ class TruncatedFormatterBase(FormatterBase, ABC):
         """
         return {
             "role": "system",
-            "content": msg.get_content_blocks("text"),
+            "content": msg.get_content_blocks("text") or "",
         }
 
     async def _format_tool_sequence(
