@@ -54,6 +54,31 @@ def _watch_error() -> type[BaseException]:
     return WatchError
 
 
+# Deletes the message whose parsed ``id`` field equals ``ARGV[1]`` from the
+# list at ``KEYS[1]`` and drops it from the id set at ``KEYS[2]``. Scanning,
+# removing and de-indexing run as one server-side operation so a concurrent
+# delete cannot shift the position between the lookup and the removal.
+# Returns 1 when a message was removed, 0 otherwise.
+_DELETE_MESSAGE_SCRIPT = """
+local stale = {}
+for i = 0, redis.call('LLEN', KEYS[1]) - 1 do
+    local raw = redis.call('LINDEX', KEYS[1], i)
+    local ok, decoded = pcall(cjson.decode, raw)
+    if not ok then
+        table.insert(stale, raw)
+    elseif type(decoded) == 'table' and decoded['id'] == ARGV[1] then
+        redis.call('LREM', KEYS[1], 1, raw)
+        redis.call('SREM', KEYS[2], ARGV[1])
+        return 1
+    end
+end
+if #stale > 0 then
+    redis.call('SREM', KEYS[2], unpack(stale))
+end
+return 0
+"""
+
+
 class RedisStorage(StorageBase):
     """The Redis storage implementation."""
 
@@ -1516,21 +1541,21 @@ class RedisStorage(StorageBase):
         """Delete the stored message matching ``message_id``."""
         key = self._message_key(user_id, session_id)
         index_key = self._message_index_key(user_id, session_id)
-        index = await self._find_message_index(key, message_id)
-        if index is None:
+        # Kept as eval rather than a registered script so the storage does
+        # not depend on a script cache surviving across client instances.
+        deleted = await self._client.eval(
+            _DELETE_MESSAGE_SCRIPT,
+            2,
+            key,
+            index_key,
+            message_id,
+        )
+        if not deleted:
             return False
-        raw = await self._client.lindex(key, index)
-        if raw is None:
-            return False
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.lrem(key, 0, raw)
-            pipe.srem(index_key, message_id)
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
-                pipe.expire(index_key, self.key_ttl)
-            results = await pipe.execute()
-        deleted = bool(results[0])
-        return deleted
+        if self.key_ttl is not None:
+            await self._client.expire(key, self.key_ttl)
+            await self._client.expire(index_key, self.key_ttl)
+        return True
 
     async def get_message(
         self,
