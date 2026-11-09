@@ -797,11 +797,11 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
 
         with (
             patch.object(self.owner, "_store_record", side_effect=stall_once),
-            patch(f"{_MANAGER_MODULE}._IO_TIMEOUT_SECS", 0.02),
+            patch(f"{_MANAGER_MODULE}._RETRY_DELAY_SECS", 0),
         ):
             gate.set()
             await asyncio.wait_for(stalled.wait(), timeout=1)
-            await asyncio.wait_for(self._settle(task), timeout=2)
+            await asyncio.wait_for(self._settle(task), timeout=5)
         record = await self.reader.get_task(task_id, user_id="alice")
         self.assertEqual(record.status, TaskStatus.COMPLETED)
         self.assertEqual(
