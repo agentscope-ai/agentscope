@@ -795,6 +795,16 @@ class RAGMiddleware(MiddlewareBase):
                     "hint_template must contain exactly one '{context}' "
                     f"placeholder; found {count}.",
                 )
+            # ``_wrap_hint`` renders text-only results with
+            # ``template.format(context=...)``, so any other placeholder
+            # (or a stray brace) would raise there — outside the search
+            # error handling — and break the reply.
+            try:
+                value.format(context="")
+            except (IndexError, KeyError, ValueError) as e:
+                raise ValueError(
+                    f"hint_template has an unknown placeholder: {e}.",
+                ) from e
             return value
 
     def __init__(
