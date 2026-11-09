@@ -2124,6 +2124,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     KnowledgeDocumentRow.user_id == user_id,
                     KnowledgeDocumentRow.knowledge_base_id
                     == knowledge_base_id,
+                    KnowledgeDocumentRow.status.notin_(("ready", "error")),
                     or_(
                         KnowledgeDocumentRow.processing_node.is_(None),
                         KnowledgeDocumentRow.lease_expires_at.is_(None),
@@ -2245,7 +2246,17 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .scalars()
                 .all()
             )
-        return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+        records = [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+        return [
+            record
+            for record in records
+            if (
+                _to_naive_utc(record.data.pending_since)
+                if record.data.pending_since is not None
+                else record.created_at
+            )
+            < threshold
+        ]
 
     # ---- Voice Profile ----
 

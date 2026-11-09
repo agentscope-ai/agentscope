@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Resumable dispatch of a persisted knowledge-base reindex batch."""
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from .._bus_ops import enqueue_index_task
@@ -30,6 +31,7 @@ async def resume_knowledge_base_reindex(
     for document in documents:
         if document.data.reindex_id != record.data.reindex_id:
             document.status = "pending"
+            document.data.pending_since = datetime.now(timezone.utc)
             document.processing_node = None
             document.lease_expires_at = None
             document.data.error = None

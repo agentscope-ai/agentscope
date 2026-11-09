@@ -20,6 +20,7 @@ mode.
 import asyncio
 import uuid
 from collections import Counter
+from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, AsyncIterator
 
 from fastapi import HTTPException, status
@@ -558,6 +559,7 @@ class KnowledgeBaseService:
                 size=size,
                 content_type=content_type,
                 blob_uri=blob_uri,
+                pending_since=datetime.now(timezone.utc),
             ),
         )
         try:

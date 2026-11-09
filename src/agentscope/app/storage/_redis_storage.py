@@ -2443,7 +2443,7 @@ class RedisStorage(StorageBase):
                     record = KnowledgeDocumentRecord.model_validate_json(raw)
                     holder = record.processing_node
                     deadline = record.lease_expires_at
-                    if (
+                    if record.status in {"ready", "error"} or (
                         holder is not None
                         and deadline is not None
                         and deadline > now
@@ -2608,7 +2608,8 @@ class RedisStorage(StorageBase):
             record = KnowledgeDocumentRecord.model_validate_json(raw)
             if record.status != "pending":
                 continue
-            if record.created_at < threshold:
+            pending_since = record.data.pending_since or record.created_at
+            if pending_since.astimezone() < threshold.astimezone():
                 records.append(record)
         return records
 

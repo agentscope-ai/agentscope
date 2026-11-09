@@ -220,8 +220,8 @@ class IndexWorker:
 
         Steps:
 
-        1. **Lease** — CAS-acquire the processing lease; bail if some
-           other worker already holds it (duplicate dispatch / sweep).
+        1. **Lease** — CAS-acquire the processing lease; bail if already
+           terminal or another worker holds it (duplicate dispatch).
         2. **Throttle** — wait on the per-worker semaphore so the
            number of in-flight parses stays bounded.
         3. **Pipeline** — parse → chunk → embed + write vector store,
@@ -248,7 +248,7 @@ class IndexWorker:
         )
         if not acquired:
             logger.debug(
-                "Skipping %s — another worker holds the lease.",
+                "Skipping %s — document is not eligible for processing.",
                 document_id,
             )
             return

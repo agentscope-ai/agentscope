@@ -21,6 +21,7 @@ from service_knowledge_base_upload_test import (
 from agentscope.app._service._access import ResourceAccessService
 from agentscope.app._service._knowledge_base import KnowledgeBaseService
 from agentscope.app._service._index_sweeper import IndexSweeper
+from agentscope.app._service._index_worker import IndexWorker
 from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.rag.blob_store import LocalBlobStore
@@ -32,7 +33,7 @@ from agentscope.app.storage import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
 )
-from agentscope.rag import ApproxTokenChunker
+from agentscope.rag import ApproxTokenChunker, TextParser
 
 
 class _AlternateApproxTokenChunker(ApproxTokenChunker):
@@ -391,6 +392,69 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             ("ready", "old error", 3),
         )
         self.assertEqual(queued, [])
+
+    async def test_reindex_grace_and_duplicate_consumption(self) -> None:
+        """Fresh reindexes wait for their grace and index once per batch."""
+        await self._store_document("doc-ready", "ready")
+        document = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-ready",
+        )
+        created_at = document.created_at
+        document.data.blob_uri = await self._service._blob_store.write_stream(
+            key="reindex/document.txt",
+            stream=BytesIO(b"abcdefgh01234567" * 16),
+        )
+        await self._storage.upsert_knowledge_document("user-1", document)
+        worker = IndexWorker(
+            storage=self._storage,
+            blob_store=self._service._blob_store,
+            knowledge_base_manager=self._manager,
+            parsers=[TextParser()],
+            node_id="worker",
+        )
+        vector_store = self._manager._vector_store
+        with patch.object(
+            vector_store,
+            "insert",
+            wraps=vector_store.insert,
+        ) as insert:
+            for batch, chunk_size in enumerate((4, 8), start=1):
+                with self.subTest(batch=batch):
+                    await self._service.update_knowledge_base(
+                        "user-1",
+                        self._knowledge_base_id,
+                        chunker_config=ChunkerConfig(
+                            type="approx_token",
+                            parameters={
+                                "chunk_size": chunk_size,
+                                "overlap": 0,
+                            },
+                        ),
+                    )
+                    await IndexSweeper(self._storage, self._bus)._sweep_once()
+                    await self._assert_dispatched(["doc-ready"])
+                    for _ in range(2):
+                        await worker.process(
+                            "user-1",
+                            self._knowledge_base_id,
+                            "doc-ready",
+                        )
+                    stored = await self._storage.get_knowledge_document(
+                        "user-1",
+                        self._knowledge_base_id,
+                        "doc-ready",
+                    )
+                    self.assertEqual(
+                        (
+                            insert.await_count,
+                            stored.created_at,
+                            stored.status,
+                            stored.data.chunk_count,
+                        ),
+                        (batch, created_at, "ready", 64 // chunk_size),
+                    )
 
     async def test_legacy_chunker_matches_worker_default(self) -> None:
         """Legacy defaults do not change with the registration order."""

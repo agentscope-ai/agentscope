@@ -7,7 +7,7 @@ moving when something goes wrong:
 - a *lease* per in-flight document — its ``lease_expires_at`` is the
   upper bound on how long a worker may sit on the document before
   another worker is allowed to take over;
-- a *creation timestamp* on every ``pending`` record — used to catch
+- a *pending timestamp* on every ``pending`` record — used to catch
   documents that were never picked up by a worker (e.g. process died
   right after the upload endpoint persisted the record).
 
@@ -67,6 +67,7 @@ class IndexSweeper:
                 A record may legitimately sit in ``pending`` while the
                 bus push is still queued; only after this grace period
                 do we treat the record as orphaned.
+                Reindexing starts a new grace period.
         """
         self._storage = storage
         self._bus = message_bus

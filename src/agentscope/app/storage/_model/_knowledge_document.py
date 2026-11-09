@@ -101,6 +101,9 @@ class KnowledgeDocumentData(BaseModel):
     reindex_id: str | None = None
     """The chunker-change batch for which this document was reset."""
 
+    pending_since: datetime | None = None
+    """Start of the current pending pass, in UTC; absent on legacy data."""
+
 
 class KnowledgeDocumentRecord(_RecordBase):
     """A persisted knowledge document record.

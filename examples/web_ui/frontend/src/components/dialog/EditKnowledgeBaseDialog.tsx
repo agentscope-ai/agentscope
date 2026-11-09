@@ -129,7 +129,7 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 	const submittedParameters = useMemo<Record<string, unknown>>(() => {
 		const parameters: Record<string, unknown> = {};
 		for (const [key, value] of Object.entries(chunkerParams)) {
-			if (value !== undefined && value !== null && value !== '') parameters[key] = value;
+			if (value !== undefined) parameters[key] = value;
 		}
 		return parameters;
 	}, [chunkerParams]);
@@ -141,13 +141,17 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 		const currentSchema = chunkers.find(
 			(chunker) => chunker.type === currentType,
 		)?.parameter_schema;
+		const defaultParameters = currentSchema
+			? defaultValuesFromSchema(currentSchema, NO_SKIP)
+			: {};
 		const currentParameters = {
-			...(currentSchema ? defaultValuesFromSchema(currentSchema, NO_SKIP) : {}),
+			...defaultParameters,
 			...(current?.parameters ?? {}),
 		};
 		return (
 			currentType !== selectedChunkerType ||
-			stableParameters(currentParameters) !== stableParameters(submittedParameters)
+			stableParameters(currentParameters) !==
+				stableParameters({ ...defaultParameters, ...submittedParameters })
 		);
 	}, [chunkers, knowledgeBase, selectedChunkerType, submittedParameters]);
 

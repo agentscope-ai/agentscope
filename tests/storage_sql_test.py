@@ -1324,6 +1324,7 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
                     "error": None,
                     "chunk_count": 3,
                     "reindex_id": None,
+                    "pending_since": None,
                 },
             },
         )
