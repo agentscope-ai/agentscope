@@ -31,7 +31,9 @@ return entries
 # Compare-and-set on one hash field, so a caller can write back a value
 # it decided on earlier without holding a lock across the think time.
 _REGISTRY_SET_IF_LUA = """
-if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
+local expected = ARGV[3]
+if ARGV[5] == '1' then expected = false end
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= expected then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
 return 1
@@ -522,7 +524,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one Hash field via Lua. See base."""
@@ -532,8 +534,9 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             namespace,
             field,
             value,
-            expected,
+            expected if expected is not None else "",
             ttl_secs or 0,
+            int(expected is None),
         )
         return bool(written)
 

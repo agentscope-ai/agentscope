@@ -506,7 +506,7 @@ class InMemoryMessageBus(
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one field; ``ttl_secs`` ignored. See base."""

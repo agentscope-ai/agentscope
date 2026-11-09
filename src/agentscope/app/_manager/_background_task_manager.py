@@ -475,9 +475,14 @@ class BackgroundTaskManager:
                             namespace,
                             task.id,
                         )
-                        if value is None:
+                        if task.asyncio_task.done():
                             continue
-                        payload = json.loads(value)
+                        if value is None:
+                            payload = BackgroundTaskRecord.model_validate(
+                                task,
+                            ).model_dump(mode="json")
+                        else:
+                            payload = json.loads(value)
                         if payload["status"] != TaskStatus.RUNNING:
                             continue
                         payload["_expires_at"] = (

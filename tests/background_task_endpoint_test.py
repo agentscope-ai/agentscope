@@ -161,6 +161,22 @@ class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
             while manager._completion_tasks:
                 await asyncio.gather(*manager._completion_tasks)
 
+    async def _renew_once(self) -> None:
+        """Run one heartbeat pass without waiting for the lease interval."""
+        self.owner._renewal_task.cancel()
+        await asyncio.gather(
+            self.owner._renewal_task,
+            return_exceptions=True,
+        )
+        with patch(
+            f"{_MANAGER_MODULE}.asyncio.sleep",
+            side_effect=[None, asyncio.CancelledError],
+        ):
+            try:
+                await self.owner._renew_running_records()
+            except asyncio.CancelledError:
+                pass
+
     async def test_shared_lifecycle_and_isolation(self) -> None:
         """Running and completed records are identical on either worker."""
         gate, task, task_id = await self._register(self.owner)
@@ -744,6 +760,110 @@ class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
                 self.assertEqual(record.model_dump(), expected)
             gate.set()
             await self._settle(task)
+
+    async def test_heartbeat_restores_a_cleaned_running_record(self) -> None:
+        """A live task reappears after its expired snapshot is deleted."""
+        _, _, task_id = await self._register(self.owner)
+        namespace = MessageBusKeys.bg_task_records("alice")
+        value = await self.bus.registry_get(namespace, task_id)
+        payload = json.loads(value)
+        payload["_expires_at"] = 0
+        await self.bus.registry_set(namespace, task_id, json.dumps(payload))
+        self.assertEqual(await self.reader.list_tasks(user_id="alice"), [])
+        self.assertIsNone(await self.bus.registry_get(namespace, task_id))
+
+        await self._renew_once()
+
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertIsNotNone(record)
+        self.assertEqual(record.model_dump(), expected)
+        self.assertEqual(
+            [
+                r.model_dump()
+                for r in await self.reader.list_tasks(
+                    user_id="alice",
+                )
+            ],
+            [expected],
+        )
+
+    async def test_heartbeat_restore_preserves_concurrent_outcome(
+        self,
+    ) -> None:
+        """An outcome written after a missing read wins over recovery."""
+        _, _, task_id = await self._register(self.owner)
+        namespace = MessageBusKeys.bg_task_records("alice")
+        await self.bus.registry_del(namespace, task_id)
+        terminal = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        )
+        terminal.status = TaskStatus.COMPLETED
+        terminal.completed_at = terminal.started_at + 1
+        original_set_if = self.bus.registry_set_if
+
+        async def complete_before_write(
+            namespace: str,
+            field: str,
+            value: str,
+            *,
+            expected: str | None,
+            ttl_secs: int | None = None,
+        ) -> bool:
+            await self.owner._store_record(terminal)
+            return await original_set_if(
+                namespace,
+                field,
+                value,
+                expected=expected,
+                ttl_secs=ttl_secs,
+            )
+
+        with patch.object(
+            self.bus,
+            "registry_set_if",
+            side_effect=complete_before_write,
+        ) as restore:
+            await self._renew_once()
+        restore.assert_awaited_once()
+        self.assertIsNone(restore.call_args.kwargs["expected"])
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.model_dump(), terminal.model_dump())
+
+    async def test_heartbeat_skips_task_completed_during_read(self) -> None:
+        """A missing read cannot revive a task that has already finished."""
+        gate, task, task_id = await self._register(self.owner)
+        namespace = MessageBusKeys.bg_task_records("alice")
+        await self.bus.registry_del(namespace, task_id)
+        original_get = self.bus.registry_get
+
+        async def complete_during_read(
+            namespace: str,
+            field: str,
+        ) -> str | None:
+            value = await original_get(namespace, field)
+            gate.set()
+            await self._settle(task)
+            return value
+
+        with (
+            patch.object(
+                self.bus,
+                "registry_get",
+                side_effect=complete_during_read,
+            ),
+            patch.object(
+                self.bus,
+                "registry_set_if",
+                wraps=self.bus.registry_set_if,
+            ) as restore,
+        ):
+            await self._renew_once()
+        restore.assert_not_awaited()
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.status, TaskStatus.COMPLETED)
 
     async def test_http_routes_read_another_workers_records(self) -> None:
         """The actual app exposes filtered lists, details and isolated 404s."""

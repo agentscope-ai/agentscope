@@ -514,7 +514,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Set ``field`` only while it still holds ``expected``.
@@ -531,9 +531,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Field name within the registry.
             value (`str`):
                 Serialized value to store.
-            expected (`str`):
+            expected (`str | None`):
                 The value the caller last read. The write is skipped
-                when the stored value differs.
+                when the stored value differs. ``None`` creates the field
+                only if it does not exist.
             ttl_secs (`int | None`, optional):
                 Refresh the namespace expiry when the write happens.
 
