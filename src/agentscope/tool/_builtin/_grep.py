@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The grep tool in agentscope."""
+
 import fnmatch
+import re
 from typing import Any, List, Literal
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -26,6 +28,12 @@ VCS_DIRECTORIES_TO_EXCLUDE = [
 
 # Default cap on grep results when head_limit is unspecified
 DEFAULT_HEAD_LIMIT = 250
+
+# A context line from ripgrep reads ``<path>-<number>-<text>``, while a
+# match reads ``<path>:<number>:<text>``.  The same delimiter must appear
+# on both sides of the line number, which keeps paths containing ``-`` or
+# ``:`` from being mistaken for one form or the other.
+_CONTEXT_LINE_PATTERN = re.compile(r"^.*?-\d+-", re.DOTALL)
 
 
 class RipgrepTimeoutError(Exception):
@@ -256,21 +264,66 @@ class Grep(ToolBase):
             ),
         ]
 
+    @staticmethod
+    def _is_context_line(line: str) -> bool:
+        """Whether an output line carries context rather than a match.
+
+        With context enabled, ripgrep joins ``path``, ``line_number`` and
+        ``text`` with ``:`` for a match and with ``-`` for a context
+        line, so the delimiter straight after the path tells the two
+        apart.  The path may itself contain both characters, so the
+        delimiter is found by matching the ``<path><delim><number><same
+        delim><text>`` shape instead of splitting on the first one.
+        """
+        return _CONTEXT_LINE_PATTERN.match(line.rstrip("\r\n")) is not None
+
     def _apply_head_limit(
         self,
         items: list[str],
         limit: int | None,
         offset: int = 0,
+        *,
+        count_matches_only: bool = False,
     ) -> tuple[list[str], int | None]:
         """Apply head_limit and offset to a list of items.
+
+        Args:
+            items (`list[str]`):
+                The raw output lines.
+            limit (`int | None`):
+                The maximum number of items to keep; ``None`` falls back
+                to :data:`DEFAULT_HEAD_LIMIT` and ``0`` means unlimited.
+            offset (`int`):
+                The number of leading items to skip.
+            count_matches_only (`bool`):
+                Count matching lines rather than raw lines.  Set when
+                context was requested: ripgrep then emits up to
+                ``context`` extra lines around each match, and counting
+                those against the limit lets a small limit consume the
+                whole budget with context, dropping the match that was
+                asked for.
 
         Returns (sliced_items, applied_limit_if_truncated).
         """
         if limit == 0:
             return items[offset:], None
         effective_limit = limit if limit is not None else DEFAULT_HEAD_LIMIT
-        sliced = items[offset : offset + effective_limit]
-        was_truncated = len(items) - offset > effective_limit
+        if not count_matches_only:
+            sliced = items[offset : offset + effective_limit]
+            was_truncated = len(items) - offset > effective_limit
+            return sliced, (effective_limit if was_truncated else None)
+
+        matches_seen = 0
+        last_kept = offset
+        for index in range(offset, len(items)):
+            if not self._is_context_line(items[index]):
+                matches_seen += 1
+                if matches_seen > effective_limit:
+                    break
+            last_kept = index + 1
+
+        sliced = items[offset:last_kept]
+        was_truncated = last_kept < len(items)
         return sliced, (effective_limit if was_truncated else None)
 
     async def _run_ripgrep(
@@ -473,6 +526,10 @@ class Grep(ToolBase):
             results,
             head_limit,
             offset,
+            count_matches_only=context is not None
+            or kwargs.get("-A") is not None
+            or kwargs.get("-B") is not None
+            or kwargs.get("-C") is not None,
         )
 
         suffix = ""
