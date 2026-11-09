@@ -10,7 +10,7 @@ Covers:
 import base64
 import io
 import wave
-from typing import Any
+from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -127,6 +127,45 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
         self.assertIsNotNone(result.usage)
         self.assertEqual(result.usage.input_tokens, 5)
         self.assertEqual(result.usage.output_tokens, 10)
+
+    async def test_synthesizes_only_first_audio_candidate(self) -> None:
+        """Alternative candidates must not be joined into one recording."""
+        response = _make_api_response([b"AAAA"])
+        response.candidates.extend(_make_api_response([b"BBBB"]).candidates)
+        self.mock_client.aio.models.generate_content.return_value = response
+
+        result = await self._make_model().synthesize("Hello world")
+
+        wav_bytes = base64.b64decode(result.content.source.data)
+        self.assertEqual(_parse_wav_payload(wav_bytes), b"AAAA")
+
+    async def test_stream_uses_only_first_audio_candidate(self) -> None:
+        """Streaming must not append an alternative candidate's audio."""
+        first_chunk = _make_api_response([b"AAAA"])
+        first_chunk.candidates.extend(
+            _make_api_response([b"BBBB"]).candidates,
+        )
+        second_chunk = _make_api_response([b"CCCC"])
+        second_chunk.candidates.extend(
+            _make_api_response([b"DDDD"]).candidates,
+        )
+
+        async def chunks() -> AsyncIterator[Any]:
+            yield first_chunk
+            yield second_chunk
+
+        parser = GeminiTTSModel._parse_stream_into_async_generator(
+            chunks(),
+        )
+        results = [item async for item in parser]
+
+        self.assertEqual(len(results), 2)
+        self.assertFalse(results[0].is_last)
+        self.assertTrue(results[1].is_last)
+        wav_bytes = b"".join(
+            base64.b64decode(result.content.source.data) for result in results
+        )
+        self.assertEqual(_parse_wav_payload(wav_bytes), b"AAAACCCC")
 
     async def test_none_short_circuits(self) -> None:
         """``synthesize(None)`` returns an empty response without touching

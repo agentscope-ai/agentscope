@@ -13,6 +13,9 @@ import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import httpx2
+from anthropic import DefaultAsyncHttpxClient
 from anthropic import types as anthropic_types
 
 from utils import AnyString
@@ -423,6 +426,43 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
     def _thinking(self) -> Any:
         return self.mock_create.call_args.kwargs.get("thinking")
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False disables thinking unless an explicit mode takes priority."""
+        self.assertIsNone(AnthropicChatModel.Parameters().thinking_enable)
+        for params in (
+            {},
+            {"thinking_enable": None},
+            {"thinking_enable": False},
+            {"thinking_enable": True},
+        ):
+            for mode in (None, "adaptive", "disabled"):
+                with self.subTest(params=params, mode=mode):
+                    self.model.parameters = AnthropicChatModel.Parameters(
+                        **params,
+                        thinking_mode=mode,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "claude-opus-4-5",
+                        "messages": [],
+                        "stream": False,
+                        "max_tokens": 8192,
+                    }
+                    if mode is not None:
+                        expected["thinking"] = {"type": mode}
+                    elif params.get("thinking_enable") is False:
+                        expected["thinking"] = {"type": "disabled"}
+                    elif params.get("thinking_enable"):
+                        expected["thinking"] = {
+                            "type": "enabled",
+                            "budget_tokens": 4096,
+                        }
+                    self.assertEqual(
+                        self.mock_create.call_args.kwargs,
+                        expected,
+                    )
+
     async def test_no_thinking_by_default(self) -> None:
         """Neither control set means no thinking config is sent."""
         await self.model([])
@@ -459,6 +499,25 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
 
         self.assertEqual(self._thinking(), {"type": "disabled"})
 
+    async def test_false_drops_budget_and_display(self) -> None:
+        """Disabled thinking omits budget/display without expanding tokens."""
+        self.model.parameters.thinking_enable = False
+        self.model.parameters.thinking_budget = 16_384
+        self.model.parameters.thinking_display = "summarized"
+
+        await self.model([])
+
+        self.assertEqual(
+            self.mock_create.call_args.kwargs,
+            {
+                "model": "claude-opus-4-5",
+                "messages": [],
+                "stream": False,
+                "max_tokens": 8192,
+                "thinking": {"type": "disabled"},
+            },
+        )
+
     async def test_legacy_toggle_still_means_budget_mode(self) -> None:
         """thinking_enable keeps its old meaning when mode is unset."""
         self.model.parameters.thinking_enable = True
@@ -490,6 +549,153 @@ class TestAnthropicThinkingMode(IsolatedAsyncioTestCase):
         kwargs = self.mock_create.call_args.kwargs
         self.assertEqual(kwargs["thinking"]["budget_tokens"], 8192)
         self.assertGreater(kwargs["max_tokens"], 8192)
+
+    async def test_per_call_max_tokens_bounds_auto_budget(self) -> None:
+        """The auto budget must respect a per-call max_tokens override."""
+        self.model.parameters.thinking_enable = True
+
+        await self.model([], max_tokens=4096)
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 4096)
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 2048},
+        )
+
+    async def test_auto_budget_floors_at_provider_minimum(self) -> None:
+        """Half of a small cap can fall below 1024, so clamp it up."""
+        self.model.parameters.thinking_enable = True
+
+        await self.model([], max_tokens=1500)
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 1500)
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 1024},
+        )
+
+    async def test_explicit_budget_is_forwarded(self) -> None:
+        """Let the provider validate the caller's explicit budget."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.thinking_budget = 512
+
+        await self.model([])
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(
+            kwargs["thinking"],
+            {"type": "enabled", "budget_tokens": 512},
+        )
+
+    async def test_unsatisfiable_cap_fails_fast(self) -> None:
+        """No valid budget exists while max_tokens <= 1024."""
+        self.model.parameters.thinking_enable = True
+
+        with self.assertRaises(ValueError) as ctx:
+            await self.model([], max_tokens=1024)
+
+        self.assertIn("1024", str(ctx.exception))
+        self.assertIn("max_tokens", str(ctx.exception))
+        self.mock_create.assert_not_called()
+
+    async def test_caller_can_disable_thinking_per_call(self) -> None:
+        """An explicit thinking kwarg is the per-call escape hatch."""
+        self.model.parameters.thinking_enable = True
+
+        await self.model(
+            [],
+            max_tokens=1000,
+            thinking={"type": "disabled"},
+        )
+
+        kwargs = self.mock_create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 1000)
+        self.assertEqual(kwargs["thinking"], {"type": "disabled"})
+
+    async def test_explicit_limits_on_wire(self) -> None:
+        """Exercise SDK body overrides and caller limits at the HTTP layer."""
+        self.model.parameters.thinking_enable = True
+        self.model.parameters.max_tokens = 1500
+        bodies = []
+
+        # Use the same HTTP types as the installed Anthropic SDK.
+        backend = (
+            httpx2
+            if issubclass(DefaultAsyncHttpxClient, httpx2.AsyncClient)
+            else httpx
+        )
+
+        def capture(request: Any) -> Any:
+            bodies.append(json.loads(request.content))
+            return backend.Response(
+                200,
+                json={
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": self.model.model,
+                    "content": [],
+                    "usage": {"input_tokens": 1, "output_tokens": 0},
+                },
+            )
+
+        async with DefaultAsyncHttpxClient(
+            transport=backend.MockTransport(capture),
+        ) as client:
+            model = AnthropicChatModel(
+                credential=self.model.credential,
+                model=self.model.model,
+                parameters=self.model.parameters,
+                stream=False,
+                client_kwargs={"http_client": client},
+            )
+            # (budget, call overrides, wire limit, wire thinking)
+            cases: list[tuple[int | None, dict, int, dict]] = [
+                (4096, {}, 1500, {"type": "enabled", "budget_tokens": 4096}),
+                (
+                    4096,
+                    {"max_tokens": 1000},
+                    1000,
+                    {"type": "enabled", "budget_tokens": 4096},
+                ),
+                (
+                    None,
+                    {"max_tokens": 1000, "extra_body": {"max_tokens": 8192}},
+                    8192,
+                    {"type": "enabled", "budget_tokens": 4096},
+                ),
+                (
+                    None,
+                    {"extra_body": {"max_tokens": 1025}},
+                    1025,
+                    {"type": "enabled", "budget_tokens": 1024},
+                ),
+                (
+                    None,
+                    {
+                        "max_tokens": 1000,
+                        "extra_body": {"thinking": {"type": "disabled"}},
+                    },
+                    1000,
+                    {"type": "disabled"},
+                ),
+            ]
+            for budget, overrides, limit, thinking in cases:
+                with self.subTest(budget=budget, overrides=overrides):
+                    model.parameters.thinking_budget = budget
+                    await model([], **overrides)
+                    self.assertEqual(
+                        bodies[-1],
+                        {
+                            "model": model.model,
+                            "stream": False,
+                            "messages": [],
+                            "max_tokens": limit,
+                            "thinking": thinking,
+                        },
+                    )
 
     def test_resolved_mode_drives_tool_choice_downgrade(self) -> None:
         """Only budget mode forbids forced tool use, so only it downgrades.
@@ -614,6 +820,125 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(responses[-1].id, "msg-1")
+
+    async def test_stream_takes_cumulative_message_delta_usage(self) -> None:
+        """Merge cumulative counters and include cache tokens exactly once."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-cumulative",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 7,
+                    "cache_read_input_tokens": 9,
+                },
+            },
+        )
+        full_delta = {
+            "input_tokens": 5120,
+            "cache_creation_input_tokens": 32,
+            "cache_read_input_tokens": 64,
+        }
+        cases: list[tuple[str, list[dict[str, Any]], int, int, int]] = [
+            ("all counters", [full_delta], 5216, 32, 64),
+            ("input only", [{"input_tokens": 125}], 141, 7, 9),
+            (
+                "cache only",
+                [
+                    {
+                        "cache_creation_input_tokens": 32,
+                        "cache_read_input_tokens": 64,
+                    },
+                ],
+                216,
+                32,
+                64,
+            ),
+            ("omitted counters", [{}], 136, 7, 9),
+            (
+                "null counters",
+                [{key: None for key in full_delta}],
+                136,
+                7,
+                9,
+            ),
+            (
+                "non-integer counters",
+                [
+                    {
+                        "input_tokens": "5120",
+                        "cache_creation_input_tokens": 32.5,
+                        "cache_read_input_tokens": "64",
+                    },
+                ],
+                136,
+                7,
+                9,
+            ),
+            (
+                "smaller counters",
+                [{key: 0 for key in full_delta}],
+                136,
+                7,
+                9,
+            ),
+            ("repeated counters", [full_delta, full_delta, {}], 5216, 32, 64),
+            (
+                "successive partial updates",
+                [
+                    {"input_tokens": 125},
+                    {"cache_creation_input_tokens": 32},
+                    {"cache_read_input_tokens": 64},
+                    {"input_tokens": 130},
+                ],
+                226,
+                32,
+                64,
+            ),
+        ]
+        for name, deltas, total, created, cached in cases:
+            with self.subTest(name=name):
+                events = _completion_events(completion)
+                events[-2:-1] = [
+                    events[-2].model_copy(
+                        update={
+                            "usage": events[-2].usage.model_copy(
+                                update=delta,
+                            ),
+                        },
+                    )
+                    for delta in deltas
+                ]
+                self.mock_client.messages.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(events),
+                )
+                start = datetime(2026, 10, 1, 10, 0, 0)
+                with patch(
+                    "agentscope.model._anthropic._model.datetime",
+                ) as mock_datetime:
+                    mock_datetime.now.side_effect = [
+                        start,
+                        start + timedelta(seconds=1),
+                        *[start + timedelta(seconds=2)] * len(deltas),
+                    ]
+                    responses = [r async for r in await self.model([])]
+
+                self.assertEqual(
+                    responses[-1].usage,
+                    ChatUsage(
+                        input_tokens=total,
+                        output_tokens=5,
+                        time=2.0,
+                        cache_creation_input_tokens=created,
+                        cache_input_tokens=cached,
+                    ),
+                )
 
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
@@ -770,6 +1095,49 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             responses[-1].usage,
             ChatUsage(input_tokens=10, output_tokens=5, time=20.0),
         )
+
+    async def test_cached_tokens_counted_in_input_tokens(self) -> None:
+        """The cache reads and writes count in ``input_tokens``, as for
+        the other providers, in both the stream and non-stream paths."""
+        completion = anthropic_types.Message.model_validate(
+            {
+                "id": "msg-c",
+                "type": "message",
+                "role": "assistant",
+                "model": self.model.model,
+                "content": [{"type": "text", "text": "Hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 3000,
+                },
+            },
+        )
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = MagicMock()
+        non_stream_model.client.messages.create = AsyncMock(
+            return_value=completion,
+        )
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(_completion_events(completion)),
+        )
+
+        non_stream_usage = (await non_stream_model([])).usage
+        stream_usage = [r async for r in await self.model([])][-1].usage
+
+        for usage in (non_stream_usage, stream_usage):
+            self.assertEqual(
+                (
+                    usage.input_tokens,
+                    usage.cache_input_tokens,
+                    usage.cache_creation_input_tokens,
+                    usage.output_tokens,
+                ),
+                (3210, 3000, 200, 5),
+            )
 
     async def test_stream_redacted_thinking(self) -> None:
         """Stream redacted_thinking block is emitted at

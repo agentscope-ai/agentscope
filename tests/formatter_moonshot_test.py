@@ -333,6 +333,45 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are nested inside image_url payload."""
+        fmt = MoonshotChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": self.image_data_uri,
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_to_reasoning_content(
         self,
     ) -> None:
@@ -513,6 +552,34 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             ],
             await fmt.format(msgs),
         )
+
+    async def test_video_extra_params(self) -> None:
+        """Both Moonshot formatters preserve video-specific parameters."""
+        block = DataBlock(
+            source=Base64Source(
+                data="ZmFrZSB2aWRlbw==",
+                media_type="video/mp4",
+            ),
+            fps=2,
+        )
+        for formatter_type in (
+            MoonshotChatFormatter,
+            MoonshotMultiAgentFormatter,
+        ):
+            with self.subTest(formatter=formatter_type.__name__):
+                result = await formatter_type().format(
+                    [UserMsg(name="user", content=[block])],
+                )
+                self.assertEqual(
+                    result[0]["content"][-1],
+                    {
+                        "type": "video_url",
+                        "video_url": {
+                            "url": "data:video/mp4;base64,ZmFrZSB2aWRlbw==",
+                            "fps": 2,
+                        },
+                    },
+                )
 
     async def test_chat_formatter_url_image_in_tool_result(
         self,

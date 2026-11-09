@@ -22,6 +22,7 @@ import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import Callable, Self
 
 from ._base import MessageBus
@@ -34,10 +35,10 @@ class InMemoryMessageBus(
 
     Mapping of bus modes to in-memory structures:
 
-    - **Mode A (drain queue)** — each key maps to a
-      :class:`list[tuple[str, dict]]` of ``(entry_id, payload)`` pairs.
-      ``queue_push`` appends; ``queue_drain`` pops from the front (FIFO)
-      and deletes the returned entries.
+    - **Mode A (drain queue)** — each key maps to
+      ``(entry_id, payload)`` tuples. ``queue_push`` appends;
+      ``queue_drain`` pops from the front (FIFO) and deletes the returned
+      entries.
     - **Mode C (replay log)** — same underlying list structure, but
       ``log_read`` is non-destructive.  ``log_trim`` removes entries
       in-place.
@@ -61,7 +62,7 @@ class InMemoryMessageBus(
         self._seq: int = 0
 
         # Mode A — drain queues. Expiry belongs to the whole key, as in
-        # Redis Streams, and is checked lazily on the next push or drain.
+        # Redis Streams, and is checked lazily on push, read, or drain.
         self._queues: dict[str, list[tuple[str, dict]]] = defaultdict(list)
         self._queue_expires_at: dict[str, float] = {}
 
@@ -149,7 +150,7 @@ class InMemoryMessageBus(
         """Append ``payload`` to the in-memory drain queue at ``key``.
 
         When ``ttl_secs`` is set, refresh the whole queue's expiry.
-        Expired queues are removed on the next push or drain.
+        Expired queues are removed on the next push, read, or drain.
 
         Args:
             key (`str`):
@@ -170,7 +171,7 @@ class InMemoryMessageBus(
         if ttl_secs is not None and ttl_secs <= 0:
             await self.queue_delete(key)
             return entry_id
-        self._queues[key].append((entry_id, payload))
+        self._queues[key].append((entry_id, deepcopy(payload)))
         if ttl_secs is not None:
             self._queue_expires_at[key] = now + ttl_secs
         return entry_id
@@ -200,7 +201,54 @@ class InMemoryMessageBus(
             return []
         drained = q[:max_count]
         self._queues[key] = q[max_count:]
-        return drained
+        return deepcopy(drained)
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Return queue entries without removing them.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of oldest-first entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                Deep-copied ``(entry_id, payload)`` pairs.
+        """
+        self._drop_expired_queue(key, time.monotonic())
+        return deepcopy(self._queues.get(key, [])[:max_count])
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Replace a queue while preserving the supplied payload order.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete replacement contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Fresh transport-level ids assigned to the new entries.
+        """
+        entries = [
+            (self._next_id(), deepcopy(payload)) for payload in payloads
+        ]
+        if entries:
+            self._queues[key] = entries
+        else:
+            self._queues.pop(key, None)
+        self._queue_expires_at.pop(key, None)
+        return [entry_id for entry_id, _payload in entries]
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -463,7 +511,7 @@ class InMemoryMessageBus(
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
@@ -471,6 +519,20 @@ class InMemoryMessageBus(
         if self._registries.get(namespace, {}).get(field) != expected:
             return False
         self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete without yielding between the two operations."""
+        registry = self._registries.get(namespace, {})
+        if registry.get(field) != expected:
+            return False
+        del registry[field]
         return True
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
@@ -542,6 +604,15 @@ class InMemoryMessageBus(
                 The stored value, or ``None`` if missing.
         """
         return self._registries.get(namespace, {}).get(field)
+
+    async def registry_get_many(
+        self,
+        namespace: str,
+        fields: list[str],
+    ) -> list[str | None]:
+        """Read only the requested registry fields in their supplied order."""
+        registry = self._registries.get(namespace, {})
+        return [registry.get(field) for field in fields]
 
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire registry at ``namespace``.

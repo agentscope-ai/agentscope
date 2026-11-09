@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 import { credentialApi } from '../api';
 import type { CredentialView, CreateCredentialRequest, UpdateCredentialRequest } from '../api';
+import { AVAILABLE_ASR_MODELS_KEY } from './useAvailableASRModels';
 import { AVAILABLE_MODELS_KEY } from './useAvailableModels';
 import { AVAILABLE_REALTIME_MODELS_KEY } from './useAvailableRealtimeModels';
 
@@ -38,6 +39,7 @@ export function useCredentials() {
 	const refresh = useCallback(async () => {
 		await refetch();
 		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: AVAILABLE_ASR_MODELS_KEY }),
 			queryClient.invalidateQueries({ queryKey: AVAILABLE_MODELS_KEY }),
 			queryClient.invalidateQueries({ queryKey: AVAILABLE_REALTIME_MODELS_KEY }),
 		]);

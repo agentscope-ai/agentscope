@@ -3,6 +3,7 @@
 """Unit tests for OpenAIEmbeddingModel."""
 from dataclasses import asdict
 import json
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyValue
 
 from agentscope.credential import OpenAICredential
-from agentscope.embedding import OpenAIEmbeddingModel
+from agentscope.embedding import FileEmbeddingCache, OpenAIEmbeddingModel
 
 A = AnyValue()
 
@@ -63,6 +64,96 @@ class OpenAIListModelsTest(IsolatedAsyncioTestCase):
 
 class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
     """Test OpenAI embedding API calls with mocked responses."""
+
+    @patch("openai.AsyncClient")
+    async def test_dimensions(self, mock_client_cls: Any) -> None:
+        """Per-call dimensions override the optional instance default."""
+        cases: list[tuple[bool, dict[str, int], dict[str, int]]] = [
+            (True, {}, {"dimensions": 2}),
+            (True, {"dimensions": 3}, {"dimensions": 3}),
+            (False, {}, {}),
+            (False, {"dimensions": 3}, {"dimensions": 3}),
+        ]
+        for pass_dimensions, kwargs, expected_dimensions in cases:
+            with self.subTest(pass_dimensions=pass_dimensions, kwargs=kwargs):
+                embeddings = [[0.1] * expected_dimensions.get("dimensions", 2)]
+                mock_client = mock_client_cls.return_value
+                mock_client.embeddings.create = AsyncMock(
+                    return_value=_make_response(embeddings, 1),
+                )
+                model = OpenAIEmbeddingModel(
+                    credential=OpenAICredential(api_key="k"),
+                    model="text-embedding-3-small",
+                    dimensions=2,
+                    pass_dimensions=pass_dimensions,
+                )
+
+                result = await model(["hello"], **kwargs)
+
+                mock_client.embeddings.create.assert_awaited_once_with(
+                    input=["hello"],
+                    model="text-embedding-3-small",
+                    encoding_format="float",
+                    **expected_dimensions,
+                )
+                self.assertEqual(model.dimensions, 2)
+                self.assertDictEqual(
+                    asdict(result),
+                    {
+                        "embeddings": embeddings,
+                        "id": A,
+                        "created_at": A,
+                        "type": "embedding",
+                        "usage": {"tokens": 1, "time": A, "type": "embedding"},
+                        "source": "api",
+                    },
+                )
+
+    @patch("openai.AsyncClient")
+    async def test_existing_cache_with_extra_kwargs(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Unchanged requests must still hit cache keys from older versions."""
+        embeddings = [[0.1, 0.2]]
+        mock_client = mock_client_cls.return_value
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response(embeddings, 1),
+        )
+        with TemporaryDirectory() as cache_dir:
+            cache = FileEmbeddingCache(cache_dir=cache_dir)
+            # Older requests appended dimensions after per-call arguments.
+            await cache.store(
+                embeddings=embeddings,
+                identifier={
+                    "input": ["hello"],
+                    "model": "text-embedding-3-small",
+                    "encoding_format": "float",
+                    "user": "test-user",
+                    "dimensions": 2,
+                },
+            )
+            model = OpenAIEmbeddingModel(
+                credential=OpenAICredential(api_key="k"),
+                model="text-embedding-3-small",
+                dimensions=2,
+                embedding_cache=cache,
+            )
+
+            result = await model(["hello"], user="test-user")
+
+        mock_client.embeddings.create.assert_not_awaited()
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": embeddings,
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 0, "time": 0, "type": "embedding"},
+                "source": "cache",
+            },
+        )
 
     async def _check_sdk_usage(
         self,

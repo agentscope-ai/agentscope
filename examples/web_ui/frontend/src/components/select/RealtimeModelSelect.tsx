@@ -46,7 +46,7 @@ export function RealtimeModelSelect({
 }: Props) {
 	const { groups, loading } = useAvailableRealtimeModels();
 	const { t } = useTranslation();
-	const entries = Object.entries(groups);
+	const entries = Object.entries(groups).sort(([left], [right]) => left.localeCompare(right));
 
 	const handleSelect = (credentialId: string, model: RealtimeModelCard) => {
 		onChange?.({
@@ -63,6 +63,8 @@ export function RealtimeModelSelect({
 				<Button
 					variant="ghost"
 					size="sm"
+					aria-label={t('realtime.selectModel')}
+					tooltip={t('realtime.selectModel')}
 					className={cn('max-w-52 justify-between gap-1 font-mono', className)}
 					{...props}
 				>
@@ -93,7 +95,7 @@ export function RealtimeModelSelect({
 												handleSelect(items[0].credential.id, model)
 											}
 										>
-											{model.label}
+											{model.name}
 										</DropdownMenuItem>
 									))
 								: items.map(({ credential, models }) => (
@@ -110,7 +112,7 @@ export function RealtimeModelSelect({
 																handleSelect(credential.id, model)
 															}
 														>
-															{model.label}
+															{model.name}
 														</DropdownMenuItem>
 													))}
 												</DropdownMenuSubContent>

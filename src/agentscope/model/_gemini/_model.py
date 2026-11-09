@@ -153,10 +153,12 @@ class GeminiChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="Whether to enable thinking output.",
+            description="Whether to enable thinking output."
+            " When None, no ``thinking_config`` is sent and the"
+            " model's default behavior applies.",
         )
 
         thinking_budget: int | None = Field(
@@ -296,16 +298,17 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable:
-            config["thinking_config"] = {
-                "include_thoughts": True,
-                "thinking_budget": self.parameters.thinking_budget or 1024,
-            }
-        else:
-            config["thinking_config"] = {
-                "include_thoughts": False,
-                "thinking_budget": 0,
-            }
+        if self.parameters.thinking_enable is not None:
+            if self.parameters.thinking_enable:
+                config["thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_budget": self.parameters.thinking_budget or 1024,
+                }
+            else:
+                config["thinking_config"] = {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                }
 
         # Per-call config takes precedence over model-level defaults.
         config.update(config_kwargs)
