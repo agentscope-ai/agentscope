@@ -320,6 +320,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
                 session.state.context = [
                     AssistantMsg(
                         name="Friday",
+                        id=session.state.reply_id,
                         content=[
                             ToolCallBlock(
                                 id="old_tool",
@@ -329,6 +330,8 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
                             ),
                         ],
                     ),
+                    UserMsg("user", "Later speech"),
+                    AssistantMsg("Friday", "Voice response"),
                 ]
                 original = session.state.model_dump()
                 with self.assertRaises(ValueError) as raised:

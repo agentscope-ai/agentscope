@@ -928,6 +928,13 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
                         ),
                     ],
                 )
+                self.session.state.reply_id = self.session.state.context[0].id
+                self.session.state.context.extend(
+                    [
+                        UserMsg("user", "Later speech"),
+                        AssistantMsg("Friday", "Voice response"),
+                    ],
+                )
                 with self.assertRaises(HTTPException) as raised:
                     await self._offer()
                 self.assertEqual(

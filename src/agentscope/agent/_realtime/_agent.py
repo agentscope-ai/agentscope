@@ -1579,6 +1579,9 @@ class RealtimeAgent:
         if delegation.agent is None:
             return
         backend_state = delegation.agent.state
+        self.state.reply_context = backend_state.reply_context.model_copy(
+            deep=True,
+        )
         self.state.permission_context = (
             backend_state.permission_context.model_copy(deep=True)
         )
