@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, patch
 
 from utils import MockModel
 
-from agentscope.agent import Agent, RealtimeAgent
+from agentscope.agent import Agent, ContextConfig, RealtimeAgent
+from agentscope.agent._realtime._agent import _ClientDelegation
 from agentscope.credential import OpenAICredential
 from agentscope.event import (
     AgentEvent,
@@ -39,7 +40,7 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.middleware import MiddlewareBase
-from agentscope.model import ChatResponse
+from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.realtime import (
     ControlFrame,
     ControlFrameType,
@@ -56,6 +57,7 @@ from agentscope.realtime import (
     TransportFrame,
 )
 from agentscope.state import AgentState
+from agentscope.tool import FunctionTool, Toolkit
 
 CRED = OpenAICredential(api_key="sk-x")
 
@@ -1315,6 +1317,305 @@ class RealtimeAgentLiveTest(unittest.IsolatedAsyncioTestCase):
                     ("assistant", "fg", 31, 35),
                 ],
                 "chars": 7,
+            },
+        )
+
+
+class RealtimeDelegationLifecycleTest(unittest.IsolatedAsyncioTestCase):
+    """Check delegation ownership across reconnects and compaction."""
+
+    async def _reconnect(
+        self,
+        agent: RealtimeAgent,
+        socket: _FakeWebSocket,
+    ) -> None:
+        """Wait for the provider disconnect before opening a new session."""
+        await socket.close()
+
+        async def wait_disconnected() -> None:
+            while agent._connected:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_disconnected(), timeout=1)
+        await agent.connect()
+
+    async def test_reconnect_retires_parked_and_queued_delegations(
+        self,
+    ) -> None:
+        """Keep completed work, interrupt HITL and discard old queue items."""
+        sockets = [_FakeWebSocket(), _FakeWebSocket()]
+        executed = []
+        backends = []
+
+        def read() -> str:
+            """Record a completed read before the permission request."""
+            executed.append("read")
+            return "contents"
+
+        def write() -> str:
+            """Record a write only if the user approves it."""
+            executed.append("write")
+            return "written"
+
+        def factory(state: AgentState) -> Agent:
+            """Park the first task and let the next session finish normally."""
+            model = MockModel(context_size=10000)
+            responses = [
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ]
+            if not backends:
+                responses = [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=name,
+                                name=name,
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                    )
+                    for name in ("read", "write")
+                ]
+            model.set_responses(responses)
+            backend = Agent(
+                "Friday",
+                "Be brief.",
+                model,
+                state=state,
+                toolkit=Toolkit(
+                    tools=[
+                        FunctionTool(read, is_read_only=True),
+                        FunctionTool(write),
+                    ],
+                ),
+            )
+            backends.append(backend)
+            return backend
+
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            _model(),
+            delegation_agent_factory=factory,
+        )
+        self.addAsyncCleanup(agent.close)
+        with patch("websockets.connect", AsyncMock(side_effect=sockets)):
+            await agent.connect()
+            agent._start_client_delegation("old")
+            while agent._tasks:
+                await asyncio.gather(*list(agent._tasks))
+            old = agent._delegations["old"]
+            timeout = old.timeout_task
+            agent._start_client_delegation("queued")
+            await self._reconnect(agent, sockets[0])
+            self.assertEqual(
+                {
+                    "active": agent._active_delegation_id,
+                    "queue": list(agent._delegation_queue),
+                    "delegations": agent._delegations,
+                    "routes": agent._delegated_tool_calls,
+                    "timeout_done": timeout is not None and timeout.done(),
+                    "awaiting": backends[0].state.has_awaiting_tool_calls(
+                        "Friday",
+                    ),
+                    "executed": executed,
+                    "results": [
+                        (block.id, block.state)
+                        for message in agent.state.context
+                        for block in message.get_content_blocks("tool_result")
+                    ],
+                },
+                {
+                    "active": None,
+                    "queue": [],
+                    "delegations": {},
+                    "routes": {},
+                    "timeout_done": True,
+                    "awaiting": False,
+                    "executed": ["read"],
+                    "results": [
+                        ("read", ToolResultState.SUCCESS),
+                        ("write", ToolResultState.INTERRUPTED),
+                    ],
+                },
+            )
+            # A late callback must not revive a task from the old connection.
+            await agent._drive_client_delegation(old, old.prompt)
+            agent._start_client_delegation("new")
+            while agent._tasks:
+                await asyncio.gather(*list(agent._tasks))
+            self.assertEqual(
+                {
+                    "backends": len(backends),
+                    "commentary": [
+                        (item["delegation_id"], item["content"])
+                        for item in sockets[1].sent
+                        if item["type"] == "session.commentary.append"
+                    ],
+                },
+                {"backends": 2, "commentary": [("new", "Done")]},
+            )
+
+    async def test_reconnect_cancels_running_backend_before_new_session(
+        self,
+    ) -> None:
+        """Do not send an old task's late result on the new connection."""
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class Backend(_FakeDelegationAgent):
+            """Keep a task running until reconnect cancels its execution."""
+
+            async def reply_stream(
+                self,
+                inputs: Msg,
+                yield_final_msg: bool,
+            ) -> AsyncIterator[Msg]:
+                """Return late output after receiving cancellation."""
+                self.state.middle_context["completed_operation"] = True
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                async for item in super().reply_stream(
+                    inputs,
+                    yield_final_msg,
+                ):
+                    yield item
+
+        backend = Backend()
+        sockets = [_FakeWebSocket(), _FakeWebSocket()]
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            _model(),
+            delegation_agent_factory=lambda _: backend,
+        )
+        self.addAsyncCleanup(agent.close)
+        with patch("websockets.connect", AsyncMock(side_effect=sockets)):
+            await agent.connect()
+            agent._start_client_delegation("old")
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await self._reconnect(agent, sockets[0])
+            self.assertEqual(
+                {
+                    "cancelled": cancelled.is_set(),
+                    "tasks": len(agent._tasks),
+                    "active": agent._active_delegation_id,
+                    "state": agent.state.middle_context,
+                    "commentary": [
+                        item
+                        for item in sockets[1].sent
+                        if item["type"] == "session.commentary.append"
+                    ],
+                },
+                {
+                    "cancelled": True,
+                    "tasks": 0,
+                    "active": None,
+                    "state": {"completed_operation": True},
+                    "commentary": [],
+                },
+            )
+
+    async def test_compression_prunes_only_delegated_history(self) -> None:
+        """Sync real compression while retaining concurrent Live messages."""
+        recent = UserMsg("user", "3" * 40, id="recent")
+        parent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            _model(),
+            state=AgentState(
+                summary="old summary",
+                context=[
+                    UserMsg("user", "1" * 120, id="old1"),
+                    AssistantMsg("Friday", "2" * 40, id="old2"),
+                    recent,
+                ],
+            ),
+        )
+        model = MockModel(context_size=100)
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "Compressed",
+                    "current_state": "Done",
+                    "important_discoveries": "Facts",
+                    "next_steps": "Continue",
+                    "context_to_preserve": "Keep this",
+                },
+            ),
+        )
+        backend = Agent(
+            "Friday",
+            "0" * 80,
+            model,
+            toolkit=Toolkit(),
+            state=parent._copy_delegation_state(),
+            context_config=ContextConfig(trigger_ratio=0.7, reserve_ratio=0.4),
+        )
+        delegation = _ClientDelegation(
+            delegation_id="task",
+            prompt=UserMsg("user", "Task"),
+            generation=parent._connection_generation,
+            agent=backend,
+            baseline_ids={msg.id for msg in backend.state.context},
+        )
+        backend.state.context.insert(
+            2,
+            AssistantMsg(
+                "Friday",
+                id="tool_reply",
+                content=[
+                    ToolResultBlock(
+                        id="read",
+                        name="Read",
+                        output="contents " * 100,
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        )
+        parent._sync_delegation_state(delegation)
+        self.assertIn("tool_reply", [msg.id for msg in parent.state.context])
+        await parent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta="Concurrent speech",
+                start_ms=0,
+                end_ms=10,
+            ),
+        )
+        await backend.compress_context()
+        self.assertEqual([msg.id for msg in backend.state.context], ["recent"])
+        self.assertNotEqual(backend.state.summary, "old summary")
+        await parent._on_model_event(
+            TimelineTranscriptDeltaEvent(
+                role="user",
+                delta=" continues",
+                start_ms=10,
+                end_ms=20,
+            ),
+        )
+        live = parent.state.context[-1].model_dump()
+        parent._sync_delegation_state(delegation)
+        # Repeated checkpoints must not reintroduce compacted tool messages.
+        parent._sync_delegation_state(delegation)
+        self.assertEqual(
+            {
+                "summary": parent.state.summary,
+                "messages": [msg.model_dump() for msg in parent.state.context],
+                "next_messages": [
+                    msg.model_dump()
+                    for msg in parent._copy_delegation_state().context
+                ],
+            },
+            {
+                "summary": backend.state.summary,
+                "messages": [recent.model_dump(), live],
+                "next_messages": [recent.model_dump()],
             },
         )
 

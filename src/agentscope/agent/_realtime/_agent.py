@@ -122,9 +122,11 @@ class _ClientDelegation:
 
     delegation_id: str
     prompt: Msg
+    generation: int
     agent: "Agent | None" = None
     prompt_id: str = ""
     baseline_ids: set[str] = field(default_factory=set)
+    synced_ids: set[str] = field(default_factory=set)
     buffered_events: list[AgentEvent] = field(default_factory=list)
     visible: bool = False
     timeout_task: asyncio.Task[None] | None = None
@@ -291,13 +293,16 @@ class RealtimeAgent:
         closed it; a no-op while connected."""
         if self._connected:
             return
-        self._closing = False
-
         if self._connection_generation:
             async with self._barge_lock:
                 self._reset_user_turns()
                 self._finish_reply(ReplyFinishedReason.ERROR)
                 self._finish_live_replies(ReplyFinishedReason.ERROR)
+            if self.model.interaction_mode is InteractionMode.FULL_DUPLEX:
+                # A new Live session cannot accept old delegation IDs.
+                # Close and persist its tasks before opening the new socket.
+                await self.close()
+        self._closing = False
         self._connection_generation += 1
 
         instructions = self.system_prompt
@@ -1215,6 +1220,7 @@ class RealtimeAgent:
         delegation = _ClientDelegation(
             delegation_id=delegation_id,
             prompt=prompt,
+            generation=self._connection_generation,
         )
         self._delegations[delegation_id] = delegation
         if self._active_delegation_id is None:
@@ -1333,15 +1339,27 @@ class RealtimeAgent:
     def _schedule_delegation_failure(self, delegation_id: str) -> None:
         """Tell GPT-Live that an application backend is unavailable."""
         task = asyncio.create_task(
-            self.model.send_delegation_result(
+            self._send_delegation_result(
                 delegation_id,
                 "The delegated task could not be completed because the "
                 "session chat agent is unavailable.",
+                self._connection_generation,
             ),
             name=f"live-delegation-failure-{delegation_id}",
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _send_delegation_result(
+        self,
+        delegation_id: str,
+        content: str,
+        generation: int,
+    ) -> None:
+        """Send results only to the Live connection that requested them."""
+        if self._closing or generation != self._connection_generation:
+            return
+        await self.model.send_delegation_result(delegation_id, content)
 
     async def _drive_client_delegation(
         self,
@@ -1355,6 +1373,8 @@ class RealtimeAgent:
         result_override: str | None = None,
     ) -> None:
         """Run a chat agent and return its verified result to GPT-Live."""
+        if delegation.generation != self._connection_generation:
+            return
         final: Msg | None = None
         waiting_for_external_input = False
         pending_result_end: ToolResultEndEvent | None = None
@@ -1445,9 +1465,10 @@ class RealtimeAgent:
             )
             if not content:
                 content = "The delegated task completed without a text result."
-            await self.model.send_delegation_result(
+            await self._send_delegation_result(
                 delegation.delegation_id,
                 content,
+                delegation.generation,
             )
             self._finish_client_delegation(delegation.delegation_id)
         except Exception:  # noqa: BLE001
@@ -1460,9 +1481,10 @@ class RealtimeAgent:
                 self._finish_client_delegation(delegation.delegation_id)
                 return
             try:
-                await self.model.send_delegation_result(
+                await self._send_delegation_result(
                     delegation.delegation_id,
                     "The delegated task failed. Ask the user to try again.",
+                    delegation.generation,
                 )
             except Exception:  # noqa: BLE001
                 logger.exception(
@@ -1567,17 +1589,13 @@ class RealtimeAgent:
             deep=True,
         )
         self.state.middle_context = deepcopy(backend_state.middle_context)
-        existing = {
-            message.id: index
-            for index, message in enumerate(
-                self.state.context,
-            )
-        }
+        self.state.summary = deepcopy(backend_state.summary)
+        projected: dict[str, Msg] = {}
         for message in backend_state.context:
-            if (
-                message.id in delegation.baseline_ids
-                or message.id == delegation.prompt_id
-            ):
+            if message.id == delegation.prompt_id:
+                continue
+            if message.id in delegation.baseline_ids:
+                projected[message.id] = message.model_copy(deep=True)
                 continue
             kept = [
                 block.model_copy(deep=True)
@@ -1588,12 +1606,22 @@ class RealtimeAgent:
                 continue
             synced = message.model_copy(deep=True)
             synced.content = kept
-            index = existing.get(message.id)
-            if index is None:
-                existing[message.id] = len(self.state.context)
-                self.state.context.append(synced)
+            projected[message.id] = synced
+
+        # Only this backend's history may be replaced or compacted. Live
+        # messages added or extended while it runs belong to the parent.
+        owned_ids = delegation.baseline_ids | delegation.synced_ids
+        delegation.synced_ids = projected.keys() - delegation.baseline_ids
+        context = []
+        for message in self.state.context:
+            if message.id in owned_ids:
+                replacement = projected.pop(message.id, None)
+                if replacement is not None:
+                    context.append(replacement)
             else:
-                self.state.context[index] = synced
+                context.append(message)
+        context.extend(projected.values())
+        self.state.context = context
 
     def _finish_client_delegation(self, delegation_id: str) -> None:
         """Drop routing state after a delegated task reaches a result."""
@@ -1627,7 +1655,11 @@ class RealtimeAgent:
         if delegation_id != self._active_delegation_id:
             return None
         delegation = self._delegations.get(delegation_id)
-        if delegation is None or delegation.expiring:
+        if (
+            delegation is None
+            or delegation.expiring
+            or delegation.generation != self._connection_generation
+        ):
             return None
         return delegation
 
