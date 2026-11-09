@@ -714,8 +714,16 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         search_tool = _find_tool(self.toolkit, "search_memory")
         await search_tool(keywords=["alice"])
 
-        self.assertEqual(len(fake.search_calls), 1)
-        self.assertEqual(fake.search_calls[0]["top_k"], 9)
+        self.assertEqual(
+            fake.search_calls,
+            [
+                {
+                    "query": "alice",
+                    "filters": {"user_id": "alice"},
+                    "top_k": 9,
+                },
+            ],
+        )
         self.assertEqual(
             search_tool.input_schema["properties"]["limit"]["default"],
             9,
