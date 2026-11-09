@@ -363,13 +363,8 @@ class IndexWorker:
             return
 
         if record.status == "ready":
-            # A duplicate delivery of a task whose first run already
-            # completed.  The lease only excludes workers that are
-            # *currently* processing, so re-entering the pipeline here
-            # would delete the vectors this document already has and
-            # degrade it to ``error`` if the rerun hit a transient
-            # failure.  Re-indexing goes through an explicit status reset
-            # to ``pending``, which is not a terminal state.
+            # The lease prevents concurrent work, not late duplicates.
+            # Re-indexing requires resetting the status to pending.
             logger.debug(
                 "Skipping %s — already indexed; ignoring duplicate task.",
                 document_id,
