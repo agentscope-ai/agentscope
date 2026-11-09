@@ -887,11 +887,25 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
 
     async def test_slow_io_keeps_all_running_tasks_visible(self) -> None:
         """Renewal latency must not accumulate across every running task."""
+        for _ in range(8):
+            await self._register(self.owner)
+        expected = {
+            task.id: BackgroundTaskRecord.model_validate(task).model_dump()
+            for task in self.owner.tasks.values()
+        }
+        task_ids = set(expected)
         original_get = self.bus.registry_get
         original_set_if = self.bus.registry_set_if
+        reads_started: set[str] = set()
+        writes_started: set[str] = set()
+        all_reads_started = asyncio.Event()
+        all_writes_started = asyncio.Event()
 
         async def delayed_get(namespace: str, field: str) -> str | None:
-            await asyncio.sleep(0.04)
+            reads_started.add(field)
+            if reads_started == task_ids:
+                all_reads_started.set()
+            await all_reads_started.wait()
             return await original_get(namespace, field)
 
         async def delayed_set_if(
@@ -902,7 +916,10 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
             expected: str | None,
             ttl_secs: int | None = None,
         ) -> bool:
-            await asyncio.sleep(0.04)
+            writes_started.add(field)
+            if writes_started == task_ids:
+                all_writes_started.set()
+            await all_writes_started.wait()
             return await original_set_if(
                 namespace,
                 field,
@@ -911,27 +928,36 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                 ttl_secs=ttl_secs,
             )
 
-        with patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.6):
-            for _ in range(8):
-                await self._register(self.owner)
-            expected = {
-                task.id: BackgroundTaskRecord.model_validate(task).model_dump()
-                for task in self.owner.tasks.values()
-            }
-            with (
-                patch.object(
-                    self.bus,
-                    "registry_get",
-                    side_effect=delayed_get,
-                ),
-                patch.object(
-                    self.bus,
-                    "registry_set_if",
-                    side_effect=delayed_set_if,
-                ),
-            ):
-                await asyncio.sleep(0.65)
-                for _ in range(4):
+        with (
+            patch.object(
+                self.bus,
+                "registry_get",
+                side_effect=delayed_get,
+            ),
+            patch.object(
+                self.bus,
+                "registry_set_if",
+                side_effect=delayed_set_if,
+            ),
+        ):
+            for _ in range(2):
+                reads_started.clear()
+                writes_started.clear()
+                all_reads_started.clear()
+                all_writes_started.clear()
+                values = await self.bus.registry_getall(
+                    MessageBusKeys.bg_task_records("alice"),
+                )
+                expires_at = max(
+                    json.loads(value)["_expires_at"]
+                    for value in values.values()
+                )
+                with patch(
+                    f"{_MANAGER_MODULE}.time.time",
+                    return_value=expires_at - 1,
+                ) as clock:
+                    await asyncio.wait_for(self._renew_once(), timeout=5)
+                    clock.return_value = expires_at + 1
                     records = await self.reader.list_tasks(user_id="alice")
                     self.assertEqual(
                         {record.id: record.model_dump() for record in records},
@@ -944,7 +970,6 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                         ],
                         [False] * 8,
                     )
-                    await asyncio.sleep(0.1)
 
     async def test_renewal_budget_preserves_fairness_and_cancels_io(
         self,
