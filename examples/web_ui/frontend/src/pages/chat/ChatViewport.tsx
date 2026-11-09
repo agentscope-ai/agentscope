@@ -47,6 +47,7 @@ import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
+	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -56,6 +57,7 @@ import {
 } from '@/components/ui/resizable.tsx';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SidebarTrigger } from '@/components/ui/sidebar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
@@ -213,7 +215,10 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	// Persisted so leaving and returning to /chat keeps the same panels.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
 	const viewportRef = useRef<HTMLElement>(null);
-	const [backgroundInSheet, setBackgroundInSheet] = useState(false);
+	const [panelsInSheet, setPanelsInSheet] = useState(false);
+	// Dismissing the narrow-screen overlay must preserve the desktop layout.
+	const [sheetOpen, setSheetOpen] = useState(true);
+	const [selectedSheetPanel, setSelectedSheetPanel] = useState<PanelKey | null>(null);
 
 	useEffect(() => {
 		const viewport = viewportRef.current;
@@ -224,7 +229,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			// Change layout in the next frame, outside the observer's delivery loop.
 			window.cancelAnimationFrame(frame);
 			frame = window.requestAnimationFrame(() => {
-				setBackgroundInSheet(entry.contentRect.width < 768);
+				setPanelsInSheet(entry.contentRect.width < 768);
 			});
 		});
 		observer.observe(viewport);
@@ -234,9 +239,12 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		};
 	}, []);
 
-	const dockLayout = backgroundInSheet
-		? closePanelInLayout(panelLayout, 'background')
-		: panelLayout;
+	const dockLayout = panelsInSheet ? [] : panelLayout;
+	const sheetPanelKeys = panelLayout.flat();
+	const activeSheetPanel =
+		selectedSheetPanel && sheetPanelKeys.includes(selectedSheetPanel)
+			? selectedSheetPanel
+			: sheetPanelKeys[0];
 
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
@@ -258,6 +266,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			// `openPanelInLayout`, not `togglePanel` — the latter would
 			// close a panel the user already has open.
 			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
+			setSelectedSheetPanel('team');
+			setSheetOpen(true);
 		}
 		onSessionsChanged?.();
 	}, [refetchSessions, sessionId, onSessionsChanged]);
@@ -285,6 +295,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 				if (incoming.tasks.length > 0 && taskPanelOpenedForRef.current !== sessionId) {
 					taskPanelOpenedForRef.current = sessionId;
 					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+					setSelectedSheetPanel('plan');
+					setSheetOpen(true);
 				}
 			}
 			if (value.permission_context) {
@@ -364,7 +376,10 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		dataUpdatedAt: backgroundUpdatedAt,
 		refetch: refetchBackground,
 		visible: backgroundVisible,
-	} = useBackgroundTasks(sessionId, backgroundOpen);
+	} = useBackgroundTasks(
+		sessionId,
+		panelsInSheet ? sheetOpen && activeSheetPanel === 'background' : backgroundOpen,
+	);
 	const backgroundUnavailable = !!backgroundError || backgroundPaused;
 
 	/**
@@ -908,13 +923,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 				<ResizablePanelGroup orientation="horizontal">
 					<ResizablePanel
 						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
-						minSize={backgroundInSheet ? '0%' : '24rem'}
+						minSize={panelsInSheet ? '100%' : '24rem'}
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
 								<div
 									className={
-										backgroundInSheet
+										panelsInSheet
 											? 'flex min-w-0 max-w-24 items-center gap-x-1'
 											: 'flex min-w-0 flex-row items-center gap-x-1'
 									}
@@ -945,7 +960,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 								{/* Keep the panel menu reachable when chat space is narrow. */}
 								<div
 									className={
-										backgroundInSheet
+										panelsInSheet
 											? 'flex min-w-0 flex-1 flex-wrap justify-end gap-1'
 											: 'flex shrink-0 flex-row gap-x-1'
 									}
@@ -1008,64 +1023,43 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="end" className="w-auto">
-											<DropdownMenuCheckboxItem
-												checked={backgroundOpen}
-												onCheckedChange={() => togglePanel('background')}
-												onSelect={(e) => {
-													if (!backgroundInSheet) e.preventDefault();
-												}}
-											>
-												<Activity />
-												{t('panel.background.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('plan')}
-												onCheckedChange={() => togglePanel('plan')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ListTodo />
-												{t('panel.plan.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('mcp')}
-												onCheckedChange={() => togglePanel('mcp')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<MCPSvg className="size-4" />
-												MCP
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('skill')}
-												onCheckedChange={() => togglePanel('skill')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<BookText />
-												{t('panel.skill.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('permission')}
-												onCheckedChange={() => togglePanel('permission')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ShieldCheck />
-												{t('panel.permission.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('knowledge')}
-												onCheckedChange={() => togglePanel('knowledge')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<Database />
-												{t('panel.knowledge.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('team')}
-												onCheckedChange={() => togglePanel('team')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<UsersRound />
-												{t('common.team')}
-											</DropdownMenuCheckboxItem>
+											{(
+												[
+													['background', t('panel.background.title')],
+													['plan', t('panel.plan.title')],
+													['mcp', 'MCP'],
+													['skill', t('panel.skill.title')],
+													['permission', t('panel.permission.title')],
+													['knowledge', t('panel.knowledge.title')],
+													['team', t('common.team')],
+												] satisfies [PanelKey, string][]
+											).map(([key, title]) =>
+												panelsInSheet ? (
+													<DropdownMenuItem
+														key={key}
+														onSelect={() => {
+															setPanelLayout((layout) =>
+																openPanelInLayout(layout, key),
+															);
+															setSelectedSheetPanel(key);
+															setSheetOpen(true);
+														}}
+													>
+														{panels[key].icon}
+														{title}
+													</DropdownMenuItem>
+												) : (
+													<DropdownMenuCheckboxItem
+														key={key}
+														checked={isPanelOpen(key)}
+														onCheckedChange={() => togglePanel(key)}
+														onSelect={(e) => e.preventDefault()}
+													>
+														{panels[key].icon}
+														{title}
+													</DropdownMenuCheckboxItem>
+												),
+											)}
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</div>
@@ -1199,22 +1193,19 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 					<PanelDock layout={dockLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
 			</main>
-			{backgroundInSheet && (
-				<Sheet
-					open={backgroundOpen}
-					onOpenChange={(open) => {
-						if (!open) closePanel('background');
-					}}
-				>
+			{panelsInSheet && activeSheetPanel && (
+				<Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
 					<SheetContent
 						className="gap-0 data-[side=right]:w-full sm:max-w-md"
 						aria-describedby={undefined}
 						showCloseButton={false}
 					>
 						<SheetHeader className="flex-row items-center justify-between gap-2">
-							<SheetTitle className="text-sm">{panels.background.title}</SheetTitle>
+							<SheetTitle className="min-w-0 text-sm">
+								{panels[activeSheetPanel].title}
+							</SheetTitle>
 							<div className="flex shrink-0 items-center gap-1">
-								{panels.background.actions}
+								{panels[activeSheetPanel].actions}
 								<SheetClose asChild>
 									<Button
 										variant="ghost"
@@ -1226,9 +1217,31 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 								</SheetClose>
 							</div>
 						</SheetHeader>
-						<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
-							{panels.background.content}
-						</div>
+						<Tabs
+							value={activeSheetPanel}
+							onValueChange={(key) => setSelectedSheetPanel(key as PanelKey)}
+							className="min-h-0 flex-1 gap-3 px-4 pb-4"
+						>
+							<div className="shrink-0 overflow-x-auto">
+								<TabsList>
+									{sheetPanelKeys.map((key) => (
+										<TabsTrigger key={key} value={key}>
+											{panels[key].icon}
+											{panels[key].title}
+										</TabsTrigger>
+									))}
+								</TabsList>
+							</div>
+							{sheetPanelKeys.map((key) => (
+								<TabsContent
+									key={key}
+									value={key}
+									className="min-h-0 overflow-y-auto"
+								>
+									{panels[key].content}
+								</TabsContent>
+							))}
+						</Tabs>
 					</SheetContent>
 				</Sheet>
 			)}
