@@ -233,6 +233,8 @@ class KnowledgeBase:
                 descending similarity score.  Empty when there are no
                 queries the bound embedding model can consume.
         """
+        if top_k <= 0:
+            raise ValueError('top_k must be positive.')
         if not queries:
             return []
 
