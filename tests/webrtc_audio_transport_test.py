@@ -178,6 +178,44 @@ class _FakeAgent:
         return None
 
 
+class _FailingClosingAgent(_FakeAgent):
+    """Fail after starting a reply and enqueue terminal events on exit."""
+
+    def __init__(self) -> None:
+        super().__init__({"id": "reply-1"}, [])
+        self.failure = RuntimeError("stream failed")
+        self.started = ReplyStartEvent(
+            session_id="session-1",
+            reply_id="reply-1",
+            name="Friday",
+        )
+        self.terminal = [
+            ToolResultEndEvent(
+                reply_id="reply-1",
+                tool_call_id="tool-1",
+                state=ToolResultState.INTERRUPTED,
+            ),
+            ReplyEndEvent(session_id="session-1", reply_id="reply-1"),
+        ]
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.events.extend(self.terminal)
+
+    async def reply_stream(
+        self,
+        transport: object,
+    ) -> AsyncIterator[Any]:
+        """Start the reply before simulating a provider stream error."""
+        del transport
+        yield self.started
+        raise self.failure
+
+    def drain_events(self) -> Iterator[Any]:
+        """Consume the events produced by context-manager cleanup."""
+        events, self.events = self.events, []
+        return iter(events)
+
+
 class _FakeTransport:
     """Idempotently closing transport double."""
 
@@ -1764,6 +1802,89 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session._last_entry_id, "1-0")
         self.assertEqual(session._checkpoint_entry_id, "1-0")
         self.assertEqual(session.transport.errors, [])
+
+    async def test_failed_stream_publishes_close_events(self) -> None:
+        """Publish terminal events and their checkpoint before reporting."""
+        agent = _FailingClosingAgent()
+        bus = _FakeMessageBus(sequence_entries=True)
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=bus,
+            on_closed=lambda _: None,
+        )
+        with self.assertLogs("as", level="ERROR"):
+            await session._run()
+        self.assertEqual(
+            {
+                "published": [
+                    call["event"]
+                    for call in bus.calls
+                    if call["method"] == "publish"
+                ],
+                "cursor": session._checkpoint_entry_id,
+                "errors": session.transport.errors,
+                "transport_closed": session.transport.closed,
+                "peer_closed": session.peer_connection.closed,
+                "remaining": list(agent.drain_events()),
+            },
+            {
+                "published": [
+                    {
+                        **event.model_dump(mode="json"),
+                        "_entry_id": f"{index}-0",
+                    }
+                    for index, event in enumerate(
+                        [agent.started, *agent.terminal],
+                        1,
+                    )
+                ],
+                "cursor": "3-0",
+                "errors": ["stream failed"],
+                "transport_closed": True,
+                "peer_closed": True,
+                "remaining": [],
+            },
+        )
+
+    async def test_failed_stream_preserves_original_exception(self) -> None:
+        """Drain closing events before propagating the same exception."""
+        agent = _FailingClosingAgent()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=_FakeStorage(),
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        session.agent = agent
+        events = []
+        with self.assertRaises(RuntimeError) as raised:
+            async for event in session._agent_events():
+                events.append(event)
+        self.assertIs(raised.exception, agent.failure)
+        self.assertEqual(events, [agent.started, *agent.terminal])
+
+    async def test_event_generator_close_does_not_yield(self) -> None:
+        """Explicit generator close and cancellation must not yield."""
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                agent = _FailingClosingAgent()
+                session = _make_session(
+                    agent_factory=AsyncMock(return_value=agent),
+                    storage=_FakeStorage(),
+                    message_bus=_FakeMessageBus(),
+                    on_closed=lambda _: None,
+                )
+                session.agent = agent
+                events = session._agent_events()
+                self.assertEqual(await anext(events), agent.started)
+                if cancel:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await events.athrow(asyncio.CancelledError())
+                else:
+                    await events.aclose()
+                self.assertEqual(list(agent.drain_events()), agent.terminal)
 
     async def test_pcm_events_are_not_published_to_session_events(
         self,

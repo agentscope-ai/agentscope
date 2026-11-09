@@ -284,9 +284,16 @@ class WebRTCSession:
     async def _agent_events(self) -> AsyncGenerator[AgentEvent, None]:
         """Include terminal events emitted when the voice agent closes."""
         assert self.agent is not None
-        async with self.agent:
-            async for event in self.agent.reply_stream(self.transport):
+        try:
+            async with self.agent:
+                async for event in self.agent.reply_stream(self.transport):
+                    yield event
+        except Exception:
+            # Publish cleanup events before the runner reports the error.
+            # GeneratorExit and cancellation must not yield during close.
+            for event in self.agent.drain_events():
                 yield event
+            raise
         for event in self.agent.drain_events():
             yield event
 
