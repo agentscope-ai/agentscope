@@ -33,6 +33,14 @@ class _RegistrationBus(InMemoryMessageBus):
         ttl_secs: int | None = None,
     ) -> None:
         """Write before or after the acknowledgement barrier."""
+        if namespace != MessageBusKeys.bg_tasks("session-a"):
+            await super().registry_set(
+                namespace,
+                field,
+                value,
+                ttl_secs=ttl_secs,
+            )
+            return
         if self.commit_before_wait:
             await super().registry_set(
                 namespace,
@@ -79,6 +87,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self._checkpoint()
+        await self.manager.__aexit__()
 
     @staticmethod
     async def _checkpoint() -> None:
@@ -110,6 +119,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
                     user_id="user-a",
                     tool_name="slow_tool",
                     id=task_id,
+                    started_at=self.manager.tasks[task_id].started_at,
                 ),
             },
         )
@@ -137,7 +147,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
         cancelled: bool,
         complete_during_write: bool = False,
     ) -> None:
-        """Verify faults preserve running tasks and clean up finished ones."""
+        """Verify faults cancel running tasks and clean up all outcomes."""
         self.bus.commit_before_wait = committed
         error = ConnectionError("registry acknowledgement failed")
         self.bus.write_error = error
@@ -157,12 +167,11 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
             with self.assertRaises(ConnectionError) as raised:
                 await self.registration
             self.assertIs(raised.exception, error)
-        self.assertEqual(self.task.done(), complete_during_write)
-        if not complete_during_write:
-            self.assertEqual(list(self.manager.tasks), [task_id])
-            self.assertEqual(self.bus.delete_calls, [])
-        self.finish.set()
-        self.assertTrue(await self.task)
+        if complete_during_write:
+            self.assertTrue(await self.task)
+        else:
+            with self.assertRaises(asyncio.CancelledError):
+                await self.task
         await self._assert_cleaned(task_id)
 
     async def test_error_before_write(self) -> None:
@@ -174,7 +183,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
         await self._assert_registration_fault(committed=True, cancelled=False)
 
     async def test_cancel_before_write(self) -> None:
-        """Cancelling registration preserves and eventually cleans the task."""
+        """Cancelling registration cancels and cleans the running task."""
         await self._assert_registration_fault(committed=False, cancelled=True)
 
     async def test_cancel_after_write(self) -> None:

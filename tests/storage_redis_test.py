@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, AnyValue
 
 from agentscope.app.storage import (
     RedisStorage,
@@ -2108,3 +2108,96 @@ class TestVoiceProfileTimestamps(IsolatedAsyncioTestCase):
                 self.assertEqual(record.created_at, created_at)
                 stored = await storage.get_voice_profile("owner", record.id)
                 self.assertEqual(stored.model_dump(), record.model_dump())
+
+
+class TestRecordKeyTTL(IsolatedAsyncioTestCase):
+    """Record writes store the value and its TTL in one SET command."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.addAsyncCleanup(self.storage._client.aclose)
+
+    async def _value_and_ttl(self, key: str) -> tuple[str | None, int]:
+        """Read back a key's value and remaining TTL."""
+        client = self.storage._client
+        return await client.get(key), await client.ttl(key)
+
+    async def test_first_write_expires(self) -> None:
+        """A new key is written with the configured TTL."""
+        self.storage.key_ttl = 60
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
+
+    async def test_overwrite_keeps_key_expiring(self) -> None:
+        """Overwriting an expiring or persistent key leaves it expiring."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("expiring", "old", ex=5)
+        await self.storage._client.set("persistent", "old")
+
+        for key in ("expiring", "persistent"):
+            with self.subTest(key=key):
+                await self.storage._set_with_ttl(key, "new")
+                result = await self._value_and_ttl(key)
+                self.assertEqual(result, ("new", AnyValue()))
+                self.assertGreater(result[1], 5)
+                self.assertLessEqual(result[1], 60)
+
+    async def test_no_ttl_configured_keeps_key_persistent(self) -> None:
+        """With key_ttl None, records are written without an expiry."""
+        self.storage.key_ttl = None
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_no_ttl_configured_clears_existing_expiry(self) -> None:
+        """With key_ttl None, overwriting a key removes its expiry."""
+        self.storage.key_ttl = None
+        await self.storage._client.set("probe", "old", ex=60)
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_failure_after_set_cannot_drop_ttl(self) -> None:
+        """A failing EXPIRE cannot leave the rewritten key persistent."""
+        self.storage.key_ttl = 60
+        await self.storage._client.set("probe", "old", ex=60)
+
+        with patch.object(
+            self.storage._client,
+            "expire",
+            side_effect=ConnectionError("injected"),
+        ):
+            await self.storage._set_with_ttl("probe", "new")
+
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
+
+    async def test_voice_profile_write_expires(self) -> None:
+        """Voice profile records get the configured TTL like other records."""
+        self.storage.key_ttl = 60
+        record = VoiceProfileRecord(
+            user_id="owner",
+            data=VoiceProfileData(name="Voice"),
+        )
+
+        await self.storage.upsert_voice_profile("owner", record)
+
+        key = self.storage._key(
+            self.storage.key_config.voice_profile,
+            user_id="owner",
+            profile_id=record.id,
+        )
+        result = await self._value_and_ttl(key)
+        self.assertEqual(result, (record.model_dump_json(), AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
