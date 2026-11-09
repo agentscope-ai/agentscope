@@ -1,0 +1,38 @@
+name: Pre-commit
+
+on: [push, pull_request]
+
+jobs:
+  run:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: True
+      matrix:
+        os: [ubuntu-latest]
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: '3.11'
+      # Hooks use separate virtualenvs; upgrading only the outer pip is not enough.
+      VIRTUALENV_PIP: "26.2.2"
+      VIRTUALENV_NO_PERIODIC_UPDATE: "1"
+    steps:
+    - uses: actions/checkout@master
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "0.13.4"
+        python-version: '3.11'
+    - name: Install AgentScope
+      run: |
+        uv pip install -q "pip>=26.2.2" -e .[dev]
+        seed="$RUNNER_TEMP/precommit-seed"
+        echo "VIRTUALENV_EXTRA_SEARCH_DIR=$seed" >> "$GITHUB_ENV"
+        # Fetch the hook seed wheel with patched pip, not virtualenv's bundled pip.
+        python -m pip download --no-deps --only-binary=:all: \
+          --dest "$seed" "pip==26.2.2"
+    - name: Install pre-commit
+      run: |
+        pre-commit install
+    - name: Pre-commit starts
+      run: |
+        pre-commit run --all-files

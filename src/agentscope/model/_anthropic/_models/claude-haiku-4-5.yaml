@@ -1,0 +1,31 @@
+name: claude-haiku-4-5
+label: Claude Haiku 4.5
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 200000
+output_size: 65536
+
+parameter_overrides:
+  max_tokens: {"maximum": 65536}
+  # Extended-thinking-only generation: adaptive mode is not accepted, and
+  # thinking display is already summarized by default here.
+  thinking_mode:
+    hidden: true
+  thinking_display:
+    hidden: true
+  # Haiku 4.5 does not accept the reasoning_effort parameter.
+  reasoning_effort:
+    hidden: true

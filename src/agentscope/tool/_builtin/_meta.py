@@ -1,0 +1,154 @@
+# -*- coding: utf-8 -*-
+"""The meta tool class."""
+from typing import Any, List
+
+from pydantic import Field, create_model
+from jinja2 import Template
+
+from .._tool_group import ToolGroup
+from ...permission import (
+    PermissionContext,
+    PermissionDecision,
+    PermissionBehavior,
+)
+from .._response import ToolChunk
+from .._base import ToolBase, ToolMiddlewareBase
+from ...exception import DeveloperOrientedException
+from ...message import TextBlock, ToolResultState
+from ...state import AgentState
+
+
+class ResetTools(ToolBase):
+    """A meta tool allows agent to self-manage its equipped tools by
+    activating or deactivating tool groups dynamically."""
+
+    name: str = "reset_tools"
+    description: str = (
+        "This tool allows you to reset your equipped tools based on your "
+        "current task requirements. These tools are organized into different "
+        "groups, and you can activate/deactivate them by specifying the "
+        "boolean values for each group in the input.\n\n"
+        "**Important: The input booleans are the final state of their "
+        "corresponding tool groups, not incremental changes.** Any group not "
+        "explicitly set to True will be deactivated, regardless of its "
+        "previous state.\n\n"
+        "**Best practice**: Actively manage your tool groups——activate only "
+        "what you need for the current task, and promptly deactivate groups "
+        "as soon as they are no longer needed to conserve context space.\n\n"
+        "This tool will return the usage instructions for the activated tool "
+        "groups, which you **MUST pay attention to and follow**. You can "
+        "also reuse this tool to re-check the instructions."
+    )
+    is_mcp: bool = False
+    is_read_only: bool = False
+    is_concurrency_safe: bool = True
+    is_external_tool: bool = False
+    is_state_injected: bool = True
+
+    def __init__(
+        self,
+        groups: list[ToolGroup],
+        response_template: str,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+    ) -> None:
+        """Initialize the meta tool with the current tool groups."""
+        super().__init__(middlewares=middlewares)
+        self.groups = groups
+        self.response_template = response_template
+
+    @property
+    def input_schema(self) -> dict[str, Any]:  # type: ignore[override]
+        """Dynamically generate the input schema based on the current
+        available tool groups."""
+        fields = {}
+        for group in self.groups:
+            if group.name == "basic":
+                continue
+            fields[group.name] = (
+                bool,
+                Field(
+                    default=False,
+                    description=group.description,
+                ),
+            )
+
+        model = create_model("_DynamicModel", **fields)
+        schema = model.model_json_schema()
+        return schema
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """The meta tool is always allowed to be called."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="The meta tool is always allowed to be called.",
+        )
+
+    async def call(
+        self,
+        _agent_state: AgentState,
+        **kwargs: Any,
+    ) -> ToolChunk:
+        """Activate or deactivate tool groups based on the input arguments,
+        and return their usage instructions."""
+        if _agent_state is None:
+            raise DeveloperOrientedException(
+                "Error: ResetTools requires state to be provided.",
+            )
+
+        # First verify the existence of the given group names
+        unexist_groups: list[str] = []
+        cur_groups: list[str] = [
+            _.name for _ in self.groups if _.name != "basic"
+        ]
+        for key in kwargs:
+            if key not in cur_groups:
+                unexist_groups.append(key)
+
+        if unexist_groups:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=(
+                            "Invalid group name(s): "
+                            f"{', '.join(unexist_groups)}. The current "
+                            f"available groups are: {', '.join(cur_groups)}"
+                        ),
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+            )
+
+        to_activate = []
+        for key, value in kwargs.items():
+            if not isinstance(value, bool):
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Invalid arguments: the argument '{key}' "
+                            f"should be a bool value, but got {type(value)}.",
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
+
+            if value:
+                to_activate.append(key)
+
+        # Reset the activated groups after validation
+        _agent_state.tool_context.activated_groups.clear()
+        _agent_state.tool_context.activated_groups.extend(to_activate)
+
+        template = Template(self.response_template)
+        activated_groups = [_ for _ in self.groups if _.name in to_activate]
+        return ToolChunk(
+            content=[
+                TextBlock(
+                    text=template.render(groups=activated_groups),
+                ),
+            ],
+            state=ToolResultState.SUCCESS,
+        )

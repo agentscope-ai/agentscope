@@ -1,0 +1,799 @@
+import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
+import {
+	AudioLines,
+	ArrowUp,
+	FileText,
+	Mic,
+	MicOff,
+	Loader2,
+	Paperclip,
+	Square,
+	type LucideIcon,
+	XIcon,
+} from 'lucide-react';
+import mime from 'mime';
+import React, {
+	useState,
+	useRef,
+	useEffect,
+	useMemo,
+	useLayoutEffect,
+	type KeyboardEvent,
+	useImperativeHandle,
+	forwardRef,
+} from 'react';
+import { toast } from 'sonner';
+
+import { Button } from '../ui/button';
+import { Kbd } from '../ui/kbd';
+import {
+	Attachment,
+	AttachmentAction,
+	AttachmentActions,
+	AttachmentContent,
+	AttachmentDescription,
+	AttachmentGroup,
+	AttachmentMedia,
+	AttachmentTitle,
+} from '@/components/ui/attachment.tsx';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useAudioRecorder } from '@/hooks/useAudioRecorder';
+import type { ReplyPhase } from '@/hooks/useMessages';
+import { useRealtimeAudioRecorder } from '@/hooks/useRealtimeAudioRecorder';
+import { useTranslation } from '@/i18n/useI18n.ts';
+import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
+import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
+import { cn } from '@/lib/utils';
+
+/**
+ * Represents a file that has been selected and processed (or is being processed).
+ */
+interface ProcessedFile {
+	/** Original file name for display */
+	name: string;
+	/** Processing status */
+	status: 'processing' | 'done';
+	/** The resulting ContentBlock after processing (available when status === 'done') */
+	block: ContentBlock | null;
+}
+
+interface TextInputProps {
+	onSend: (blocks: ContentBlock[]) => Promise<void> | void;
+	placeholder?: string;
+	autoComplete?: (input: string) => string | null;
+	disabled?: boolean;
+	className?: string;
+	/**
+	 * Controls which file types the file picker accepts.
+	 * Uses standard MIME types and file extensions, e.g.:
+	 *   - Images:    "image/*" or "image/jpeg", "image/png"
+	 *   - Audio:     "audio/*" or "audio/mpeg", "audio/wav"
+	 *   - Video:     "video/*"
+	 *   - Plain text:"text/plain"
+	 *   - PDF:       "application/pdf"
+	 *   - Word:      ".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	 *   - Excel:     ".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	 *
+	 * When undefined → no restriction (all files allowed).
+	 * When empty array [] → attachment button is disabled (model accepts no files).
+	 */
+	allowedInputTypes?: string[];
+	/**
+	 * Called immediately when a file is selected (at attach time, NOT at send time).
+	 * Should resolve to a ContentBlock to include in the message, or null to skip the file.
+	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
+	 */
+	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+	/**
+	 * The current reply lifecycle phase from ``useMessages``. A running
+	 * reply adds a separate Stop action while Send remains available for
+	 * appending another turn to the queue.
+	 */
+	phase?: ReplyPhase;
+	/** Number of accepted user turns that have not started a reply yet. */
+	queuedCount?: number;
+	onInterrupt?: () => void;
+	/** Current browser realtime voice connection state. */
+	voiceState?: RealtimeConnectionState;
+	/** Starts or stops the browser realtime voice connection. */
+	onVoiceToggle?: () => void;
+	/** Prevents voice start when no realtime model is configured. */
+	voiceDisabled?: boolean;
+	/** Audio formats accepted by the selected ASR model. */
+	asrInputTypes?: string[];
+	/** Upload one completed recording and return its transcription. */
+	onTranscribe?: (file: File) => Promise<string>;
+	/** Whether the selected ASR model consumes live PCM audio. */
+	asrRealtime?: boolean;
+	/** Credential and model used by server-proxied realtime ASR. */
+	realtimeASRConfig?: RealtimeASRConfig | null;
+	/** Prevents recording when the active credential has no ASR model. */
+	asrDisabled?: boolean;
+	/** Restarts recorder state when its session, credential, or model changes. */
+	asrResetKey?: string;
+	/**
+	 * Content rendered directly above the input pill, inside the outer
+	 * wrapper that {@link className} styles (e.g. the working directory
+	 * and git status).
+	 *
+	 * The pill keeps all four of its corners, so the two only read as one
+	 * surface if the caller gives that wrapper a background and a radius
+	 * concentric with the pill's — outer radius = 28px + the wrapper's
+	 * padding. Anything less and the pill's top corners cut into the
+	 * header's edges.
+	 */
+	headerSlot?: React.ReactNode;
+}
+
+export interface TextInputRef {
+	focus: () => void;
+}
+
+/** One line box of textarea text: ``text-sm`` (14px) at a 1.5 line-height. */
+const LINE_HEIGHT_PX = 21;
+/** Height of the input in its collapsed, single-line state. */
+const COLLAPSED_HEIGHT_PX = 52;
+/**
+ * Padding rather than height: a textarea top-aligns its text, so forcing the
+ * height would leave dead space under the caret instead of centring the line.
+ */
+const TEXTAREA_PADDING_Y_PX = (COLLAPSED_HEIGHT_PX - LINE_HEIGHT_PX) / 2;
+/** Growth stops after six lines of text; the textarea scrolls beyond that. */
+const MAX_HEIGHT_PX = LINE_HEIGHT_PX * 6 + TEXTAREA_PADDING_Y_PX * 2;
+/** Horizontal padding of the textarea, mirrored by the overlay and the ghost. */
+const TEXTAREA_PADDING_X_PX = 12;
+
+/**
+ * A text input component with file attachment support and autocomplete functionality.
+ *
+ * @param root0 - The component props.
+ * @param root0.onSend - Callback function to handle sending content blocks.
+ * @param root0.placeholder - Placeholder text for the input field.
+ * @param root0.autoComplete - Function to provide autocomplete suggestions.
+ * @param root0.disabled - Whether the input is disabled.
+ * @param root0.className - Additional CSS classes for styling.
+ * @param root0.queuedCount - Accepted turns waiting to start.
+ * @param root0.onInterrupt - Stops the currently active reply.
+ * @returns A TextInput component.
+ */
+export const TextInput = forwardRef<TextInputRef, TextInputProps>(
+	(
+		{
+			onSend,
+			placeholder,
+			autoComplete,
+			disabled = false,
+			className,
+			allowedInputTypes,
+			fileProcessor,
+			phase = 'idle',
+			queuedCount = 0,
+			onInterrupt,
+			voiceState = 'idle',
+			onVoiceToggle,
+			voiceDisabled = false,
+			asrInputTypes = [],
+			onTranscribe,
+			asrRealtime = false,
+			realtimeASRConfig = null,
+			asrDisabled = false,
+			asrResetKey = '',
+			headerSlot,
+		},
+		ref,
+	) => {
+		const { t } = useTranslation();
+		const defaultPlaceholder = placeholder || t('chat.inputPlaceholder');
+		const [value, setValue] = useState('');
+		const [files, setFiles] = useState<ProcessedFile[]>([]);
+		const [isFocused, setIsFocused] = useState(false);
+		const [submitting, setSubmitting] = useState(false);
+		const mountedRef = useRef(false);
+		useLayoutEffect(() => {
+			mountedRef.current = true;
+			return () => {
+				mountedRef.current = false;
+			};
+		}, []);
+		const textareaRef = useRef<HTMLTextAreaElement>(null);
+		const fileInputRef = useRef<HTMLInputElement>(null);
+		const measureRef = useRef<HTMLSpanElement>(null);
+		/** ``true`` — textarea takes the full width, buttons drop to their own row. */
+		const [isStacked, setIsStacked] = useState(false);
+		const asrContextRef = useRef({ key: asrResetKey, mounted: true });
+
+		useEffect(() => {
+			asrContextRef.current = { key: asrResetKey, mounted: true };
+			return () => {
+				asrContextRef.current.mounted = false;
+			};
+		}, [asrResetKey]);
+
+		const handleRecorded = async (file: File) => {
+			if (!onTranscribe) return;
+			const requestKey = asrResetKey;
+			const transcript = (await onTranscribe(file)).trim();
+			if (!asrContextRef.current.mounted || asrContextRef.current.key !== requestKey) return;
+			if (!transcript) {
+				toast.info(t('textInput.transcriptionEmpty'));
+				return;
+			}
+			setValue((current) =>
+				current.trimEnd() ? `${current.trimEnd()} ${transcript}` : transcript,
+			);
+			requestAnimationFrame(() => textareaRef.current?.focus());
+		};
+
+		const handleRecordingError = (error: unknown) => {
+			const permissionDenied =
+				error instanceof DOMException &&
+				(error.name === 'NotAllowedError' || error.name === 'SecurityError');
+			toast.error(
+				permissionDenied
+					? t('textInput.microphonePermissionDenied')
+					: t('textInput.transcriptionFailed'),
+			);
+		};
+
+		const audioRecorder = useAudioRecorder({
+			acceptedTypes: asrInputTypes,
+			resetKey: asrResetKey,
+			onRecorded: handleRecorded,
+			onError: handleRecordingError,
+		});
+		const realtimeBaseRef = useRef('');
+		const realtimeAudioRecorder = useRealtimeAudioRecorder({
+			config: realtimeASRConfig,
+			resetKey: asrResetKey,
+			onStart: () => {
+				realtimeBaseRef.current = value.trimEnd();
+			},
+			onTranscript: (text, isLast) => {
+				const transcript = text.trim();
+				const base = realtimeBaseRef.current;
+				setValue(base && transcript ? `${base} ${transcript}` : base || transcript);
+				if (isLast) {
+					if (!transcript) toast.info(t('textInput.transcriptionEmpty'));
+					requestAnimationFrame(() => textareaRef.current?.focus());
+				}
+			},
+			onError: handleRecordingError,
+		});
+		const speechRecorder = asrRealtime ? realtimeAudioRecorder : audioRecorder;
+		const speechInputBusy = speechRecorder.state !== 'idle';
+		const speechHandlerUnavailable = asrRealtime ? !realtimeASRConfig : !onTranscribe;
+		const speechInputDisabled =
+			speechRecorder.state !== 'recording' &&
+			(disabled ||
+				phase !== 'idle' ||
+				asrDisabled ||
+				speechHandlerUnavailable ||
+				!speechRecorder.supported ||
+				speechRecorder.state !== 'idle');
+		const speechInputTooltip = (() => {
+			if (speechRecorder.state === 'requesting') {
+				return t('textInput.requestingMicrophone');
+			}
+			if (speechRecorder.state === 'recording') {
+				return t('textInput.stopRecording');
+			}
+			if (speechRecorder.state === 'transcribing') {
+				return t('textInput.transcribing');
+			}
+			if (asrDisabled || speechHandlerUnavailable) {
+				return t('textInput.asrUnavailable');
+			}
+			if (!speechRecorder.supported) {
+				return t('textInput.recordingUnsupported');
+			}
+			return t('textInput.startRecording');
+		})();
+
+		// Derive the accept attribute for the hidden file input
+		const acceptAttr =
+			allowedInputTypes && allowedInputTypes.length > 0
+				? allowedInputTypes.join(',')
+				: undefined;
+
+		// Attachment button is disabled when the model explicitly accepts no file types
+		const attachDisabled =
+			disabled || (allowedInputTypes !== undefined && allowedInputTypes.length === 0);
+
+		// Whether any file is still being processed (block send until all done)
+		const hasProcessing = files.some((f) => f.status === 'processing');
+
+		// A finished attachment is content on its own: the composer can send it
+		// without any text, and the file processor already built the DataBlock.
+		const hasReadyAttachment = files.some((f) => f.status === 'done' && f.block !== null);
+
+		// Something to send: either text or a processed attachment.
+		const hasContent = value.trim().length > 0 || hasReadyAttachment;
+
+		useImperativeHandle(ref, () => ({
+			focus: () => textareaRef.current?.focus(),
+		}));
+
+		// Grow the textarea with its content. The ``auto`` reset is what lets it
+		// shrink again — ``scrollHeight`` never reports less than the current height.
+		useLayoutEffect(() => {
+			const textarea = textareaRef.current;
+			if (!textarea) return;
+			textarea.style.height = 'auto';
+			textarea.style.height = `${textarea.scrollHeight}px`;
+			// Stacking widens the textarea, so the line count has to be redone.
+		}, [value, isStacked]);
+
+		// Measured on the ghost, not the textarea: stacking widens the textarea, so
+		// measuring it would flip-flop (wraps → stack → fits → unstack → wraps).
+		useLayoutEffect(() => {
+			const ghost = measureRef.current;
+			if (!ghost) return;
+			setIsStacked(ghost.scrollHeight > LINE_HEIGHT_PX);
+		}, [value]);
+
+		// Calculate autocomplete suggestion using useMemo
+		const suggestion = useMemo(() => {
+			if (autoComplete && value && isFocused) {
+				const result = autoComplete(value);
+				// Only return the part after the cursor
+				if (result && result.startsWith(value)) {
+					return result.substring(value.length);
+				}
+				return result || '';
+			}
+			return '';
+		}, [value, autoComplete, isFocused]);
+
+		const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+			// Tab key to select autocomplete
+			if (e.key === 'Tab' && suggestion) {
+				e.preventDefault();
+				setValue(value + suggestion);
+				return;
+			}
+
+			// Enter to send message, Shift+Enter for new line
+			if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+				e.preventDefault();
+				void handleSend();
+			}
+		};
+
+		const handleSend = async () => {
+			if (!hasContent || disabled || hasProcessing || submitting || speechInputBusy) return;
+
+			const blocks: ContentBlock[] = [];
+
+			// Add text block
+			if (value.trim()) {
+				const textBlock: TextBlock = {
+					id: crypto.randomUUID(),
+					type: 'text',
+					text: value.trim(),
+					created_at: new Date().toISOString(),
+					finished_at: new Date().toISOString(),
+				};
+				blocks.push(textBlock);
+			}
+
+			// Add processed file blocks (skip errored ones)
+			files.forEach((f) => {
+				if (f.status === 'done' && f.block) {
+					blocks.push(f.block);
+				}
+			});
+
+			const submittedValue = value;
+			const submittedFiles = files;
+			setSubmitting(true);
+			// Start a fresh draft immediately. If the request fails, merge the
+			// submitted draft back without erasing anything typed meanwhile.
+			setValue('');
+			setFiles([]);
+			try {
+				await onSend(blocks);
+			} catch {
+				if (!mountedRef.current) return;
+				// The API layer reports the error; restore both the failed turn
+				// and any new draft content so neither is silently lost.
+				setValue((current) => (current ? `${submittedValue}\n${current}` : submittedValue));
+				setFiles((current) => [...submittedFiles, ...current]);
+			} finally {
+				if (mountedRef.current) setSubmitting(false);
+			}
+		};
+
+		const replyActive = phase !== 'idle';
+		const voiceActive = voiceState === 'active' || voiceState === 'connecting';
+
+		/**
+		 * The primary action controls realtime voice when it is connected,
+		 * otherwise it sends a normal or queued text turn. A running text
+		 * reply gets its own Stop button so sending remains available.
+		 */
+		const actionButton: {
+			icon: LucideIcon;
+			tooltip: string;
+			disabled: boolean;
+			variant: 'default' | 'ghost';
+			onClick: (() => void) | undefined;
+		} = (() => {
+			if (voiceState === 'connecting') {
+				return {
+					icon: Loader2,
+					tooltip: t('realtime.stop'),
+					disabled: false,
+					variant: 'default',
+					onClick: onVoiceToggle,
+				};
+			}
+			if (voiceState === 'active') {
+				return {
+					icon: Square,
+					tooltip: t('realtime.stop'),
+					disabled: false,
+					variant: 'default',
+					onClick: onVoiceToggle,
+				};
+			}
+			if (hasContent || replyActive || submitting) {
+				return {
+					icon: submitting ? Loader2 : ArrowUp,
+					tooltip: replyActive ? t('textInput.queue') : t('textInput.send'),
+					disabled:
+						disabled || !hasContent || hasProcessing || submitting || speechInputBusy,
+					variant: 'default',
+					onClick: handleSend,
+				};
+			}
+			return {
+				icon: AudioLines,
+				tooltip: voiceDisabled ? t('realtime.selectFirst') : t('realtime.start'),
+				disabled: voiceDisabled || speechInputBusy,
+				variant: 'ghost',
+				onClick: onVoiceToggle,
+			};
+		})();
+
+		const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+			if (!e.target.files) return;
+			const selected = Array.from(e.target.files);
+			// Reset input value so the same file can be re-selected
+			e.target.value = '';
+
+			selected.forEach((file) => {
+				// Insert a placeholder in processing state
+				const placeholder: ProcessedFile = {
+					name: file.name,
+					status: 'processing',
+					block: null,
+				};
+
+				setFiles((prev) => [...prev, placeholder]);
+
+				fileProcessor(file)
+					.then((block) => {
+						setFiles(
+							(prev) =>
+								prev
+									.map((f) =>
+										f.name === file.name && f.status === 'processing'
+											? block
+												? { ...f, status: 'done', block }
+												: null
+											: f,
+									)
+									.filter(Boolean) as ProcessedFile[],
+						);
+					})
+					.catch(() => {
+						// Caller is responsible for error notification (e.g. toast).
+						// Just silently remove the entry here.
+						setFiles((prev) =>
+							prev.filter(
+								(f) => !(f.name === file.name && f.status === 'processing'),
+							),
+						);
+					});
+			});
+		};
+
+		return (
+			<div className={cn('flex flex-col', className)}>
+				{headerSlot}
+				<div
+					id="tour-chat-input"
+					className="flex w-full flex-col rounded-[28px] border bg-background px-2"
+					data-tour="chat-input"
+				>
+					{files.length > 0 && (
+						<AttachmentGroup className={'w-full max-w-full px-1 mt-1'}>
+							{files.map((file, index) => {
+								const isImage =
+									file.block &&
+									file.block.type === 'data' &&
+									file.block.source.media_type.startsWith('image/');
+								let data: undefined | string;
+								if (file.block && file.block.type === 'data') {
+									const block = file.block;
+									data =
+										block.source.type === 'url'
+											? block.source.url
+											: `data:${block.source.media_type};base64,${block.source.data}`;
+								}
+
+								return (
+									<Attachment>
+										<AttachmentMedia variant={isImage ? 'image' : 'icon'}>
+											{file.status === 'processing' ? (
+												<Loader2 className="size-3 shrink-0 animate-spin" />
+											) : isImage ? (
+												<img src={data} alt={file.name} />
+											) : (
+												<FileText className="size-3" />
+											)}
+										</AttachmentMedia>
+										<AttachmentContent>
+											<AttachmentTitle>{file.name}</AttachmentTitle>
+											<AttachmentDescription>
+												{file.status === 'processing'
+													? t('common.uploading')
+													: (
+															mime.getExtension(
+																mime.getType(file.name) || 'bin',
+															) || 'bin'
+														).toUpperCase()}
+											</AttachmentDescription>
+										</AttachmentContent>
+										<AttachmentActions>
+											<AttachmentAction
+												onClick={() =>
+													setFiles(files.filter((_, i) => i !== index))
+												}
+											>
+												<XIcon />
+											</AttachmentAction>
+										</AttachmentActions>
+									</Attachment>
+								);
+							})}
+						</AttachmentGroup>
+					)}
+
+					{/* ``items-end`` in both layouts: the buttons are then already at the
+					    bottom before stacking moves them there, so nothing jumps. */}
+					<div className="relative flex flex-wrap items-end justify-end">
+						{/* Ghost row, always laid out side-by-side, so the width it hands
+						    the text is the narrow one whichever layout is on screen. */}
+						<div
+							aria-hidden
+							className="pointer-events-none invisible absolute inset-x-0 top-0 flex h-0 items-start overflow-hidden"
+						>
+							<div className="min-w-0 flex-1">
+								{/* Padding-x and line-height decide where text wraps, so they
+								    match the textarea; padding-y is left off on purpose. */}
+								<span
+									ref={measureRef}
+									className="block text-sm"
+									style={{
+										paddingLeft: `${TEXTAREA_PADDING_X_PX}px`,
+										paddingRight: `${TEXTAREA_PADDING_X_PX}px`,
+										lineHeight: `${LINE_HEIGHT_PX}px`,
+										whiteSpace: 'pre-wrap',
+										wordWrap: 'break-word',
+									}}
+								>
+									{value}
+								</span>
+							</div>
+							{/* Stands in for the button cluster below — keep the count, the
+							    gap and the ``size-9`` footprint in step with it. */}
+							<div className="flex shrink-0 gap-2">
+								<div className="size-9" />
+								<div className="size-9" />
+								<div className="size-9" />
+								{replyActive && !voiceActive && <div className="size-9" />}
+							</div>
+						</div>
+
+						{/* ``min-w-0`` lets the textarea shrink instead of pushing the
+						    buttons out of the row once the text gets long. */}
+						<div
+							className={cn('relative min-w-0', isStacked ? 'basis-full' : 'flex-1')}
+						>
+							{/* ``block`` — inline-block would sit on the text baseline and
+							    leave a descender gap that makes the wrapper taller. */}
+							<textarea
+								ref={textareaRef}
+								value={value}
+								onChange={(e) => setValue(e.target.value)}
+								onKeyDown={handleKeyDown}
+								onFocus={() => setIsFocused(true)}
+								onBlur={() => setIsFocused(false)}
+								placeholder={defaultPlaceholder}
+								disabled={disabled}
+								readOnly={asrRealtime && speechInputBusy}
+								rows={1}
+								className="block w-full resize-none rounded-md border-0 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+								style={{
+									minHeight: `${COLLAPSED_HEIGHT_PX}px`,
+									maxHeight: `${MAX_HEIGHT_PX}px`,
+									lineHeight: `${LINE_HEIGHT_PX}px`,
+									paddingTop: `${TEXTAREA_PADDING_Y_PX}px`,
+									paddingBottom: `${TEXTAREA_PADDING_Y_PX}px`,
+									overflowY: 'auto',
+								}}
+								autoFocus={true}
+							/>
+
+							{/* Autocomplete overlay — its padding and line-height mirror the
+							    textarea's, or the suggestion drifts off the real text. */}
+							{suggestion && isFocused && (
+								<div
+									className="pointer-events-none absolute left-0 top-0 px-3 text-sm"
+									style={{
+										lineHeight: `${LINE_HEIGHT_PX}px`,
+										paddingTop: `${TEXTAREA_PADDING_Y_PX}px`,
+										paddingBottom: `${TEXTAREA_PADDING_Y_PX}px`,
+										whiteSpace: 'pre-wrap',
+										wordWrap: 'break-word',
+									}}
+								>
+									{/* Invisible input text */}
+									<span className="invisible">{value}</span>
+									{/* Suggestion text */}
+									<span className="text-muted-foreground">{suggestion}</span>
+									{/* Tab hint */}
+									<span className="ml-2 text-xs text-muted-foreground/60">
+										<Kbd>Tab</Kbd> {t('textInput.toComplete')}
+									</span>
+								</div>
+							)}
+						</div>
+
+						{/* Collapsed-height box centring the buttons, so a single line still
+						    reads as centred while the row bottom-aligns them. */}
+						<div
+							className="flex shrink-0 items-center gap-2"
+							style={{ height: `${COLLAPSED_HEIGHT_PX}px` }}
+						>
+							{/* Attachment button */}
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-lg"
+										onClick={() => fileInputRef.current?.click()}
+										disabled={attachDisabled}
+										className="shrink-0 rounded-full"
+									>
+										<Paperclip className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>
+									{attachDisabled && allowedInputTypes?.length === 0
+										? t('textInput.attachNotSupported')
+										: t('textInput.attach')}
+								</TooltipContent>
+							</Tooltip>
+
+							{/* Speech-to-text recording */}
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span
+										className="inline-flex shrink-0"
+										tabIndex={speechInputDisabled ? 0 : undefined}
+									>
+										<Button
+											type="button"
+											aria-label={speechInputTooltip}
+											variant="ghost"
+											size="icon-lg"
+											onClick={speechRecorder.toggle}
+											disabled={speechInputDisabled}
+											className={cn(
+												'relative shrink-0 rounded-full transition-colors',
+												speechRecorder.state === 'recording' &&
+													'bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive',
+											)}
+										>
+											{speechRecorder.state === 'requesting' ||
+											speechRecorder.state === 'transcribing' ? (
+												<Loader2 className="size-4 animate-spin" />
+											) : speechRecorder.state === 'recording' ? (
+												<MicOff className="size-4" />
+											) : (
+												<Mic className="size-4" />
+											)}
+										</Button>
+									</span>
+								</TooltipTrigger>
+								<TooltipContent>{speechInputTooltip}</TooltipContent>
+							</Tooltip>
+
+							{/* Keep Stop and Send separate while a reply is active:
+							    users can enqueue another turn without losing the
+							    ability to interrupt the current generation. */}
+							{replyActive && !voiceActive && (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="outline"
+											onClick={onInterrupt}
+											disabled={phase === 'interrupting'}
+											size="icon-lg"
+											className="shrink-0 rounded-full"
+										>
+											<Square className="h-4 w-4" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>
+										{phase === 'interrupting'
+											? t('textInput.stopping')
+											: t('textInput.stop')}
+									</TooltipContent>
+								</Tooltip>
+							)}
+
+							{/* Voice or Send — driven by ``actionButton`` config. */}
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span
+										className="inline-flex shrink-0"
+										tabIndex={actionButton.disabled ? 0 : undefined}
+									>
+										<Button
+											type="button"
+											aria-label={actionButton.tooltip}
+											variant={actionButton.variant}
+											onClick={actionButton.onClick}
+											disabled={actionButton.disabled}
+											size="icon-lg"
+											className={cn(
+												'relative shrink-0 rounded-full transition-colors',
+												voiceState === 'active' &&
+													'before:absolute before:inset-[-4px] before:rounded-full before:border before:border-primary/30 before:animate-pulse',
+											)}
+										>
+											<actionButton.icon
+												className={cn(
+													'h-4 w-4',
+													(voiceState === 'connecting' || submitting) &&
+														'animate-spin',
+												)}
+											/>
+										</Button>
+									</span>
+								</TooltipTrigger>
+								<TooltipContent>{actionButton.tooltip}</TooltipContent>
+							</Tooltip>
+
+							{/* Hidden file input */}
+							<input
+								ref={fileInputRef}
+								type="file"
+								multiple
+								accept={acceptAttr}
+								onChange={handleFileSelect}
+								className="hidden"
+							/>
+						</div>
+					</div>
+				</div>
+				{queuedCount > 0 && (
+					<div
+						className="px-3 text-xs text-muted-foreground"
+						role="status"
+						aria-live="polite"
+					>
+						{t('textInput.queued', { count: queuedCount })}
+					</div>
+				)}
+			</div>
+		);
+	},
+);
+
+TextInput.displayName = 'TextInput';

@@ -1,0 +1,649 @@
+# -*- coding: utf-8 -*-
+"""The OpenAI formatter for agentscope."""
+import base64
+import re
+from abc import ABC
+from fnmatch import fnmatch
+from typing import Any
+from urllib.request import url2pathname
+
+import requests
+from pydantic import Field
+
+from ._formatter_base import FormatterBase
+from .._logging import logger
+from ..message import (
+    Msg,
+    URLSource,
+    TextBlock,
+    DataBlock,
+    Base64Source,
+    ToolCallBlock,
+    ToolResultBlock,
+    HintBlock,
+    ThinkingBlock,
+)
+
+
+# The Chat Completions API rejects a message ``name`` containing whitespace
+# or any of ``<|\/>`` with a 400 error: "string does not match pattern.
+# Expected a string that matches the pattern '^[^\s<|\\/>]+$'".
+_INVALID_MESSAGE_NAME_CHARS = re.compile(r"[\s<|\\/>]+")
+
+
+def _format_message_name(name: str | None) -> dict[str, str]:
+    """Build the ``name`` field of an OpenAI chat message.
+
+    Agent and user names are free text (e.g. ``"Research Assistant"``),
+    while the API only accepts names without whitespace and ``<|\\/>``.
+    Each run of such characters is replaced with ``_``, and the field is
+    omitted for an empty name, which the API rejects as well.
+
+    Args:
+        name (`str | None`):
+            The name of the message sender.
+
+    Returns:
+        `dict[str, str]`:
+            ``{"name": <valid name>}``, or an empty dict.
+    """
+    if not name:
+        return {}
+    return {"name": _INVALID_MESSAGE_NAME_CHARS.sub("_", name)}
+
+
+class _OpenAIFormatterBase(FormatterBase, ABC):
+    """Base class for OpenAI formatters, providing shared data block
+    formatting logic."""
+
+    def _format_openai_data_block(
+        self,
+        block: DataBlock,
+    ) -> dict[str, Any] | None:
+        """Format a DataBlock into the required format for OpenAI API.
+
+        For image blocks, URLs are returned as-is (or converted to base64 for
+        local ``file://`` paths). Image extras such as ``detail`` are merged
+        into the nested ``image_url`` payload as required by OpenAI Chat
+        Completions. For audio blocks, data is always converted to base64 as
+        required by the OpenAI ``input_audio`` format, and extras are merged
+        into the nested ``input_audio`` payload.
+
+        Args:
+            block (`DataBlock`):
+                The DataBlock to format.
+
+        Returns:
+            `dict[str, Any] | None`:
+                A dictionary in OpenAI API format, or ``None`` if the block
+                should be skipped.
+        """
+        if not any(
+            fnmatch(block.source.media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            logger.warning(
+                "Unsupported media type %s for OpenAI API. "
+                "Supported types: %s. This block will be skipped.",
+                block.source.media_type,
+                ", ".join(self.supported_input_media_types),
+            )
+            return None
+
+        main_type = block.source.media_type.split("/")[0]
+
+        if main_type == "image":
+            return self._format_image_source(block.source, block.model_extra)
+
+        if main_type == "audio":
+            return self._format_audio_source(block.source, block.model_extra)
+
+        if block.source.media_type == "application/pdf":
+            return self._format_file_source(block.source, block.name)
+
+        logger.warning(
+            "Unsupported main media type %s for OpenAI API. "
+            "This block will be skipped.",
+            main_type,
+        )
+        return None
+
+    def _format_image_source(
+        self,
+        source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Convert an image source to OpenAI image_url format.
+
+        Local ``file://`` URLs are read from disk and converted to base64
+        data URIs. Remote URLs are passed through unchanged. Extra media
+        parameters (for example ``detail``) are merged into the nested
+        ``image_url`` object, matching OpenAI Chat Completions' image input
+        schema. Subclasses may override this to apply provider-specific
+        handling (e.g. forcing remote URLs to be downloaded and base64-encoded
+        for APIs that don't accept raw HTTPS URLs).
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The image source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific image parameters to merge into the nested
+                ``image_url`` object, such as OpenAI's ``detail``.
+
+        Returns:
+            `dict[str, Any]`:
+                A dictionary with ``"type": "image_url"`` in OpenAI format.
+                Extra fields are nested under the ``image_url`` object.
+        """
+        if isinstance(source, Base64Source):
+            url = f"data:{source.media_type};base64,{source.data}"
+
+        elif isinstance(source, URLSource):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
+                # Local file — read and encode as base64 data URI
+                local_path = url2pathname(url_str.removeprefix("file://"))
+                with open(local_path, "rb") as f:
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                url = f"data:{source.media_type};base64,{encoded}"
+            else:
+                # Remote URL — pass through as-is
+                url = url_str
+
+        else:
+            raise ValueError(f"Unsupported image source type: {type(source)}")
+
+        image_url_payload = {"url": url}
+        if extra:
+            image_url_payload.update(extra)
+        return {
+            "type": "image_url",
+            "image_url": image_url_payload,
+        }
+
+    @staticmethod
+    def _format_audio_source(
+        source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Convert an audio source to OpenAI input_audio format.
+
+        Local ``file://`` URLs are read from disk. Remote URLs are downloaded.
+        Only ``wav`` and ``mp3`` formats are supported by the OpenAI API.
+        Extra fields are merged into the nested ``input_audio`` object.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The audio source to convert.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific audio parameters to merge into the nested
+                ``input_audio`` object.
+
+        Returns:
+            `dict[str, Any]`:
+                A dictionary with ``"type": "input_audio"`` in OpenAI format.
+        """
+        media_type_to_format = {
+            "audio/wav": "wav",
+            "audio/mp3": "mp3",
+            "audio/mpeg": "mp3",
+        }
+        media_type = source.media_type
+        if media_type not in media_type_to_format:
+            raise TypeError(
+                f"Unsupported audio media type: {media_type}, "
+                "only WAV and MP3 audio are supported.",
+            )
+        audio_format = media_type_to_format[media_type]
+
+        if isinstance(source, Base64Source):
+            input_audio_payload = {
+                "data": source.data,
+                "format": audio_format,
+            }
+            if extra:
+                input_audio_payload.update(extra)
+            return {
+                "type": "input_audio",
+                "input_audio": input_audio_payload,
+            }
+
+        if isinstance(source, URLSource):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
+                # Local file
+                local_path = url2pathname(url_str.removeprefix("file://"))
+                with open(local_path, "rb") as f:
+                    data = base64.b64encode(f.read()).decode("utf-8")
+            else:
+                # Remote URL — download and encode
+                response = requests.get(url_str, timeout=30)
+                response.raise_for_status()
+                data = base64.b64encode(response.content).decode("utf-8")
+
+            input_audio_payload = {
+                "data": data,
+                "format": audio_format,
+            }
+            if extra:
+                input_audio_payload.update(extra)
+            return {
+                "type": "input_audio",
+                "input_audio": input_audio_payload,
+            }
+
+        raise TypeError(f"Unsupported audio source type: {type(source)}.")
+
+    @staticmethod
+    def _format_file_source(
+        source: URLSource | Base64Source,
+        name: str | None,
+    ) -> dict[str, Any]:
+        """Convert a PDF source to the OpenAI ``file`` content part.
+
+        Files are always inlined as base64 data URIs: local ``file://`` URLs
+        are read from disk and remote URLs are downloaded, since the Chat
+        Completions API has no URL form for files.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The file source to convert.
+            name (`str | None`):
+                The file name presented to the API, falls back to
+                ``"document.pdf"``.
+
+        Returns:
+            `dict[str, Any]`:
+                A dictionary with ``"type": "file"`` in OpenAI format.
+        """
+        if isinstance(source, Base64Source):
+            data = source.data
+        elif isinstance(source, URLSource):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
+                with open(
+                    url2pathname(url_str.removeprefix("file://")),
+                    "rb",
+                ) as f:
+                    data = base64.b64encode(f.read()).decode("utf-8")
+            else:
+                response = requests.get(url_str, timeout=30)
+                response.raise_for_status()
+                data = base64.b64encode(response.content).decode("utf-8")
+        else:
+            raise ValueError(f"Unsupported file source type: {type(source)}")
+
+        return {
+            "type": "file",
+            "file": {
+                "filename": name or "document.pdf",
+                "file_data": f"data:{source.media_type};base64,{data}",
+            },
+        }
+
+
+class OpenAIChatFormatter(_OpenAIFormatterBase):
+    """The OpenAI formatter class for chatbot scenario, where only a user
+    and an agent are involved. We use the `name` field in OpenAI API to
+    identify different entities in the conversation.
+    """
+
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "application/pdf",
+        ],
+        description=(
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+        ),
+    )
+
+    async def format(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format message objects into OpenAI API required format.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of Msg objects to format.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                A list of dictionaries, where each dictionary has "name",
+                "role", and "content" keys.
+        """
+        self.assert_list_of_msgs(msgs)
+
+        messages: list[dict] = []
+        i = 0
+        while i < len(msgs):
+            msg = msgs[i]
+            content_blocks = []
+            tool_calls = []
+
+            # Hold the promoted media until this turn's tool messages are out.
+            pending_media: list[dict] = []
+
+            for block in msg.get_content_blocks():
+                if pending_media and not isinstance(block, ToolResultBlock):
+                    messages.extend(pending_media)
+                    pending_media = []
+
+                if isinstance(block, TextBlock):
+                    content_blocks.append({"type": "text", "text": block.text})
+
+                elif isinstance(block, DataBlock):
+                    formatted = self._format_openai_data_block(
+                        block,
+                    )
+                    if formatted is not None:
+                        content_blocks.append(formatted)
+
+                elif isinstance(block, HintBlock):
+                    if content_blocks or tool_calls:
+                        msg_openai = {
+                            "role": msg.role,
+                            **_format_message_name(msg.name),
+                            "content": content_blocks or None,
+                        }
+                        if tool_calls:
+                            msg_openai["tool_calls"] = tool_calls
+                        messages.append(msg_openai)
+                        content_blocks = []
+                        tool_calls = []
+
+                    if isinstance(block.hint, str):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": block.hint},
+                                ],
+                            },
+                        )
+                    else:
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append(
+                                    {"type": "text", "text": sub.text},
+                                )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = self._format_openai_data_block(
+                                    sub,
+                                )
+                                if formatted_sub is not None:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            messages.append(
+                                {"role": "user", "content": hint_parts},
+                            )
+
+                elif isinstance(block, ToolCallBlock):
+                    tool_calls.append(
+                        {
+                            "id": block.id,
+                            "type": "function",
+                            "function": {
+                                "name": block.name,
+                                "arguments": block.input,
+                            },
+                        },
+                    )
+
+                elif isinstance(block, ToolResultBlock):
+                    if content_blocks or tool_calls:
+                        msg_openai_flush = {
+                            "role": msg.role,
+                            **_format_message_name(msg.name),
+                            "content": content_blocks or None,
+                        }
+                        if tool_calls:
+                            msg_openai_flush["tool_calls"] = tool_calls
+                        messages.append(msg_openai_flush)
+                        content_blocks = []
+                        tool_calls = []
+
+                    (
+                        textual_output,
+                        multimodal_data,
+                    ) = self.convert_tool_result_to_string(block.output)
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": block.id,
+                            "content": textual_output,
+                            "name": block.name,
+                        },
+                    )
+
+                    if multimodal_data:
+                        promo_content = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_content.append(
+                                    {"type": "text", "text": item.text},
+                                )
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_openai_data_block(
+                                    item,
+                                )
+                                if fmt_item is not None:
+                                    promo_content.append(fmt_item)
+                        if promo_content:
+                            pending_media.append(
+                                {
+                                    "role": "user",
+                                    "name": "system-reminder",
+                                    "content": promo_content,
+                                },
+                            )
+
+                elif isinstance(block, ThinkingBlock):
+                    # OpenAI API does not accept reasoning/thinking content
+                    # in conversation history — skip thinking blocks silently.
+                    pass
+
+                else:
+                    logger.warning(
+                        "Unsupported block type %s in the message, skipped.",
+                        type(block),
+                    )
+
+            messages.extend(pending_media)
+
+            msg_openai = {
+                "role": msg.role,
+                **_format_message_name(msg.name),
+                "content": content_blocks or None,
+            }
+
+            if tool_calls:
+                msg_openai["tool_calls"] = tool_calls
+
+            # When both content and tool_calls are None, skipped
+            if msg_openai["content"] or msg_openai.get("tool_calls"):
+                messages.append(msg_openai)
+
+            # Move to next message
+            i += 1
+
+        return messages
+
+
+class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
+    """
+    OpenAI formatter for multi-agent conversations, where more than
+    a user and an agent are involved.
+
+    .. tip:: This formatter is compatible with OpenAI API and
+        OpenAI-compatible services like vLLM, Azure OpenAI, and others.
+    """
+
+    conversation_history_prompt: str = Field(
+        default=(
+            "# Conversation History\n"
+            "The content between <history></history> tags contains "
+            "your conversation history\n"
+        ),
+        description="The prompt to use for the conversation history section.",
+    )
+
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "application/pdf",
+        ],
+        description=(
+            "The supported input types. Defaults to "
+            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+        ),
+    )
+
+    async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
+        """Format input messages into the structure required by the OpenAI API
+        for multi-agent conversations."""
+        self.assert_list_of_msgs(msgs)
+
+        formatted_msgs = []
+        start_index = 0
+        if len(msgs) > 0 and msgs[0].role == "system":
+            formatted_msgs.append(
+                await self._format_system_message(msgs[0]),
+            )
+            start_index = 1
+
+        is_first_agent_message = True
+        async for typ, group in self._group_messages(msgs[start_index:]):
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_tool_sequence(group),
+                    )
+                case "agent_message":
+                    (
+                        formatted_group,
+                        has_history,
+                    ) = await self._format_agent_message_with_hints(
+                        group,
+                        is_first_agent_message,
+                        self._format_agent_message,
+                        prompt_requires_text=True,
+                    )
+                    formatted_msgs.extend(formatted_group)
+                    if has_history:
+                        is_first_agent_message = False
+
+        return formatted_msgs
+
+    async def _format_tool_sequence(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Given a sequence of tool call/result messages, format them into
+        the required format for the OpenAI API."""
+        return await OpenAIChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the OpenAI chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The OpenAI user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
+
+    async def _format_agent_message(
+        self,
+        msgs: list[Msg],
+        is_first: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Given a sequence of messages without tool calls/results, format
+        them into the required format for the OpenAI API."""
+
+        if is_first:
+            conversation_history_prompt = self.conversation_history_prompt
+        else:
+            conversation_history_prompt = ""
+
+        formatted_msgs: list[dict] = []
+        conversation_blocks: list = []
+        accumulated_text = []
+        media_blocks: list[dict] = []
+
+        for msg in msgs:
+            for block in msg.get_content_blocks():
+                if isinstance(block, TextBlock):
+                    accumulated_text.append(f"{msg.name}: {block.text}")
+
+                elif isinstance(block, DataBlock):
+                    formatted = self._format_openai_data_block(
+                        block,
+                    )
+                    if formatted is not None:
+                        media_blocks.append(formatted)
+
+        if accumulated_text:
+            conversation_blocks.append(
+                {"text": "\n".join(accumulated_text)},
+            )
+
+        if conversation_blocks:
+            if conversation_blocks[0].get("text"):
+                conversation_blocks[0]["text"] = (
+                    conversation_history_prompt
+                    + "<history>\n"
+                    + conversation_blocks[0]["text"]
+                )
+            else:
+                conversation_blocks.insert(
+                    0,
+                    {"text": conversation_history_prompt + "<history>\n"},
+                )
+
+            if conversation_blocks[-1].get("text"):
+                conversation_blocks[-1]["text"] += "\n</history>"
+            else:
+                conversation_blocks.append({"text": "</history>"})
+
+        conversation_blocks_text = "\n".join(
+            b.get("text", "") for b in conversation_blocks
+        )
+
+        content_list: list[dict[str, Any]] = []
+        if conversation_blocks_text:
+            content_list.append(
+                {"type": "text", "text": conversation_blocks_text},
+            )
+        content_list.extend(media_blocks)
+
+        if content_list:
+            formatted_msgs.append({"role": "user", "content": content_list})
+
+        return formatted_msgs
+
+    @staticmethod
+    async def _format_system_message(
+        msg: Msg,
+    ) -> dict[str, Any]:
+        """Format system message for OpenAI API."""
+        return {
+            "role": "system",
+            "content": msg.get_text_content(),
+        }

@@ -1,0 +1,14 @@
+name: text-embedding-v4
+label: Text Embedding v4
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - application/x-embedding
+
+context_size: 8192
+
+dimensions: 1024
+supported_dimensions: [2048, 1536, 1024, 768, 512, 256, 128, 64]

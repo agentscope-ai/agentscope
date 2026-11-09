@@ -1,0 +1,27 @@
+name: o3
+label: o3
+status: deprecated
+deprecated_at: "2026-12-11T00:00:00"
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 200000
+output_size: 100000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 100000
+  # Voice only applies to omni-style models; hide the field for this
+  # non-omni model so the frontend popover doesn't render it.
+  voice:
+    hidden: true

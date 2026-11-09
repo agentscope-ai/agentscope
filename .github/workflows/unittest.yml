@@ -1,0 +1,38 @@
+name: Python Unittest Coverage
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    if: false == contains(github.event.pull_request.title, 'WIP')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-26]
+        python-version: ['3.11']
+    env:
+      OS: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "0.13.4"
+        python-version: ${{ matrix.python-version }}
+    - name: Install Bubblewrap (Linux only)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bubblewrap
+    - name: Install Dev Dependencies
+      run: |
+        uv pip install -q -e .[dev]
+        uv pip install coverage pytest
+    - name: Run tests with coverage
+      env:
+        GRPC_VERBOSITY: ERROR
+      run: |
+        coverage run -m pytest tests -v
+    - name: Generate coverage report
+      run: |
+        coverage report -m

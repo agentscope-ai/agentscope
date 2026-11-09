@@ -1,0 +1,38 @@
+name: claude-sonnet-5
+label: Claude Sonnet 5
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens: {"maximum": 128000}
+  # Budget-based thinking (``thinking.type: "enabled"``) is rejected by
+  # this generation; adaptive is the only mode it accepts.
+  thinking_enable:
+    hidden: true
+  thinking_budget:
+    hidden: true
+  thinking_mode:
+    default: adaptive
+    anyOf:
+      - enum: [adaptive, disabled]
+        type: string
+      - type: "null"
+  # Defaults to "omitted" on these models, which renders as empty thinking
+  # blocks — ask for summaries explicitly.
+  thinking_display:
+    default: summarized

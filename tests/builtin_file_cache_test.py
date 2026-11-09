@@ -1,0 +1,713 @@
+# -*- coding: utf-8 -*-
+"""File cache test case for Read/Write/Edit tools."""
+import asyncio
+import os
+import tempfile
+from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
+
+from agentscope.state import AgentState, ToolContext
+from agentscope.state._state import ReadCacheEntry
+from agentscope.tool import Read, Write, Edit
+
+
+class FileCacheTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
+    """Test file cache functionality for Read/Write/Edit tools."""
+
+    async def asyncSetUp(self) -> None:
+        """The async setup method."""
+        self.read_tool = Read()
+        self.write_tool = Write()
+        self.edit_tool = Edit()
+        self.state = AgentState()
+
+        # Create a temporary directory
+        self.temp_dir = tempfile.mkdtemp()
+        self.test_file = os.path.join(self.temp_dir, "test.txt")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up temporary files."""
+        import shutil
+
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    async def test_edit_without_read(self) -> None:
+        """Test Edit fails when file not read first."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Hello World\n")
+
+        # Try to edit without reading first
+        chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Hello",
+            new_string="Hi",
+            _agent_state=self.state,
+        )
+
+        # Should fail with error
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("must first read", chunk.content[0].text)
+
+    async def test_write_without_read(self) -> None:
+        """Test Write fails when existing file not read first."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Existing content\n")
+
+        # Try to write without reading first
+        chunk = await self.write_tool(
+            file_path=self.test_file,
+            content="New content\n",
+            _agent_state=self.state,
+        )
+
+        # Should fail with error
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("has not been read yet", chunk.content[0].text)
+
+    async def test_write_new_file_without_read(self) -> None:
+        """Test Write succeeds for new file without reading."""
+        new_file = os.path.join(self.temp_dir, "new_file.txt")
+
+        # Write to a new file (doesn't exist yet)
+        chunk = await self.write_tool(
+            file_path=new_file,
+            content="New file content\n",
+            _agent_state=self.state,
+        )
+
+        # Should succeed
+        self.assertEqual(chunk.state, "running")
+        self.assertTrue(os.path.exists(new_file))
+
+        with open(new_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "New file content\n")
+
+    async def test_edit_after_read(self) -> None:
+        """Test Edit succeeds after reading file."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Hello World\n")
+
+        # Read the file first
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        # Now edit should succeed
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Hello",
+            new_string="Hi",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(edit_chunk.state, "running")
+
+        # Verify file was edited
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "Hi World\n")
+
+    async def test_write_after_read(self) -> None:
+        """Test Write succeeds after reading file."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Old content\n")
+
+        # Read the file first
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        # Now write should succeed
+        write_chunk = await self.write_tool(
+            file_path=self.test_file,
+            content="New content\n",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(write_chunk.state, "running")
+
+        # Verify file was overwritten
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "New content\n")
+
+    async def test_cache_invalidation_after_file_deletion(self) -> None:
+        """Test cache handles file deletion gracefully."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Test content\n")
+
+        # Read the file to cache it
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        # Verify cache exists
+        self.assertEqual(len(self.state.tool_context.read_file_cache), 1)
+        self.assertEqual(
+            self.state.tool_context.read_file_cache[0].file_path,
+            self.test_file,
+        )
+
+        # Delete the file
+        os.unlink(self.test_file)
+
+        # Try to edit - should fail with "File not found" error
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Test",
+            new_string="New",
+            _agent_state=self.state,
+        )
+
+        # Should fail with "File not found" error
+        self.assertEqual(edit_chunk.state, "error")
+        self.assertIn("not found", edit_chunk.content[0].text.lower())
+
+        # Try to read again - should also fail
+        read_chunk2 = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk2.state, "error")
+        self.assertIn("does not exist", read_chunk2.content[0].text)
+
+    async def test_cache_invalidation_after_file_modification(self) -> None:
+        """Test cache detects file modification."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Original content\n")
+
+        # Read the file to cache it
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        # Modify the file externally
+        import time
+
+        time.sleep(0.1)  # Ensure mtime changes
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Modified content\n")
+
+        # Try to edit - should fail because cache is stale
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Original",
+            new_string="New",
+            _agent_state=self.state,
+        )
+
+        # Should fail with error
+        self.assertEqual(edit_chunk.state, "error")
+        self.assertIn("must first read", edit_chunk.content[0].text)
+
+    async def test_cache_lru_eviction(self) -> None:
+        """Test LRU cache eviction when max_cache_files is exceeded."""
+        # Set a small cache limit
+        self.state.tool_context.max_cache_files = 3
+
+        # Create and read 4 files
+        files = []
+        for i in range(4):
+            file_path = os.path.join(self.temp_dir, f"file{i}.txt")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"Content {i}\n")
+            files.append(file_path)
+
+            # Read each file
+            await self.read_tool(
+                file_path=file_path,
+                _agent_state=self.state,
+            )
+
+        # Cache should only have 3 files (oldest evicted)
+        self.assertEqual(len(self.state.tool_context.read_file_cache), 3)
+
+        # The first file should have been evicted
+        cached_paths = [
+            entry.file_path
+            for entry in self.state.tool_context.read_file_cache
+        ]
+        self.assertNotIn(files[0], cached_paths)
+        self.assertIn(files[1], cached_paths)
+        self.assertIn(files[2], cached_paths)
+        self.assertIn(files[3], cached_paths)
+
+    async def test_oversized_file_is_not_cached(self) -> None:
+        """An oversized entry must not exceed the cache byte limit."""
+        context = ToolContext()
+        context.max_cache_bytes = 1.0
+
+        await context.cache_file(
+            file_path="small.txt",
+            lines=["a" * 512],
+            mtime=1.0,
+        )
+        await context.cache_file(
+            file_path="oversized.txt",
+            lines=["b" * 2048],
+            mtime=1.0,
+        )
+
+        self.assertEqual(
+            [entry.file_path for entry in context.read_file_cache],
+            ["small.txt"],
+        )
+        self.assertLessEqual(
+            sum(entry.bytes for entry in context.read_file_cache),
+            context.max_cache_bytes,
+        )
+
+    async def test_cache_hit_refreshes_lru_recency(self) -> None:
+        """Test cache hits keep recently used files from being evicted."""
+        self.state.tool_context.max_cache_files = 3
+
+        files = []
+        for i in range(4):
+            file_path = os.path.join(self.temp_dir, f"file{i}.txt")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"Content {i}\n")
+            files.append(file_path)
+
+        for file_path in files[:3]:
+            await self.read_tool(
+                file_path=file_path,
+                _agent_state=self.state,
+            )
+
+        cache = await self.state.tool_context.get_cache(files[0])
+        self.assertIsNotNone(cache)
+
+        await self.read_tool(
+            file_path=files[3],
+            _agent_state=self.state,
+        )
+
+        cached_paths = [
+            entry.file_path
+            for entry in self.state.tool_context.read_file_cache
+        ]
+
+        self.assertIn(files[0], cached_paths)
+        self.assertNotIn(files[1], cached_paths)
+        self.assertIn(files[2], cached_paths)
+        self.assertIn(files[3], cached_paths)
+
+    async def test_concurrent_cache_hits_preserve_lru_entries(self) -> None:
+        """Concurrent hits must not duplicate or evict cache entries."""
+        context = ToolContext(
+            read_file_cache=[
+                {
+                    "lines": ["a"],
+                    "updated_at": 1.0,
+                    "bytes": 1.0,
+                    "file_path": "a",
+                },
+                {
+                    "lines": ["b"],
+                    "updated_at": 1.0,
+                    "bytes": 1.0,
+                    "file_path": "b",
+                },
+            ],
+        )
+        both_started = asyncio.Event()
+        calls = 0
+
+        async def synchronized_getmtime(_: str) -> float:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                both_started.set()
+            await both_started.wait()
+            return 1.0
+
+        with patch(
+            "agentscope.state._state.aiofiles.os.path.getmtime",
+            side_effect=synchronized_getmtime,
+        ):
+            results = list(
+                await asyncio.gather(
+                    context.get_cache("a"),
+                    context.get_cache("a"),
+                ),
+            )
+
+        self.assertListEqual(
+            results,
+            [
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
+        )
+        self.assertListEqual(
+            context.read_file_cache,
+            [
+                ReadCacheEntry(
+                    lines=["b"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="b",
+                ),
+                ReadCacheEntry(
+                    lines=["a"],
+                    updated_at=1.0,
+                    bytes=1.0,
+                    file_path="a",
+                ),
+            ],
+        )
+
+    async def test_cache_without_state(self) -> None:
+        """Test tools work without state (fallback mode)."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Hello World\n")
+
+        # Edit without state should work (fallback to reading from disk)
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Hello",
+            new_string="Hi",
+            _agent_state=None,
+        )
+
+        self.assertEqual(edit_chunk.state, "running")
+
+        # Verify file was edited
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "Hi World\n")
+
+    async def test_multiple_reads_update_cache(self) -> None:
+        """Test reading same file multiple times updates cache."""
+        # Create a file
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Content v1\n")
+
+        # Read the file
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(len(self.state.tool_context.read_file_cache), 1)
+
+        # Read again - should update cache, not add duplicate
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(len(self.state.tool_context.read_file_cache), 1)
+
+    async def test_read_cache_lines_contain_newlines(self) -> None:
+        """Test that cached lines from Read retain trailing newlines.
+
+        readlines() includes the newline character in each line. The cache
+        must store them as-is so that "".join(lines) reconstructs the exact
+        original file content.
+        """
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("line1\nline2\nline3\n")
+
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        cache = await self.state.tool_context.get_cache(self.test_file)
+        self.assertIsNotNone(cache)
+        # Each line from readlines() ends with \n
+        self.assertEqual(cache.lines, ["line1\n", "line2\n", "line3\n"])
+        # "".join reconstructs the exact original content
+        self.assertEqual("".join(cache.lines), "line1\nline2\nline3\n")
+
+    async def test_edit_multiline_match_from_cache(self) -> None:
+        """Test Edit correctly matches multi-line old_string from
+        cached content.
+
+        Regression test for the bug where "\n".join(cache.lines) doubled the
+        newlines (e.g. "line1\n\nline2\n" instead of "line1\nline2\n"),
+        making multi-line old_string matching fail.
+        """
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("line1\nline2\nline3\n")
+
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # This multi-line old_string must match exactly in the reconstructed
+        # content; with the bug it would not be found.
+        chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="line1\nline2",
+            new_string="replaced",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "replaced\nline3\n")
+
+    async def test_edit_single_line_match_from_cache(self) -> None:
+        """Test Edit correctly matches single-line old_string from cache."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Hello World\nThis is a test\n")
+
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Hello World",
+            new_string="Hello Python",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "Hello Python\nThis is a test\n")
+
+    async def test_edit_then_edit_without_reread(self) -> None:
+        """Test consecutive Edits succeed after a single Read."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("alpha\nbeta\ngamma\n")
+
+        # Read to populate the cache
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(read_chunk.state, "running")
+
+        # First edit succeeds and refreshes the cache
+        first_edit = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="alpha",
+            new_string="ALPHA",
+            _agent_state=self.state,
+        )
+        self.assertEqual(first_edit.state, "running")
+
+        # Second edit passes the staleness gate without a fresh Read
+        second_edit = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="beta",
+            new_string="BETA",
+            _agent_state=self.state,
+        )
+        self.assertEqual(second_edit.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "ALPHA\nBETA\ngamma\n")
+
+    async def test_write_then_edit_without_reread(self) -> None:
+        """Test Write updates the cache so Edit can use it afterwards."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("original content\n")
+
+        # Read to populate cache
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # Overwrite with Write (mtime changes, cache is refreshed)
+        write_chunk = await self.write_tool(
+            file_path=self.test_file,
+            content="new content\n",
+            _agent_state=self.state,
+        )
+        self.assertEqual(write_chunk.state, "running")
+
+        # Edit should succeed against the written content
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="new content",
+            new_string="updated content",
+            _agent_state=self.state,
+        )
+        self.assertEqual(edit_chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "updated content\n")
+
+    async def test_write_cache_stale_then_reread(self) -> None:
+        """Test workflow: Read -> Write -> Read -> Edit works correctly."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("original\n")
+
+        # First read
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # Overwrite
+        import time
+
+        time.sleep(0.01)  # ensure mtime changes
+        await self.write_tool(
+            file_path=self.test_file,
+            content="rewritten\n",
+            _agent_state=self.state,
+        )
+
+        # Re-read to refresh cache
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # Now Edit should succeed against the new content
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="rewritten",
+            new_string="final",
+            _agent_state=self.state,
+        )
+        self.assertEqual(edit_chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "final\n")
+
+    async def test_non_utf8_read_cannot_back_edit_or_write(self) -> None:
+        """Test a lossy non-UTF-8 Read cannot back an Edit or Write."""
+        original = b"name = 'caf\xe9'\ncount = 1\n"
+        with open(self.test_file, "wb") as f:
+            f.write(original)
+
+        read_chunk = await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+        self.assertEqual(
+            read_chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "     1\tname = 'caf\ufffd'\n"
+                            "     2\tcount = 1\n\n"
+                            "Note: This file is not valid UTF-8. Invalid "
+                            "bytes are shown as U+FFFD, and the file cannot "
+                            "be modified with the Edit tool."
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+        self.assertEqual(self.state.tool_context.read_file_cache, [])
+
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="count = 1",
+            new_string="count = 2",
+            _agent_state=self.state,
+        )
+        self.assertEqual(
+            edit_chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Error: To edit a file, you must first read "
+                            "it using the Read tool."
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+
+        with open(self.test_file, "rb") as f:
+            self.assertEqual(f.read(), original)
+
+        write_chunk = await self.write_tool(
+            file_path=self.test_file,
+            content="replacement\n",
+            _agent_state=self.state,
+        )
+        self.assertEqual(
+            write_chunk.model_dump(
+                exclude={
+                    "id": True,
+                    "content": {"__all__": {"id", "created_at"}},
+                },
+            ),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Error: File {self.test_file} exists but has "
+                            "not been read yet. You must read the file "
+                            "first before writing to it."
+                        ),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+            },
+        )
+
+        with open(self.test_file, "rb") as f:
+            self.assertEqual(f.read(), original)

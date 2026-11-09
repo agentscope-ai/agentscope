@@ -1,0 +1,203 @@
+# -*- coding: utf-8 -*-
+"""The types for the tool module in AgentScope."""
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import (
+    Literal,
+    Type,
+    Any,
+    TypeAlias,
+    Coroutine,
+    AsyncGenerator,
+    Generator,
+    Awaitable,
+    Callable,
+)
+
+from pydantic import BaseModel
+
+from ._response import ToolChunk
+from ._base import ToolBase
+from ._utils import _remove_title_field
+
+
+@dataclass
+class RegisteredTool:
+    """The registered tool function class, used to store the tool function and
+    its registration information."""
+
+    tool: ToolBase
+    """The original tool function."""
+
+    # Execution related fields
+    extended_model: Type[BaseModel] | None = field(init=False, default=None)
+    """The base model used to extend the JSON schema of the original tool
+    function, so that we can dynamically adjust the tool function."""
+
+    # Tools management fields
+    group: str | Literal["basic"] = "basic"
+    """The belonging group of the tool function"""
+    original_name: str | None = field(default=None)
+    """The original name of the tool function when it has been renamed."""
+
+    def __post_init__(self) -> None:
+        """Validate the registered tool function after initialization."""
+        # validate schema
+        if self.tool.input_schema is not None:
+            if not (
+                isinstance(self.tool.input_schema, dict)
+                and self.tool.input_schema.get("type") == "object"
+                and isinstance(self.tool.input_schema.get("properties"), dict)
+            ):
+                raise ValueError(
+                    f"Invalid input_schema: {self.tool.input_schema}. ",
+                )
+
+    def get_tool_schema(
+        self,
+        extended_model: Type[BaseModel] | None = None,
+    ) -> dict:
+        """Get the JSON schema of the tool function via the following steps:
+
+        1. Remove preset_kwargs from the JSON schema, since they are not
+        exposed to the agent.
+        2. If extended_model is provided, merge its schema with the
+        current function schema.
+
+        Args:
+            extended_model (`Type[BaseModel] | None`, optional):
+                The dynamic BaseModel used to extend the original function. If
+                provided, the given BaseModel will be merged into the original
+                function schema instead of the extended_model field.
+
+        Returns:
+            `dict`: The JSON schema of the tool function.
+        """
+        input_schema = deepcopy(self.tool.input_schema)
+        _remove_title_field(input_schema)
+        function_schema: dict = {
+            "type": "function",
+            "function": {
+                "name": self.tool.name,
+                "description": self.tool.description,
+                "parameters": input_schema,
+            },
+        }
+
+        extended_model = extended_model or self.extended_model
+
+        if extended_model is None:
+            return function_schema
+
+        # Merge the extended model with the original JSON schema
+        extended_schema = extended_model.model_json_schema()
+
+        _remove_title_field(extended_schema)
+
+        # Merge properties from extended schema
+        for key, value in extended_schema["properties"].items():
+            if key in function_schema["function"]["parameters"]["properties"]:
+                raise ValueError(
+                    f"The field `{key}` already exists in the original "
+                    f"function schema of `{self.tool.name}`. Try to use a "
+                    "different name.",
+                )
+
+            function_schema["function"]["parameters"]["properties"][
+                key
+            ] = value
+
+            if key in extended_schema.get("required", []):
+                if "required" not in function_schema["function"]["parameters"]:
+                    function_schema["function"]["parameters"]["required"] = []
+                function_schema["function"]["parameters"]["required"].append(
+                    key,
+                )
+
+        # Merge $defs from extended schema to support nested models
+        if "$defs" in extended_schema:
+            merged_params = function_schema["function"]["parameters"]
+            if "$defs" not in merged_params:
+                merged_params["$defs"] = {}
+
+            # Check for conflicts and merge $defs
+            for def_key, def_value in extended_schema["$defs"].items():
+                def_value_copy = deepcopy(def_value)
+                _remove_title_field(
+                    def_value_copy,
+                )  # pylint: disable=protected-access
+
+                if def_key in merged_params["$defs"]:
+                    # Check if the two definitions are from the same BaseModel
+                    # by comparing their content
+                    # Create copies and remove title fields for comparison
+
+                    existing_def_copy = deepcopy(
+                        merged_params["$defs"][def_key],
+                    )
+                    _remove_title_field(existing_def_copy)
+
+                    if existing_def_copy != def_value_copy:
+                        # The definitions are different, raise an error
+                        raise ValueError(
+                            f"The $defs key `{def_key}` conflicts with "
+                            f"existing definition in function schema of "
+                            f"`{self.tool.name}`.",
+                        )
+                    # The definitions are the same (from the same BaseModel),
+                    # skip merging this key
+                    continue
+
+                merged_params["$defs"][def_key] = def_value_copy
+
+        return function_schema
+
+
+# The function types that can be registered as tools in AgentScope.
+Function: TypeAlias = (
+    # Sync function
+    Callable[..., ToolChunk]
+    |
+    # Async function
+    Callable[..., Awaitable[ToolChunk]]
+    |
+    # Sync generator function
+    Callable[..., Generator[ToolChunk, None, None]]
+    |
+    # Async generator function
+    Callable[..., AsyncGenerator[ToolChunk, None]]
+    |
+    # Async function that returns async generator
+    Callable[..., Coroutine[Any, Any, AsyncGenerator[ToolChunk, None]]]
+    |
+    # Async function that returns sync generator
+    Callable[..., Coroutine[Any, Any, Generator[ToolChunk, None, None]]]
+)
+
+
+class ToolChoice(BaseModel):
+    """The tool choice configuration.
+
+    Attributes:
+        mode: The tool choice mode. Supports:
+
+            * ``"auto"`` – the model decides whether to call a tool.
+            * ``"none"`` – the model must not call any tool.
+            * ``"required"`` – the model must call at least one tool.
+            * ``str`` (a tool name) – the model **must** call exactly that
+              tool (forced single-tool call).  The name is validated against
+              ``tools`` (if provided) or against the full tools list passed to
+              the model.
+
+        tools: An optional list of tool names. When specified, the tool
+            schemas forwarded to the model are filtered to only those tools.
+            This also acts as a validation whitelist for ``mode`` when it
+            is a specific tool name (str): the name must appear in this
+            list.  Prefer using ``mode=<tool_name>`` (str) over
+            ``tools=["<tool_name>"]`` when the goal is a forced single-tool
+            call without changing the available tool set, as the former
+            avoids schema-list changes that would invalidate prompt caches.
+    """
+
+    mode: Literal["auto", "none", "required"] | str
+    tools: list[str] | None = None

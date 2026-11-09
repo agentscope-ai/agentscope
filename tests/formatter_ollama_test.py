@@ -1,0 +1,1002 @@
+# -*- coding: utf-8 -*-
+"""Comprehensive formatter unit tests for OllamaChatFormatter and
+OllamaMultiAgentFormatter, with exact ground-truth comparisons.
+"""
+import base64
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import IsolatedAsyncioTestCase
+
+from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
+from agentscope.message import (
+    Msg,
+    UserMsg,
+    AssistantMsg,
+    SystemMsg,
+    TextBlock,
+    DataBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    Base64Source,
+    URLSource,
+    ThinkingBlock,
+    HintBlock,
+)
+
+
+_FIXED_ID = "TESTID1234567"
+
+
+class TestOllamaFormatter(IsolatedAsyncioTestCase):
+    """Comprehensive tests for Ollama Chat and MultiAgent formatters."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up shared fixtures and ground-truth dicts."""
+        _hist_prompt = OllamaMultiAgentFormatter().conversation_history_prompt
+
+        # Base64 image fixture
+        self.image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+
+        self.msgs_system = [
+            SystemMsg(
+                name="system",
+                content="You're a helpful assistant.",
+            ),
+        ]
+        self.msgs_conversation = [
+            UserMsg(
+                name="user",
+                content="What is the capital of France?",
+            ),
+            AssistantMsg(
+                name="assistant",
+                content="The capital of France is Paris.",
+            ),
+            UserMsg(
+                name="user",
+                content="What is the capital of Germany?",
+            ),
+            AssistantMsg(
+                name="assistant",
+                content="The capital of Germany is Berlin.",
+            ),
+            UserMsg(
+                name="user",
+                content="What is the capital of Japan?",
+            ),
+        ]
+        self.msgs_tools = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_capital",
+                        input='{"country": "Japan"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="get_capital",
+                        output=[
+                            TextBlock(text="The capital of Japan is Tokyo."),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The capital of Japan is Tokyo."),
+                ],
+            ),
+        ]
+
+        # --- Chat formatter ground truth ---
+        # Ollama content is always a plain string.
+        # Tool calls use dict arguments (not JSON string).
+        self.gt_chat = [
+            {"role": "system", "content": "You're a helpful assistant."},
+            {"role": "user", "content": "What is the capital of France?"},
+            {
+                "role": "assistant",
+                "content": "The capital of France is Paris.",
+            },
+            {"role": "user", "content": "What is the capital of Germany?"},
+            {
+                "role": "assistant",
+                "content": "The capital of Germany is Berlin.",
+            },
+            {"role": "user", "content": "What is the capital of Japan?"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": {"country": "Japan"},
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_name": "get_capital",
+                "content": "The capital of Japan is Tokyo.",
+            },
+            {"role": "assistant", "content": "The capital of Japan is Tokyo."},
+        ]
+
+        # --- MultiAgent formatter ground truth ---
+        # System content is a plain string.
+        # History is a plain string with format "name:\ntext" per message.
+        # For is_first=False, there are NO <history> tags (only in
+        # is_first=True).
+        _conv_text = (
+            "user:\nWhat is the capital of France?\n"
+            "assistant:\nThe capital of France is Paris.\n"
+            "user:\nWhat is the capital of Germany?\n"
+            "assistant:\nThe capital of Germany is Berlin.\n"
+            "user:\nWhat is the capital of Japan?"
+        )
+        self._gt_trailing_asst = {
+            "role": "assistant",
+            "content": "The capital of Japan is Tokyo.",
+        }
+        self._gt_tool_call = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "get_capital",
+                        "arguments": {"country": "Japan"},
+                    },
+                },
+            ],
+        }
+        self._gt_tool_result = {
+            "role": "tool",
+            "tool_name": "get_capital",
+            "content": "The capital of Japan is Tokyo.",
+        }
+
+        self.gt_multiagent = [
+            {"role": "system", "content": "You're a helpful assistant."},
+            {
+                "role": "user",
+                "content": (
+                    _hist_prompt + "<history>\n" + _conv_text + "\n</history>"
+                ),
+            },
+            self._gt_tool_call,
+            self._gt_tool_result,
+            self._gt_trailing_asst,
+        ]
+
+    # ------------------------------------------------------------------
+    # OllamaChatFormatter tests
+    # ------------------------------------------------------------------
+
+    async def test_chat_formatter(self) -> None:
+        """Chat formatter produces exact output for various subsets."""
+        fmt = OllamaChatFormatter()
+
+        # Full history
+        res = await fmt.format(
+            [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
+        )
+        self.assertListEqual(self.gt_chat, res)
+
+        # Without system
+        res = await fmt.format([*self.msgs_conversation, *self.msgs_tools])
+        self.assertListEqual(self.gt_chat[1:], res)
+
+        # Without conversation
+        n_tools_gt = len(self.gt_chat) - 1 - len(self.msgs_conversation)
+        res = await fmt.format([*self.msgs_system, *self.msgs_tools])
+        self.assertListEqual(
+            [self.gt_chat[0]] + self.gt_chat[-n_tools_gt:],
+            res,
+        )
+
+        # Without tools
+        res = await fmt.format([*self.msgs_system, *self.msgs_conversation])
+        self.assertListEqual(self.gt_chat[:-n_tools_gt], res)
+
+        # Empty
+        self.assertListEqual([], await fmt.format([]))
+
+    async def test_chat_formatter_tool_call_arguments_are_dict(self) -> None:
+        """Ollama requires tool call arguments as a dict, not a JSON string."""
+        fmt = OllamaChatFormatter()
+        tc = ToolCallBlock(id="c1", name="search", input='{"q": "weather"}')
+        res = await fmt.format(
+            [AssistantMsg(name="assistant", content=[tc])],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "search",
+                                "arguments": {"q": "weather"},
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_image_before_tool_call_kept(self) -> None:
+        """Images accumulated before a tool call stay on the same message."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me look."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                    ToolCallBlock(
+                        id="c1",
+                        name="search",
+                        input='{"q": "weather"}',
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Let me look.",
+                    "images": [self.image_b64],
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "search",
+                                "arguments": {"q": "weather"},
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_base64_image(self) -> None:
+        """Base64 image is placed in the 'images' list as a raw base64
+        string."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="What is this?"),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
+
+    async def test_formatters_read_percent_encoded_file_urls(self) -> None:
+        """Local file URLs are decoded before their paths are opened."""
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "image #1.png"
+            image_path.write_bytes(base64.b64decode(self.image_b64))
+            msgs = [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        DataBlock(
+                            source=URLSource(
+                                url=image_path.as_uri(),
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            ]
+
+            chat_result = await OllamaChatFormatter().format(msgs)
+            multiagent_result = await OllamaMultiAgentFormatter().format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [self.image_b64],
+                },
+            ],
+            chat_result,
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\nWhat is this?\n</history>"
+                    ),
+                    "images": [self.image_b64],
+                },
+            ],
+            multiagent_result,
+        )
+
+    async def test_formatters_preserve_local_file_uri_characters(self) -> None:
+        """Decode Unicode and literal percent escapes once, preserving '+'."""
+        with TemporaryDirectory() as directory:
+            for filename in ("caf\u00e9.png", "image%20.png", "image+1.png"):
+                path = Path(directory) / filename
+                path.write_bytes(base64.b64decode(self.image_b64))
+                # URI paths allow a literal '+'; form decoding would lose it.
+                url = path.as_uri().replace("%2B", "+")
+                source = URLSource(url=url, media_type="image/png")
+                self.assertEqual(str(source.url), url)
+                msgs = [
+                    UserMsg(
+                        name="user",
+                        content=[DataBlock(source=source)],
+                    ),
+                ]
+                for formatter, expected_content in (
+                    (OllamaChatFormatter(), ""),
+                    (
+                        OllamaMultiAgentFormatter(),
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\n</history>",
+                    ),
+                ):
+                    with self.subTest(
+                        filename=filename,
+                        formatter=type(formatter).__name__,
+                    ):
+                        result = await formatter.format(msgs)
+                        self.assertEqual(
+                            result,
+                            [
+                                {
+                                    "role": "user",
+                                    "content": expected_content,
+                                    "images": [self.image_b64],
+                                },
+                            ],
+                        )
+
+    async def test_chat_formatter_base64_image_in_tool_result(
+        self,
+    ) -> None:
+        """Base64 images in tool results are promoted to a follow-up user
+        message with images list."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_img",
+                        name="get_map",
+                        input='{"city": "Tokyo"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_img",
+                        name="get_map",
+                        output=[
+                            TextBlock(text="Here is the map."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Here is the map of Tokyo."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+
+        expected_tool_content = (
+            "Here is the map.\n"
+            f"<system-reminder>A(n) image file is returned "
+            f"and will be presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_map",
+                                "arguments": {"city": "Tokyo"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_map",
+                    "content": expected_tool_content,
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "<system-reminder>The multimodal data "
+                        "and their identifiers are listed as follows:\n"
+                        f"- {_FIXED_ID} (image file): \n"
+                        "</system-reminder>"
+                    ),
+                    "images": [self.image_b64],
+                },
+                {
+                    "role": "assistant",
+                    "content": "Here is the map of Tokyo.",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "screenshot", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "get_title", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "screenshot",
+                    "content": (
+                        "Screenshot taken.\n"
+                        "<system-reminder>A(n) image file is returned and "
+                        "will be presented to you with the identifier "
+                        f"[{_FIXED_ID}].</system-reminder>"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_title",
+                    "content": "Example Domain",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "<system-reminder>The multimodal data "
+                        "and their identifiers are listed as follows:\n"
+                        f"- {_FIXED_ID} (image file): \n"
+                        "</system-reminder>"
+                    ),
+                    "images": [self.image_b64],
+                },
+                {
+                    "role": "assistant",
+                    "content": "The page is Example Domain.",
+                },
+            ],
+            res,
+        )
+
+    # ------------------------------------------------------------------
+    # OllamaMultiAgentFormatter tests
+    # ------------------------------------------------------------------
+
+    async def test_multiagent_formatter(self) -> None:
+        """MultiAgent formatter produces exact output for various subsets."""
+        fmt = OllamaMultiAgentFormatter()
+
+        # Full
+        res = await fmt.format(
+            [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
+        )
+        self.assertListEqual(self.gt_multiagent, res)
+
+        # Without system
+        res = await fmt.format([*self.msgs_conversation, *self.msgs_tools])
+        self.assertListEqual(self.gt_multiagent[1:], res)
+
+        # Without tools
+        res = await fmt.format([*self.msgs_system, *self.msgs_conversation])
+        self.assertListEqual(self.gt_multiagent[:2], res)
+
+        # System only
+        res = await fmt.format(self.msgs_system)
+        self.assertListEqual([self.gt_multiagent[0]], res)
+
+        # Conversation only
+        res = await fmt.format(self.msgs_conversation)
+        self.assertListEqual([self.gt_multiagent[1]], res)
+
+        # Tools only
+        res = await fmt.format(self.msgs_tools)
+        self.assertListEqual(
+            [
+                self._gt_tool_call,
+                self._gt_tool_result,
+                self._gt_trailing_asst,
+            ],
+            res,
+        )
+
+        # System + tools
+        res = await fmt.format([*self.msgs_system, *self.msgs_tools])
+        self.assertListEqual(
+            [
+                self.gt_multiagent[0],
+                self._gt_tool_call,
+                self._gt_tool_result,
+                self._gt_trailing_asst,
+            ],
+            res,
+        )
+
+        # Empty
+        self.assertListEqual([], await fmt.format([]))
+
+    async def test_multiagent_formatter_image_only_message_kept(self) -> None:
+        """An agent message carrying only an image (no text) is preserved.
+
+        Regression test: the image-only turn used to be dropped because the
+        guard only considered text blocks.
+        """
+        fmt = OllamaMultiAgentFormatter()
+        msgs = [
+            Msg(
+                name="",
+                role="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_image_history_prompt(self) -> None:
+        """Emit the history prompt once, on the first textual history."""
+        fmt = OllamaMultiAgentFormatter(
+            conversation_history_prompt="Custom history instructions\n",
+        )
+        hint = AssistantMsg(
+            name="assistant",
+            content=[HintBlock(hint="Continue")],
+        )
+        hint_output = [{"role": "user", "content": "Continue"}]
+        tool = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="c1", name="inspect", input="{}"),
+                ToolResultBlock(
+                    id="c1",
+                    name="inspect",
+                    output="Done",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        tool_output: list[dict] = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "inspect", "arguments": {}}},
+                ],
+            },
+            {"role": "tool", "tool_name": "inspect", "content": "Done"},
+        ]
+        separators: list[tuple[Msg, list[dict]]] = [
+            (hint, hint_output),
+            (tool, tool_output),
+        ]
+        for name in ("", "viewer"):
+            for separator, expected_separator in separators:
+                with self.subTest(name=name, separator=separator.content):
+                    msgs = [
+                        UserMsg(
+                            name=name,
+                            content=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data=self.image_b64,
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        separator,
+                        UserMsg(name="user", content="Describe the image"),
+                        hint,
+                        UserMsg(name="user", content="More details"),
+                    ]
+                    first_content = (
+                        f"{fmt.conversation_history_prompt}"
+                        f"<history>\n{name}:\n</history>"
+                        if name
+                        else ""
+                    )
+                    later_prompt = (
+                        "" if name else fmt.conversation_history_prompt
+                    )
+                    self.assertListEqual(
+                        [
+                            {
+                                "role": "user",
+                                "content": first_content,
+                                "images": [self.image_b64],
+                            },
+                            *expected_separator,
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{later_prompt}<history>\n"
+                                    "user:\nDescribe the image\n</history>"
+                                ),
+                            },
+                            *hint_output,
+                            {
+                                "role": "user",
+                                "content": (
+                                    "<history>\nuser:\n"
+                                    "More details\n</history>"
+                                ),
+                            },
+                        ],
+                        await fmt.format(msgs),
+                    )
+
+    async def test_chat_formatter_complex_multi_step(self) -> None:
+        """Complex multi-step sequence with interleaved thinking, text,
+        tool calls, and tool results."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking="thinking_1"),
+                    TextBlock(text="text_1"),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="func_1",
+                        input='{"arg": "value1"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_2",
+                        name="func_2",
+                        input='{"arg": "value2"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="func_1",
+                        output=[TextBlock(text="result_1")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_2",
+                        name="func_2",
+                        output=[TextBlock(text="result_2")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_2"),
+                    TextBlock(text="text_2"),
+                    ToolCallBlock(
+                        id="call_3",
+                        name="func_3",
+                        input='{"arg": "value3"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_3",
+                        name="func_3",
+                        output=[TextBlock(text="result_3")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolCallBlock(
+                        id="call_4",
+                        name="func_4",
+                        input='{"arg": "value4"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_4",
+                        name="func_4",
+                        output=[TextBlock(text="result_4")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_3"),
+                    TextBlock(text="text_3"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "text_1",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "func_1",
+                                "arguments": {"arg": "value1"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "func_2",
+                                "arguments": {"arg": "value2"},
+                            },
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_name": "func_1", "content": "result_1"},
+                {"role": "tool", "tool_name": "func_2", "content": "result_2"},
+                {
+                    "role": "assistant",
+                    "content": "text_2",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "func_3",
+                                "arguments": {"arg": "value3"},
+                            },
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_name": "func_3", "content": "result_3"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "func_4",
+                                "arguments": {"arg": "value4"},
+                            },
+                        },
+                    ],
+                },
+                {"role": "tool", "tool_name": "func_4", "content": "result_4"},
+                {"role": "assistant", "content": "text_3"},
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block(self) -> None:
+        """HintBlock flushes preceding content and becomes a user message."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me think about that."),
+                    HintBlock(hint="Remember to be concise."),
+                    TextBlock(text="Here is my answer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Let me think about that.",
+                },
+                {
+                    "role": "user",
+                    "content": "Remember to be concise.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Here is my answer.",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block_multimodal(self) -> None:
+        """Multimodal HintBlock becomes one user message with text + images
+        list."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="Inspect this screenshot:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "Inspect this screenshot:",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
+
+    async def test_tool_call_with_incomplete_input_does_not_crash(
+        self,
+    ) -> None:
+        """A truncated ``block.input`` must not crash the formatter.
+
+        Context compression or interrupted streaming can leave a
+        ``ToolCallBlock.input`` as an incomplete JSON fragment. Ollama
+        expects ``arguments`` as a dict, so the formatter must repair the
+        fragment instead of raising ``JSONDecodeError``.
+        """
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tok',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        args = res[0]["tool_calls"][0]["function"]["arguments"]
+        self.assertIsInstance(args, dict)
+
+    async def test_tool_result_message_carries_tool_name(self) -> None:
+        """``role: tool`` messages must carry ``tool_name`` per Ollama spec.
+
+        Ollama's tool-calling API correlates a tool result with its function
+        via the ``tool_name`` field (not OpenAI's ``tool_call_id``). Emitting
+        a ``tool`` message without it breaks multi-turn tool use.  See
+        https://docs.ollama.com/capabilities/tool-calling.
+        """
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_capital",
+                        input='{"country": "Japan"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="get_capital",
+                        output=[TextBlock(text="Tokyo")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        tool_messages = [m for m in res if m.get("role") == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0]["tool_name"], "get_capital")
+        # The OpenAI-style tool_call_id must NOT be emitted for Ollama.
+        self.assertNotIn("tool_call_id", tool_messages[0])

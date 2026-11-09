@@ -1,0 +1,412 @@
+# -*- coding: utf-8 -*-
+"""The MCP client test module in agentscope."""
+import asyncio
+import json
+from multiprocessing import Process
+from unittest.async_case import IsolatedAsyncioTestCase
+
+from mcp.server import MCPServer
+from mcp.types import ToolAnnotations
+from pydantic import BaseModel
+
+from agentscope.mcp import MCPClient, HttpMCPConfig
+from agentscope.message import ToolCallBlock
+from agentscope.tool import ToolResponse, ToolChunk, Toolkit
+from agentscope.state import AgentState
+
+
+async def tool_1(arg1: str, arg2: list[int]) -> str:
+    """A test tool function.
+
+    Args:
+        arg1 (`str`):
+            The first argument named arg1.
+        arg2 (`list[int]`):
+            The second argument named arg2.
+    """
+    return f"arg1: {arg1}, arg2: {arg2}"
+
+
+def setup_server() -> None:
+    """Set up the streamable HTTP MCP server."""
+    sse_server = MCPServer("SSE")
+    sse_server.tool(
+        description="A test tool function.",
+        annotations=ToolAnnotations(read_only_hint=True),
+    )(tool_1)
+    sse_server.run(transport="sse", port=8003)
+
+
+# ---------------------------------------------------------------------------
+# Server / tool definitions for $defs preservation test
+# ---------------------------------------------------------------------------
+
+
+class _ItemConfig(BaseModel):
+    """Config sub-model to generate $defs in the MCP inputSchema."""
+
+    key: str
+    count: int
+
+
+async def tool_with_model(name: str, config: _ItemConfig) -> str:
+    """A tool whose parameter uses a Pydantic sub-model.
+
+    Args:
+        name: Item name.
+        config: Item configuration.
+    """
+    return f"name={name}, key={config.key}, count={config.count}"
+
+
+def setup_defs_server() -> None:
+    """Set up an SSE MCP server that exposes a tool with Pydantic
+    sub-models."""
+    server = MCPServer("DefsSSE")
+    server.tool()(tool_with_model)
+    server.run(transport="sse", port=8005)
+
+
+class SseMCPClientTest(IsolatedAsyncioTestCase):
+    """Test class for MCP server functionality."""
+
+    async def asyncTearDown(self) -> None:
+        """Tear down the test environment."""
+        del self.toolkit
+
+        while self.process.is_alive():
+            self.process.terminate()
+            await asyncio.sleep(5)
+
+    async def asyncSetUp(self) -> None:
+        """Set up the test environment."""
+        self.port = 8003
+        self.process = Process(target=setup_server)
+        self.process.start()
+        await asyncio.sleep(10)
+
+        self.toolkit = Toolkit()
+        self.schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp__test_sse_client__tool_1",
+                    "description": "A test tool function.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "arg1": {
+                                "type": "string",
+                            },
+                            "arg2": {
+                                "items": {
+                                    "type": "integer",
+                                },
+                                "type": "array",
+                            },
+                        },
+                        "required": [
+                            "arg1",
+                            "arg2",
+                        ],
+                    },
+                },
+            },
+        ]
+
+    async def test_stateless_client(self) -> None:
+        """Test the stateless sse MCP client."""
+        # Create stateless client (is_stateful=False)
+        stateless_client = MCPClient(
+            name="test_sse_client",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
+        )
+
+        mcp_tool_1 = await stateless_client.get_tool("tool_1")
+        self.assertTrue(mcp_tool_1.is_read_only)
+        # Repeat to ensure idempotency
+        res_1 = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
+        res_2 = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
+        res_3 = await mcp_tool_1(arg1="345", arg2=[4, 5, 6])
+
+        self.assertEqual(
+            res_1.content[0].text,
+            "arg1: 123, arg2: [1, 2, 3]",
+        )
+        self.assertEqual(
+            res_2.content[0].text,
+            "arg1: 345, arg2: [4, 5, 6]",
+        )
+        self.assertEqual(
+            res_3.content[0].text,
+            "arg1: 345, arg2: [4, 5, 6]",
+        )
+
+        # Register MCPTool via Toolkit constructor
+        toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
+
+        schemas = await toolkit_with_mcp.get_tool_schemas()
+
+        self.assertListEqual(
+            schemas,
+            self.schemas,
+        )
+
+        state = AgentState()
+        res_gen = toolkit_with_mcp.call_tool(
+            ToolCallBlock(
+                id="xx",
+                type="tool_call",
+                name="mcp__test_sse_client__tool_1",
+                input=json.dumps(
+                    {
+                        "arg1": "789",
+                        "arg2": [7, 8, 9],
+                    },
+                ),
+            ),
+            state=state,
+        )
+
+        final_response = None
+        async for chunk in res_gen:
+            if isinstance(chunk, ToolResponse):
+                final_response = chunk
+            else:
+                self.assertIsInstance(chunk, ToolChunk)
+
+        self.assertIsNotNone(final_response)
+        self.assertEqual(
+            final_response.content[0].text,
+            "arg1: 789, arg2: [7, 8, 9]",
+        )
+
+        self.toolkit.clear()
+        self.assertListEqual(self.toolkit.tool_groups, [])
+
+        # Try to add the mcp client
+        self.toolkit = Toolkit(mcps=[stateless_client])
+        self.assertListEqual(
+            await self.toolkit.get_tool_schemas(),
+            self.schemas,
+        )
+
+        self.toolkit.clear()
+
+    async def test_stateful_client(self) -> None:
+        """Test the stateful sse MCP client."""
+
+        # Test stateful client (is_stateful=True)
+        stateful_client = MCPClient(
+            name="test_sse_client",
+            is_stateful=True,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
+        )
+
+        self.assertFalse(stateful_client.is_connected)
+        await stateful_client.connect()
+
+        self.assertTrue(stateful_client.is_connected)
+
+        mcp_tool_1 = await stateful_client.get_tool("tool_1")
+        # Repeat to ensure idempotency
+        res_1 = await mcp_tool_1(arg1="12", arg2=[1, 2])
+        res_2 = await mcp_tool_1(arg1="34", arg2=[4, 5])
+        res_3 = await mcp_tool_1(arg1="34", arg2=[4, 5])
+
+        self.assertEqual(
+            res_1.content[0].text,
+            "arg1: 12, arg2: [1, 2]",
+        )
+        self.assertEqual(
+            res_2.content[0].text,
+            "arg1: 34, arg2: [4, 5]",
+        )
+        self.assertEqual(
+            res_3.content[0].text,
+            "arg1: 34, arg2: [4, 5]",
+        )
+
+        # with toolkit - Register MCPTool via Toolkit constructor
+        toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
+
+        self.assertListEqual(
+            await toolkit_with_mcp.get_tool_schemas(),
+            self.schemas,
+        )
+
+        state = AgentState()
+        res_gen = toolkit_with_mcp.call_tool(
+            ToolCallBlock(
+                id="xx",
+                type="tool_call",
+                name="mcp__test_sse_client__tool_1",
+                input=json.dumps(
+                    {
+                        "arg1": "56",
+                        "arg2": [5, 6],
+                    },
+                ),
+            ),
+            state=state,
+        )
+
+        final_response = None
+        async for chunk in res_gen:
+            if isinstance(chunk, ToolResponse):
+                final_response = chunk
+            else:
+                self.assertIsInstance(chunk, ToolChunk)
+
+        self.assertIsNotNone(final_response)
+        self.assertEqual(
+            final_response.content[0].text,
+            "arg1: 56, arg2: [5, 6]",
+        )
+
+        # mcp client level test
+        self.toolkit.clear()
+        self.assertListEqual(self.toolkit.tool_groups, [])
+
+        self.toolkit = Toolkit(mcps=[stateful_client])
+        self.assertListEqual(
+            await self.toolkit.get_tool_schemas(),
+            self.schemas,
+        )
+
+        await stateful_client.close()
+        self.assertFalse(stateful_client.is_connected)
+
+    async def test_stateless_client_with_query_string_in_url(self) -> None:
+        """An SSE URL carrying a query string must still be detected as SSE.
+
+        Regression test: ``_create_http_client`` used to detect the transport
+        with ``url.endswith('/sse')``, which fails for URLs that carry a query
+        string such as ``http://host:port/sse?key=API_KEY`` (a very common
+        shape for key-based SSE MCP servers, e.g. the Amap MCP at
+        https://mcp.amap.com/sse?key=API_KEY). Such URLs were misdetected as
+        streamable HTTP, and the client then failed to handshake against the
+        SSE server with ``MCPError: Session terminated``.
+
+        After the fix, only the URL path is inspected, so the query string no
+        longer affects transport detection.
+        """
+        client = MCPClient(
+            name="test_sse_query_client",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse?key=API_KEY",
+            ),
+        )
+
+        mcp_tool_1 = await client.get_tool("tool_1")
+        res = await mcp_tool_1(arg1="123", arg2=[1, 2, 3])
+        self.assertEqual(
+            res.content[0].text,
+            "arg1: 123, arg2: [1, 2, 3]",
+        )
+
+
+class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
+    """End-to-end tests for $defs preservation in MCP tool schemas.
+
+    These tests start a real MCPServer that exposes a tool whose parameter is
+    a Pydantic sub-model. MCPServer generates an inputSchema with
+    ``$defs`` for the sub-model.  We verify that the schema returned by
+    ``await toolkit.get_tool_schemas()`` preserves those ``$defs`` and that
+    Pydantic-generated ``title`` fields inside ``$defs`` are stripped.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Start the $defs test server."""
+        self.port = 8005
+        self.process = Process(target=setup_defs_server)
+        self.process.start()
+        await asyncio.sleep(10)
+
+        self.schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp__test_defs_client__tool_with_model",
+                    # MCPServer forwards the tool's ``__doc__`` verbatim;
+                    # deriving the expectation from it keeps the test
+                    # correct under Python 3.13+, where the compiler
+                    # strips common leading whitespace from docstrings.
+                    "description": tool_with_model.__doc__,
+                    "parameters": {
+                        "$defs": {
+                            "_ItemConfig": {
+                                "description": "Config sub-model to "
+                                "generate $defs in the "
+                                "MCP inputSchema.",
+                                "properties": {
+                                    "key": {"type": "string"},
+                                    "count": {"type": "integer"},
+                                },
+                                "required": ["key", "count"],
+                                "type": "object",
+                            },
+                        },
+                        "properties": {
+                            "name": {"type": "string"},
+                            "config": {"$ref": "#/$defs/_ItemConfig"},
+                        },
+                        "required": ["name", "config"],
+                        "type": "object",
+                    },
+                },
+            },
+        ]
+
+    async def asyncTearDown(self) -> None:
+        """Stop the $defs test server."""
+        while self.process.is_alive():
+            self.process.terminate()
+            await asyncio.sleep(5)
+
+    async def test_defs_preserved_and_titles_stripped(self) -> None:
+        """$defs from Pydantic sub-model parameters must survive the full
+        pipeline.
+
+        Failure scenario (before fix):
+            MCPTool.__init__ only copied ``properties`` and ``required``,
+            so ``$defs._ItemConfig`` was silently dropped.  The LLM would
+            receive a schema where ``config`` had an unresolvable
+            ``$ref: "#/$defs/_ItemConfig"``.
+
+        Expected behaviour (after fix):
+            - ``MCPTool.input_schema`` contains ``$defs._ItemConfig``
+            - ``await toolkit.get_tool_schemas()`` output contains ``$defs``
+              with the ref resolved and Pydantic titles stripped.
+        """
+        client = MCPClient(
+            name="test_defs_client",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
+        )
+
+        mcp_tool = await client.get_tool("tool_with_model")
+
+        # 1. input_schema must preserve $defs
+        self.assertIn(
+            "$defs",
+            mcp_tool.input_schema,
+            "MCPTool.input_schema must preserve $defs from inputSchema",
+        )
+
+        # 2. get_tool_schemas() must preserve $defs and strip titles
+        toolkit = Toolkit(tools=[mcp_tool])
+        schemas = await toolkit.get_tool_schemas()
+        self.assertListEqual(schemas, self.schemas)

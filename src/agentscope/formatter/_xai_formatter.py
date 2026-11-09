@@ -1,0 +1,517 @@
+# -*- coding: utf-8 -*-
+"""The xAI formatter module.
+
+This formatter converts AgentScope ``Msg`` objects into the protobuf
+``Message`` objects expected by the ``xai_sdk`` gRPC client.  Unlike every
+other formatter, the ``format()`` method returns a list of
+``chat_pb2.Message`` proto objects rather than plain dicts, because the
+``xai_sdk`` chat API accepts proto messages directly.
+"""
+import base64
+from fnmatch import fnmatch
+from typing import Any, List
+from urllib.request import url2pathname
+
+from pydantic import Field
+
+from ._formatter_base import FormatterBase
+from .._logging import logger
+from ..message import (
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    DataBlock,
+    URLSource,
+    Base64Source,
+    HintBlock,
+)
+
+
+def _xai_user_args_from_blocks(
+    blocks: list,
+    image: Any,
+    supported_media_types: list[str],
+) -> list:
+    """Convert a list of ``TextBlock | DataBlock`` into the positional
+    args expected by ``xai_sdk.chat.user(*args)``.
+
+    DataBlocks that are not images (or use an unsupported media type) are
+    dropped with a warning, matching the user-role DataBlock handling in
+    :meth:`XAIChatFormatter.format`. Image extras are forwarded to
+    ``xai_sdk.chat.image`` as keyword arguments.
+
+    Args:
+        blocks (`list`):
+            The ``TextBlock`` / ``DataBlock`` list to convert.
+        image (`Any`):
+            The ``xai_sdk.chat.image`` constructor, passed in to keep
+            the local import contract identical to ``format``.
+        supported_media_types (`list[str]`):
+            Glob-style media-type patterns accepted by the formatter.
+
+    Returns:
+        `list`:
+            Positional args for ``user(*args)``; empty if nothing
+            survived.
+    """
+    args: list = []
+    for sub in blocks:
+        if isinstance(sub, TextBlock):
+            args.append(sub.text)
+        elif isinstance(sub, DataBlock):
+            if not sub.source.media_type.startswith("image/") or not any(
+                fnmatch(sub.source.media_type, pattern)
+                for pattern in supported_media_types
+            ):
+                logger.warning(
+                    "Unsupported media type %s for xAI API. "
+                    "Supported media types are: %s. "
+                    "This block will be skipped.",
+                    sub.source.media_type,
+                    ", ".join(supported_media_types),
+                )
+                continue
+            if isinstance(sub.source, URLSource):
+                url_str = str(sub.source.url)
+                if url_str.startswith("file://"):
+                    local_path = url2pathname(url_str.removeprefix("file://"))
+                    with open(local_path, "rb") as f:
+                        encoded = base64.b64encode(f.read()).decode(
+                            "utf-8",
+                        )
+                    args.append(
+                        image(
+                            f"data:{sub.source.media_type};"
+                            f"base64,{encoded}",
+                            **(sub.model_extra or {}),
+                        ),
+                    )
+                else:
+                    args.append(
+                        image(url_str, **(sub.model_extra or {})),
+                    )
+            elif isinstance(sub.source, Base64Source):
+                args.append(
+                    image(
+                        f"data:{sub.source.media_type};"
+                        f"base64,{sub.source.data}",
+                        **(sub.model_extra or {}),
+                    ),
+                )
+    return args
+
+
+class XAIChatFormatter(FormatterBase):
+    """Formatter for the xAI chat model.
+
+    Converts ``Msg`` objects into ``xai_sdk`` protobuf ``Message`` objects
+    that can be appended directly to a ``xai_sdk`` chat session. Image
+    ``DataBlock`` extras are passed as keyword arguments to
+    ``xai_sdk.chat.image`` (for example ``detail``).
+
+    Unlike other formatters whose ``format()`` returns ``list[dict]``, this
+    formatter returns ``list[chat_pb2.Message]``.  The type annotation is
+    intentionally widened to ``list[Any]`` to accommodate this difference.
+    """
+
+    input_types: list[str] = Field(
+        default=["text/plain", "image/jpeg", "image/png"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/jpeg", "image/png"]``.'
+        ),
+    )
+
+    # pylint: disable=too-many-statements, too-many-branches
+    async def format(
+        self,
+        msgs: list[Msg],
+        **kwargs: Any,
+    ) -> List[Any]:
+        """Convert a list of ``Msg`` objects to ``xai_sdk`` proto messages.
+
+        Args:
+            msgs (`list[Msg]`):
+                A list of ``Msg`` objects representing the conversation.
+            **kwargs (`Any`):
+                Unused; retained for interface compatibility.
+
+        Returns:
+            `list[Any]`:
+                A list of ``chat_pb2.Message`` proto objects, ready to be
+                appended to a ``xai_sdk`` chat session via ``chat.append()``.
+                Image ``DataBlock`` extras are forwarded to
+                ``xai_sdk.chat.image`` as keyword arguments.
+        """
+        from xai_sdk.chat import (
+            assistant,
+            image,
+            system,
+            tool_result,
+            user,
+            chat_pb2,
+        )
+
+        self.assert_list_of_msgs(msgs)
+
+        xai_messages: List[Any] = []
+
+        for msg in msgs:
+            blocks = msg.get_content_blocks()
+
+            text_blocks = [b for b in blocks if isinstance(b, TextBlock)]
+
+            if msg.role == "system":
+                text = "\n".join(b.text for b in text_blocks)
+                xai_messages.append(system(text))
+
+            elif msg.role == "user":
+                content_args: list = []
+                for block in blocks:
+                    if isinstance(block, ThinkingBlock):
+                        pass
+                    elif isinstance(block, HintBlock):
+                        if content_args:
+                            xai_messages.append(user(*content_args))
+                            content_args = []
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            hint_args = _xai_user_args_from_blocks(
+                                block.hint,
+                                image,
+                                self.supported_input_media_types,
+                            )
+                            if hint_args:
+                                xai_messages.append(user(*hint_args))
+                    elif isinstance(block, TextBlock):
+                        content_args.append(block.text)
+                    elif isinstance(block, DataBlock):
+                        content_args.extend(
+                            _xai_user_args_from_blocks(
+                                [block],
+                                image,
+                                self.supported_input_media_types,
+                            ),
+                        )
+                    else:
+                        logger.warning(
+                            "Unsupported block type %s in user message, "
+                            "skipped.",
+                            type(block).__name__,
+                        )
+
+                if content_args:
+                    xai_messages.append(user(*content_args))
+
+            elif msg.role == "assistant":
+                pending_text: list[TextBlock] = []
+                pending_tool_calls: list[ToolCallBlock] = []
+                pending_media: list[Any] = []
+
+                for block in blocks:
+                    if pending_media and not isinstance(
+                        block,
+                        ToolResultBlock,
+                    ):
+                        xai_messages.extend(pending_media)
+                        pending_media = []
+
+                    if isinstance(block, ToolResultBlock):
+                        # Convert each ToolResultBlock to a tool_result
+                        # message.
+                        if pending_tool_calls:
+                            msg_proto = chat_pb2.Message()
+                            msg_proto.role = chat_pb2.MessageRole.Value(
+                                "ROLE_ASSISTANT",
+                            )
+                            if pending_text:
+                                c = msg_proto.content.add()
+                                c.text = "\n".join(
+                                    b.text for b in pending_text
+                                )
+                                pending_text = []
+                            for tc in pending_tool_calls:
+                                proto_tc = msg_proto.tool_calls.add()
+                                proto_tc.id = tc.id
+                                proto_tc.type = chat_pb2.ToolCallType.Value(
+                                    "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                                )
+                                proto_tc.function.name = tc.name
+                                proto_tc.function.arguments = tc.input
+                            xai_messages.append(msg_proto)
+                            pending_tool_calls = []
+                        elif pending_text:
+                            text = "\n".join(b.text for b in pending_text)
+                            if text:
+                                xai_messages.append(assistant(text))
+                            pending_text = []
+
+                        (
+                            textual_output,
+                            multimodal_data,
+                        ) = self.convert_tool_result_to_string(
+                            block.output,
+                        )
+                        xai_messages.append(
+                            tool_result(
+                                textual_output,
+                                tool_call_id=block.id,
+                            ),
+                        )
+
+                        # Promote media that came back inside the tool
+                        # result into a following user message, which is what
+                        # the other formatters do via the same shared helper.
+                        # ``xai_sdk`` re-hydrates binary tool results and
+                        # ``input_types`` already advertises images, so the
+                        # textual hint alone would lose the picture.
+                        if multimodal_data:
+                            promo_args = _xai_user_args_from_blocks(
+                                multimodal_data,
+                                image,
+                                self.supported_input_media_types,
+                            )
+                            if promo_args:
+                                pending_media.append(user(*promo_args))
+
+                    elif isinstance(block, ToolCallBlock):
+                        pending_tool_calls.append(block)
+
+                    elif isinstance(block, TextBlock):
+                        pending_text.append(block)
+
+                    elif isinstance(block, ThinkingBlock):
+                        pass
+
+                    elif isinstance(block, HintBlock):
+                        if pending_tool_calls or pending_text:
+                            if pending_tool_calls:
+                                msg_proto = chat_pb2.Message()
+                                msg_proto.role = chat_pb2.MessageRole.Value(
+                                    "ROLE_ASSISTANT",
+                                )
+                                if pending_text:
+                                    c = msg_proto.content.add()
+                                    c.text = "\n".join(
+                                        b.text for b in pending_text
+                                    )
+                                    pending_text = []
+                                for tc in pending_tool_calls:
+                                    proto_tc = msg_proto.tool_calls.add()
+                                    proto_tc.id = tc.id
+                                    proto_tc.type = (
+                                        chat_pb2.ToolCallType.Value(
+                                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                                        )
+                                    )
+                                    proto_tc.function.name = tc.name
+                                    proto_tc.function.arguments = tc.input
+                                xai_messages.append(msg_proto)
+                                pending_tool_calls = []
+                            elif pending_text:
+                                text = "\n".join(b.text for b in pending_text)
+                                if text:
+                                    xai_messages.append(assistant(text))
+                                pending_text = []
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            hint_args = _xai_user_args_from_blocks(
+                                block.hint,
+                                image,
+                                self.supported_input_media_types,
+                            )
+                            if hint_args:
+                                xai_messages.append(user(*hint_args))
+
+                xai_messages.extend(pending_media)
+
+                if pending_tool_calls:
+                    # Assistant turn that triggered tool calls (history).
+                    msg_proto = chat_pb2.Message()
+                    msg_proto.role = chat_pb2.MessageRole.Value(
+                        "ROLE_ASSISTANT",
+                    )
+                    if pending_text:
+                        c = msg_proto.content.add()
+                        c.text = "\n".join(b.text for b in pending_text)
+                        pending_text = []
+                    for tc in pending_tool_calls:
+                        proto_tc = msg_proto.tool_calls.add()
+                        proto_tc.id = tc.id
+                        proto_tc.type = chat_pb2.ToolCallType.Value(
+                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                        )
+                        proto_tc.function.name = tc.name
+                        proto_tc.function.arguments = tc.input
+                    xai_messages.append(msg_proto)
+                elif pending_text:
+                    # Regular assistant text message.
+                    text = "\n".join(b.text for b in pending_text)
+                    if text:
+                        xai_messages.append(assistant(text))
+
+            else:
+                logger.warning(
+                    "Unsupported message role '%s', skipped.",
+                    msg.role,
+                )
+
+        return xai_messages
+
+
+class XAIMultiAgentFormatter(FormatterBase):
+    """Formatter for the xAI chat model in multi-agent conversations.
+
+    Produces ``xai_sdk`` protobuf ``Message`` objects (same as
+    :class:`XAIChatFormatter`).  Prior agent-to-agent messages are collapsed
+    into a single ``user`` message with ``<history></history>`` tags; the
+    images of those messages are appended to the same ``user`` message.
+    Hint blocks and tool call / result sequences are delegated to
+    :class:`XAIChatFormatter`.
+
+    .. note:: ``format()`` returns ``list[Any]`` (protobuf messages), not
+        ``list[dict]``.
+    """
+
+    conversation_history_prompt: str = Field(
+        default=(
+            "# Conversation History\n"
+            "The content between <history></history> tags contains "
+            "your conversation history\n"
+        ),
+        description="The prompt to use for the conversation history section.",
+    )
+
+    input_types: list[str] = Field(
+        default=["text/plain", "image/jpeg", "image/png"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/jpeg", "image/png"]``.'
+        ),
+    )
+
+    async def format(
+        self,
+        msgs: list[Msg],
+        **kwargs: Any,
+    ) -> List[Any]:
+        """Convert a list of ``Msg`` objects to ``xai_sdk`` proto messages.
+
+        Conversation history (non-tool messages) is collapsed into a single
+        ``user`` protobuf message containing ``<history></history>`` tags,
+        followed by the images of those messages. Tool sequences are
+        formatted by :class:`XAIChatFormatter`.
+
+        Args:
+            msgs (`list[Msg]`):
+                A list of ``Msg`` objects representing the conversation.
+            **kwargs (`Any`):
+                Unused; retained for interface compatibility.
+
+        Returns:
+            `list[Any]`:
+                A list of ``chat_pb2.Message`` proto objects.
+        """
+        from xai_sdk.chat import image, system, user
+
+        self.assert_list_of_msgs(msgs)
+
+        xai_messages: List[Any] = []
+        start_index = 0
+
+        if msgs and msgs[0].role == "system":
+            text = msgs[0].get_text_content()
+            xai_messages.append(system(text))
+            start_index = 1
+
+        is_first_agent_message = True
+        async for typ, group in self._group_messages(msgs[start_index:]):
+            if typ == "tool_sequence":
+                xai_messages.extend(
+                    await XAIChatFormatter(
+                        input_types=self.input_types,
+                    ).format(group),
+                )
+            elif typ == "agent_message":
+                for is_hint, segment in self._split_agent_messages_at_hints(
+                    group,
+                ):
+                    if is_hint:
+                        xai_messages.extend(
+                            await self._format_hint_message(segment),
+                        )
+                        continue
+
+                    history_text = self._build_history_text(
+                        segment,
+                        is_first=is_first_agent_message,
+                    )
+                    user_args = _xai_user_args_from_blocks(
+                        [
+                            block
+                            for msg in segment
+                            for block in msg.get_content_blocks()
+                            if isinstance(block, DataBlock)
+                        ],
+                        image,
+                        self.supported_input_media_types,
+                    )
+                    if history_text:
+                        user_args.insert(0, history_text)
+                    if user_args:
+                        xai_messages.append(user(*user_args))
+                        if history_text:
+                            is_first_agent_message = False
+
+        return xai_messages
+
+    async def _format_hint_message(self, msgs: list[Msg]) -> list[Any]:
+        """Format hint messages with the xAI chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[Any]`:
+                The xAI user-message representation.
+        """
+        return await XAIChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
+
+    def _build_history_text(self, msgs: list[Msg], *, is_first: bool) -> str:
+        """Build a ``<history>…</history>`` text block from agent messages.
+
+        Args:
+            msgs (`list[Msg]`):
+                Non-tool messages to collapse into history.
+            is_first (`bool`):
+                When ``True``, prepend
+                :attr:`conversation_history_prompt` before the tag.
+
+        Returns:
+            `str`:
+                The formatted history string, or an empty string when there
+                is no text content.
+        """
+        lines: list[str] = []
+        for msg in msgs:
+            parts: list[str] = []
+            if msg.name:
+                parts.append(f"{msg.name}:")
+            for block in msg.get_content_blocks():
+                if isinstance(block, TextBlock):
+                    parts.append(block.text)
+            if parts:
+                lines.append(" ".join(parts))
+
+        if not lines:
+            return ""
+
+        prefix = self.conversation_history_prompt if is_first else ""
+        return prefix + "<history>\n" + "\n".join(lines) + "\n</history>"

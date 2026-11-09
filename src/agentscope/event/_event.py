@@ -1,0 +1,607 @@
+# -*- coding: utf-8 -*-
+"""Event types for agent execution."""
+from enum import StrEnum
+from typing import Any, Dict, Literal, List, Self, TypeAlias
+
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing_extensions import deprecated
+
+from .._utils._common import _generate_id, _generate_timestamp
+from ..message import (
+    DataBlock,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
+)
+from ..model import FinishedReason
+from ..permission import PermissionRule
+
+
+class EventType(StrEnum):
+    """Event type enumeration."""
+
+    REPLY_START = "REPLY_START"
+    REPLY_END = "REPLY_END"
+
+    MODEL_CALL_START = "MODEL_CALL_START"
+    MODEL_CALL_END = "MODEL_CALL_END"
+
+    TEXT_BLOCK_START = "TEXT_BLOCK_START"
+    TEXT_BLOCK_DELTA = "TEXT_BLOCK_DELTA"
+    TEXT_BLOCK_END = "TEXT_BLOCK_END"
+
+    DATA_BLOCK_START = "DATA_BLOCK_START"
+    DATA_BLOCK_DELTA = "DATA_BLOCK_DELTA"
+    DATA_BLOCK_END = "DATA_BLOCK_END"
+
+    THINKING_BLOCK_START = "THINKING_BLOCK_START"
+    THINKING_BLOCK_DELTA = "THINKING_BLOCK_DELTA"
+    THINKING_BLOCK_END = "THINKING_BLOCK_END"
+
+    HINT_BLOCK = "HINT_BLOCK"
+
+    TOOL_CALL_START = "TOOL_CALL_START"
+    TOOL_CALL_DELTA = "TOOL_CALL_DELTA"
+    TOOL_CALL_END = "TOOL_CALL_END"
+
+    TOOL_RESULT_START = "TOOL_RESULT_START"
+    TOOL_RESULT_TEXT_DELTA = "TOOL_RESULT_TEXT_DELTA"
+    TOOL_RESULT_DATA_DELTA = "TOOL_RESULT_DATA_DELTA"
+    TOOL_RESULT_END = "TOOL_RESULT_END"
+
+    EXCEED_MAX_ITERS = "EXCEED_MAX_ITERS"
+
+    REQUIRE_USER_CONFIRM = "REQUIRE_USER_CONFIRM"
+    REQUIRE_EXTERNAL_EXECUTION = "REQUIRE_EXTERNAL_EXECUTION"
+
+    USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
+    USER_INTERRUPT = "USER_INTERRUPT"
+    EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
+
+    CUSTOM = "CUSTOM"
+
+
+class EventBase(BaseModel):
+    """Base event class."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    id: str = Field(default_factory=_generate_id)
+    """Unique event identifier."""
+    created_at: str = Field(default_factory=_generate_timestamp)
+    """ISO 8601 timestamp of when the event was created."""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the event."""
+
+
+class ReplyStartEvent(EventBase):
+    """Reply start event."""
+
+    type: Literal[EventType.REPLY_START] = EventType.REPLY_START
+    """Event type."""
+    session_id: str
+    """ID of the session this reply belongs to."""
+    reply_id: str
+    """ID of the reply message produced by this reply."""
+    name: str
+    """Name of the agent."""
+    role: Literal["user", "assistant", "system"] = "assistant"
+    """Role of the agent."""
+
+
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
+class ReplyEndReason(StrEnum):
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
+
+
+class ReplyEndEvent(EventBase):
+    """Reply end event."""
+
+    type: Literal[EventType.REPLY_END] = EventType.REPLY_END
+    """Event type."""
+    session_id: str
+    """ID of the session this reply belongs to."""
+    reply_id: str
+    """ID of the reply message produced by this reply."""
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
+    """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
+
+
+class ModelCallStartEvent(EventBase):
+    """Model call start event."""
+
+    type: Literal[EventType.MODEL_CALL_START] = EventType.MODEL_CALL_START
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this model call belongs to."""
+    model_name: str
+    """Name of the model being called."""
+
+
+class ModelCallEndEvent(EventBase):
+    """Model call end event."""
+
+    type: Literal[EventType.MODEL_CALL_END] = EventType.MODEL_CALL_END
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this model call belongs to."""
+    input_tokens: int
+    """Number of input tokens consumed."""
+    output_tokens: int
+    """Number of output tokens generated."""
+    cache_input_tokens: int = 0
+    """Number of input tokens read from the prompt cache."""
+    cache_creation_input_tokens: int = 0
+    """Number of input tokens used to create the prompt cache."""
+    finished_reason: FinishedReason = Field(
+        default=FinishedReason.COMPLETED,
+    )
+    """The finished reason of this model call."""
+
+
+class TextBlockStartEvent(EventBase):
+    """Text block start event."""
+
+    type: Literal[EventType.TEXT_BLOCK_START] = EventType.TEXT_BLOCK_START
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the text block."""
+
+
+class TextBlockDeltaEvent(EventBase):
+    """Text block delta event."""
+
+    type: Literal[EventType.TEXT_BLOCK_DELTA] = EventType.TEXT_BLOCK_DELTA
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the text block."""
+    delta: str
+    """Incremental text content."""
+
+
+class TextBlockEndEvent(EventBase):
+    """Text block end event."""
+
+    type: Literal[EventType.TEXT_BLOCK_END] = EventType.TEXT_BLOCK_END
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the text block."""
+    text: str | None = None
+    """The block's final text, when it is not the concatenation of the
+    deltas: a voice reply cut short is truncated to what the user heard."""
+
+
+class DataBlockStartEvent(EventBase):
+    """Data block start event."""
+
+    type: Literal[EventType.DATA_BLOCK_START] = EventType.DATA_BLOCK_START
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the data block."""
+    media_type: str
+    """MIME type of the data content (e.g. "image/png")."""
+    name: str | None = None
+    """Name of the data, e.g. a file name."""
+
+
+class DataBlockDeltaEvent(EventBase):
+    """Data block delta event."""
+
+    type: Literal[EventType.DATA_BLOCK_DELTA] = EventType.DATA_BLOCK_DELTA
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the data block."""
+    media_type: str
+    """MIME type of the data content."""
+    data: str | None = None
+    """Incremental base64-encoded data, mutually exclusive with `url`."""
+    url: str | None = None
+    """URL pointing to the data, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
+
+
+class DataBlockEndEvent(EventBase):
+    """Data block end event."""
+
+    type: Literal[EventType.DATA_BLOCK_END] = EventType.DATA_BLOCK_END
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the data block."""
+
+
+class ThinkingBlockStartEvent(EventBase):
+    """Thinking block start event."""
+
+    type: Literal[
+        EventType.THINKING_BLOCK_START
+    ] = EventType.THINKING_BLOCK_START
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the thinking block."""
+
+
+class ThinkingBlockDeltaEvent(EventBase):
+    """Thinking block delta event."""
+
+    type: Literal[
+        EventType.THINKING_BLOCK_DELTA
+    ] = EventType.THINKING_BLOCK_DELTA
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the thinking block."""
+    delta: str
+    """Incremental thinking text content."""
+
+
+class ThinkingBlockEndEvent(EventBase):
+    """Thinking block end event."""
+
+    type: Literal[EventType.THINKING_BLOCK_END] = EventType.THINKING_BLOCK_END
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the thinking block."""
+
+
+class HintBlockEvent(EventBase):
+    """One-shot hint block event.
+
+    Unlike text/thinking blocks, hint blocks are not streamed — the
+    full content is available at creation time (team messages,
+    background tool results, user interruptions, …). A single event
+    carries the complete :class:`~agentscope.message.HintBlock`.
+
+    The ``hint`` field mirrors :attr:`HintBlock.hint` and may be a
+    plain string or a list of :class:`TextBlock` / :class:`DataBlock`
+    for multimodal content.
+    """
+
+    type: Literal[EventType.HINT_BLOCK] = EventType.HINT_BLOCK
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the hint block."""
+    source: str | None = None
+    """Sender or origin of this hint (e.g. ``"alice"``, ``"system"``)."""
+    hint: str | List[TextBlock | DataBlock]
+    """Complete hint content — ``str`` or ``list[TextBlock | DataBlock]``."""
+
+
+class ToolCallStartEvent(EventBase):
+    """Tool call start event."""
+
+    type: Literal[EventType.TOOL_CALL_START] = EventType.TOOL_CALL_START
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool call belongs to."""
+    tool_call_id: str
+    """Unique identifier of the tool call."""
+    tool_call_name: str
+    """Name of the tool being called."""
+
+
+class ToolCallDeltaEvent(EventBase):
+    """Tool call delta event."""
+
+    type: Literal[EventType.TOOL_CALL_DELTA] = EventType.TOOL_CALL_DELTA
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool call belongs to."""
+    tool_call_id: str
+    """Unique identifier of the tool call."""
+    delta: str
+    """Incremental tool call arguments (JSON fragment)."""
+
+
+class ToolCallEndEvent(EventBase):
+    """Tool call end event."""
+
+    type: Literal[EventType.TOOL_CALL_END] = EventType.TOOL_CALL_END
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool call belongs to."""
+    tool_call_id: str
+    """Unique identifier of the tool call."""
+
+
+class ToolResultStartEvent(EventBase):
+    """Tool result start event."""
+
+    type: Literal[EventType.TOOL_RESULT_START] = EventType.TOOL_RESULT_START
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool result belongs to."""
+    tool_call_id: str
+    """ID of the corresponding tool call."""
+    tool_call_name: str
+    """Name of the tool that was called."""
+
+
+class ToolResultTextDeltaEvent(EventBase):
+    """Tool result text delta event."""
+
+    type: Literal[
+        EventType.TOOL_RESULT_TEXT_DELTA
+    ] = EventType.TOOL_RESULT_TEXT_DELTA
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool result belongs to."""
+    tool_call_id: str
+    """ID of the corresponding tool call."""
+    delta: str
+    """Incremental text content of the tool result."""
+
+
+class ToolResultDataDeltaEvent(EventBase):
+    """Tool result data delta event."""
+
+    type: Literal[
+        EventType.TOOL_RESULT_DATA_DELTA
+    ] = EventType.TOOL_RESULT_DATA_DELTA
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool result belongs to."""
+    tool_call_id: str
+    """ID of the corresponding tool call."""
+    block_id: str = Field(default_factory=_generate_id)
+    """Unique identifier of the data block created by this event."""
+    media_type: str
+    """MIME type of the binary content."""
+    data: str | None = None
+    """Base64-encoded binary data, mutually exclusive with `url`."""
+    url: str | None = None
+    """URL pointing to the binary content, mutually exclusive with `data`."""
+
+    @model_validator(mode="after")
+    def validate_data_source(self) -> Self:
+        """Ensure exactly one data source is provided."""
+        if (self.data is None) == (self.url is None):
+            raise ValueError(
+                "Exactly one of `data` or `url` must be provided.",
+            )
+        return self
+
+
+class ToolResultEndEvent(EventBase):
+    """Tool result end event."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    type: Literal[EventType.TOOL_RESULT_END] = EventType.TOOL_RESULT_END
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this tool result belongs to."""
+    tool_call_id: str
+    """ID of the corresponding tool call."""
+    state: ToolResultState
+    """Final execution state of the tool call."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the tool result event."""
+
+
+@deprecated(
+    "ExceedMaxItersEvent is deprecated and will be removed; check the "
+    "'finished_reason' field of ReplyEndEvent against "
+    "ReplyFinishedReason.EXCEED_MAX_ITERS instead.",
+)
+class ExceedMaxItersEvent(EventBase):
+    """Deprecated exceeded max iteration event, still emitted for backward
+    compatibility without semantics; use ``ReplyEndEvent.finished_reason``."""
+
+    type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    name: str
+    """Name of the agent."""
+
+
+class RequireUserConfirmEvent(EventBase):
+    """Require user confirm event."""
+
+    type: Literal[
+        EventType.REQUIRE_USER_CONFIRM
+    ] = EventType.REQUIRE_USER_CONFIRM
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    tool_calls: List[ToolCallBlock]
+    """Tool calls pending user confirmation."""
+
+
+class RequireExternalExecutionEvent(EventBase):
+    """Require external execution event."""
+
+    type: Literal[
+        EventType.REQUIRE_EXTERNAL_EXECUTION
+    ] = EventType.REQUIRE_EXTERNAL_EXECUTION
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    tool_calls: List[ToolCallBlock]
+    """Tool calls to be executed externally."""
+
+
+class ConfirmResult(BaseModel):
+    """Confirm result for a tool call."""
+
+    confirmed: bool
+    """Whether the user confirmed the tool call."""
+    tool_call: ToolCallBlock
+    """The tool call that was confirmed or rejected."""
+    rules: list[PermissionRule] | None = None
+    """The allowed permission rules for this tool call. This field is only
+    applicable when ``confirmed`` is True. In case user modification is
+    needed, complete permission rules are used here instead of references to
+    the suggested rules in ``RequireUserConfirmEvent``."""
+
+
+class UserConfirmResultEvent(EventBase):
+    """User confirm result event."""
+
+    type: Literal[
+        EventType.USER_CONFIRM_RESULT
+    ] = EventType.USER_CONFIRM_RESULT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    confirm_results: list[ConfirmResult]
+    """Confirmation results for each pending tool call."""
+
+
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply.
+
+    Delivered to :meth:`Agent.reply_stream` (or :meth:`Agent.reply`) to
+    abort a reply that is currently waiting on external input — either
+    user confirmation (:class:`RequireUserConfirmEvent`) or external
+    execution (:class:`RequireExternalExecutionEvent`).
+
+    On receipt, the agent closes every pending tool call with an
+    interrupted tool result, emits a fallback assistant message, ends
+    the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
+    enter the reasoning-acting loop.
+
+    .. note:: This event is only meaningful for parked replies. To
+        interrupt a running (actively-generating) reply, cancel the
+        underlying task instead — the agent handles that path via its
+        own ``CancelledError`` cleanup.
+    """
+
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this interrupt targets."""
+
+
+class ExternalExecutionResultEvent(EventBase):
+    """External execution result event."""
+
+    type: Literal[
+        EventType.EXTERNAL_EXECUTION_RESULT
+    ] = EventType.EXTERNAL_EXECUTION_RESULT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    execution_results: List[ToolResultBlock]
+    """Results returned by the external executor."""
+
+
+class CustomEvent(EventBase):
+    """Generic extensible event for signals that don't fit a specific
+    ``AgentEvent`` subtype.
+
+    Used by service-layer middleware to notify front-end subscribers
+    about state changes (task progress, team membership, permission
+    updates, …) without polluting the core agent event enum with
+    application-specific types.
+
+    Front-end implementations should handle unknown ``name`` values
+    gracefully — skip with no error.
+
+    Attributes:
+        name (`str`):
+            Identifies the kind of notification. Well-known values:
+
+            - ``"state_updated"`` — agent state (tasks / permission)
+              changed during a tool call.
+            - ``"team_updated"`` — team membership changed (member
+              added / team created or dissolved).
+            - ``"chat_input_started"`` — one or more FIFO-queued user
+              messages have started their agent turn.
+            - ``"chat_input_failed"`` — a dequeued user turn failed before
+              the service could produce a usable reply.
+            - ``"chat_input_cancelled"`` — an already-started queued turn
+              was interrupted and will not be replayed automatically.
+            - ``"chat_queue_changed"`` — the editable pending-turn
+              snapshot changed after enqueue, edit, delete, or reorder.
+            - ``"mcp_progress"`` — transient MCP tool progress, with
+              ``reply_id``, ``tool_call_id``, ``progress``, ``total`` and
+              ``message`` in ``value``. Not part of the final tool result.
+
+        value (`dict`):
+            Arbitrary JSON-serializable payload whose schema depends
+            on ``name``. May be empty.
+    """
+
+    type: Literal[EventType.CUSTOM] = EventType.CUSTOM
+    """Event type discriminator."""
+    name: str
+    """Kind of notification — see class docstring for well-known values."""
+    value: dict = Field(default_factory=dict)
+    """Arbitrary payload."""
+
+
+AgentEvent: TypeAlias = (
+    ReplyStartEvent
+    | ReplyEndEvent
+    | ExceedMaxItersEvent
+    | RequireUserConfirmEvent
+    | RequireExternalExecutionEvent
+    | ModelCallStartEvent
+    | ModelCallEndEvent
+    | TextBlockStartEvent
+    | TextBlockDeltaEvent
+    | TextBlockEndEvent
+    | DataBlockStartEvent
+    | DataBlockDeltaEvent
+    | DataBlockEndEvent
+    | ThinkingBlockStartEvent
+    | ThinkingBlockDeltaEvent
+    | ThinkingBlockEndEvent
+    | HintBlockEvent
+    | ToolCallStartEvent
+    | ToolCallDeltaEvent
+    | ToolCallEndEvent
+    | ToolResultStartEvent
+    | ToolResultTextDeltaEvent
+    | ToolResultDataDeltaEvent
+    | ToolResultEndEvent
+    | UserConfirmResultEvent
+    | UserInterruptEvent
+    | ExternalExecutionResultEvent
+    | CustomEvent
+)

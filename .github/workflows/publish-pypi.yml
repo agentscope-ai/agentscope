@@ -1,0 +1,45 @@
+# This workflow will upload a Python Package using Twine when a release is created
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: Publish PyPi Package
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "0.13.4"
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        uv pip install build
+    - name: Build package
+      # Use patched uv instead of pip seeded into the isolated build env.
+      run: python -m build --installer=uv
+    - name: Test installation
+      run: |
+        uv pip install dist/*.whl
+        python -c "import agentscope; print(agentscope.__version__)"
+    - name: Publish package
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_API_TOKEN }}

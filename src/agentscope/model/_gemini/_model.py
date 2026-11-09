@@ -1,0 +1,611 @@
+# -*- coding: utf-8 -*-
+"""The Google Gemini chat model implementation."""
+import base64
+import json
+from datetime import datetime
+from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
+
+from pydantic import BaseModel, Field
+
+from ..._utils._common import _generate_id, _flatten_json_schema
+from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import GeminiCredential
+from ...formatter import FormatterBase, GeminiChatFormatter
+from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
+from ...tool import ToolChoice
+
+if TYPE_CHECKING:
+    from google.genai.types import GenerateContentResponse
+else:
+    GenerateContentResponse = Any
+
+
+def _is_null_schema(schema: Any) -> bool:
+    """Return whether a schema represents only JSON null."""
+    return isinstance(schema, dict) and schema.get("type") in (
+        "null",
+        ["null"],
+    )
+
+
+def _sanitize_schema_for_gemini(schema: Any) -> Any:
+    """Sanitize a JSON schema to be compatible with the Gemini API.
+
+    Gemini API does not support certain JSON Schema constructs. This
+    function removes or rewrites the following:
+
+    - ``$schema``: removed entirely.
+    - ``additionalProperties``: removed entirely.
+    - ``const``: converted to an equivalent single-value ``enum``,
+      since Gemini's ``Schema`` model does not support ``const``.
+    - ``type`` arrays containing ``"null"``: simplified to the single
+      non-null type or converted to ``anyOf`` for multiple non-null
+      types, matching nullable JSON Schema emitted by Pydantic and
+      OpenAPI 3.1. Multi-type arrays with an existing ``anyOf`` raise
+      ``ValueError`` rather than dropping conjunctive constraints.
+    - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
+      the single non-null type. If there is exactly one non-null
+      alternative it is inlined directly; otherwise the ``anyOf`` is
+      kept but the null entry is dropped.
+    - All nested sub-schemas (``properties``, ``items``, ``$defs``,
+      etc.) are processed recursively.
+
+    Args:
+        schema (`Any`):
+            The JSON schema to sanitize. Non-dict values are returned
+            unchanged; lists are recursively sanitized element-wise.
+
+    Returns:
+        `Any`:
+            A sanitized copy of the schema, or the original value if it
+            is not a dict or list.
+    """
+    if not isinstance(schema, dict):
+        if isinstance(schema, list):
+            return [_sanitize_schema_for_gemini(v) for v in schema]
+        return schema
+
+    schema = dict(schema)
+
+    # Gemini's Schema model does not support the JSON Schema dialect marker.
+    schema.pop("$schema", None)
+
+    # Gemini (and many third-party proxies) reject `null` as a standalone
+    # functionDeclaration property type. Some MCP servers emit
+    # {"type": "null"} directly (not wrapped in anyOf) for parameters that
+    # accept None — rewrite it to "object" so it round-trips through the API.
+    if _is_null_schema(schema):
+        schema["type"] = "object"
+    elif isinstance(schema.get("type"), list):
+        non_null_types = [v for v in schema["type"] if v != "null"]
+        if len(non_null_types) == 1:
+            schema["type"] = non_null_types[0]
+        elif non_null_types:
+            if "anyOf" in schema:
+                raise ValueError(
+                    "Cannot safely sanitize Gemini schema with both a "
+                    "multi-type nullable type array and anyOf.",
+                )
+            schema.pop("type")
+            schema["anyOf"] = [{"type": type_} for type_ in non_null_types]
+        else:
+            schema["type"] = "object"
+
+    # Remove additionalProperties — not supported by Gemini
+    schema.pop("additionalProperties", None)
+
+    # Convert `const` into an equivalent single-value `enum` — Gemini's
+    # Schema model does not support the `const` keyword.
+    if "const" in schema:
+        const_value = schema.pop("const")
+        schema.setdefault("enum", [const_value])
+
+    # Simplify anyOf that only differs by a null type, e.g. Optional[X]
+    if "anyOf" in schema and isinstance(schema["anyOf"], list):
+        any_of = schema["anyOf"]
+        non_null = [v for v in any_of if not _is_null_schema(v)]
+        if len(non_null) < len(any_of):  # at least one null entry removed
+            if len(non_null) == 1:
+                # Inline the single non-null type, preserving outer keys
+                merged = dict(_sanitize_schema_for_gemini(non_null[0]))
+                for k, v in schema.items():
+                    if k != "anyOf":
+                        merged.setdefault(k, v)
+                return merged
+            elif non_null:
+                schema["anyOf"] = [
+                    _sanitize_schema_for_gemini(v) for v in non_null
+                ]
+            else:
+                del schema["anyOf"]
+
+    # Recursively process nested object schemas
+    for key in ["properties", "patternProperties", "$defs"]:
+        if key in schema and isinstance(schema[key], dict):
+            schema[key] = {
+                k: _sanitize_schema_for_gemini(v)
+                for k, v in schema[key].items()
+            }
+
+    for key in ["items", "not", "if", "then", "else"]:
+        if key in schema:
+            schema[key] = _sanitize_schema_for_gemini(schema[key])
+
+    for key in ["allOf", "oneOf", "anyOf"]:
+        if key in schema and isinstance(schema[key], list):
+            schema[key] = [_sanitize_schema_for_gemini(v) for v in schema[key]]
+
+    return schema
+
+
+class GeminiChatModel(ChatModelBase):
+    """The Google Gemini chat model."""
+
+    class Parameters(BaseModel):
+        """The parameters for the Gemini chat model."""
+
+        max_tokens: int | None = Field(
+            default=None,
+            title="Max Tokens",
+            description="The maximum number of tokens for the LLM output.",
+            gt=0,
+        )
+
+        thinking_enable: bool | None = Field(
+            default=None,
+            title="Thinking",
+            description="Whether to enable thinking output."
+            " When None, no ``thinking_config`` is sent and the"
+            " model's default behavior applies.",
+        )
+
+        thinking_budget: int | None = Field(
+            default=None,
+            title="Thinking Budget",
+            description="The thinking budget in tokens.",
+            gt=0,
+        )
+
+        temperature: float | None = Field(
+            default=None,
+            title="Temperature",
+            description="The temperature for the LLM output.",
+            ge=0,
+            le=2,
+        )
+
+        top_p: float | None = Field(
+            default=None,
+            title="Top P",
+            description="The top P value for the LLM output.",
+            gt=0,
+            le=1,
+        )
+
+    type: Literal["gemini_chat"] = "gemini_chat"
+    """The type of the chat model."""
+
+    def __init__(
+        self,
+        credential: GeminiCredential,
+        model: str,
+        parameters: "GeminiChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        context_size: int = 1048576,
+        formatter: FormatterBase | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize the Gemini chat model.
+
+        Args:
+            credential (`GeminiCredential`):
+                The Google Gemini credential used to authenticate API calls.
+            model (`str`):
+                The Gemini model name, e.g. ``gemini-2.0-flash-exp``.
+            parameters (`GeminiChatModel.Parameters | None`, defaults to \
+            `None`):
+                The Gemini API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the Gemini API.
+            retry_delay (`float`, defaults to `1.0`):
+                Seconds to sleep between retry attempts.
+            context_size (`int`, defaults to `1048576`):
+                The model context size used for context compression.
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the Gemini API. When ``None``, a
+                ``GeminiChatFormatter`` instance will be used.
+            client_kwargs (`dict[str, Any] | None`, defaults to `None`):
+                Extra keyword arguments forwarded to ``google.genai.Client``
+                (e.g. ``vertexai``, ``project``, ``location``,
+                ``credentials``, ``http_options``).
+        """
+        super().__init__(
+            credential=credential,
+            model=model,
+            parameters=parameters or self.Parameters(),
+            stream=stream,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            context_size=context_size,
+        )
+        self.formatter = formatter or GeminiChatFormatter()
+        self.client_kwargs = client_kwargs or {}
+
+        from google import genai
+
+        self.client: genai.Client = genai.Client(
+            api_key=self.credential.api_key.get_secret_value(),
+            **self.client_kwargs,
+        )
+
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
+        from google.genai import errors
+
+        # APIError is the common parent of ClientError (4xx) and ServerError
+        # (5xx). The google-genai SDK does not expose a dedicated rate-limit
+        # subclass, and 429 surfaces as ClientError — so we accept the wider
+        # set to make sure 429s are retried, at the cost of also retrying
+        # rare 4xx like auth/bad-request a few times.
+        return (errors.APIError,)
+
+    async def _call_api(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        tools: list[dict] | None = None,
+        tool_choice: ToolChoice | None = None,
+        **config_kwargs: Any,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        """Call the Gemini chat API.
+
+        Args:
+            model_name (`str`):
+                The model name to use for this call.
+            messages (`list`):
+                A list of message objects for Gemini API.
+            tools (`list[dict]`, default `None`):
+                The tools JSON schemas.
+            tool_choice (`ToolChoice | None`, optional):
+                Controls which (if any) tool is called by the model.
+            **config_kwargs (`Any`):
+                Extra keyword arguments for the Gemini config.
+
+        Returns:
+            `ChatResponse | AsyncGenerator[ChatResponse, None]`:
+                A ``ChatResponse`` when streaming is disabled, or an async
+                generator of ``ChatResponse`` objects when streaming is
+                enabled.
+        """
+        formatted_messages = await self.formatter.format(messages)
+
+        config: dict[str, Any] = {}
+
+        if self.parameters.max_tokens is not None:
+            config["max_output_tokens"] = self.parameters.max_tokens
+
+        if self.parameters.temperature is not None:
+            config["temperature"] = self.parameters.temperature
+
+        if self.parameters.top_p is not None:
+            config["top_p"] = self.parameters.top_p
+
+        if self.parameters.thinking_enable is not None:
+            if self.parameters.thinking_enable:
+                config["thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_budget": self.parameters.thinking_budget or 1024,
+                }
+            else:
+                config["thinking_config"] = {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                }
+
+        # Per-call config takes precedence over model-level defaults.
+        config.update(config_kwargs)
+
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+
+        if fmt_tools is not None:
+            config["tools"] = fmt_tools
+
+        if fmt_tool_choice is not None:
+            config["tool_config"] = fmt_tool_choice
+
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "contents": formatted_messages,
+            "config": config,
+        }
+
+        start_datetime = datetime.now()
+
+        if self.stream:
+            response = await self.client.aio.models.generate_content_stream(
+                **kwargs,
+            )
+            return self._parse_stream_response(
+                start_datetime,
+                response,
+            )
+
+        response = await self.client.aio.models.generate_content(**kwargs)
+        return self._parse_completion_response(start_datetime, response)
+
+    async def _parse_stream_response(
+        self,
+        start_datetime: datetime,
+        response: Any,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Parse the Gemini streaming response.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`Any`):
+                The Gemini async stream object from
+                ``client.aio.models.generate_content_stream``.
+
+        Yields:
+            `ChatResponse`:
+                Incremental ``ChatResponse`` objects with ``is_last=False``
+                followed by a final one with ``is_last=True``.
+        """
+
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
+
+        async for chunk in response:
+            # Capture response_id from the first chunk that carries it
+            delta_res = ChatResponse(
+                content=[],
+                is_last=False,
+                id=response_id,
+            )
+
+            # Update the response ID if exists
+            response_id = getattr(chunk, "response_id", None) or response_id
+            delta_res.id = response_id
+
+            if (
+                chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
+                for part in chunk.candidates[0].content.parts:
+                    if part.text:
+                        # Thinking
+                        if part.thought:
+                            delta_res.append_thinking(
+                                block_id=thinking_id,
+                                thinking=part.text,
+                            )
+
+                        # Text
+                        else:
+                            delta_res.append_text(
+                                block_id=text_id,
+                                text=part.text,
+                            )
+
+                    # Tool call
+                    if part.function_call:
+                        if part.thought_signature:
+                            # Mark signature IDs for the history formatter.
+                            call_id = "gemini_ts:" + base64.b64encode(
+                                part.thought_signature,
+                            ).decode("utf-8")
+                        else:
+                            call_id = part.function_call.id or _generate_id()
+
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=part.function_call.name,
+                            input=json.dumps(
+                                part.function_call.args or {},
+                                ensure_ascii=False,
+                            ),
+                        )
+
+            usage = self._extract_usage(chunk.usage_metadata, start_datetime)
+
+            if delta_res.content or usage:
+                delta_res.usage = usage
+                yield delta_res
+
+    def _parse_completion_response(
+        self,
+        start_datetime: datetime,
+        response: GenerateContentResponse,
+    ) -> ChatResponse:
+        """Parse the Gemini non-streaming response.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`GenerateContentResponse`):
+                The Gemini generate content response object.
+
+        Returns:
+            `ChatResponse`:
+                A single ``ChatResponse`` with ``is_last=True``.
+        """
+        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+
+        if (
+            response.candidates
+            and response.candidates[0].content
+            and response.candidates[0].content.parts
+        ):
+            for part in response.candidates[0].content.parts:
+                if part.text:
+                    if part.thought:
+                        content_blocks.append(
+                            ThinkingBlock(thinking=part.text),
+                        )
+                    else:
+                        content_blocks.append(TextBlock(text=part.text))
+
+                if part.function_call:
+                    keyword_args = part.function_call.args or {}
+                    if part.thought_signature:
+                        # Mark signature IDs for the history formatter.
+                        call_id = "gemini_ts:" + base64.b64encode(
+                            part.thought_signature,
+                        ).decode("utf-8")
+                    else:
+                        call_id = part.function_call.id or _generate_id()
+                    content_blocks.append(
+                        ToolCallBlock(
+                            id=call_id,
+                            name=part.function_call.name,
+                            input=json.dumps(keyword_args, ensure_ascii=False),
+                        ),
+                    )
+
+        usage = self._extract_usage(response.usage_metadata, start_datetime)
+
+        return ChatResponse(
+            id=getattr(response, "response_id", None) or _generate_id(),
+            content=content_blocks,
+            is_last=True,
+            usage=usage,
+        )
+
+    def _extract_usage(
+        self,
+        usage_metadata: Any,
+        start_datetime: datetime,
+    ) -> ChatUsage | None:
+        """Extract ChatUsage from usage_metadata.
+
+        Args:
+            usage_metadata (`Any`):
+                The usage metadata object from a Gemini response.
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+
+        Returns:
+            `ChatUsage | None`:
+                A ``ChatUsage`` object if usage data is available, otherwise
+                ``None``.
+        """
+        if not usage_metadata:
+            return None
+        prompt_tokens = usage_metadata.prompt_token_count
+        total_tokens = usage_metadata.total_token_count
+        if prompt_tokens is not None and total_tokens is not None:
+            tool_use_tokens = (
+                getattr(
+                    usage_metadata,
+                    "tool_use_prompt_token_count",
+                    0,
+                )
+                or 0
+            )
+            input_tokens = prompt_tokens + tool_use_tokens
+            candidates_tokens = getattr(
+                usage_metadata,
+                "candidates_token_count",
+                None,
+            )
+            if candidates_tokens is not None:
+                output_tokens = candidates_tokens + (
+                    getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                )
+            else:
+                # Fallback for SDK versions without the candidate count.
+                output_tokens = total_tokens - input_tokens
+            return ChatUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                time=(datetime.now() - start_datetime).total_seconds(),
+                cache_input_tokens=getattr(
+                    usage_metadata,
+                    "cached_content_token_count",
+                    0,
+                )
+                or 0,
+            )
+        return None
+
+    def _format_tools(
+        self,
+        tools: list[dict] | None,
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, dict | None]:
+        """Validate and format tools and tool_choice for Gemini.
+
+        Converts tool schemas to Gemini's ``function_declarations``
+        format (resolving ``$ref`` references) and maps tool_choice
+        modes to Gemini's ``function_calling_config``. When
+        ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific
+        tool name (str) the model is restricted via
+        ``allowed_function_names`` without needing to filter the list,
+        preserving prompt-cache efficiency.
+
+        Args:
+            tools (`list[dict] | None`, optional):
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`, optional):
+                The tool choice configuration.
+
+        Returns:
+            `tuple[list[dict] | None, dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_config).
+        """
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
+                tools = [t for t in tools if t["function"]["name"] in allowed]
+
+        fmt_tools = None
+        if tools:
+            function_declarations = []
+            for schema in tools:
+                if "function" not in schema:
+                    continue
+                func = schema["function"].copy()
+                if "parameters" in func:
+                    func["parameters"] = _sanitize_schema_for_gemini(
+                        _flatten_json_schema(func["parameters"]),
+                    )
+                function_declarations.append(func)
+            fmt_tools = [{"function_declarations": function_declarations}]
+
+        if not tool_choice:
+            return fmt_tools, None
+
+        mode = tool_choice.mode
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — restrict to that single tool
+            fmt_choice: dict = {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [mode],
+                },
+            }
+            return fmt_tools, fmt_choice
+
+        mode_mapping = {
+            "auto": "AUTO",
+            "none": "NONE",
+            "required": "ANY",
+        }
+        fmt_choice = {
+            "function_calling_config": {"mode": mode_mapping[mode]},
+        }
+        return fmt_tools, fmt_choice

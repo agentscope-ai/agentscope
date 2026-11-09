@@ -1,0 +1,2390 @@
+# -*- coding: utf-8 -*-
+# pylint: disable=protected-access
+"""Test cases for LocalWorkspace."""
+import asyncio
+import os
+import json
+import base64
+import hashlib
+import shutil
+import tempfile
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest import skipUnless
+from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
+from dataclasses import asdict
+from urllib.parse import urlparse
+
+import aiofiles
+from utils import AnyString, MockModel
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.state import AgentState
+from agentscope.tool import (
+    Bash,
+    Edit,
+    Glob,
+    Grep,
+    LocalBackend,
+    PowerShell,
+    Read,
+    Toolkit,
+    ToolBase,
+    ToolChunk,
+    Write,
+)
+from agentscope.permission import PermissionDecision, PermissionBehavior
+from agentscope.workspace import LocalWorkspace, WorkspaceBase
+from agentscope.mcp import MCPClient, StdioMCPConfig
+from agentscope.message import (
+    Msg,
+    UserMsg,
+    AssistantMsg,
+    DataBlock,
+    HintBlock,
+    Base64Source,
+    URLSource,
+    TextBlock,
+    ToolResultBlock,
+    ToolResultState,
+    ToolCallBlock,
+)
+
+# Probe the temp filesystem rather than assuming case rules from the OS.
+_CASE_INSENSITIVE_FS = os.path.exists(tempfile.gettempdir().swapcase())
+
+
+class _LongResultTool(ToolBase):
+    """A mock tool that returns a long string result for offload testing."""
+
+    name: str = "long_result_tool"
+    description: str = "A tool that returns a long string."
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> PermissionDecision:
+        """Always allow."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="Mock tool always allows",
+            message="Mock tool always allows",
+        )
+
+    async def __call__(self, **_kwargs: Any) -> ToolChunk:
+        """Return a long string result followed by a base64 data block, so we
+        can also verify base64 data offloading."""
+        return ToolChunk(
+            content=[
+                TextBlock(text="0" * 30000),
+                DataBlock(
+                    name="fake_image.png",
+                    source=Base64Source(
+                        data="AAECAwQF",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+            state=ToolResultState.SUCCESS,
+        )
+
+
+class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace builtin tools."""
+
+    async def test_list_tools_builtin_posix_uses_bash(self) -> None:
+        """A POSIX local workspace returns Bash and filesystem tools."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="posix"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_list_tools_builtin_windows_uses_powershell(self) -> None:
+        """A Windows local workspace returns PowerShell, not Bash."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="nt"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {PowerShell, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_windows_shell_switch_is_local_workspace_behavior(
+        self,
+    ) -> None:
+        """Build the tool list in LocalWorkspace without delegating up."""
+        workspace = LocalWorkspace(workdir="workspace")
+        backend = workspace.get_backend()
+
+        with (
+            patch.object(
+                WorkspaceBase,
+                "list_tools",
+                new=AsyncMock(side_effect=AssertionError("must not delegate")),
+            ),
+            patch(
+                "agentscope.workspace._local_workspace.os",
+                SimpleNamespace(name="nt"),
+            ),
+        ):
+            tools = await workspace.list_tools()
+
+        self.assertIsInstance(tools[0], PowerShell)
+        self.assertIs(tools[0]._backend, backend)
+
+
+class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace offload functionality."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.workspace = LocalWorkspace(workdir=self.temp_dir.name)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+
+    async def test_offload_context_pure_text(self) -> None:
+        """Test offloading messages with pure text content.
+
+        This test verifies that:
+        1. Messages with string content are correctly offloaded
+        2. The offloaded file is created at the expected path
+        3. The file contains valid JSONL with all message fields preserved
+        """
+        session_id = "test_session_pure_text"
+        msgs = [
+            UserMsg(name="user", content="Hello, world!"),
+            AssistantMsg(name="assistant", content="Hi there!"),
+        ]
+
+        # Offload the messages
+        file_path = await self.workspace.offload_context(session_id, msgs)
+
+        # Verify the file was created at the expected path
+        expected_path = os.path.join(
+            self.temp_dir.name,
+            "sessions",
+            session_id,
+            "context.jsonl",
+        )
+        self.assertEqual(file_path, expected_path)
+        self.assertTrue(os.path.exists(file_path))
+
+        # Read and verify the offloaded messages
+        async with aiofiles.open(file_path, "r") as f:
+            content = await f.read()
+
+        lines = content.strip().split("\n")
+        self.assertEqual(len(lines), 2)
+
+        # Compare with expected JSON strings
+        expected_lines = [msg.model_dump_json() for msg in msgs]
+        self.assertListEqual(lines, expected_lines)
+
+    async def test_offload_context_multiple_calls(self) -> None:
+        """Test multiple calls to offload_context for the same session.
+
+        This test verifies that:
+        1. Multiple calls to offload_context append correctly to the file
+        2. Each message is on its own line (proper JSONL format)
+        3. No lines are concatenated together
+        """
+        session_id = "test_session_multiple"
+
+        # First batch of messages
+        msgs1 = [
+            UserMsg(name="user", content="First message"),
+            AssistantMsg(name="assistant", content="First response"),
+        ]
+
+        # Second batch of messages
+        msgs2 = [
+            UserMsg(name="user", content="Second message"),
+            AssistantMsg(name="assistant", content="Second response"),
+        ]
+
+        # Offload first batch
+        file_path = await self.workspace.offload_context(session_id, msgs1)
+
+        # Offload second batch
+        file_path2 = await self.workspace.offload_context(session_id, msgs2)
+
+        # Verify both calls return the same path
+        self.assertEqual(file_path, file_path2)
+
+        # Read and verify the offloaded messages
+        async with aiofiles.open(file_path, "r") as f:
+            content = await f.read()
+
+        lines = content.strip().split("\n")
+        self.assertEqual(len(lines), 4)
+
+        # Compare with expected JSON strings
+        expected_lines = [msg.model_dump_json() for msg in msgs1 + msgs2]
+        self.assertListEqual(lines, expected_lines)
+
+        # Verify each line is valid JSON
+        for line in lines:
+            msg = Msg.model_validate_json(line)
+            self.assertIsNotNone(msg)
+
+    async def test_offload_context_empty_msgs_appends_nothing(self) -> None:
+        """Offloading an empty batch must not append a blank JSONL line.
+
+        The empty join used to be written as a standalone ``\\n``, which
+        is not a JSON record and broke every line-oriented consumer of
+        ``context.jsonl``.
+        """
+        session_id = "test_session_empty_batch"
+        msgs1 = [UserMsg(name="user", content="First message")]
+        file_path = await self.workspace.offload_context(session_id, msgs1)
+        await self.workspace.offload_context(session_id, [])
+
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
+
+        self.assertFalse(content.endswith(b"\n\n"))
+        for line in content.decode("utf-8").splitlines():
+            self.assertTrue(line.strip())
+            Msg.model_validate_json(line)
+            json.loads(line)
+
+    async def test_offload_context_with_datablock(self) -> None:
+        """Test offloading messages with DataBlock content.
+
+        This test verifies that:
+        1. Messages with DataBlock (Base64Source) are correctly offloaded
+        2. DataBlock data is persisted to separate files
+        3. DataBlock source is converted from Base64Source to URLSource
+        4. The offloaded message file contains the updated DataBlock
+        """
+        session_id = "test_session_datablock"
+
+        # Create a test image data (1x1 red pixel PNG)
+        test_data = base64.b64encode(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde",
+        ).decode()
+
+        data_block = DataBlock(
+            source=Base64Source(data=test_data, media_type="image/png"),
+            name="test_image",
+        )
+
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[TextBlock(text="Check this image:"), data_block],
+            ),
+        ]
+
+        # Offload the messages
+        file_path = await self.workspace.offload_context(session_id, msgs)
+
+        # Verify the message file was created
+        self.assertTrue(os.path.exists(file_path))
+
+        # Read and verify the offloaded message
+        async with aiofiles.open(file_path, "r") as f:
+            content = await f.read()
+
+        loaded_msg = Msg.model_validate_json(content.strip())
+
+        # Verify the data file was created and extract the URL
+        self.assertIsInstance(loaded_msg.content, list)
+        self.assertEqual(len(loaded_msg.content), 2)
+        data_url = str(loaded_msg.content[1].source.url)
+        self.assertTrue(data_url.startswith("workspace://"))
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
+        self.assertTrue(os.path.exists(data_file_path))
+
+        # Verify the data file contains the correct content
+        async with aiofiles.open(data_file_path, "rb") as f:
+            saved_data = await f.read()
+        self.assertEqual(saved_data, base64.b64decode(test_data))
+
+        # Build expected message with URLSource for comparison
+        # Use the actual IDs from loaded message to avoid UUID mismatch
+        expected_msg = UserMsg(
+            name="user",
+            content=[
+                TextBlock(
+                    text="Check this image:",
+                    id=loaded_msg.content[0].id,
+                    created_at=loaded_msg.content[0].created_at,
+                ),
+                DataBlock(
+                    id=loaded_msg.content[1].id,
+                    source=loaded_msg.content[1].source,
+                    name="test_image",
+                    created_at=loaded_msg.content[1].created_at,
+                ),
+            ],
+            id=loaded_msg.id,
+            created_at=loaded_msg.created_at,
+        )
+        self.assertEqual(
+            loaded_msg.model_dump_json(),
+            expected_msg.model_dump_json(),
+        )
+
+    async def test_offload_context_nested_media(self) -> None:
+        """Offload nested media without changing the caller's message."""
+        data = base64.b64encode(b"nested media").decode()
+        media = DataBlock(
+            id="media",
+            source=Base64Source(data=data, media_type="image/png"),
+            created_at="2026-01-01T00:00:00",
+        )
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolResultBlock(
+                    id="tool-call",
+                    name="get_media",
+                    output=[media],
+                    state=ToolResultState.SUCCESS,
+                    created_at="2026-01-01T00:00:00",
+                ),
+                HintBlock(
+                    id="hint",
+                    hint=[media],
+                    created_at="2026-01-01T00:00:00",
+                ),
+            ],
+            id="message",
+            created_at="2026-01-01T00:00:00",
+        )
+        original = msg.model_dump(mode="json")
+
+        path = await self.workspace.offload_context("nested-media", [msg])
+        saved = Msg.model_validate_json(
+            await self.workspace.get_backend().read_file(path),
+        )
+
+        url = (
+            "workspace:///data/"
+            f"{hashlib.sha256(data.encode()).hexdigest()}.png"
+        )
+        expected = msg.model_dump(mode="json")
+        for index, field in ((0, "output"), (1, "hint")):
+            expected["content"][index][field][0] = {
+                "type": "data",
+                "id": "media",
+                "source": {
+                    "type": "url",
+                    "url": url,
+                    "media_type": "image/png",
+                },
+                "name": None,
+                "created_at": AnyString(),
+                "finished_at": None,
+            }
+
+        self.assertEqual(saved.model_dump(mode="json"), expected)
+        self.assertEqual(msg.model_dump(mode="json"), original)
+
+    async def test_offload_data_block_deduplication(self) -> None:
+        """Test that duplicate DataBlocks are deduplicated.
+
+        This test verifies that:
+        1. Multiple DataBlocks with the same content share the same file
+        2. Only one file is created for duplicate data
+        3. Both DataBlocks point to the same file path
+        """
+        # Create two DataBlocks with identical data
+        test_data = base64.b64encode(b"test content").decode()
+
+        data_block1 = DataBlock(
+            source=Base64Source(data=test_data, media_type="text/plain"),
+            name="file1",
+        )
+        data_block2 = DataBlock(
+            source=Base64Source(data=test_data, media_type="text/plain"),
+            name="file2",
+        )
+
+        # Offload both data blocks
+        result1 = await self.workspace.offload_data_block(data_block1)
+        result2 = await self.workspace.offload_data_block(data_block2)
+
+        # Verify both point to the same file by comparing source URLs
+        self.assertEqual(str(result1.source.url), str(result2.source.url))
+
+        # Verify the file exists
+        data_url = str(result1.source.url)
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
+        self.assertTrue(os.path.exists(data_file_path))
+
+        # Verify only one file was created in the data directory
+        data_dir = os.path.join(self.temp_dir.name, "data")
+        files = os.listdir(data_dir)
+        self.assertEqual(len(files), 1)
+
+    async def test_offload_data_block_url_source(self) -> None:
+        """Test offloading DataBlock with URLSource.
+
+        This test verifies that:
+        1. DataBlock with URLSource is returned as-is
+        2. No file is created for URLSource DataBlocks
+        """
+        from pydantic import AnyUrl
+
+        data_block = DataBlock(
+            source=URLSource(
+                url=AnyUrl("https://example.com/image.png"),
+                media_type="image/png",
+            ),
+            name="remote_image",
+        )
+
+        # Offload the data block
+        result = await self.workspace.offload_data_block(data_block)
+
+        # Verify the data block is returned as-is by comparing full objects
+        self.assertDictEqual(result.model_dump(), data_block.model_dump())
+
+        # Verify no file was created in the data directory
+        data_dir = os.path.join(self.temp_dir.name, "data")
+        if os.path.exists(data_dir):
+            files = os.listdir(data_dir)
+            self.assertEqual(len(files), 0)
+
+    async def test_offload_tool_result_string(self) -> None:
+        """Test offloading tool result with string output.
+
+        This test verifies that:
+        1. Tool result with string output is correctly offloaded
+        2. The offloaded file is created at the expected path
+        3. The file contains the correct string content
+        """
+        session_id = "test_session_tool_result"
+        tool_result = ToolResultBlock(
+            id="tool_123",
+            name="test_tool",
+            output="Tool execution successful!",
+            state=ToolResultState.SUCCESS,
+        )
+
+        # Offload the tool result
+        file_path = await self.workspace.offload_tool_result(
+            session_id,
+            tool_result,
+        )
+
+        # Verify the file was created at the expected path
+        expected_path = os.path.join(
+            self.temp_dir.name,
+            "sessions",
+            session_id,
+            f"tool_result-{tool_result.id}.txt",
+        )
+        self.assertEqual(file_path, expected_path)
+        self.assertTrue(os.path.exists(file_path))
+
+        # Read and verify the content
+        async with aiofiles.open(file_path, "r") as f:
+            content = await f.read()
+
+        expected_content = "Tool execution successful!"
+        self.assertEqual(content, expected_content)
+
+    async def test_offload_tool_result_with_blocks(self) -> None:
+        """Test offloading tool result with TextBlock and DataBlock output.
+
+        This test verifies that:
+        1. Tool result with list of blocks is correctly offloaded
+        2. TextBlock content is extracted and written to file
+        3. DataBlock is offloaded and referenced in the output file
+        4. The output file contains the correct format
+        """
+        session_id = "test_session_tool_result_blocks"
+
+        # Create test data
+        test_data = base64.b64encode(b"test file content").decode()
+        data_block = DataBlock(
+            source=Base64Source(data=test_data, media_type="text/plain"),
+            name="output.txt",
+        )
+
+        tool_result = ToolResultBlock(
+            id="tool_456",
+            name="file_tool",
+            output=[
+                TextBlock(text="File created successfully: "),
+                data_block,
+            ],
+            state=ToolResultState.SUCCESS,
+        )
+
+        # Offload the tool result
+        file_path = await self.workspace.offload_tool_result(
+            session_id,
+            tool_result,
+        )
+
+        # Verify the file was created
+        self.assertTrue(os.path.exists(file_path))
+
+        # Read and verify the content
+        async with aiofiles.open(file_path, "r") as f:
+            content = await f.read()
+
+        # Verify the content structure (URL format varies by platform)
+        self.assertTrue(content.startswith("File created successfully: "))
+        self.assertIn("<data url='workspace://", content)
+        self.assertIn("name='output.txt'", content)
+        self.assertIn("media_type='text/plain'", content)
+        self.assertTrue(content.endswith("/>"))
+
+        # Extract and verify the data file exists
+        # Parse the URL from the content
+        import re
+
+        url_match = re.search(r"url='([^']+)'", content)
+        self.assertIsNotNone(url_match)
+        data_url = url_match.group(1)
+        # Resolve the workspace-relative URL to its physical path.
+        data_file_path = os.path.join(
+            self.temp_dir.name,
+            urlparse(data_url).path.lstrip("/"),
+        )
+        self.assertTrue(os.path.exists(data_file_path))
+
+
+class TestLocalWorkspaceSkills(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace skill management functionality."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        # pylint: disable=consider-using-with
+        self.test_skills_dir = tempfile.TemporaryDirectory()
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+        self.test_skills_dir.cleanup()
+
+    def _create_test_skill(
+        self,
+        skill_name: str,
+        description: str,
+        additional_files: dict[str, str] | None = None,
+    ) -> str:
+        """Create a test skill directory with SKILL.md.
+
+        Args:
+            skill_name (`str`):
+                The name of the skill.
+            description (`str`):
+                The description of the skill.
+            additional_files (`dict[str, str] | None`, optional):
+                Additional files to create in the skill directory.
+                Keys are file names, values are file contents.
+
+        Returns:
+            `str`:
+                The path to the created skill directory.
+        """
+        skill_dir = os.path.join(self.test_skills_dir.name, skill_name)
+        os.makedirs(skill_dir, exist_ok=True)
+
+        # Create SKILL.md with frontmatter
+        skill_md_content = f"""---
+name: {skill_name}
+description: {description}
+---
+
+# {skill_name}
+
+{description}
+"""
+        with open(
+            os.path.join(skill_dir, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(skill_md_content)
+
+        # Create additional files if provided
+        if additional_files:
+            for filename, content in additional_files.items():
+                with open(
+                    os.path.join(skill_dir, filename),
+                    "w",
+                    encoding="utf-8",
+                ) as f:
+                    f.write(content)
+
+        return skill_dir
+
+    async def test_initialize_copy_skills(self) -> None:
+        """Test copying skills to workspace.
+
+        This test verifies that:
+        1. Skills are correctly copied from source paths to workspace
+        2. The .skills file is created with correct hash mappings
+        3. All skill files are preserved during copying
+        """
+        # Create test skills
+        skill1_dir = self._create_test_skill(
+            "test_skill_1",
+            "A test skill for testing",
+            {"tool.py": "def test_tool():\n    pass\n"},
+        )
+        skill2_dir = self._create_test_skill(
+            "test_skill_2",
+            "Another test skill",
+            {"helper.py": "def helper():\n    return 42\n"},
+        )
+
+        # Create workspace with skill paths
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill1_dir, skill2_dir],
+        )
+
+        # Initialize the workspace
+        await workspace.initialize()
+
+        # Verify skills were copied
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
+        self.assertTrue(os.path.exists(skills_dir))
+
+        # Verify skill directories exist
+        skill1_target = os.path.join(skills_dir, "test_skill_1")
+        skill2_target = os.path.join(skills_dir, "test_skill_2")
+        self.assertTrue(os.path.exists(skill1_target))
+        self.assertTrue(os.path.exists(skill2_target))
+
+        # Verify SKILL.md files exist
+        self.assertTrue(
+            os.path.exists(os.path.join(skill1_target, "SKILL.md")),
+        )
+        self.assertTrue(
+            os.path.exists(os.path.join(skill2_target, "SKILL.md")),
+        )
+
+        # Verify additional files were copied
+        self.assertTrue(os.path.exists(os.path.join(skill1_target, "tool.py")))
+        self.assertTrue(
+            os.path.exists(os.path.join(skill2_target, "helper.py")),
+        )
+
+        # Verify .skills file was created with correct new structure
+        skills_hash_file = os.path.join(skills_dir, ".index")
+        self.assertTrue(os.path.exists(skills_hash_file))
+
+        async with aiofiles.open(skills_hash_file, "r") as f:
+            skills_data = json.loads(await f.read())
+
+        # Verify top-level structure
+        self.assertIn("skills_dir_mtime", skills_data)
+        self.assertIn("skills", skills_data)
+
+        skills_index = skills_data["skills"]
+        self.assertEqual(len(skills_index), 2)
+
+        # Verify each entry has the correct structure
+        self.assertIn("test_skill_1", skills_index)
+        self.assertIn("test_skill_2", skills_index)
+        self.assertDictEqual(
+            {k: v["skill_name"] for k, v in skills_index.items()},
+            {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
+        )
+
+    async def test_initialize_with_tilde_skill_path(self) -> None:
+        """Test that ``skill_paths`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is seeded through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            with patch.dict(os.environ, env, clear=False):
+                workspace = LocalWorkspace(
+                    workdir=self.temp_dir.name,
+                    skill_paths=[os.path.join("~", "tilde_skill")],
+                )
+                self.assertEqual(
+                    workspace.skill_paths,
+                    [os.path.abspath(skill_dir)],
+                )
+                await workspace.initialize()
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            ".seed",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
+
+    async def test_add_skill_with_tilde_path(self) -> None:
+        """Test that ``add_skill`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is added through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            workspace = LocalWorkspace(workdir=self.temp_dir.name)
+            await workspace.initialize()
+            with patch.dict(os.environ, env, clear=False):
+                await workspace.add_skill(os.path.join("~", "tilde_skill"))
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
+
+    async def test_initialize_skip_duplicate_skills(self) -> None:
+        """Test that duplicate skills are not copied again.
+
+        This test verifies that:
+        1. Skills are copied on first initialization
+        2. Running initialize again does not copy duplicate skills
+        3. The .skills file is not modified on second initialization
+        """
+        # Create test skill
+        skill_dir = self._create_test_skill(
+            "test_skill_dup",
+            "A test skill for duplication testing",
+        )
+
+        # Create workspace and initialize
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill_dir],
+        )
+        await workspace.initialize()
+
+        # Get the .skills file content after first initialization
+        skills_hash_file = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            ".seed",
+            ".index",
+        )
+        async with aiofiles.open(skills_hash_file, "r") as f:
+            hash_data_first = await f.read()
+
+        # Get modification time of the skill directory
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            ".seed",
+            "test_skill_dup",
+        )
+        mtime_first = os.path.getmtime(skill_target)
+
+        # Initialize again
+        await workspace.initialize()
+
+        # Verify .skills file is unchanged
+        async with aiofiles.open(skills_hash_file, "r") as f:
+            hash_data_second = await f.read()
+        self.assertEqual(hash_data_first, hash_data_second)
+
+        # Verify skill directory was not modified
+        mtime_second = os.path.getmtime(skill_target)
+        self.assertEqual(mtime_first, mtime_second)
+
+    async def test_initialize_deduplicate_skills(self) -> None:
+        """Test that duplicate skills in skill_paths are deduplicated.
+
+        This test verifies that:
+        1. When skill_paths contains duplicates (same hash), only one is copied
+        2. No concurrent copy conflicts occur
+        3. The .skills file contains only one entry for the duplicated skill
+        """
+        # Create a test skill
+        skill_dir = self._create_test_skill(
+            "test_skill_dedup",
+            "A test skill for deduplication testing",
+        )
+
+        # Create workspace with the same skill path listed multiple times
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill_dir, skill_dir, skill_dir],  # Same path 3 times
+        )
+
+        # Initialize the workspace
+        await workspace.initialize()
+
+        # Verify only one skill was copied
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
+        skill_target = os.path.join(skills_dir, "test_skill_dedup")
+        self.assertTrue(os.path.exists(skill_target))
+
+        # Verify .skills file contains only one entry
+        skills_hash_file = os.path.join(skills_dir, ".index")
+        self.assertTrue(os.path.exists(skills_hash_file))
+
+        async with aiofiles.open(skills_hash_file, "r") as f:
+            skills_data = json.loads(await f.read())
+
+        # Should have exactly one entry in the skills index
+        skills_index = skills_data["skills"]
+        self.assertEqual(len(skills_index), 1)
+        self.assertIn("test_skill_dedup", skills_index)
+        self.assertEqual(
+            skills_index["test_skill_dedup"]["skill_name"],
+            "test_skill_dedup",
+        )
+
+    async def test_initialize_invalid_skill(self) -> None:
+        """Test handling of invalid skills.
+
+        This test verifies that:
+        1. Skills without SKILL.md are not copied
+        2. Skills with invalid frontmatter are not copied
+        3. Valid skills are still copied correctly
+        """
+        # Create a valid skill
+        valid_skill_dir = self._create_test_skill(
+            "valid_skill",
+            "A valid test skill",
+        )
+
+        # Create an invalid skill without SKILL.md
+        invalid_skill_no_md = os.path.join(
+            self.test_skills_dir.name,
+            "invalid_no_md",
+        )
+        os.makedirs(invalid_skill_no_md, exist_ok=True)
+        with open(
+            os.path.join(invalid_skill_no_md, "tool.py"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("def tool():\n    pass\n")
+
+        # Create an invalid skill with malformed frontmatter
+        invalid_skill_bad_fm = os.path.join(
+            self.test_skills_dir.name,
+            "invalid_bad_fm",
+        )
+        os.makedirs(invalid_skill_bad_fm, exist_ok=True)
+        with open(
+            os.path.join(invalid_skill_bad_fm, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                "---\nname: missing_description\n---\n\nNo description field!",
+            )
+
+        # Create workspace with all skill paths
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[
+                valid_skill_dir,
+                invalid_skill_no_md,
+                invalid_skill_bad_fm,
+            ],
+        )
+
+        # Initialize the workspace
+        await workspace.initialize()
+
+        # Verify only the valid skill was copied
+        skills_dir = os.path.join(self.temp_dir.name, "skills", ".seed")
+        self.assertTrue(os.path.exists(skills_dir))
+
+        # Verify valid skill exists
+        valid_target = os.path.join(skills_dir, "valid_skill")
+        self.assertTrue(os.path.exists(valid_target))
+
+        # Verify invalid skills do not exist
+        invalid_target_no_md = os.path.join(skills_dir, "invalid_no_md")
+        invalid_target_bad_fm = os.path.join(skills_dir, "invalid_bad_fm")
+        self.assertFalse(os.path.exists(invalid_target_no_md))
+        self.assertFalse(os.path.exists(invalid_target_bad_fm))
+
+    async def test_list_skills(self) -> None:
+        """Test listing skills from workspace.
+
+        This test verifies that:
+        1. All skills in the workspace are correctly listed
+        2. Each skill has the correct name, description, and directory
+        3. The returned list matches the expected skills
+        """
+        # Create test skills
+        skill1_dir = self._create_test_skill(
+            "list_skill_1",
+            "First skill for listing",
+        )
+        skill2_dir = self._create_test_skill(
+            "list_skill_2",
+            "Second skill for listing",
+        )
+
+        # Create workspace and initialize
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill1_dir, skill2_dir],
+        )
+        await workspace.initialize()
+
+        # List skills
+        skills = await workspace.list_skills()
+
+        # Verify the number of skills
+        self.assertEqual(len(skills), 2)
+
+        # Sort skills by name for consistent comparison
+        skills_sorted = sorted(skills, key=lambda s: s.name)
+
+        # Build expected skills for comparison
+        expected_skills = [
+            {
+                "name": "list_skill_1",
+                "description": "First skill for listing",
+                "dir": skills_sorted[0].dir,  # Use actual dir path
+                "markdown": skills_sorted[0].markdown,  # Use actual markdown
+                "updated_at": skills_sorted[
+                    0
+                ].updated_at,  # Use actual timestamp
+            },
+            {
+                "name": "list_skill_2",
+                "description": "Second skill for listing",
+                "dir": skills_sorted[1].dir,  # Use actual dir path
+                "markdown": skills_sorted[1].markdown,  # Use actual markdown
+                "updated_at": skills_sorted[
+                    1
+                ].updated_at,  # Use actual timestamp
+            },
+        ]
+
+        # Compare full skill objects using dataclasses.asdict
+        actual_skills = [asdict(skill) for skill in skills_sorted]
+        self.assertListEqual(actual_skills, expected_skills)
+
+    async def test_list_skills_empty(self) -> None:
+        """Test listing skills when no skills exist.
+
+        This test verifies that:
+        1. An empty list is returned when no skills are in the workspace
+        2. No errors are raised when the skills directory doesn't exist
+        """
+        # Create workspace without initializing
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+
+        # List skills (should return empty list)
+        skills = await workspace.list_skills()
+
+        # Verify empty list is returned
+        self.assertListEqual(skills, [])
+
+    async def test_add_skill_with_utf8_bom(self) -> None:
+        """Test installing and listing a skill with a UTF-8 BOM."""
+        skill_dir = self._create_test_skill(
+            "bom_skill",
+            "Installed despite the BOM",
+        )
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(skill_md_path, "rb") as f:
+            content = f.read()
+        with open(skill_md_path, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + content)
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+        await workspace.add_skill(skill_dir)
+
+        installed_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "bom_skill",
+        )
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Installed despite the BOM",
+                    "dir": installed_dir,
+                    "markdown": "# bom_skill\n\nInstalled despite the BOM",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(installed_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+    async def test_list_skills_reconciles_utf8_bom_skill(self) -> None:
+        """Test indexing a manually added skill with a UTF-8 BOM."""
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        skill_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "default",
+            "dropped_skill",
+        )
+        os.makedirs(skill_dir)
+        with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+            f.write(
+                b"\xef\xbb\xbf---\n"
+                b"name: dropped_skill\n"
+                b"description: Dropped with a BOM\n"
+                b"---\n\nBody.\n",
+            )
+
+        skills = await workspace.list_skills()
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "dropped_skill",
+                    "description": "Dropped with a BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": os.path.getmtime(
+                        os.path.join(skill_dir, "SKILL.md"),
+                    ),
+                },
+            ],
+        )
+
+
+class _UnindexedWorkspace(WorkspaceBase):  # pylint: disable=abstract-method
+    """Use a local backend to test the base skill listing implementation."""
+
+    def __init__(self, workdir: str) -> None:
+        """Bind a local backend over ``workdir``."""
+        super().__init__()
+        self.workdir = workdir
+        self._backend = LocalBackend()
+
+    async def initialize(self) -> None:
+        """Nothing to provision for this workspace."""
+
+    async def close(self) -> None:
+        """Nothing to release for this workspace."""
+
+    async def _equip_partition(self, agent_id: str | None) -> str:
+        """Return the partition without copying the seed template."""
+        partition = self._skill_partition(agent_id)
+        os.makedirs(partition, exist_ok=True)
+        return partition
+
+
+class TestWorkspaceBaseListSkills(IsolatedAsyncioTestCase):
+    """Front-matter parsing in the default ``WorkspaceBase.list_skills``."""
+
+    async def test_list_skills_with_utf8_bom(self) -> None:
+        """A BOM-prefixed SKILL.md is listed, not silently dropped."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = _UnindexedWorkspace(workdir)
+            partition = await workspace._equip_partition(None)
+            skill_dir = os.path.join(partition, "bom_skill")
+            os.makedirs(skill_dir)
+            with open(os.path.join(skill_dir, "SKILL.md"), "wb") as f:
+                f.write(
+                    b"\xef\xbb\xbf---\n"
+                    b"name: bom_skill\n"
+                    b"description: Listed despite the BOM\n"
+                    b"---\n\nBody.\n",
+                )
+
+            skills = await workspace.list_skills()
+
+        self.assertListEqual(
+            [asdict(skill) for skill in skills],
+            [
+                {
+                    "name": "bom_skill",
+                    "description": "Listed despite the BOM",
+                    "dir": skill_dir,
+                    "markdown": "Body.",
+                    "updated_at": 0.0,
+                },
+            ],
+        )
+
+
+class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
+    """Test the local workspace class offloading with the agent."""
+
+    async def test_offload_tool_result(self) -> None:
+        """Test integration with the agent when offloading tool result.
+
+        This test verifies that:
+        1. A long tool result is split into a reserved part (kept in context)
+           and an offloaded part (written to disk).
+        2. The reserved tool result block in the context is truncated and
+           contains a system reminder pointing to the offload file.
+        3. The offloaded file contains the truncated remainder.
+        4. A second reply with a fresh tool call produces a new offload file.
+        """
+        with tempfile.TemporaryDirectory() as workdir:
+            session_id = "test_session"
+            model = MockModel(stream=False, context_size=100000)
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're a helpful assistant named Friday.",
+                model=model,
+                toolkit=Toolkit(
+                    tools=[_LongResultTool()],
+                ),
+                context_config=ContextConfig(
+                    tool_result_limit=50,
+                ),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
+                offloader=LocalWorkspace(
+                    workdir=workdir,
+                ),
+                state=AgentState(session_id=session_id),
+            )
+
+            model.set_responses(
+                mock_responses=[
+                    [
+                        ChatResponse(
+                            content=[
+                                ToolCallBlock(
+                                    id="1",
+                                    name="long_result_tool",
+                                    input="{}",
+                                ),
+                            ],
+                            is_last=True,
+                        ),
+                    ],
+                    [
+                        ChatResponse(
+                            content=[
+                                TextBlock(text="End_1."),
+                            ],
+                            is_last=True,
+                        ),
+                    ],
+                ],
+            )
+
+            await agent.reply()
+
+            # === Assert offload file content ===
+            offload_path_1 = os.path.join(
+                workdir,
+                "sessions",
+                session_id,
+                "tool_result-1.txt",
+            )
+            self.assertTrue(os.path.exists(offload_path_1))
+            async with aiofiles.open(offload_path_1, "r") as f:
+                offload_content = await f.read()
+
+            # The base64 payload is hashed with sha256 and persisted under
+            # `{workdir}/data/{hash}.{ext}` with the decoded bytes.
+            b64_data = "AAECAwQF"
+            data_hash = hashlib.sha256(b64_data.encode()).hexdigest()
+            data_file_path = os.path.join(
+                workdir,
+                "data",
+                f"{data_hash}.png",
+            )
+            self.assertTrue(os.path.exists(data_file_path))
+            async with aiofiles.open(data_file_path, "rb") as f:
+                self.assertEqual(await f.read(), base64.b64decode(b64_data))
+
+            # The full text is "0" * 30000 followed by a base64 DataBlock;
+            # tool_result_limit=50 reserves ~200 chars of text in context, the
+            # remaining 29800 chars + the DataBlock placeholder are offloaded.
+            data_url = f"workspace:///data/{data_hash}.png"
+            expected_offload_content = (
+                "0" * 29800 + f"<data url='{data_url}' name='fake_image.png' "
+                f"media_type='image/png'/>"
+            )
+            self.assertEqual(offload_content, expected_offload_content)
+
+            # === Assert context content ===
+            reminder_1 = (
+                "\n<<<TRUNCATED>>>\n<system-reminder>The remaining content "
+                "has been omitted for limited context. You can refer to the "
+                f"file in '{offload_path_1}' for the truncated content if "
+                "needed.</system-reminder>"
+            )
+            expected_first_msg = {
+                "id": AnyString(),
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "1",
+                        "name": "long_result_tool",
+                        "input": "{}",
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": "1",
+                        "name": "long_result_tool",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "text": "0" * 200 + reminder_1,
+                                "id": AnyString(),
+                            },
+                        ],
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "text": "End_1.",
+                        "id": AnyString(),
+                    },
+                ],
+                "metadata": {},
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "usage": None,
+            }
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [expected_first_msg],
+            )
+
+    async def test_offload_context(self) -> None:
+        """Test integration with the agent when offloading context.
+
+        This test triggers context compression twice in the same session and
+        verifies that:
+        1. The offload file ``context.jsonl`` is appended to (not
+           overwritten) across the two compressions.
+        2. When the compressed context contains a base64-encoded
+           ``DataBlock``, the binary payload is persisted to a separate
+           data file and the offloaded JSON line references that file via a
+           ``URLSource`` instead of embedding the base64 inline.
+        3. ``agent.state.summary`` is rewritten on every compression and
+           ends with a system-reminder pointing to the offload file.
+        4. ``agent.state.context`` only retains the latest assistant reply.
+
+        Note: compression triggers based on ``model.context_size`` together
+        with the default ``ContextConfig.trigger_ratio`` (0.8) — we set
+        ``context_size=100`` here so the threshold is just 80 tokens, and a
+        ~500-byte user message (~125 tokens) is enough to trigger
+        compression on each reply. The default ``ContextConfig`` is used.
+        """
+        with tempfile.TemporaryDirectory() as workdir:
+            session_id = "test_session_ctx"
+            model = MockModel(stream=False, context_size=100)
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're Friday.",
+                model=model,
+                toolkit=Toolkit(),
+                offloader=LocalWorkspace(workdir=workdir),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
+                state=AgentState(session_id=session_id),
+            )
+
+            # The mock structured response is reused across both compression
+            # calls (same summary fields each time).
+            model.set_structured_response(
+                StructuredResponse(
+                    content={
+                        "task_overview": "TASK",
+                        "current_state": "STATE",
+                        "important_discoveries": "DISCOVERIES",
+                        "next_steps": "NEXT",
+                        "context_to_preserve": "PRESERVE",
+                    },
+                ),
+            )
+
+            # Each reply yields a single final-text response (no tool calls).
+            model.set_responses(
+                mock_responses=[
+                    ChatResponse(
+                        content=[TextBlock(text="End_1.")],
+                        is_last=True,
+                    ),
+                    ChatResponse(
+                        content=[TextBlock(text="End_2.")],
+                        is_last=True,
+                    ),
+                ],
+            )
+
+            offload_path = os.path.join(
+                workdir,
+                "sessions",
+                session_id,
+                "context.jsonl",
+            )
+
+            # ===== First reply =====
+            # Build user_msg_a with **fixed** random fields (msg id, the
+            # content-block ids, timestamps) so the offloaded JSONL is a
+            # fully deterministic string we can assert against literally.
+            #
+            # Putting the DataBlock FIRST (before the long TextBlock) makes
+            # the boundary split include both blocks on the compress side,
+            # so the very first compression offloads a multimodal message —
+            # the DataBlock is rewritten to a URLSource alongside the
+            # original TextBlock, exercising the multimodal offload path.
+            b64_data = "AAECAwQF"
+            user_msg_a = UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        id="data_block_a",
+                        name="fake_image_a.png",
+                        source=Base64Source(
+                            data=b64_data,
+                            media_type="image/png",
+                        ),
+                        created_at="2026-01-01T00:00:00",
+                    ),
+                    TextBlock(
+                        id="text_block_a",
+                        text="A" * 500,
+                        created_at="2026-01-01T00:00:00",
+                    ),
+                ],
+                id="msg_a",
+                created_at="2026-01-01T00:00:00",
+                finished_at="2026-01-01T00:00:00",
+            )
+            await agent.reply(user_msg_a)
+
+            self.assertTrue(os.path.exists(offload_path))
+            async with aiofiles.open(offload_path, "r") as f:
+                content_after_first = await f.read()
+
+            # The offloader rewrites the DataBlock (Base64Source → URLSource)
+            # as a fresh block, so its ``created_at`` is regenerated rather
+            # than preserved; capture the actual value for the assertion.
+            offloaded_data_created_at = (
+                Msg.model_validate_json(
+                    content_after_first.strip(),
+                )
+                .content[0]
+                .created_at
+            )
+
+            # The DataBlock is persisted to ``{workdir}/data/`` as soon as
+            # it is included in an offloaded line — this happens during the
+            # first compression because both blocks land on the compress
+            # side of the boundary split.
+            data_hash = hashlib.sha256(b64_data.encode()).hexdigest()
+            data_file_path = os.path.join(
+                workdir,
+                "data",
+                f"{data_hash}.png",
+            )
+            self.assertTrue(os.path.exists(data_file_path))
+            async with aiofiles.open(data_file_path, "rb") as f:
+                self.assertEqual(await f.read(), base64.b64decode(b64_data))
+
+            # The single offloaded line carries user_msg_a with the
+            # DataBlock's source rewritten from ``Base64Source`` to
+            # ``URLSource`` (pointing at the persisted data file) while the
+            # TextBlock is preserved as-is. The expected JSONL is written
+            # literally so a developer can read off exactly what gets
+            # persisted; only the temp-dir-dependent file URL is
+            # interpolated via ``data_url``.
+            data_url = f"workspace:///data/{data_hash}.png"
+            expected_user_msg_a_offloaded_json = (
+                '{"name":"user","content":['
+                '{"type":"data","id":"data_block_a","source":'
+                '{"type":"url","url":"' + data_url + '",'
+                '"media_type":"image/png"},"name":"fake_image_a.png",'
+                '"created_at":"' + offloaded_data_created_at + '",'
+                '"finished_at":null},'
+                '{"type":"text","text":"' + "A" * 500 + '",'
+                '"id":"text_block_a",'
+                '"created_at":"2026-01-01T00:00:00","finished_at":null}'
+                '],"role":"user","id":"msg_a","metadata":{},'
+                '"created_at":"2026-01-01T00:00:00",'
+                '"usage":null,'
+                '"finished_at":"2026-01-01T00:00:00",'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
+            )
+            self.assertEqual(
+                content_after_first,
+                expected_user_msg_a_offloaded_json + "\n",
+            )
+
+            # ``state.context`` after the first compression is empty
+            # (msgs_to_reserve is empty since both content blocks of
+            # user_msg_a went to the compress side). After reasoning,
+            # ``state.context[0]`` is the assistant's "End_1." reply. The
+            # assistant fields (msg id, text-block id, timestamps) are
+            # generated by the agent — we capture them here and substitute
+            # them into the expected string.
+            assistant_1 = agent.state.context[0]
+
+            # ===== Second reply =====
+            user_msg_b = UserMsg(
+                name="user",
+                content=[
+                    TextBlock(
+                        id="text_block_b",
+                        text="B" * 500,
+                        created_at="2026-01-02T00:00:00",
+                    ),
+                ],
+                id="msg_b",
+                created_at="2026-01-02T00:00:00",
+                finished_at="2026-01-02T00:00:00",
+            )
+            await agent.reply(user_msg_b)
+
+            async with aiofiles.open(offload_path, "r") as f:
+                content_after_second = await f.read()
+
+            # The second compression offloads ``assistant_1`` and
+            # ``user_msg_b``. The file is appended to (mode="a"), so it
+            # now contains 3 lines: the multimodal user_msg_a from the
+            # first compression, plus assistant_1 and user_msg_b from the
+            # second.
+            expected_assistant_1_json = (
+                '{"name":"Friday","content":['
+                '{"type":"text","text":"End_1.","id":"'
+                + assistant_1.content[0].id
+                + '","created_at":"'
+                + assistant_1.content[0].created_at
+                + '","finished_at":'
+                + json.dumps(assistant_1.content[0].finished_at)
+                + "}"
+                '],"role":"assistant","id":"' + assistant_1.id + '",'
+                '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
+                '"usage":null,'
+                '"finished_at":null,'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
+            )
+            expected_user_msg_b_json = (
+                '{"name":"user","content":['
+                '{"type":"text","text":"' + "B" * 500 + '",'
+                '"id":"text_block_b",'
+                '"created_at":"2026-01-02T00:00:00","finished_at":null}'
+                '],"role":"user","id":"msg_b","metadata":{},'
+                '"created_at":"2026-01-02T00:00:00",'
+                '"usage":null,'
+                '"finished_at":"2026-01-02T00:00:00",'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
+            )
+            self.assertEqual(
+                content_after_second,
+                expected_user_msg_a_offloaded_json
+                + "\n"
+                + expected_assistant_1_json
+                + "\n"
+                + expected_user_msg_b_json
+                + "\n",
+            )
+
+            # ``state.summary`` is rewritten on every compression, so the
+            # final value is just one rendering of the summary template plus
+            # one offload pointer (both compressions wrote to the same file).
+            expected_summary = (
+                "<system-info>Here is a summary of your previous work\n"
+                "# Task Overview\n"
+                "TASK\n\n"
+                "# Current State\n"
+                "STATE\n\n"
+                "# Important Discoveries\n"
+                "DISCOVERIES\n\n"
+                "# Next Steps\n"
+                "NEXT\n\n"
+                "# Context to Preserve\n"
+                "PRESERVE</system-info>\n"
+                f"<system-reminder>The compressed context is offloaded "
+                f"to '{offload_path}', you can refer to it when needed."
+                f"</system-reminder>"
+            )
+            self.assertEqual(agent.state.summary, expected_summary)
+
+            # ``state.context`` only retains the latest assistant text;
+            # everything else has been offloaded.
+            expected_second_assistant = {
+                "id": AnyString(),
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "text": "End_2.",
+                        "id": AnyString(),
+                    },
+                ],
+                "metadata": {},
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+                "usage": None,
+            }
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [expected_second_assistant],
+            )
+
+
+class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
+    """Test MCP loading error handling in LocalWorkspace.initialize().
+
+    Covers:
+    - Invalid entries in persisted .mcp are skipped (not crashing)
+    - Stateful MCP connection failures are skipped (not crashing)
+    - Valid MCPs still load despite invalid neighbours
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+
+    async def _write_mcp_file(self, entries: list[dict]) -> str:
+        """Write a list of MCP config dicts to ``<workdir>/.mcp``.
+
+        Args:
+            entries: List of raw MCP config dicts.
+
+        Returns:
+            The path to the written file.
+        """
+        mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+        async with aiofiles.open(mcp_file, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(entries, indent=2, ensure_ascii=False))
+        return mcp_file
+
+    @staticmethod
+    def _make_http_mcp(name: str) -> dict:
+        """Return a valid stateless HTTP MCP entry."""
+        return {
+            "name": name,
+            "is_stateful": False,
+            "mcp_config": {
+                "type": "http_mcp",
+                "url": "http://localhost:19999/nonexistent",
+            },
+            "enable_tools": None,
+            "disable_tools": None,
+            "execution_timeout": None,
+        }
+
+    @staticmethod
+    def _make_bad_stdio_mcp(name: str) -> dict:
+        """Return an invalid STDIO MCP entry (is_stateful=False)."""
+        return {
+            "name": name,
+            "is_stateful": False,
+            "mcp_config": {
+                "type": "stdio_mcp",
+                "command": "nonexistent_cmd",
+            },
+            "enable_tools": None,
+            "disable_tools": None,
+            "execution_timeout": None,
+        }
+
+    # -----------------------------------------------------------------
+    #  persisted .mcp
+    # -----------------------------------------------------------------
+
+    async def test_initialize_skips_bad_entry_keeps_good(self) -> None:
+        """A persisted .mcp with one bad entry should skip it and still
+        load the valid entry."""
+        await self._write_mcp_file(
+            [
+                self._make_bad_stdio_mcp("bad_one"),
+                self._make_http_mcp("good_one"),
+            ],
+        )
+
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        # A v1 flat-list .mcp is migrated into the legacy scope
+        mcps = await ws.list_mcps()
+        names = [m.name for m in mcps]
+        self.assertIn("good_one", names)
+        self.assertNotIn("bad_one", names)
+
+    # -----------------------------------------------------------------
+    #  default_mcps + connect failure
+    # -----------------------------------------------------------------
+
+    async def test_initialize_connect_failure_removes_mcp(self) -> (None):
+        """A stateful MCP whose connect() raises should not crash
+        initialize() and should be removed from the MCP list."""
+        ws = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            default_mcps=[
+                MCPClient(
+                    name="will_fail_connect",
+                    is_stateful=True,
+                    mcp_config=StdioMCPConfig(
+                        command="nonexistent_command_xyz",
+                    ),
+                ),
+            ],
+        )
+        await ws.initialize()
+        self.assertTrue(ws.is_alive)
+        # Instantiated lazily on first list_mcps for this scope
+        names = [
+            m.name
+            for m in await ws.list_mcps(
+                agent_id="test-agent",
+                session_id="test-session",
+            )
+        ]
+        self.assertNotIn("will_fail_connect", names)
+
+
+class TestLocalWorkspaceMCPScoping(IsolatedAsyncioTestCase):
+    """Per-``(agent_id, session_id)`` MCP scoping in LocalWorkspace.
+
+    Covers:
+    - each scope is seeded from ``default_mcps`` and gets its own
+      instances, built lazily on first ``list_mcps``
+    - ``add_mcp`` / ``remove_mcp`` only touch the calling scope
+    - a scope absent from ``.mcp`` is not the same as one persisted
+      with an empty list
+    - ``purge_session`` drops declarations, instances and offload files
+    - the live-stateful cap never evicts the requesting scope
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def _make_mcp(name: str) -> MCPClient:
+        """Return a stateless HTTP MCP that needs no live server."""
+        return MCPClient(
+            name=name,
+            is_stateful=False,
+            mcp_config={
+                "type": "http_mcp",
+                "url": f"http://127.0.0.1:1/{name}",
+            },
+        )
+
+    def _read_mcp_file(self) -> dict:
+        """Return the parsed ``.mcp`` payload."""
+        with open(self.mcp_file, encoding="utf-8") as f:
+            return json.load(f)
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_scopes_get_independent_instances(self) -> None:
+        """Each scope is seeded from defaults with its own instances."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        # Nothing is instantiated before the first list_mcps.
+        self.assertEqual(ws._mcp_instances, {})
+
+        a1 = await ws.list_mcps(agent_id="agent-A", session_id="sess-1")
+        a2 = await ws.list_mcps(agent_id="agent-A", session_id="sess-2")
+        b1 = await ws.list_mcps(agent_id="agent-B", session_id="sess-1")
+
+        self.assertEqual([m.name for m in a1], ["seed"])
+        self.assertEqual([m.name for m in a2], ["seed"])
+        self.assertIsNot(a1[0], a2[0])
+        self.assertIsNot(a1[0], b1[0])
+
+        # Repeat access reuses the same instances.
+        self.assertIs(
+            (await ws.list_mcps(agent_id="agent-A", session_id="sess-1"))[0],
+            a1[0],
+        )
+
+        # A scope that only read defaults leaves no trace on disk.
+        self.assertFalse(os.path.exists(self.mcp_file))
+
+    async def test_add_and_remove_are_scoped(self) -> None:
+        """``add_mcp`` / ``remove_mcp`` touch only the calling scope."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        extra = self._make_mcp("extra")
+
+        registered = await ws.add_mcp(
+            extra,
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+
+        self.assertIs(registered, extra)
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
+        )
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-2",
+                )
+            ],
+            ["seed"],
+        )
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-B",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+        saved = self._read_mcp_file()
+        self.assertEqual(saved["version"], 2)
+        self.assertEqual(list(saved["mcps"]), ["agent-A"])
+
+        await ws.remove_mcp("extra", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_duplicate_name_in_one_scope_raises(self) -> None:
+        """A duplicate name is rejected per scope, not globally."""
+        ws = await self._workspace()
+
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with self.assertRaises(ValueError):
+            await ws.add_mcp(
+                self._make_mcp("dup"),
+                agent_id="agent-A",
+                session_id="sess-1",
+            )
+
+        # The same name in another scope is fine.
+        await ws.add_mcp(
+            self._make_mcp("dup"),
+            agent_id="agent-A",
+            session_id="sess-2",
+        )
+
+    async def test_emptied_scope_is_not_reseeded(self) -> None:
+        """An empty declaration differs from an absent one."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertEqual(
+            await ws.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
+        self.assertEqual(
+            self._read_mcp_file()["mcps"]["agent-A"]["sess-1"],
+            [],
+        )
+
+        # It survives a restart rather than falling back to defaults.
+        await ws.close()
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            await ws2.list_mcps(agent_id="agent-A", session_id="sess-1"),
+            [],
+        )
+        # An untouched scope still gets the defaults.
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-9",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_mcp_file_with_utf8_bom_is_restored(self) -> None:
+        """A BOM-prefixed .mcp still restores the persisted declarations.
+
+        The file is ordinary JSON in the workspace; a Windows editor may
+        re-save it with a byte order mark. Plain UTF-8 used to fail to
+        parse, silently dropping every declaration and falling back to
+        ``default_mcps``.
+        """
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        with open(self.mcp_file, "rb") as f:
+            payload = f.read()
+        with open(self.mcp_file, "wb") as f:
+            f.write(b"\xef\xbb\xbf" + payload)
+        await ws.close()
+
+        ws2 = await self._workspace(default_mcps=[self._make_mcp("seed")])
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws2.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed", "extra"],
+        )
+
+    async def test_reset_returns_to_factory_defaults(self) -> None:
+        """``reset`` drops ``.mcp``, so defaults are seeded again."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.remove_mcp("seed", agent_id="agent-A", session_id="sess-1")
+        self.assertTrue(os.path.exists(self.mcp_file))
+
+        await ws.reset()
+
+        self.assertFalse(os.path.exists(self.mcp_file))
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_purge_session_drops_scope_and_offload(self) -> None:
+        """``purge_session`` forgets declarations and offload files."""
+        ws = await self._workspace(default_mcps=[self._make_mcp("seed")])
+
+        await ws.add_mcp(
+            self._make_mcp("extra"),
+            agent_id="agent-A",
+            session_id="sess-1",
+        )
+        await ws.offload_context(
+            "sess-1",
+            [UserMsg(name="user", content="hi")],
+        )
+        session_dir = os.path.join(self.temp_dir.name, "sessions", "sess-1")
+        self.assertTrue(os.path.isdir(session_dir))
+
+        await ws.purge_session(agent_id="agent-A", session_id="sess-1")
+
+        self.assertFalse(os.path.exists(session_dir))
+        self.assertNotIn("agent-A", self._read_mcp_file()["mcps"])
+        # The scope is back to "never seen" — defaults apply again.
+        self.assertEqual(
+            [
+                m.name
+                for m in await ws.list_mcps(
+                    agent_id="agent-A",
+                    session_id="sess-1",
+                )
+            ],
+            ["seed"],
+        )
+
+    async def test_capacity_never_evicts_the_caller(self) -> None:
+        """The live-stateful cap only evicts other agents/sessions."""
+        connected: list[str] = []
+
+        async def _fake_connect(client: MCPClient) -> None:
+            """Mark connected without opening a transport."""
+            connected.append(client.name)
+            client._is_connected = True
+
+        async def _fake_close(client: MCPClient, *_a: Any, **_kw: Any) -> None:
+            """Mark disconnected without touching a transport."""
+            client._is_connected = False
+
+        def _stateful(name: str) -> MCPClient:
+            """A stateful spec whose transport is never opened."""
+            return MCPClient(
+                name=name,
+                is_stateful=True,
+                mcp_config={
+                    "type": "http_mcp",
+                    "url": f"http://127.0.0.1:1/{name}",
+                },
+            )
+
+        with patch.object(MCPClient, "connect", _fake_connect), patch.object(
+            MCPClient,
+            "close",
+            _fake_close,
+        ):
+            ws = await self._workspace(
+                default_mcps=[_stateful("a"), _stateful("b")],
+                max_live_stateful_mcps=2,
+            )
+
+            first = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual(len(first), 2)
+
+            # The cap is 2, so serving another session evicts the
+            # first — but the newcomer still gets its full set.
+            second = await ws.list_mcps(agent_id="agent-B", session_id="s1")
+            self.assertEqual(len(second), 2)
+            self.assertEqual(ws._mcp_instances[("agent-A", "s1")], {})
+
+            # Coming back rebuilds the evicted session's declaration.
+            again = await ws.list_mcps(agent_id="agent-A", session_id="s1")
+            self.assertEqual([m.name for m in again], ["a", "b"])
+            self.assertEqual(len(connected), 6)
+
+
+class TestLocalWorkspaceSkillPartitions(IsolatedAsyncioTestCase):
+    """Per-agent skill partitions under ``skills/``.
+
+    Covers:
+    - an agent's installs stay out of every other agent's listing
+    - ``skill_paths`` equip each agent with its own copy, once
+    - a caller that names no agent gets the default partition
+    - a pre-partition ``skills/`` becomes the seed template
+    - an agent id that would escape ``skills/`` is refused
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.src_dir = tempfile.TemporaryDirectory()
+        self.skills_dir = os.path.join(self.temp_dir.name, "skills")
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.temp_dir.cleanup()
+        self.src_dir.cleanup()
+
+    def _make_skill(self, dir_name: str, skill_name: str) -> str:
+        """Write a minimal skill directory outside the workspace."""
+        path = os.path.join(self.src_dir.name, dir_name)
+        os.makedirs(path, exist_ok=True)
+        with open(
+            os.path.join(path, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                f"---\nname: {skill_name}\ndescription: d\n---\n\nbody\n",
+            )
+        return path
+
+    async def _workspace(self, **kwargs: Any) -> LocalWorkspace:
+        """Build and initialise a workspace over the temp workdir."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name, **kwargs)
+        await ws.initialize()
+        self.addAsyncCleanup(ws.close)
+        return ws
+
+    async def test_agent_installs_are_isolated(self) -> None:
+        """What one agent installs, no other agent can see."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["a-skill"],
+        )
+        self.assertEqual(await ws.list_skills(agent_id="B"), [])
+        self.assertEqual(await ws.list_skills(), [])
+        self.assertTrue(
+            os.path.isdir(os.path.join(self.skills_dir, "A", "a-skill")),
+        )
+
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
+    async def test_add_skill_case_only_directory_collision(self) -> None:
+        """Case-only names get distinct paths without renaming the skills."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("source-a", "Example"))
+        await ws.add_skill(self._make_skill("source-b", "example"))
+
+        self.assertDictEqual(
+            {
+                s.name: (os.path.basename(s.dir), s.markdown)
+                for s in await ws.list_skills()
+            },
+            {"Example": ("Example", "body"), "example": ("example_1", "body")},
+        )
+
+    @skipUnless(_CASE_INSENSITIVE_FS, "requires case-insensitive FS")
+    async def test_seed_skill_case_only_directory_collision(self) -> None:
+        """Seed population keeps both skills on insensitive filesystems."""
+        ws = await self._workspace(
+            skill_paths=[
+                self._make_skill("source-a", "Example"),
+                self._make_skill("source-b", "example"),
+            ],
+        )
+
+        for agent_id in ("A", "B"):
+            self.assertDictEqual(
+                {
+                    s.name: (os.path.basename(s.dir), s.markdown)
+                    for s in await ws.list_skills(agent_id=agent_id)
+                },
+                {
+                    "Example": ("Example", "body"),
+                    "example": ("example_1", "body"),
+                },
+            )
+
+    async def test_seeds_equip_each_agent_with_its_own_copy(self) -> None:
+        """``skill_paths`` reach every agent, but as separate copies."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+
+        for agent_id in ("A", "B"):
+            self.assertEqual(
+                [s.name for s in await ws.list_skills(agent_id=agent_id)],
+                ["seed-skill"],
+            )
+
+        # A drops its copy: B keeps its own, and A does not get it back.
+        await ws.remove_skill("seed-skill", agent_id="A")
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="B")],
+            ["seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, ".seed", "seed-skill"),
+            ),
+        )
+
+    async def test_unnamed_caller_gets_the_default_partition(self) -> None:
+        """The SDK path, which never names an agent, is just a partition."""
+        ws = await self._workspace(
+            skill_paths=[self._make_skill("seeded", "seed-skill")],
+        )
+        await ws.add_skill(self._make_skill("plain", "plain-skill"))
+
+        self.assertEqual(
+            sorted(s.name for s in await ws.list_skills()),
+            ["plain-skill", "seed-skill"],
+        )
+        self.assertTrue(
+            os.path.isdir(
+                os.path.join(self.skills_dir, "default", "plain-skill"),
+            ),
+        )
+        # An agent is equipped from the template, not from that partition.
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["seed-skill"],
+        )
+
+    async def test_pre_partition_layout_becomes_the_template(self) -> None:
+        """Skills sitting directly under ``skills/`` equip every agent."""
+        legacy = os.path.join(self.skills_dir, "legacy")
+        os.makedirs(legacy)
+        with open(
+            os.path.join(legacy, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("---\nname: old\ndescription: d\n---\n\nbody\n")
+        with open(
+            os.path.join(self.skills_dir, ".skills"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "skills_dir_mtime": 0.0,
+                    "skills": {"legacy": {"hash": "h", "skill_name": "old"}},
+                },
+                f,
+            )
+
+        ws = await self._workspace()
+
+        self.assertEqual(os.listdir(self.skills_dir), [".seed"])
+        self.assertEqual(
+            [s.name for s in await ws.list_skills(agent_id="A")],
+            ["old"],
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.skills_dir, ".seed", ".index")),
+        )
+
+    async def test_traversing_agent_id_is_refused(self) -> None:
+        """An agent id is a directory name, so it may not escape."""
+        ws = await self._workspace()
+        for agent_id in ("../escape", "..", ".seed"):
+            with self.assertRaises(ValueError):
+                await ws.list_skills(agent_id=agent_id)
+
+    async def test_purge_agent_drops_its_partition(self) -> None:
+        """Deleting an agent takes its skills with it."""
+        ws = await self._workspace()
+        await ws.add_skill(self._make_skill("only-a", "a-skill"), agent_id="A")
+
+        await ws.purge_agent(agent_id="A")
+
+        self.assertFalse(os.path.exists(os.path.join(self.skills_dir, "A")))
+        self.assertEqual(await ws.list_skills(agent_id="A"), [])
+
+
+class TestSkillCopyCancellation(IsolatedAsyncioTestCase):
+    """Control copy completion without replacing its filesystem behavior."""
+
+    async def test_cancelled_copy_cannot_write_after_reset(self) -> None:
+        """Keep the lock through copy and rollback despite repeated cancel."""
+        for copy_fails in (False, True):
+            with self.subTest(copy_fails=copy_fails):
+                await self._check_cancelled_copy(copy_fails)
+
+    async def _check_cancelled_copy(self, copy_fails: bool) -> None:
+        """Run cancellation and reset against a gated executor thread."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "SKILL.md").write_text(
+                "---\nname: copy-audit\ndescription: Test skill\n---\nBody\n",
+                encoding="utf-8",
+            )
+            (source / "scripts").mkdir()
+            (source / "scripts" / "run.py").write_text(
+                "print('copied')\n",
+                encoding="utf-8",
+            )
+            workspace = LocalWorkspace(workdir=str(root / "workspace"))
+            await workspace.initialize()
+            entered = threading.Event()
+            release = threading.Event()
+            finished = threading.Event()
+            original = shutil.copytree
+            destinations: list[Path] = []
+            cleanup_entered = asyncio.Event()
+            cleanup_release = asyncio.Event()
+            original_delete = workspace._backend.delete_path
+
+            async def gated_delete(path: str) -> None:
+                """Expose cancellation while rollback owns the destination."""
+                if destinations and Path(path) == destinations[0]:
+                    cleanup_entered.set()
+                    await cleanup_release.wait()
+                await original_delete(path)
+
+            def gated_copy(
+                src: str,
+                dst: str,
+                *args: Any,
+                **kwargs: Any,
+            ) -> str:
+                """Pause the real copy and optionally fail after it writes."""
+                if Path(src).resolve() != source.resolve():
+                    return original(src, dst, *args, **kwargs)
+                destinations.append(Path(dst))
+                entered.set()
+                try:
+                    if not release.wait(10):
+                        raise TimeoutError("copy gate was not released")
+                    result = original(src, dst, *args, **kwargs)
+                    if copy_fails:
+                        raise OSError("copy failed after writing files")
+                    return result
+                finally:
+                    finished.set()
+
+            reset = None
+            with patch("shutil.copytree", gated_copy), patch.object(
+                workspace._backend,
+                "delete_path",
+                side_effect=gated_delete,
+            ):
+                install = asyncio.create_task(workspace.add_skill(str(source)))
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+                    install.cancel()
+                    await asyncio.sleep(0)
+                    install.cancel()
+                    await asyncio.sleep(0)
+                    self.assertTrue(workspace._skill_lock.locked())
+                    self.assertFalse(install.done())
+                    reset = asyncio.create_task(workspace.reset())
+                    await asyncio.sleep(0)
+                    self.assertFalse(reset.done())
+                    release.set()
+                    await asyncio.wait_for(cleanup_entered.wait(), 5)
+                    install.cancel()
+                    await asyncio.sleep(0)
+                    self.assertTrue(workspace._skill_lock.locked())
+                    self.assertFalse(reset.done())
+                    cleanup_release.set()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await asyncio.wait_for(install, 5)
+                    await asyncio.wait_for(reset, 5)
+                    self.assertTrue(finished.is_set())
+                    self.assertFalse(destinations[0].exists())
+                    self.assertFalse(workspace._skill_lock.locked())
+                finally:
+                    release.set()
+                    cleanup_release.set()
+                    await asyncio.gather(install, return_exceptions=True)
+                    if reset is not None:
+                        await asyncio.gather(reset, return_exceptions=True)
+                    self.assertTrue(await asyncio.to_thread(finished.wait, 5))
+                    await workspace.close()

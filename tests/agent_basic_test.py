@@ -1,0 +1,2204 @@
+# -*- coding: utf-8 -*-
+"""The basic test of the agent class."""
+import base64
+from typing import Any
+from unittest.async_case import IsolatedAsyncioTestCase
+
+from utils import AnyString, MockModel
+
+from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.tool import (
+    ToolBase,
+    Toolkit,
+    ToolChunk,
+)
+from agentscope.permission import (
+    PermissionDecision,
+    PermissionBehavior,
+    PermissionContext,
+)
+from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    URLSource,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    UserMsg,
+)
+from agentscope.types import ReplyFinishedReason
+
+
+class MockSequentialTool(ToolBase):
+    """A mock tool that is not concurrency safe (sequential execution)."""
+
+    name: str = "mock_sequential_tool"
+    description: str = "A mock sequential tool for testing"
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "input": {"type": "string", "description": "Input string"},
+        },
+        "required": ["input"],
+    }
+    is_concurrency_safe: bool = False
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Check permissions for the tool usage."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="Mock tool always allows",
+            message="Mock tool always allows",
+        )
+
+    # pylint: disable=redefined-builtin
+    async def __call__(self, input: str, **kwargs: Any) -> ToolChunk:
+        """Execute the tool."""
+        return ToolChunk(
+            content=[TextBlock(text=f"Sequential result: {input}")],
+        )
+
+
+class MockConcurrentTool(ToolBase):
+    """A mock tool that is concurrency safe (concurrent execution)."""
+
+    name: str = "mock_concurrent_tool"
+    description: str = "A mock concurrent tool for testing"
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "input": {"type": "string", "description": "Input string"},
+        },
+        "required": ["input"],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Check permissions for the tool usage."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="Mock tool always allows",
+            message="Mock tool always allows",
+        )
+
+    # pylint: disable=redefined-builtin
+    async def __call__(self, input: str, **kwargs: Any) -> ToolChunk:
+        """Execute the tool."""
+        return ToolChunk(
+            content=[TextBlock(text=f"Concurrent result: {input}")],
+        )
+
+
+class AgentBasicTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
+    """The basic test of the agent class."""
+
+    async def asyncSetUp(self) -> None:
+        """The async setup method."""
+        self.model = MockModel()
+        self.agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=self.model,
+            toolkit=Toolkit(),
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off here to keep the event assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+    def _get_event_base(self, reply_id: str) -> dict:
+        """Get the dict with the basic fields for event assertion."""
+        return {
+            "id": AnyString(),
+            "created_at": AnyString(),
+            "metadata": {},
+            "reply_id": reply_id,
+        }
+
+    def _get_msg_base(self) -> dict:
+        """Get the dict with the basic fields for message assertion."""
+        return {
+            "id": AnyString(),
+            "created_at": AnyString(),
+            "finished_at": None,
+            "finished_reason": None,
+            "structured_output": None,
+            "error": None,
+            "metadata": {},
+            "name": "Friday",
+            "role": "assistant",
+            "usage": None,
+        }
+
+    async def test_default_configs_are_not_shared_between_agents(
+        self,
+    ) -> None:
+        """Agents created with defaults own independent config objects."""
+        agent_1 = Agent(
+            name="agent-1",
+            system_prompt="You are agent 1.",
+            model=MockModel(),
+        )
+        agent_2 = Agent(
+            name="agent-2",
+            system_prompt="You are agent 2.",
+            model=MockModel(),
+        )
+
+        self.assertIsNot(agent_1.model_config, agent_2.model_config)
+        self.assertIsNot(agent_1.context_config, agent_2.context_config)
+        self.assertIsNot(agent_1.react_config, agent_2.react_config)
+        self.assertIsNot(agent_1.injection_config, agent_2.injection_config)
+
+        agent_1.model_config.max_retries = 3
+        agent_1.context_config.tool_result_limit = 123
+        agent_1.react_config.max_iters = 2
+        agent_1.injection_config.timezone = "Asia/Shanghai"
+
+        self.assertNotEqual(
+            agent_1.model_config.max_retries,
+            agent_2.model_config.max_retries,
+        )
+        self.assertNotEqual(
+            agent_1.context_config.tool_result_limit,
+            agent_2.context_config.tool_result_limit,
+        )
+        self.assertNotEqual(
+            agent_1.react_config.max_iters,
+            agent_2.react_config.max_iters,
+        )
+        self.assertNotEqual(
+            agent_1.injection_config.timezone,
+            agent_2.injection_config.timezone,
+        )
+
+    async def test_inconsistent_ratios_are_rejected(self) -> None:
+        """The ratios of the context config must leave room ahead of the
+        compression threshold."""
+        with self.assertRaises(ValueError):
+            Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=ContextConfig(
+                    trigger_ratio=0.5,
+                    reserve_ratio=0.6,
+                ),
+            )
+
+        with self.assertRaises(ValueError):
+            Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=ContextConfig(
+                    trigger_ratio=0.5,
+                    context_buffer_ratio=0.5,
+                ),
+            )
+
+    async def test_deprecated_context_buffer_ratio_is_migrated(self) -> None:
+        """The buffer ratio of the injection config still takes effect, and
+        overrides the one in the context config."""
+        context_config = ContextConfig(context_buffer_ratio=0.1)
+        with self.assertWarns(DeprecationWarning):
+            agent = Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.3),
+            )
+
+        self.assertEqual(agent.context_config.context_buffer_ratio, 0.3)
+
+    async def test_deprecated_override_does_not_mutate_the_caller_config(
+        self,
+    ) -> None:
+        """Migrating the deprecated ratio must not write through a config
+        object that another agent shares."""
+        context_config = ContextConfig()
+        with self.assertWarns(DeprecationWarning):
+            overriding = Agent(
+                name="overriding",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+            )
+        sharing = Agent(
+            name="sharing",
+            system_prompt="You are an agent.",
+            model=MockModel(),
+            context_config=context_config,
+        )
+
+        self.assertEqual(overriding.context_config.context_buffer_ratio, 0.5)
+        self.assertEqual(context_config.context_buffer_ratio, 0.2)
+        self.assertEqual(sharing.context_config.context_buffer_ratio, 0.2)
+
+    async def test_streaming_reasoning(self) -> None:
+        """Test the streaming model inference without tool calls generated,
+        only text in model response.
+
+        Test both the reply and replyStream interfaces.
+        """
+        # Set up mock responses for streaming
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Hello")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[TextBlock(text=" world")],
+                        is_last=False,
+                    ),
+                    ChatResponse(content=[TextBlock(text="!")], is_last=False),
+                    ChatResponse(
+                        content=[TextBlock(text="Hello world!")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        # Test replyStream interface
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hi"),
+        ):
+            events.append(event.model_dump())
+
+        # Verify events
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+
+        expected_events = [
+            {
+                "type": "REPLY_START",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {
+                "type": "MODEL_CALL_START",
+                "model_name": "mock-model",
+            },
+            {
+                "type": "TEXT_BLOCK_START",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "Hello",
+            },
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": " world",
+            },
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "!",
+            },
+            {
+                "type": "TEXT_BLOCK_END",
+                "block_id": AnyString(),
+                "text": None,
+            },
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
+        ]
+
+        basic_dict = self._get_event_base(reply_id)
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events],
+        )
+
+        # Assert context after reply_stream
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
+                "finished_at": AnyString(),
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                **msg_base,
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context)
+        self.assertEqual(self.agent.state.cur_iter, 1)
+
+        # Test reply interface
+        self.model.cnt = 0  # Reset mock model response index
+        msg = await self.agent.reply(UserMsg(name="user", content="Hi again"))
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "error": None,
+                "id": AnyString(),
+                "metadata": {},
+                "usage": None,
+            },
+        )
+
+        # Assert context after reply
+        expected_context_after_reply = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
+                "metadata": {},
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                **msg_base,
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "metadata": {},
+            },
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hi again",
+                    },
+                ],
+                "metadata": {},
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                **msg_base,
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "metadata": {},
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_non_streaming_reasoning(self) -> None:
+        """Test the non-streaming model inference without tool calls generated,
+        only text in model response.
+
+        Test both the reply and replyStream interfaces.
+        """
+        # Set up mock response for non-streaming
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hello world!")],
+                    is_last=True,
+                    usage=None,
+                ),
+            ],
+        )
+
+        # Test replyStream interface
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hi"),
+        ):
+            events.append(event.model_dump())
+
+        # Verify events
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+
+        expected_events = [
+            {
+                "type": "REPLY_START",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {
+                "type": "MODEL_CALL_START",
+                "model_name": "mock-model",
+            },
+            {
+                "type": "TEXT_BLOCK_START",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "Hello world!",
+            },
+            {
+                "type": "TEXT_BLOCK_END",
+                "block_id": AnyString(),
+                "text": None,
+            },
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
+        ]
+
+        basic_dict = self._get_event_base(reply_id)
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events],
+        )
+
+        # Assert context after reply_stream
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
+                "metadata": {},
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                **msg_base,
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "metadata": {},
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context)
+
+        # Test reply interface
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hello world!")],
+                    is_last=True,
+                    usage=None,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Hi again"))
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "error": None,
+                "id": AnyString(),
+                "metadata": {},
+                "usage": None,
+            },
+        )
+
+        # Assert context after reply
+        expected_context_after_reply = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
+                "metadata": {},
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                **msg_base,
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "metadata": {},
+            },
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hi again",
+                    },
+                ],
+                "metadata": {},
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                **msg_base,
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "metadata": {},
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_usage_cache_tokens_are_not_dropped(self) -> None:
+        """Regression test for issue #2305.
+
+        Prompt cache tokens (``cache_input_tokens`` and
+        ``cache_creation_input_tokens``) parsed by the model adapter into
+        ``ChatUsage`` must survive the agent layer:
+
+        1. ``ModelCallEndEvent`` must carry them so middleware reading the
+           event can record cache hit rates.
+        2. ``_save_to_context`` must merge them into ``Msg.usage``.
+        """
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hello world!")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=20,
+                        time=0.5,
+                        cache_input_tokens=60,
+                        cache_creation_input_tokens=40,
+                    ),
+                ),
+            ],
+        )
+
+        end_events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hi"),
+        ):
+            if event.type == "MODEL_CALL_END":
+                end_events.append(event)
+
+        # 1) The end event must carry the cache tokens.
+        self.assertEqual(len(end_events), 1)
+        self.assertEqual(
+            end_events[0].model_dump(),
+            {
+                **self._get_event_base(self.agent.state.reply_id),
+                "type": "MODEL_CALL_END",
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_input_tokens": 60,
+                "cache_creation_input_tokens": 40,
+                "finished_reason": "completed",
+            },
+        )
+
+        # 2) The saved assistant message must expose the cache tokens in its
+        #    usage.
+        assistant_msgs = [
+            msg for msg in self.agent.state.context if msg.role == "assistant"
+        ]
+        self.assertEqual(len(assistant_msgs), 1)
+        usage = assistant_msgs[0].usage
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        self.assertEqual(
+            usage.model_dump(),
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_input_tokens": 60,
+                "cache_creation_input_tokens": 40,
+            },
+        )
+
+    async def test_usage_cache_tokens_none_normalized_to_zero(self) -> None:
+        """Regression test: None-valued cache fields must not raise Pydantic.
+
+        ChatUsage is a plain dataclass that does not enforce int annotations at
+        runtime. Adapters copy optional SDK fields with getattr(x, 0),
+        which can still return None when the attribute exists but is null.
+        None-valued cache fields must be normalized to zero before
+        entering any Pydantic model.
+        """
+        usage_with_none_cache = ChatUsage(
+            input_tokens=10,
+            output_tokens=5,
+            time=0.1,
+        )
+        # Manually assign None to the two cache fields (dataclass will not
+        # complain at runtime because there is no runtime type check).
+        usage_with_none_cache.cache_input_tokens = None
+        usage_with_none_cache.cache_creation_input_tokens = None
+
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hi")],
+                    is_last=True,
+                    usage=usage_with_none_cache,
+                ),
+            ],
+        )
+
+        end_events = []
+        # Must not raise Pydantic ValidationError; reply completes cleanly.
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hello"),
+        ):
+            if event.type == "MODEL_CALL_END":
+                end_events.append(event)
+
+        self.assertEqual(len(end_events), 1)
+        self.assertEqual(
+            end_events[0].model_dump(),
+            {
+                **self._get_event_base(self.agent.state.reply_id),
+                "type": "MODEL_CALL_END",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                # None must be normalized to 0.
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+        )
+
+        assistant_msgs = [
+            msg for msg in self.agent.state.context if msg.role == "assistant"
+        ]
+        self.assertEqual(len(assistant_msgs), 1)
+        usage = assistant_msgs[0].usage
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        # None from dataclass must also be normalized to 0 in Msg.usage.
+        self.assertEqual(
+            usage.model_dump(),
+            {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        )
+
+    async def test_usage_cache_tokens_in_reply_return(self) -> None:
+        """Regression test: Agent.reply() result must keep the cache tokens.
+
+        ``final_usage`` is rebuilt from the saved context message when
+        returning the final ``AssistantMsg``. It must copy both cache
+        fields, otherwise the returned message silently reports zeros even
+        though the saved context carried the correct values.
+        """
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Hello world!")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=20,
+                        time=0.5,
+                        cache_input_tokens=60,
+                        cache_creation_input_tokens=40,
+                    ),
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Hi"))
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Hello world!",
+                    },
+                ],
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cache_input_tokens": 60,
+                    "cache_creation_input_tokens": 40,
+                },
+            },
+        )
+
+    async def test_max_iters_counts_reasoning_acting_round_once(self) -> None:
+        """A tool round consumes one iteration before final reasoning."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent.react_config = ReActConfig(max_iters=2)
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tool_call_1",
+                            name="mock_sequential_tool",
+                            input='{"input": "x"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Go"))
+
+        self.assertEqual(msg.finished_reason, ReplyFinishedReason.COMPLETED)
+        self.assertEqual(
+            [block.text for block in msg.get_content_blocks("text")],
+            ["done"],
+        )
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
+        tool_results = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(
+            tool_results[0].output[0].text,
+            "Sequential result: x",
+        )
+
+    async def test_thinking_only_response_continues_reasoning(self) -> None:
+        """A thinking-only response should not end with an empty reply."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Think"))
+
+        # The thinking-only turn must trigger a second reasoning round
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
+        # The final reply message only carries the visible text answer
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Final answer",
+                    },
+                ],
+                "usage": None,
+            },
+        )
+
+        # The context keeps the thinking block and the final answer in a
+        # single assistant message following the user turn
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Think",
+                    },
+                ],
+                "finished_at": AnyString(),
+                "finished_reason": None,
+            },
+            {
+                **msg_base,
+                "content": [
+                    {
+                        "type": "thinking",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "thinking": "Working on it",
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Final answer",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context)
+
+    async def test_last_thinking_only_response_forces_final_text(self) -> None:
+        """A final thinking-only round gets one text-only model call."""
+        received_tool_choices: list = []
+
+        class TrackingModel(MockModel):
+            """A mock model that records tool choice arguments."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                """Record the tool choice and return the next response."""
+                received_tool_choices.append(kwargs.get("tool_choice"))
+                return await super()._call_api(*args, **kwargs)
+
+        model = TrackingModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final summary")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            react_config=ReActConfig(max_iters=1),
+        )
+
+        items = []
+        async for item in agent.reply_stream(
+            UserMsg(name="user", content="Think"),
+            yield_final_msg=True,
+        ):
+            items.append(item)
+        msg = items[-1]
+
+        self.assertEqual(model.cnt, 2)
+        self.assertEqual(agent.state.cur_iter, 2)
+        self.assertEqual(received_tool_choices[0], None)
+        self.assertEqual(received_tool_choices[1].mode, "none")
+        event_base = self._get_event_base(agent.state.reply_id)
+        self.assertListEqual(
+            [item.model_dump() for item in items[-3:-1]],
+            [
+                {
+                    **event_base,
+                    "type": "EXCEED_MAX_ITERS",
+                    "name": "Friday",
+                },
+                {
+                    **event_base,
+                    "type": "REPLY_END",
+                    "error": None,
+                    "session_id": agent.state.session_id,
+                    "finished_reason": (ReplyFinishedReason.EXCEED_MAX_ITERS),
+                },
+            ],
+        )
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Final summary",
+                    },
+                ],
+            },
+        )
+
+    async def test_forced_final_text_call_is_bounded(self) -> None:
+        """The forced final text call runs at most once."""
+        self.agent.react_config = ReActConfig(max_iters=1)
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="First thought")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                ),
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Second thought")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=50,
+                        time=0.2,
+                        cache_input_tokens=7,
+                        cache_creation_input_tokens=3,
+                    ),
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Think"))
+
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "usage": {
+                    "input_tokens": 180,
+                    "output_tokens": 90,
+                    "cache_input_tokens": 12,
+                    "cache_creation_input_tokens": 5,
+                },
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "The maximum reasoning-acting iterations "
+                        "are exceeded.",
+                    },
+                ],
+            },
+        )
+
+    async def test_interrupted_reply_preserves_usage(self) -> None:
+        """An interrupted final message carries the model usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Partial response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                    finished_reason=FinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(
+            UserMsg(name="user", content="Continue"),
+        )
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.INTERRUPTED,
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 40,
+                    "cache_input_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                },
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": (
+                            "I notice the interruption. How can I help you?"
+                        ),
+                    },
+                ],
+            },
+        )
+
+    async def test_reply_does_not_reuse_previous_usage(self) -> None:
+        """A reply with no new context does not reuse prior usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="First response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                ),
+                ChatResponse(content=[], is_last=True),
+            ],
+        )
+
+        await self.agent.reply(UserMsg(name="user", content="Start"))
+        msg = await self.agent.reply()
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "content": [],
+            },
+        )
+
+    async def test_streaming_sequential_tool_calls(self) -> None:
+        """Test the streaming model inference with tool calls generated.
+
+        Test only the replyStream interface. The `is_concurrent_safe` of the
+        registered tools should be False to make sure the tool calls are
+        executed sequentially.
+
+        To assert:
+        1. The events (by assert the dict generated by model_dump)
+        2. The final reply message
+        3. The agent state (Before and after replyStream)
+        """
+        # Register sequential tools
+        seq_tool = MockSequentialTool()
+        self.agent.toolkit = Toolkit(tools=[seq_tool])
+
+        # Create tool call IDs
+        tool_call_id_1 = "tool_call_1"
+        tool_call_id_2 = "tool_call_2"
+
+        # Set up mock responses with tool calls
+        text_block = TextBlock(text="I'll call the tool")
+        tool_call_1 = ToolCallBlock(
+            id=tool_call_id_1,
+            name="mock_sequential_tool",
+            input='{"input": "test1"}',
+        )
+        tool_call_1_part1 = ToolCallBlock(
+            id=tool_call_id_1,
+            name="mock_sequential_tool",
+            input='{"input": ',
+        )
+        tool_call_1_part2 = ToolCallBlock(
+            id=tool_call_id_1,
+            name="mock_sequential_tool",
+            input='"test1"}',
+        )
+        tool_call_2 = ToolCallBlock(
+            id=tool_call_id_2,
+            name="mock_sequential_tool",
+            input='{"input": "test2"}',
+        )
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[text_block, tool_call_1_part1],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[tool_call_1_part2],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[tool_call_2],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[text_block, tool_call_1, tool_call_2],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="ended")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[TextBlock(text="ended")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        # Collect all events
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        # Verify events
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+
+        # Expected events for sequential tool calls
+        expected_events = [
+            {
+                "type": "REPLY_START",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
+            {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "I'll call the tool",
+            },
+            {
+                "type": "TOOL_CALL_START",
+                "tool_call_id": tool_call_id_1,
+                "tool_call_name": "mock_sequential_tool",
+            },
+            {
+                "type": "TOOL_CALL_DELTA",
+                "tool_call_id": tool_call_id_1,
+                "delta": '{"input": ',
+            },
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
+            {
+                "type": "TOOL_CALL_DELTA",
+                "tool_call_id": tool_call_id_1,
+                "delta": '"test1"}',
+            },
+            {
+                "type": "TOOL_CALL_START",
+                "tool_call_id": tool_call_id_2,
+                "tool_call_name": "mock_sequential_tool",
+            },
+            {
+                "type": "TOOL_CALL_DELTA",
+                "tool_call_id": tool_call_id_2,
+                "delta": '{"input": "test2"}',
+            },
+            {"type": "TOOL_CALL_END", "tool_call_id": tool_call_id_1},
+            {"type": "TOOL_CALL_END", "tool_call_id": tool_call_id_2},
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_1,
+                "tool_call_name": "mock_sequential_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_1,
+                "delta": "Sequential result: test1",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_1,
+                "state": "success",
+            },
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_2,
+                "tool_call_name": "mock_sequential_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_2,
+                "delta": "Sequential result: test2",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_2,
+                "state": "success",
+            },
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
+            {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "ended",
+            },
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
+        ]
+
+        basic_dict = self._get_event_base(reply_id)
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events],
+        )
+
+        # Assert context after reply_stream
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Test",
+                    },
+                ],
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "I'll call the tool",
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_1,
+                        "name": "mock_sequential_tool",
+                        "input": '{"input": "test1"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_2,
+                        "name": "mock_sequential_tool",
+                        "input": '{"input": "test2"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Sequential result: test1",
+                            },
+                        ],
+                        "name": "mock_sequential_tool",
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Sequential result: test2",
+                            },
+                        ],
+                        "name": "mock_sequential_tool",
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "ended",
+                    },
+                ],
+            },
+        ]
+
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context = [{**msg_base, **_} for _ in expected_context]
+        self.assertListEqual(context_dicts, expected_context)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_streaming_concurrent_tool_calls(self) -> None:
+        """Test the streaming model inference with tool calls generated.
+
+        Test only the replyStream interface. The `is_concurrent_safe` of the
+        registered tools should be True to make sure the tool calls are
+        executed concurrently.
+
+        To assert:
+        1. The events (by assert the dict generated by model_dump)
+        2. The final reply message
+        3. The agent state (Before and after replyStream)
+        """
+        # Register concurrent tools
+        conc_tool = MockConcurrentTool()
+
+        self.agent.toolkit = Toolkit(
+            tools=[conc_tool],
+        )
+
+        # Create tool call IDs
+        tool_call_id_1 = "tool_call_1"
+        tool_call_id_2 = "tool_call_2"
+
+        # Set up mock responses with tool calls
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=tool_call_id_1,
+                                name="mock_concurrent_tool",
+                                input='{"input": "test1"}',
+                            ),
+                            ToolCallBlock(
+                                id=tool_call_id_2,
+                                name="mock_concurrent_tool",
+                                input='{"input": "test2"}',
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="All done")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[TextBlock(text="All done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        # Collect all events
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump())
+
+        # Verify events
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+
+        # For concurrent execution, the order of tool results may vary
+        # Split events into: prefix (before concurrent), concurrent part,
+        # suffix (after concurrent)
+
+        # Expected prefix events (before tool execution)
+        expected_prefix = [
+            {
+                "type": "REPLY_START",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+        ]
+
+        # Expected concurrent events (order may vary)
+        expected_concurrent = [
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_1,
+                "tool_call_name": "mock_concurrent_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_1,
+                "delta": "Concurrent result: test1",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_1,
+                "state": "success",
+            },
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_2,
+                "tool_call_name": "mock_concurrent_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_2,
+                "delta": "Concurrent result: test2",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_2,
+                "state": "success",
+            },
+        ]
+
+        # Expected suffix events (final model call with pure text)
+        expected_suffix = [
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
+            {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "All done",
+            },
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
+        ]
+
+        # Assert prefix events (fixed order)
+        basic_dict = self._get_event_base(reply_id)
+        prefix_len = len(expected_prefix)
+        self.assertListEqual(
+            events[:prefix_len],
+            [{**basic_dict, **_} for _ in expected_prefix],
+        )
+
+        # Assert concurrent events (order may vary)
+        concurrent_len = len(expected_concurrent)
+        concurrent_events = events[prefix_len : prefix_len + concurrent_len]
+
+        # Check length matches
+        self.assertEqual(len(concurrent_events), len(expected_concurrent))
+
+        # Check each expected event is in the actual events
+        for expected_event in expected_concurrent:
+            expected_with_base = {**basic_dict, **expected_event}
+            self.assertIn(expected_with_base, concurrent_events)
+
+        # Assert suffix events (fixed order)
+        suffix_events = events[prefix_len + concurrent_len :]
+        self.assertListEqual(
+            suffix_events,
+            [{**basic_dict, **_} for _ in expected_suffix],
+        )
+
+        # Assert context after reply_stream
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Test",
+                    },
+                ],
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_1,
+                        "name": "mock_concurrent_tool",
+                        "input": '{"input": "test1"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_2,
+                        "name": "mock_concurrent_tool",
+                        "input": '{"input": "test2"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Concurrent result: test1",
+                            },
+                        ],
+                        "name": "mock_concurrent_tool",
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Concurrent result: test2",
+                            },
+                        ],
+                        "name": "mock_concurrent_tool",
+                        "state": "success",
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "All done",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context = [{**msg_base, **_} for _ in expected_context]
+        self.assertListEqual(context_dicts, expected_context)
+
+    async def test_streaming_mixed_tool_calls(self) -> None:
+        """Test the streaming model inference with both sequential and
+        concurrent tool calls generated.
+
+        Test only the replyStream interface.
+
+        To assert:
+        1. The events (by assert the dict generated by model_dump)
+        2. The final reply message
+        3. The agent state (Before and after replyStream)
+        """
+        # Register both sequential and concurrent tools
+        seq_tool = MockSequentialTool()
+        conc_tool = MockConcurrentTool()
+
+        self.agent.toolkit = Toolkit(
+            tools=[seq_tool, conc_tool],
+        )
+
+        # Create tool call IDs
+        tool_call_id_1 = "tool_call_1"
+        tool_call_id_2 = "tool_call_2"
+        tool_call_id_3 = "tool_call_3"
+
+        # Set up mock responses with mixed tool calls
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=tool_call_id_1,
+                                name="mock_sequential_tool",
+                                input='{"input": "seq1"}',
+                            ),
+                            ToolCallBlock(
+                                id=tool_call_id_2,
+                                name="mock_concurrent_tool",
+                                input='{"input": "conc1"}',
+                            ),
+                            ToolCallBlock(
+                                id=tool_call_id_3,
+                                name="mock_concurrent_tool",
+                                input='{"input": "conc2"}',
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="All done")],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[TextBlock(text="All done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        # Collect all events
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump())
+
+        # Verify events
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+
+        # For mixed execution: sequential tool first, then concurrent tools
+        # Split events into: prefix (before tool execution), sequential part,
+        # concurrent part, suffix (final model call)
+
+        # Expected prefix events (before tool execution)
+        expected_prefix = [
+            {
+                "type": "REPLY_START",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+        ]
+
+        # Expected sequential tool execution events
+        expected_sequential = [
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_1,
+                "tool_call_name": "mock_sequential_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_1,
+                "delta": "Sequential result: seq1",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_1,
+                "state": "success",
+                "metadata": {},
+            },
+        ]
+
+        # Expected concurrent events (order may vary)
+        expected_concurrent: list[dict[str, Any]] = [
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_2,
+                "tool_call_name": "mock_concurrent_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_2,
+                "delta": "Concurrent result: conc1",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_2,
+                "state": "success",
+            },
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": tool_call_id_3,
+                "tool_call_name": "mock_concurrent_tool",
+            },
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id_3,
+                "delta": "Concurrent result: conc2",
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id_3,
+                "state": "success",
+                "metadata": {},
+            },
+        ]
+
+        # Expected suffix events (final model call with pure text)
+        expected_suffix = [
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
+            {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": "All done",
+            },
+            {"type": "TEXT_BLOCK_END", "block_id": AnyString(), "text": None},
+            {
+                "type": "MODEL_CALL_END",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "finished_reason": "completed",
+            },
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
+        ]
+
+        # Assert prefix events (fixed order)
+        basic_dict = self._get_event_base(reply_id)
+        prefix_len = len(expected_prefix)
+        self.assertListEqual(
+            events[:prefix_len],
+            [{**basic_dict, **_} for _ in expected_prefix],
+        )
+
+        # Assert sequential events (fixed order)
+        sequential_len = len(expected_sequential)
+        self.assertListEqual(
+            events[prefix_len : prefix_len + sequential_len],
+            [{**basic_dict, **_} for _ in expected_sequential],
+        )
+
+        # Assert concurrent events (order may vary)
+        concurrent_len = len(expected_concurrent)
+        concurrent_events = events[
+            prefix_len
+            + sequential_len : prefix_len
+            + sequential_len
+            + concurrent_len
+        ]
+
+        # Check length matches
+        self.assertEqual(len(concurrent_events), len(expected_concurrent))
+
+        # Check each expected event is in the actual events
+        for expected_event in expected_concurrent:
+            expected_with_base = {**basic_dict, **expected_event}
+            self.assertIn(expected_with_base, concurrent_events)
+
+        # Assert suffix events (fixed order)
+        suffix_events = events[prefix_len + sequential_len + concurrent_len :]
+        self.assertListEqual(
+            suffix_events,
+            [{**basic_dict, **_} for _ in expected_suffix],
+        )
+
+        # Assert context after reply_stream
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Test",
+                    },
+                ],
+                "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
+            },
+            {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_1,
+                        "name": "mock_sequential_tool",
+                        "input": '{"input": "seq1"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_2,
+                        "name": "mock_concurrent_tool",
+                        "input": '{"input": "conc1"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": tool_call_id_3,
+                        "name": "mock_concurrent_tool",
+                        "input": '{"input": "conc2"}',
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "name": "mock_sequential_tool",
+                        "state": "success",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Sequential result: seq1",
+                            },
+                        ],
+                        "metadata": {},
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "name": "mock_concurrent_tool",
+                        "state": "success",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Concurrent result: conc1",
+                            },
+                        ],
+                        "metadata": {},
+                    },
+                    {
+                        "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "name": "mock_concurrent_tool",
+                        "state": "success",
+                        "output": [
+                            {
+                                "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                                "id": AnyString(),
+                                "text": "Concurrent result: conc2",
+                            },
+                        ],
+                        "metadata": {},
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "All done",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context = [{**msg_base, **_} for _ in expected_context]
+        self.assertListEqual(context_dicts, expected_context)
+        self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_event_block_id_matches_data_block_id(self) -> None:
+        """Base64 and URL DataBlocks keep their id on the emitted event."""
+        agent = Agent(
+            name="test",
+            system_prompt="",
+            model=MockModel(),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        chunks = [
+            DataBlock(
+                id="b64-block",
+                source=Base64Source(
+                    data=base64.b64encode(b"hello").decode("ascii"),
+                    media_type="audio/wav",
+                ),
+            ),
+            DataBlock(
+                id="url-block",
+                source=URLSource(
+                    url="https://example.com/a.wav",
+                    media_type="audio/wav",
+                ),
+            ),
+        ]
+        # pylint: disable=protected-access
+        events = [
+            event
+            async for event in agent._convert_tool_chunk_to_event(
+                "tc-1",
+                chunks,
+            )
+        ]
+        self.assertListEqual(
+            [(type(e).__name__, e.block_id) for e in events],
+            [
+                ("ToolResultDataDeltaEvent", "b64-block"),
+                ("ToolResultDataDeltaEvent", "url-block"),
+            ],
+        )
+
+    async def asyncTearDown(self) -> None:
+        """The async teardown method."""

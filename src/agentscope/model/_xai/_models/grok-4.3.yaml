@@ -1,0 +1,21 @@
+name: grok-4.3
+label: Grok 4.3
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+# xAI publishes no max-output figure for any Grok model. Derived as 1/16 of
+# the context window, matching the ratio of providers that do publish one.
+output_size: 64000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 64000
