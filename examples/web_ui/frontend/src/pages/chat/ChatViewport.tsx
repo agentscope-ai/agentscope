@@ -266,8 +266,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			// `openPanelInLayout`, not `togglePanel` — the latter would
 			// close a panel the user already has open.
 			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
-			setSelectedSheetPanel('team');
-			setSheetOpen(true);
 		}
 		onSessionsChanged?.();
 	}, [refetchSessions, sessionId, onSessionsChanged]);
@@ -295,8 +293,6 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 				if (incoming.tasks.length > 0 && taskPanelOpenedForRef.current !== sessionId) {
 					taskPanelOpenedForRef.current = sessionId;
 					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
-					setSelectedSheetPanel('plan');
-					setSheetOpen(true);
 				}
 			}
 			if (value.permission_context) {
