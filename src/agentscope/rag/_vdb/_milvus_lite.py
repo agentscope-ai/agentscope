@@ -526,8 +526,10 @@ class MilvusLiteStore(VectorStoreBase):
         # deterministic entity IDs may hold duplicates from indexing
         # retries, and truncating at `limit` raw rows could then drop a
         # low index while returning a duplicate of a higher one.
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
-            self.get_client().query,
+            client.query,
             collection_name=collection,
             filter=" and ".join(clauses),
             output_fields=["chunk"],
