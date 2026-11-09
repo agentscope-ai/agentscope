@@ -1934,6 +1934,61 @@ class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
         self.assertIsNone(dispatcher._task)
         self.assertIsNone(dispatcher._fallback_task)
 
+    async def test_cancelled_ready_startup_cleans_up_retries(self) -> None:
+        """Cancellation after readiness also cleans up dispatched retries."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        bus._locks.add(MessageBusKeys.session_lock("s"))
+        await enqueue_run_trigger(
+            bus,
+            user_id="u",
+            session_id="s",
+            agent_id="a",
+            signal=False,
+        )
+        started: list[asyncio.Task] = []
+
+        async def subscribe(
+            _key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            if on_ready is not None:
+                on_ready()
+            yield {}
+            # Dispatch can spawn retries before the readiness wait returns.
+            started.extend(dispatcher._retry_tasks)
+            startup.cancel()
+            await asyncio.Event().wait()
+
+        with patch.object(bus, "subscribe", subscribe), patch(
+            "agentscope.app._manager._wakeup_dispatcher."
+            "_RESUME_RETRY_BACKOFF_SECS",
+            60,
+        ):
+            # pylint: disable=unnecessary-dunder-call
+            startup = asyncio.create_task(dispatcher.__aenter__())
+            try:
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(startup, timeout=1)
+                self.assertEqual(
+                    (
+                        [task.done() for task in started],
+                        dispatcher._task,
+                        dispatcher._fallback_task,
+                        dispatcher._retry_tasks,
+                        dispatcher._chat_queue._closed,
+                    ),
+                    ([True], None, None, set(), True),
+                )
+            finally:
+                await dispatcher.__aexit__(None, None, None)
+
     async def test_startup_returns_only_after_subscription_is_live(
         self,
     ) -> None:
