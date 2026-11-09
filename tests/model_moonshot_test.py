@@ -18,7 +18,11 @@ from utils import AnyString
 
 from agentscope.exception import StructuredOutputError
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
-from agentscope.model import MoonshotChatModel, StructuredResponse
+from agentscope.model import (
+    FinishedReason,
+    MoonshotChatModel,
+    StructuredResponse,
+)
 from agentscope.credential import MoonshotCredential
 from agentscope.tool import ToolChoice
 
@@ -45,6 +49,7 @@ def _mock_completion(
     tool_calls: Any = None,
     reasoning: Any = None,
     response_id: str = "kimi-1",
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
@@ -64,6 +69,7 @@ def _mock_completion(
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason
 
     resp = MagicMock()
     resp.id = response_id
@@ -179,6 +185,17 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "kimi-1")
+
+    async def test_length_finish_reason_is_normalized(self) -> None:
+        """The OpenAI-compatible reason is normalized."""
+        self.mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(finish_reason="length"),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(result.metadata, {"raw_finish_reason": "length"})
 
     async def test_usage_cache_input_tokens_from_nested_details(self) -> None:
         """Read cached tokens from nested usage details."""

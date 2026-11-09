@@ -257,6 +257,10 @@ class Agent:
         # reply loop only exits after the event is delivered (not swallowed)
         self._receive_reply_end: bool = False
 
+        # Set only for the final malformed tool call of a length-truncated
+        # model response and consumed before that call enters the executor.
+        self._rejected_tool_call_id: str | None = None
+
     def _validate_configs(self) -> None:
         """Validate the config combinations that a single config class cannot
         check by itself.
@@ -1838,6 +1842,7 @@ class Agent:
             list(completed_response.content),
             completed_response.usage,
         )
+        self._mark_truncated_tool_call(completed_response)
 
         # A thinking-only response is an intermediate reasoning step rather
         # than a user-visible final answer. Keep the ReAct loop running so the
@@ -2500,6 +2505,20 @@ class Agent:
             | CustomEvent`:
                 The events generated during the tool call execution.
         """
+        if tool_call.id == self._rejected_tool_call_id:
+            self._rejected_tool_call_id = None
+            async for evt in self._handle_error_tool_call(
+                tool_call,
+                message=(
+                    "The tool was not executed because the model response "
+                    "reached a length limit and the tool arguments are "
+                    "incomplete JSON."
+                ),
+                state=ToolResultState.ERROR,
+            ):
+                yield evt
+            return
+
         # ===================================================================
         # Step 1: Check and parse the tool call input:
         #  - if failed, directly return the error message to the agent
@@ -2752,6 +2771,34 @@ class Agent:
         raise ValueError(
             f"Invalid permission decision behavior: {decision.behavior}",
         )
+
+    def _mark_truncated_tool_call(self, response: ChatResponse) -> None:
+        """Remember a final tool call whose arguments were cut off.
+
+        The call is rejected later only when every condition holds: the
+        option is enabled, the provider reported a length limit, the final
+        block is a tool call, and strict ``json.loads`` fails. Earlier tool
+        calls in the same response already finished generating, so they run.
+        A tool call followed by other content is not the truncated tail.
+
+        Args:
+            response (`ChatResponse`):
+                The completed model response for this reasoning step.
+        """
+        self._rejected_tool_call_id = None
+        if not self.react_config.reject_truncated_tool_call:
+            return
+        if response.finished_reason != FinishedReason.LENGTH:
+            return
+        if not response.content:
+            return
+        tool_call = response.content[-1]
+        if not isinstance(tool_call, ToolCallBlock):
+            return
+        try:
+            json.loads(tool_call.input)
+        except (TypeError, ValueError):
+            self._rejected_tool_call_id = tool_call.id
 
     async def _acting(
         self,
