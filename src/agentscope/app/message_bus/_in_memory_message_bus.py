@@ -506,7 +506,7 @@ class InMemoryMessageBus(
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
@@ -514,6 +514,20 @@ class InMemoryMessageBus(
         if self._registries.get(namespace, {}).get(field) != expected:
             return False
         self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete without yielding between the two operations."""
+        registry = self._registries.get(namespace, {})
+        if registry.get(field) != expected:
+            return False
+        del registry[field]
         return True
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:

@@ -514,7 +514,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Set ``field`` only while it still holds ``expected``.
@@ -531,9 +531,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Field name within the registry.
             value (`str`):
                 Serialized value to store.
-            expected (`str`):
+            expected (`str | None`):
                 The value the caller last read. The write is skipped
-                when the stored value differs.
+                when the stored value differs. ``None`` creates the field
+                only if it does not exist.
             ttl_secs (`int | None`, optional):
                 Refresh the namespace expiry when the write happens.
 
@@ -541,6 +542,29 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             `bool`:
                 ``True`` when the value was written.
         """
+
+    async def registry_del_if(  # pylint: disable=unused-argument
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Delete a field atomically only if its value still matches.
+
+        Backends may override this optional operation. The default leaves
+        data intact so existing adapters remain usable without an unsafe
+        read-then-delete fallback.
+
+        Args:
+            namespace (`str`): The registry key.
+            field (`str`): The field to remove.
+            expected (`str`): The previously observed value.
+
+        Returns:
+            `bool`: True if deleted; False if absent, changed, or unsupported.
+        """
+        return False
 
     @abstractmethod
     async def registry_pop(self, namespace: str, field: str) -> str | None:
