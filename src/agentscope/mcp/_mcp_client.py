@@ -137,6 +137,7 @@ class MCPClient(BaseModel):
     _close_requested: asyncio.Event | None = PrivateAttr(default=None)
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
+    _tool_list_generation: int = PrivateAttr(default=0)
     _http_client: httpx2.AsyncClient | None = PrivateAttr(default=None)
     _static_headers: httpx2.Headers | None = PrivateAttr(default=None)
     _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -239,6 +240,7 @@ class MCPClient(BaseModel):
         from a connection that no longer matches them.
         """
         if isinstance(message, mcp.types.ToolListChangedNotification):
+            self._tool_list_generation += 1
             self._cached_tools = None
 
     def _create_http_client(
@@ -494,18 +496,29 @@ class MCPClient(BaseModel):
                 Raw MCP tool descriptors after filtering.
 
         Raises:
-            RuntimeError: If not connected (for stateful connections).
+            RuntimeError: If not connected (for stateful connections), or
+                if tool-list notifications invalidate both discovery attempts.
         """
-        if not self.is_stateful:
-            # Stateless: create a temporary auto-negotiating client.
-            async with self._get_client_gen() as client:
-                res = await client.list_tools(cache_mode="refresh")
+        # A notification can invalidate the catalog while tools/list is in
+        # flight. Never publish that older snapshot as a valid cache. Retry
+        # once; a continuously changing server must not keep discovery busy.
+        for _attempt in range(2):
+            if not self.is_stateful:
+                async with self._get_client_gen() as client:
+                    generation = self._tool_list_generation
+                    res = await client.list_tools(cache_mode="refresh")
+            else:
+                self._validate_connection()
+                generation = self._tool_list_generation
+                res = await self._client.list_tools(cache_mode="refresh")
+            if generation == self._tool_list_generation:
                 self._cached_tools = res.tools
+                break
         else:
-            # Stateful: use the existing high-level client.
-            self._validate_connection()
-            res = await self._client.list_tools(cache_mode="refresh")
-            self._cached_tools = res.tools
+            raise RuntimeError(
+                f"MCP {self.name!r} tool list changed during discovery; "
+                "retry the lookup.",
+            )
 
         available_tools: list = self._cached_tools
         if self.enable_tools is not None:
