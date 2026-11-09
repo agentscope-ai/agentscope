@@ -7,8 +7,8 @@ from .._manager import BackgroundTaskManager
 from ._schema import (
     BackgroundTaskInfo,
     ListBackgroundTasksResponse,
-    to_info,
 )
+from ._schema._background_task import to_info
 
 background_task_router = APIRouter(
     prefix="/background-tasks",

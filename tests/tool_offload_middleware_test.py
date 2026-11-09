@@ -433,6 +433,106 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                 self.assertEqual(record.model_dump(), expected)
                 self.assertEqual(self.bg_manager.tasks, {})
 
+    async def test_interrupted_response_matches_record_and_inbox(self) -> None:
+        """Interrupted results keep their output and report cancellation."""
+        for output in ("", "partial output"):
+            with self.subTest(output=output):
+                agent, middleware = self._make_agent(
+                    Toolkit(tools=[SlowTool()]),
+                    timeout_secs=0.01,
+                )
+                gate = asyncio.Event()
+                delivered = asyncio.Event()
+                mock_bus = middleware._message_bus
+                mock_bus.publish.side_effect = (
+                    lambda *_args, event=delivered, **_kwargs: event.set()
+                )
+                response = ToolResponse(
+                    id="call_interrupted",
+                    state=ToolResultState.INTERRUPTED,
+                    content=[TextBlock(text=output)] if output else [],
+                )
+                original = response.model_dump(mode="json")
+
+                async def handler(
+                    *,
+                    event: asyncio.Event = gate,
+                    result: ToolResponse = response,
+                    **_kwargs: Any,
+                ) -> AsyncGenerator:
+                    await event.wait()
+                    yield result
+
+                call = ToolCallBlock(
+                    id="call_interrupted",
+                    name="slow_tool",
+                    input="{}",
+                )
+                async for _ in middleware.on_acting(
+                    agent,
+                    {"tool_call": call},
+                    handler,
+                ):
+                    pass
+                bg = next(iter(self.bg_manager.tasks.values()))
+                expected = BackgroundTaskRecord.model_validate(bg).model_dump()
+                gate.set()
+                await bg.asyncio_task
+                await asyncio.gather(*self.bg_manager._completion_tasks)
+                await asyncio.wait_for(delivered.wait(), timeout=1)
+                record = await self.bg_manager.get_task(bg.id, user_id="u")
+                expected.update(
+                    status=TaskStatus.CANCELLED,
+                    completed_at=record.completed_at,
+                )
+                self.assertEqual(record.model_dump(), expected)
+
+                prefix = (
+                    "<system-notification>Tool 'slow_tool' running in "
+                    "background (id=call_interrupted) has been cancelled"
+                )
+                expected_hint: str | list[dict]
+                if output:
+                    expected_hint = [
+                        dict(
+                            original["content"][0],
+                            text=f"{prefix}.\n\nResult:\n\n{output}"
+                            "</system-notification>",
+                        ),
+                    ]
+                else:
+                    expected_hint = (
+                        f"{prefix} with no output.</system-notification>"
+                    )
+                inbox = [
+                    call.args[1]
+                    for call in mock_bus.queue_push.call_args_list
+                    if call.args[0]
+                    == MessageBusKeys.inbox(
+                        agent.state.session_id,
+                    )
+                ]
+                self.assertEqual(
+                    inbox,
+                    [
+                        {
+                            "type": "hint",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                            "source": json.dumps(
+                                {
+                                    "label": "tool_output",
+                                    "sublabel": "slow_tool · call_interrupted",
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "hint": expected_hint,
+                        },
+                    ],
+                )
+                self.assertEqual(response.model_dump(mode="json"), original)
+
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""
 

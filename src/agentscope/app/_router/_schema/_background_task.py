@@ -18,7 +18,8 @@ class BackgroundTaskInfo(BaseModel):
     agent_id: str = Field(description="Agent that triggered this task.")
     tool_name: str = Field(description="Name of the offloaded tool.")
     summary: str = Field(
-        description="Short human-readable summary of the tool invocation.",
+        description="Short human-readable summary of the tool invocation. "
+        "May include unredacted tool arguments stored in shared task records.",
     )
     status: TaskStatus = Field(description="Current lifecycle status.")
     started_at: datetime = Field(

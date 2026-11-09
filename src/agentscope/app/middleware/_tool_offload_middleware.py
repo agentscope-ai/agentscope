@@ -52,6 +52,13 @@ def _make_summary(tool_name: str, raw_input: str | None) -> str:
     characters. For dict-shaped JSON inputs, multiple key=value pairs
     are included up to the length budget.
 
+    This truncates inputs without redacting secrets. Argument values,
+    nested values, commands, and malformed-input snippets may contain
+    sensitive data. The summary is stored in shared task snapshots and
+    returned by the user-scoped background-task REST endpoints. Redis
+    stores this field as plaintext; persistence to disk and backups depends
+    on the deployment configuration.
+
     Args:
         tool_name (`str`):
             The tool name (always included as prefix).
@@ -328,12 +335,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 )
                 return
 
-            outcome = (
-                "failed"
-                if response is not None
-                and response.state == ToolResultState.ERROR
-                else "completed"
-            )
+            outcome = "completed"
+            if response is not None:
+                if response.state == ToolResultState.ERROR:
+                    outcome = "failed"
+                elif response.state == ToolResultState.INTERRUPTED:
+                    outcome = "been cancelled"
 
             tool_call_id = tool_call.id
 
@@ -395,9 +402,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             # reasoning step, and WakeupDispatcher kicks an idle session
             # on whichever process picks up the wakeup.
             logger.info(
-                "Background tool '%s' completed, pushing result to inbox "
+                "Background tool '%s' has %s, pushing result to inbox "
                 "and enqueueing wakeup: session_id=%s",
                 tool_name,
+                outcome,
                 session_id,
             )
             await deliver_to_inbox(

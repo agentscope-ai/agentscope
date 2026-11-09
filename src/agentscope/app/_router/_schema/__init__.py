@@ -4,7 +4,6 @@
 from ._background_task import (
     BackgroundTaskInfo,
     ListBackgroundTasksResponse,
-    to_info,
 )
 from ._channel import (
     StartCredentialBindingRequest,
@@ -178,7 +177,6 @@ __all__ = [
     # Background Task
     "BackgroundTaskInfo",
     "ListBackgroundTasksResponse",
-    "to_info",
     # Channel
     "ChannelActionResponse",
     "ChannelChatId",
