@@ -7,8 +7,13 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
+from utils import MockModel
+
+from agentscope.agent import Agent
 from agentscope.app._service._realtime import RealtimeService
 from agentscope.app.channel import ChatKind
+from agentscope.app.message_bus import MessageBusKeys
+from agentscope.app.middleware import StateChangeMiddleware
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -19,8 +24,12 @@ from agentscope.app.storage import (
     SessionRecord,
 )
 from agentscope.middleware import RAGMiddleware
-from agentscope.message import AssistantMsg, ToolCallBlock, UserMsg
+from agentscope.message import AssistantMsg, TextBlock, ToolCallBlock, UserMsg
+from agentscope.model import ChatResponse
+from agentscope.permission import PermissionMode
 from agentscope.realtime import InteractionMode, RealtimeModelBase
+from agentscope.state import AgentState
+from agentscope.tool import FunctionTool, TaskCreate, Toolkit
 
 
 class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -446,6 +455,8 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
         assert factory is not None
         delegated_state = realtime_agent._copy_delegation_state()
         delegated_agent = factory(delegated_state)
+        notifier = delegated_agent._reply_middlewares[0]
+        self.assertIsInstance(notifier, StateChangeMiddleware)
         self.assertDictEqual(
             {
                 "model": delegated_agent.model,
@@ -476,7 +487,7 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
                 ],
                 "state_isolated": True,
                 "message_isolated": True,
-                "reply_middlewares": [middleware],
+                "reply_middlewares": [notifier, middleware],
                 "middleware_calls": [
                     (user_id, agent_id, session_id, workspace),
                 ],
@@ -484,12 +495,146 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertListEqual(
             get_toolkit_mock.await_args.kwargs["middlewares"],
-            [middleware],
+            [notifier, middleware],
         )
         get_model_mock.assert_awaited_once_with(
             user_id,
             chat_config,
             service._access,
+        )
+
+    async def test_delegation_publishes_state_and_team_changes(self) -> None:
+        """Assembled middleware publishes tool changes to the session bus."""
+        bus = SimpleNamespace(
+            log_append=AsyncMock(return_value="1-0"),
+            publish=AsyncMock(),
+        )
+        service = RealtimeService(
+            storage=object(),
+            workspace_manager=object(),
+            scheduler_manager=object(),
+            background_task_manager=object(),
+            message_bus=bus,
+            resource_access_service=object(),
+        )
+        session = SessionRecord(
+            id="session",
+            user_id="user",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="workspace"),
+        )
+        middlewares = await service._build_delegation_middlewares(
+            user_id="user",
+            agent_id="agent",
+            session_id=session.id,
+            session=session,
+            workspace=object(),
+        )
+        state = AgentState()
+        initial_permission = state.permission_context.model_dump(mode="json")
+
+        def update_permission() -> str:
+            """Simulate a tool changing session permission state."""
+            state.permission_context.mode = PermissionMode.ACCEPT_EDITS
+            return "Updated"
+
+        def create_team() -> str:
+            """Simulate a successful team tool without external storage."""
+            return "Created"
+
+        model = MockModel(context_size=10000)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="task",
+                            name="TaskCreate",
+                            input=(
+                                '{"subject":"Test",'
+                                '"description":"Notify UI"}'
+                            ),
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="permission",
+                            name="update_permission",
+                            input="{}",
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="team",
+                            name="TeamCreate",
+                            input="{}",
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        agent = Agent(
+            "Friday",
+            "Be brief.",
+            model,
+            state=state,
+            middlewares=middlewares,
+            toolkit=Toolkit(
+                tools=[
+                    TaskCreate(),
+                    FunctionTool(update_permission, is_read_only=True),
+                    FunctionTool(
+                        create_team,
+                        name="TeamCreate",
+                        is_read_only=True,
+                    ),
+                ],
+            ),
+        )
+        async for _ in agent.reply_stream(
+            UserMsg(name="user", content="Create a task and team."),
+        ):
+            pass
+
+        final_state = {
+            "tasks_context": state.tasks_context.model_dump(mode="json"),
+            "permission_context": state.permission_context.model_dump(
+                mode="json",
+            ),
+        }
+        key = MessageBusKeys.session_events(session.id)
+        self.assertEqual(
+            {
+                "task_count": len(state.tasks_context.tasks),
+                "notifications": [
+                    (call.args[0], call.args[1]["name"], call.args[1]["value"])
+                    for call in bus.publish.call_args_list
+                ],
+            },
+            {
+                "task_count": 1,
+                "notifications": [
+                    (
+                        key,
+                        "state_updated",
+                        {
+                            **final_state,
+                            "permission_context": initial_permission,
+                        },
+                    ),
+                    (key, "state_updated", final_state),
+                    (key, "team_updated", {}),
+                    (key, "state_updated", final_state),
+                ],
+            },
         )
 
     async def test_gpt_live_builds_knowledge_middleware(self) -> None:
@@ -533,10 +678,11 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
             workspace=object(),
         )
 
-        self.assertEqual(len(middlewares), 1)
-        self.assertIsInstance(middlewares[0], RAGMiddleware)
-        self.assertListEqual(middlewares[0]._knowledge_bases, [knowledge])
-        self.assertEqual(middlewares[0]._parameters.top_k, 3)
+        self.assertEqual(len(middlewares), 2)
+        self.assertIsInstance(middlewares[0], StateChangeMiddleware)
+        self.assertIsInstance(middlewares[1], RAGMiddleware)
+        self.assertListEqual(middlewares[1]._knowledge_bases, [knowledge])
+        self.assertEqual(middlewares[1]._parameters.top_k, 3)
         access.resolve_knowledge_base.assert_awaited_once_with(
             "user-1",
             "knowledge-1",

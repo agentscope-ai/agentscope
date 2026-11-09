@@ -5,10 +5,12 @@ import asyncio
 import base64
 import json
 import unittest
-from typing import AsyncIterator
+from typing import AsyncGenerator, AsyncIterator, Callable
 from unittest.mock import AsyncMock, patch
 
-from agentscope.agent import RealtimeAgent
+from utils import MockModel
+
+from agentscope.agent import Agent, RealtimeAgent
 from agentscope.credential import OpenAICredential
 from agentscope.event import (
     AgentEvent,
@@ -36,6 +38,8 @@ from agentscope.message import (
     ToolResultState,
     UserMsg,
 )
+from agentscope.middleware import MiddlewareBase
+from agentscope.model import ChatResponse
 from agentscope.realtime import (
     ControlFrame,
     ControlFrameType,
@@ -883,6 +887,90 @@ class RealtimeAgentLiveTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertDictEqual(agent._delegated_tool_calls, {})
         self.assertEqual(sync_calls, 2)
+
+    async def test_delegations_preserve_middleware_state(self) -> None:
+        """Carry middleware data across tasks without sharing nested state."""
+        counts = []
+        backends = []
+
+        class Counter(MiddlewareBase):
+            """Record the number of replies in persistent middleware data."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                """Increment state before running the actual Agent reply."""
+                values = agent.state.middle_context.setdefault(
+                    "counter",
+                    {"count": 0, "history": []},
+                )
+                values["count"] += 1
+                values["history"].append(values["count"])
+                counts.append(values["count"])
+                async for item in next_handler(**input_kwargs):
+                    yield item
+
+        def create_backend(state: AgentState) -> Agent:
+            """Build a real Agent with deterministic model output."""
+            model = MockModel(context_size=10000)
+            model.set_responses(
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            )
+            backend = Agent(
+                "Friday",
+                "Be brief.",
+                model,
+                state=state,
+                middlewares=[Counter()],
+            )
+            backends.append(backend)
+            return backend
+
+        model = _model()
+        model.send_delegation_result = AsyncMock()
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            model,
+            delegation_agent_factory=create_backend,
+        )
+        for task_id in ("first", "second"):
+            await agent._on_model_event(
+                DelegationCreatedEvent(
+                    delegation_id=task_id,
+                    target="client",
+                ),
+            )
+            while agent._tasks:
+                await asyncio.gather(*list(agent._tasks))
+
+        backends[0].state.middle_context["counter"]["history"].append(99)
+        backends[1].state.middle_context["counter"]["history"].append(100)
+        self.assertEqual(
+            {
+                "counts": counts,
+                "saved": agent.state.middle_context,
+                "backend_states": [
+                    backend.state.middle_context for backend in backends
+                ],
+            },
+            {
+                "counts": [1, 2],
+                "saved": {"counter": {"count": 2, "history": [1, 2]}},
+                "backend_states": [
+                    {"counter": {"count": 1, "history": [1, 99]}},
+                    {"counter": {"count": 2, "history": [1, 2, 100]}},
+                ],
+            },
+        )
 
     async def test_client_delegations_use_latest_serial_state(self) -> None:
         """Queued tasks are created only after the active task syncs state."""

@@ -1566,6 +1566,7 @@ class RealtimeAgent:
         self.state.tasks_context = backend_state.tasks_context.model_copy(
             deep=True,
         )
+        self.state.middle_context = deepcopy(backend_state.middle_context)
         existing = {
             message.id: index
             for index, message in enumerate(

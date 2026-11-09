@@ -21,6 +21,7 @@ from ...tool import ToolBase
 from ...workspace import WorkspaceBase
 from ..channel import ChannelBase, ChannelClients, ChatKind
 from ..message_bus import MessageBus
+from ..middleware import StateChangeMiddleware
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import ChannelOrigin, SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
@@ -294,7 +295,12 @@ class RealtimeService:
         workspace: WorkspaceBase,
     ) -> list[MiddlewareBase]:
         """Build Chat middlewares that are safe in a Live task backend."""
-        middlewares: list[MiddlewareBase] = []
+        middlewares: list[MiddlewareBase] = [
+            StateChangeMiddleware(
+                message_bus=self._message_bus,
+                session_id=session_id,
+            ),
+        ]
         if self._extra_agent_middlewares is not None:
             factory_args: tuple = (user_id, agent_id, session_id)
             if self._middlewares_take_workspace:
