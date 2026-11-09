@@ -2169,3 +2169,22 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         value, ttl = await self._value_and_ttl("probe")
         self.assertEqual(value, "new")
         self.assertTrue(0 < ttl <= 60)
+
+    async def test_voice_profile_write_expires(self) -> None:
+        """Voice profile records get the configured TTL like other records."""
+        self.storage.key_ttl = 60
+        record = VoiceProfileRecord(
+            user_id="owner",
+            data=VoiceProfileData(name="Voice"),
+        )
+
+        await self.storage.upsert_voice_profile("owner", record)
+
+        key = self.storage._key(
+            self.storage.key_config.voice_profile,
+            user_id="owner",
+            profile_id=record.id,
+        )
+        value, ttl = await self._value_and_ttl(key)
+        self.assertEqual(value, record.model_dump_json())
+        self.assertTrue(0 < ttl <= 60)

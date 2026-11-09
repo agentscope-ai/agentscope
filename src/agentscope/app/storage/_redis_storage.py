@@ -2608,10 +2608,7 @@ class RedisStorage(StorageBase):
             self.key_config.voice_profile_index,
             user_id=user_id,
         )
-        await self._client.set(
-            key,
-            record.model_dump_json(),
-        )
+        await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
         return record.id
 
