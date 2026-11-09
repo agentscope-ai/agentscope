@@ -80,6 +80,49 @@ showing the call and its arguments; pick an answer with the arrow keys and
 `Enter`. Audio keeps flowing while the card is up, and the agent gives up on
 an unanswered one after five minutes.
 
+### Context management
+
+To enable background summaries, pass a chat model explicitly. A realtime
+model cannot generate structured summaries through the chat model API.
+Using the `credential` and realtime `model` from `local_mic.py`:
+
+```python
+from agentscope.agent import RealtimeAgent, RealtimeContextConfig
+from agentscope.model import DashScopeChatModel
+
+agent = RealtimeAgent(
+    name="Friday",
+    system_prompt="You are a concise voice assistant.",
+    model=model,
+    context_config=RealtimeContextConfig(
+        context_length=128_000,
+        trigger_ratio=0.8,
+        tool_result_limit=10_000,
+        compression_model=DashScopeChatModel(
+            credential=credential,
+            model="qwen-plus",
+        ),
+    ),
+)
+```
+
+Choose `context_length` for the realtime model in use. Leaving
+`compression_model=None` disables summaries; tool-result limits still apply.
+Pass `workspace=your_workspace` to save complete tool results and summarized
+messages through the existing `Offloader` interface.
+
+Usage reports are observations, not accumulated billing totals. When input
+usage is absent, the agent estimates transcript tokens locally. These are
+estimates; they do not account exactly for provider-side audio or caching.
+Tool text uses the same UTF-8-bytes/4 estimate, with an omission reminder
+appended after the retained text.
+
+Summaries run without blocking audio and replace only an unchanged history
+prefix at a quiet turn boundary. Reconnecting injects the summary followed
+by recent turns, using structured replay when supported and instructions
+otherwise. Local compression does not shrink the current provider session
+or automatically reconnect it.
+
 ## Tips
 
 - **Use headphones.** With speakers, the microphone picks up the agent's own

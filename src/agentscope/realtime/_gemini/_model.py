@@ -473,8 +473,8 @@ class GeminiRealtimeModel(RealtimeModelBase):
             return []
         event = me.ResponseDoneEvent(
             item_id=self._response_id,
-            input_tokens=self._usage.get("promptTokenCount", 0),
-            output_tokens=self._usage.get("responseTokenCount", 0),
+            input_tokens=self._usage.get("promptTokenCount"),
+            output_tokens=self._usage.get("responseTokenCount"),
         )
         self._response_id, self._usage = "", {}
         return [event]
