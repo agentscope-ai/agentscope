@@ -7,6 +7,7 @@ other formatter, the ``format()`` method returns a list of
 ``chat_pb2.Message`` proto objects rather than plain dicts, because the
 ``xai_sdk`` chat API accepts proto messages directly.
 """
+
 import base64
 from fnmatch import fnmatch
 from typing import Any, List
@@ -210,6 +211,10 @@ class XAIChatFormatter(FormatterBase):
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
                 pending_media: list[Any] = []
+                # Media authored by the assistant itself.  It is promoted
+                # after the assistant turn has been emitted, so the turn
+                # keeps its place in the conversation.
+                assistant_media: list[DataBlock] = []
 
                 for block in blocks:
                     if pending_media and not isinstance(
@@ -286,6 +291,14 @@ class XAIChatFormatter(FormatterBase):
                     elif isinstance(block, ThinkingBlock):
                         pass
 
+                    elif isinstance(block, DataBlock):
+                        # xAI carries media on user turns only, so an
+                        # assistant-authored block is promoted into a user
+                        # message *after* the assistant turn rather than
+                        # dropped.  The other formatters forward the same
+                        # message inline.
+                        assistant_media.append(block)
+
                     elif isinstance(block, HintBlock):
                         if pending_tool_calls or pending_text:
                             if pending_tool_calls:
@@ -353,6 +366,17 @@ class XAIChatFormatter(FormatterBase):
                     text = "\n".join(b.text for b in pending_text)
                     if text:
                         xai_messages.append(assistant(text))
+
+                # Assistant media follows the turn that produced it, since
+                # xAI accepts media on user turns only.
+                if assistant_media:
+                    promo_args = _xai_user_args_from_blocks(
+                        assistant_media,
+                        image,
+                        self.supported_input_media_types,
+                    )
+                    if promo_args:
+                        xai_messages.append(user(*promo_args))
 
             else:
                 logger.warning(
