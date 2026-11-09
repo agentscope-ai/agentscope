@@ -5,7 +5,7 @@
 import asyncio
 import json
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from fractions import Fraction
 from types import SimpleNamespace
@@ -18,6 +18,7 @@ from aiortc.mediastreams import MediaStreamError
 from av import AudioFrame as AVAudioFrame
 from fastapi import HTTPException
 
+from agentscope.agent import RealtimeAgent
 from agentscope.app._router._realtime import _create_realtime_offer
 from agentscope.app._router._schema import (
     RealtimeOfferRequest,
@@ -30,6 +31,7 @@ from agentscope.app._service._webrtc_audio_transport import (
 from agentscope.app._service._webrtc_session import WebRTCSession
 from agentscope.app.message_bus import MessageBusKeys
 from agentscope.app.storage import CredentialRecord, RealtimeModelConfig
+from agentscope.credential import OpenAICredential
 from agentscope.event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -43,7 +45,12 @@ from agentscope.event import (
     ToolResultEndEvent,
 )
 from agentscope.message import ToolCallBlock, ToolResultState
-from agentscope.realtime import AudioFrame, DashScopeAudioRealtimeModel
+from agentscope.realtime import (
+    AudioFrame,
+    DashScopeAudioRealtimeModel,
+    OpenAILiveModel,
+    TimelineTranscriptDeltaEvent,
+)
 
 
 class _FakeDataChannel:
@@ -141,6 +148,10 @@ class _FakeAgent:
         del transport
         for event in self.events:
             yield event
+
+    def drain_events(self) -> Iterator[Any]:
+        """No additional cleanup events for the default fixture."""
+        return iter(())
 
     def checkpoint_snapshot(self, event: Any) -> object | None:
         """Return state for the same boundaries as the real agent."""
@@ -1351,6 +1362,110 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         )
+
+    async def test_pruned_live_segments_remain_in_message_history(
+        self,
+    ) -> None:
+        """Checkpoint pruning bounds state without erasing voice history."""
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            OpenAILiveModel(
+                "gpt-live-1",
+                OpenAICredential(api_key="fake"),
+            ),
+        )
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=storage,
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        session.agent = agent
+        for index in range(50):
+            for role in ("user", "assistant"):
+                await agent._on_model_event(
+                    TimelineTranscriptDeltaEvent(
+                        role=role,
+                        delta=role[0] * 1_000,
+                        start_ms=index * 2_100,
+                        end_ms=index * 2_100 + 100,
+                    ),
+                )
+                for event in agent.drain_events():
+                    snapshot = agent.checkpoint_snapshot(event)
+                    if snapshot is not None:
+                        await session._persist_state(snapshot)
+        await agent.close()
+        for event in agent.drain_events():
+            snapshot = agent.checkpoint_snapshot(event)
+            if snapshot is not None:
+                await session._persist_state(snapshot)
+        await session._persist_state()
+        self.assertEqual(
+            {
+                "history": {
+                    role: "".join(
+                        msg.get_text_content() or ""
+                        for msg in storage.messages.values()
+                        if msg.role == role
+                    )
+                    for role in ("user", "assistant")
+                },
+                "deletions": [
+                    call
+                    for call in storage.calls
+                    if call["method"] == "delete_message"
+                ],
+                "cached_ids": set(session._persisted_messages),
+            },
+            {
+                "history": {
+                    "user": "u" * 50_000,
+                    "assistant": "a" * 50_000,
+                },
+                "deletions": [],
+                "cached_ids": {msg.id for msg in agent.state.context},
+            },
+        )
+        self.assertLessEqual(
+            sum(
+                len(msg.get_text_content() or "")
+                for msg in agent.state.context
+            ),
+            32_000,
+        )
+        self.assertLess(len(agent.state.context), len(storage.messages))
+
+    async def test_close_events_are_published_before_final_persistence(
+        self,
+    ) -> None:
+        """Events emitted by Agent exit are not stranded in its queue."""
+        ended = ReplyEndEvent(
+            session_id="session-1",
+            reply_id="reply-1",
+        )
+
+        class ClosingAgent(_FakeAgent):
+            """Emit the final reply only after the runtime closes."""
+
+            def drain_events(self) -> Iterator[Any]:
+                return iter([ended])
+
+        agent = ClosingAgent({"id": "reply-1"}, [])
+        bus = _FakeMessageBus()
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=bus,
+            on_closed=lambda _: None,
+        )
+        await session._run()
+        self.assertEqual(session._last_entry_id, "1-0")
+        self.assertEqual(session._checkpoint_entry_id, "1-0")
+        self.assertEqual(session.transport.errors, [])
 
     async def test_pcm_events_are_not_published_to_session_events(
         self,

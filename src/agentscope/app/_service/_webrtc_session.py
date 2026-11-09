@@ -2,13 +2,15 @@
 """Lifecycle owner for one browser WebRTC realtime session."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 
 from aiortc import RTCPeerConnection
 
 from ..._logging import logger
 from ...agent import RealtimeAgent
 from ...event import (
+    AgentEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -176,10 +178,8 @@ class WebRTCSession:
                         for message in self.agent.state.context
                     }
                     async with self.transport:
-                        async with self.agent:
-                            async for event in self.agent.reply_stream(
-                                self.transport,
-                            ):
+                        async with aclosing(self._agent_events()) as events:
+                            async for event in events:
                                 if isinstance(event, DataBlockStartEvent) and (
                                     event.media_type.startswith("audio/pcm")
                                 ):
@@ -275,6 +275,15 @@ class WebRTCSession:
             await self.peer_connection.close()
             self._on_closed(self)
 
+    async def _agent_events(self) -> AsyncGenerator[AgentEvent, None]:
+        """Include terminal events emitted when the voice agent closes."""
+        assert self.agent is not None
+        async with self.agent:
+            async for event in self.agent.reply_stream(self.transport):
+                yield event
+        for event in self.agent.drain_events():
+            yield event
+
     async def _checkpoint_state(
         self,
         entry_id: str | None,
@@ -335,9 +344,12 @@ class WebRTCSession:
         )
         removed_ids = self._persisted_messages.keys() - current_messages.keys()
         for message_id in sorted(removed_ids):
-            await self.storage.delete_message(
-                self.user_id,
-                self.session_id,
-                message_id,
-            )
+            # Completed Live segments leave the bounded runtime window but
+            # remain readable in history. Drop their cache entries as well.
+            if not message_id.startswith(("live:user:", "live:assistant:")):
+                await self.storage.delete_message(
+                    self.user_id,
+                    self.session_id,
+                    message_id,
+                )
             self._persisted_messages.pop(message_id, None)

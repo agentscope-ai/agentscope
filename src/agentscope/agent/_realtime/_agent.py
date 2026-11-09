@@ -5,7 +5,7 @@ import base64
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, TYPE_CHECKING
@@ -76,6 +76,7 @@ if TYPE_CHECKING:
 _BACKLOG_FRAMES = 100
 _HISTORY_MAX_MESSAGES = 100
 _HISTORY_MAX_TEXT_CHARS = 32_000
+_LIVE_SEGMENT_MAX_TEXT_CHARS = 4_000
 _LIVE_CHECKPOINT_INTERVAL_SECS = 2.0
 _DELEGATION_INPUT_TIMEOUT_SECS = 300.0
 
@@ -94,6 +95,7 @@ class _Reply:
     audio_block_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     text_started: bool = False
     audio_started: bool = False
+    text_chars: int = 0
 
 
 @dataclass
@@ -250,6 +252,7 @@ class RealtimeAgent:
         self._active_delegation_id: str | None = None
         self._delegated_tool_calls: dict[str, str] = {}
         self._delegation_lock = asyncio.Lock()
+        self._closing = False
 
         # Model session: connected flag, the downlink pump that outlives
         # any transport, and reconnect bookkeeping.
@@ -279,6 +282,7 @@ class RealtimeAgent:
         closed it; a no-op while connected."""
         if self._connected:
             return
+        self._closing = False
 
         if self._connection_generation:
             async with self._barge_lock:
@@ -380,6 +384,11 @@ class RealtimeAgent:
 
     async def close(self) -> None:
         """Cancel everything in flight and close the model session."""
+        self._closing = True
+        if self._downlink is not None:
+            self._downlink.cancel()
+            await asyncio.gather(self._downlink, return_exceptions=True)
+            self._downlink = None
         for future in self._confirmations.values():
             future.cancel()
         self._confirmations.clear()
@@ -396,10 +405,20 @@ class RealtimeAgent:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         if timeout_tasks:
             await asyncio.gather(*timeout_tasks, return_exceptions=True)
-        if self._downlink is not None:
-            self._downlink.cancel()
-            await asyncio.gather(self._downlink, return_exceptions=True)
-            self._downlink = None
+        for delegation in list(self._delegations.values()):
+            if delegation.agent is not None:
+                if delegation.agent.state.has_awaiting_tool_calls(self.name):
+                    await self._drive_client_delegation(
+                        delegation,
+                        UserInterruptEvent(
+                            reply_id=delegation.agent.state.reply_id,
+                        ),
+                    )
+                self._sync_delegation_state(delegation)
+        self._delegations.clear()
+        self._delegation_queue.clear()
+        self._delegated_tool_calls.clear()
+        self._active_delegation_id = None
         self._connected = False
         self._connected_event.clear()
         await self.model.close()
@@ -525,17 +544,8 @@ class RealtimeAgent:
                 await self._interrupt_live_speech()
             else:
                 await self._barge_in()
-            while not self._out.empty():
-                queued = self._out.get_nowait()
-                self._yielded_checkpoint = (
-                    (queued.event.id, queued.checkpoint)
-                    if queued.checkpoint is not None
-                    else None
-                )
-                try:
-                    yield queued.event
-                finally:
-                    self._yielded_checkpoint = None
+            for event in self.drain_events():
+                yield event
             # A transport failure must not look like a clean disconnect.
             if not uplink.cancelled() and uplink.exception() is not None:
                 raise uplink.exception()  # type: ignore[misc]
@@ -544,6 +554,25 @@ class RealtimeAgent:
                 uplink.cancel()
                 await asyncio.gather(uplink, return_exceptions=True)
             self._transport = None
+
+    def drain_events(self) -> Iterator[AgentEvent]:
+        """Yield pending events, including cleanup emitted by ``close``.
+
+        Each yielded event retains its checkpoint until iteration resumes.
+        Session owners should drain after closing to publish final tool and
+        transcript states before persisting the final session snapshot.
+        """
+        while not self._out.empty():
+            queued = self._out.get_nowait()
+            self._yielded_checkpoint = (
+                (queued.event.id, queued.checkpoint)
+                if queued.checkpoint is not None
+                else None
+            )
+            try:
+                yield queued.event
+            finally:
+                self._yielded_checkpoint = None
 
     # ------------------------------------------------------------------
     # Discrete input
@@ -915,13 +944,7 @@ class RealtimeAgent:
 
             case me.TimelineTranscriptDeltaEvent():
                 self._append_live_transcript(event)
-                reply = self._start_live_reply(event.role)
-                self._emit_live_text(
-                    event.role,
-                    reply,
-                    event.delta,
-                    event.end_ms,
-                )
+                self._segment_live_text(event)
 
             case me.SessionClosedEvent():
                 self._finish_live_replies(ReplyFinishedReason.COMPLETED)
@@ -982,6 +1005,7 @@ class RealtimeAgent:
         end_ms: int,
     ) -> None:
         """Append a timestamped Live transcript to its speaker's message."""
+        reply.text_chars += len(delta)
         if not reply.text_started:
             reply.text_started = True
             self._emit(
@@ -1022,6 +1046,58 @@ class RealtimeAgent:
             ),
             checkpoint=self._should_checkpoint_live_transcript(end_ms),
         )
+
+    def _segment_live_text(
+        self,
+        event: me.TimelineTranscriptDeltaEvent,
+    ) -> None:
+        """Rotate bounded transcript segments without changing playback."""
+        offset = 0
+        while offset < len(event.delta):
+            reply = self._start_live_reply(event.role)
+            available = _LIVE_SEGMENT_MAX_TEXT_CHARS - reply.text_chars
+            chunk = event.delta[offset : offset + available]
+            self._prune_live_context(len(chunk))
+            self._emit_live_text(event.role, reply, chunk, event.end_ms)
+            offset += len(chunk)
+            if reply.text_chars >= _LIVE_SEGMENT_MAX_TEXT_CHARS:
+                # Persist the completed segment before any later event can
+                # prune it from runtime context. History retains this copy.
+                self._finish_live_role(
+                    event.role,
+                    ReplyFinishedReason.COMPLETED,
+                )
+
+    def _prune_live_context(self, incoming_chars: int) -> None:
+        """Keep recent Live text in state and older segments in history."""
+        live_messages = [
+            msg
+            for msg in self.state.context
+            if msg.id.startswith(("live:user:", "live:assistant:"))
+        ]
+        total_chars = (
+            sum(len(msg.get_text_content() or "") for msg in live_messages)
+            + incoming_chars
+        )
+        count = len(live_messages)
+        open_ids = {reply.reply_id for reply in self._live_replies.values()}
+        removed: set[str] = set()
+        for message in live_messages:
+            if (
+                total_chars <= _HISTORY_MAX_TEXT_CHARS
+                and count < _HISTORY_MAX_MESSAGES
+            ):
+                break
+            if message.id in open_ids:
+                continue
+            removed.add(message.id)
+            total_chars -= len(message.get_text_content() or "")
+            count -= 1
+        if removed:
+            self.state.context = [
+                msg for msg in self.state.context if msg.id not in removed
+            ]
+            self._live_message_ids.difference_update(removed)
 
     def _should_checkpoint_live_transcript(self, end_ms: int) -> bool:
         """Sample state when the wall or Live timeline interval advances."""
@@ -1097,7 +1173,11 @@ class RealtimeAgent:
 
     def _start_client_delegation(self, delegation_id: str) -> None:
         """Queue one GPT-Live task behind the active delegation."""
-        if not delegation_id or delegation_id in self._delegations:
+        if (
+            self._closing
+            or not delegation_id
+            or delegation_id in self._delegations
+        ):
             return
         if self._delegation_agent_factory is None:
             self._schedule_delegation_failure(delegation_id)
@@ -1148,7 +1228,7 @@ class RealtimeAgent:
 
     def _activate_next_client_delegation(self) -> None:
         """Start the oldest queued delegation, if one remains."""
-        if self._active_delegation_id is not None:
+        if self._closing or self._active_delegation_id is not None:
             return
         while self._delegation_queue:
             delegation_id = self._delegation_queue.popleft()
@@ -1251,6 +1331,7 @@ class RealtimeAgent:
         """Run a chat agent and return its verified result to GPT-Live."""
         final: Msg | None = None
         waiting_for_external_input = False
+        pending_result_end: ToolResultEndEvent | None = None
         try:
             if delegation.agent is None:
                 raise RuntimeError("The delegation backend is unavailable.")
@@ -1259,6 +1340,10 @@ class RealtimeAgent:
                     inputs,
                     yield_final_msg=True,
                 ):
+                    if pending_result_end is not None:
+                        self._sync_delegation_state(delegation)
+                        self._emit(pending_result_end)
+                        pending_result_end = None
                     if isinstance(item, Msg):
                         final = item
                         continue
@@ -1299,22 +1384,33 @@ class RealtimeAgent:
                             ReplyEndEvent,
                         ),
                     ):
-                        if isinstance(
-                            item,
-                            (ToolResultEndEvent, ReplyEndEvent),
-                        ):
+                        if isinstance(item, ToolResultEndEvent):
+                            # External results enter backend state after
+                            # END is yielded. Advance once before taking
+                            # the checkpoint paired with that event.
+                            pending_result_end = item
+                            continue
+                        if isinstance(item, ReplyEndEvent):
                             self._sync_delegation_state(delegation)
                         self._emit(item)
 
-            if waiting_for_external_input:
-                self._schedule_delegation_timeout(delegation)
+            self._sync_delegation_state(delegation)
+            if pending_result_end is not None:
+                self._emit(pending_result_end)
+            if waiting_for_external_input or (
+                delegation.agent.state.has_awaiting_tool_calls(self.name)
+            ):
+                if not self._closing:
+                    self._schedule_delegation_timeout(delegation)
                 return
             if final is None:
                 raise RuntimeError(
                     "The delegation backend ended without a final result.",
                 )
 
-            self._sync_delegation_state(delegation)
+            if self._closing:
+                self._finish_client_delegation(delegation.delegation_id)
+                return
             content = (
                 result_override or (final.get_text_content() or "").strip()
             )
@@ -1330,6 +1426,10 @@ class RealtimeAgent:
                 "RealtimeAgent: client delegation %s failed",
                 delegation.delegation_id,
             )
+            if self._closing:
+                self._sync_delegation_state(delegation)
+                self._finish_client_delegation(delegation.delegation_id)
+                return
             try:
                 await self.model.send_delegation_result(
                     delegation.delegation_id,

@@ -13,7 +13,9 @@ export function getPendingHitlCalls(messages: readonly Msg[]): PendingHitlCall[]
 		const message = messages[index];
 		if (message.role !== 'assistant') continue;
 		const resultIds = new Set(
-			getContentBlocks(message, 'tool_result').map((result) => result.id),
+			getContentBlocks(message, 'tool_result')
+				.filter((result) => result.state !== 'running')
+				.map((result) => result.id),
 		);
 		for (const toolCall of getContentBlocks(message, 'tool_call')) {
 			if (resultIds.has(toolCall.id)) continue;
