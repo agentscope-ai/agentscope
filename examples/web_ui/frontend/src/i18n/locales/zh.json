@@ -663,6 +663,31 @@
 		"blockedBy": "依赖"
 	},
 	"panel": {
+		"background": {
+			"title": "后台工具",
+			"runningCount": "运行中：{{count}}",
+			"refresh": "刷新后台工具",
+			"duration": "后台运行时长：{{duration}}",
+			"totalDuration": "总执行时长：{{duration}}",
+			"backgroundDuration": "其中后台运行：{{duration}}",
+			"copyId": "复制任务 ID",
+			"copied": "已复制任务 ID",
+			"errorDetails": "失败详情",
+			"noSession": "选择会话以查看后台工具",
+			"emptyTitle": "暂无后台工具",
+			"emptyDescription": "转入后台继续执行的工具会显示在这里。",
+			"noRunning": "当前没有正在后台运行的工具。",
+			"recent": "最近结束（{{count}}）",
+			"retention": "最近结果仅临时保留，这里不包含完整历史记录。",
+			"loadError": "无法加载后台工具，请重试。",
+			"stale": "刷新失败，当前显示上次获取的状态，任务可能已发生变化。",
+			"status": {
+				"running": "运行中",
+				"completed": "已完成",
+				"failed": "失败",
+				"cancelled": "已取消"
+			}
+		},
 		"plan": {
 			"title": "计划",
 			"completed": "已完成：{{count}}",

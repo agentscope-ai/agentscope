@@ -1,13 +1,16 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import {
+	Activity,
 	BookText,
 	ChevronDown,
 	Database,
 	ListTodo,
 	PanelRight,
+	RefreshCw,
 	ShieldCheck,
 	UsersRound,
+	X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -25,6 +28,7 @@ import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { BackgroundTasksPanel } from '@/components/panel/BackgroundTasksPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
@@ -50,10 +54,12 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
+import { useBackgroundTasks } from '@/hooks/useBackgroundTasks';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
@@ -103,6 +109,7 @@ const KNOWN_PANELS: Record<PanelKey, true> = {
 	permission: true,
 	knowledge: true,
 	team: true,
+	background: true,
 };
 
 /**
@@ -205,6 +212,31 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+	const viewportRef = useRef<HTMLElement>(null);
+	const [backgroundInSheet, setBackgroundInSheet] = useState(false);
+
+	useEffect(() => {
+		const viewport = viewportRef.current;
+		if (!viewport) return;
+		let frame = 0;
+		// Measure available chat space, including changes to the app sidebars.
+		const observer = new ResizeObserver(([entry]) => {
+			// Change layout in the next frame, outside the observer's delivery loop.
+			window.cancelAnimationFrame(frame);
+			frame = window.requestAnimationFrame(() => {
+				setBackgroundInSheet(entry.contentRect.width < 768);
+			});
+		});
+		observer.observe(viewport);
+		return () => {
+			observer.disconnect();
+			window.cancelAnimationFrame(frame);
+		};
+	}, []);
+
+	const dockLayout = backgroundInSheet
+		? closePanelInLayout(panelLayout, 'background')
+		: panelLayout;
 
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
@@ -322,6 +354,18 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		(key: PanelKey) => panelLayout.some((column) => column.includes(key)),
 		[panelLayout],
 	);
+	const backgroundOpen = isPanelOpen('background');
+	const {
+		data: backgroundData,
+		isPending: backgroundLoading,
+		error: backgroundError,
+		isPaused: backgroundPaused,
+		isFetching: backgroundRefreshing,
+		dataUpdatedAt: backgroundUpdatedAt,
+		refetch: refetchBackground,
+		visible: backgroundVisible,
+	} = useBackgroundTasks(sessionId, backgroundOpen);
+	const backgroundUnavailable = !!backgroundError || backgroundPaused;
 
 	/**
 	 * Persist a knowledge-base attachment change. `null` detaches every
@@ -405,6 +449,52 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	// dock itself stays free of any data dependency.
 	const panels = useMemo<Record<PanelKey, PanelDescriptor>>(
 		() => ({
+			background: {
+				title: (
+					<span className="flex items-center gap-2">
+						{t('panel.background.title')}
+						{backgroundData && !backgroundUnavailable && (
+							<Badge variant="outline" className="tabular-nums">
+								{t('panel.background.runningCount', {
+									count: backgroundData.tasks.filter(
+										(task) => task.status === 'running',
+									).length,
+								})}
+							</Badge>
+						)}
+					</span>
+				),
+				icon: <Activity className="size-4" />,
+				actions: (
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						aria-label={t('panel.background.refresh')}
+						tooltip={t('panel.background.refresh')}
+						disabled={!sessionId || backgroundRefreshing}
+						onClick={() => void refetchBackground()}
+					>
+						<RefreshCw
+							className={
+								backgroundRefreshing ? 'motion-safe:animate-spin' : undefined
+							}
+						/>
+					</Button>
+				),
+				content: (
+					<BackgroundTasksPanel
+						key={sessionId}
+						sessionId={sessionId}
+						tasks={backgroundData?.tasks}
+						loading={backgroundLoading && !backgroundUnavailable}
+						error={backgroundUnavailable}
+						refreshing={backgroundRefreshing}
+						visible={backgroundVisible}
+						updatedAt={backgroundUpdatedAt}
+						onRefresh={() => void refetchBackground()}
+					/>
+				),
+			},
 			plan: {
 				title: t('panel.plan.title'),
 				icon: <ListTodo className="size-4" />,
@@ -495,6 +585,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}),
 		[
 			t,
+			backgroundData,
+			backgroundUnavailable,
+			backgroundLoading,
+			backgroundRefreshing,
+			backgroundUpdatedAt,
+			backgroundVisible,
+			refetchBackground,
 			tasksContext,
 			mcps,
 			mcpsLoading,
@@ -807,15 +904,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 	return (
 		<>
-			<main className="flex size-full">
+			<main ref={viewportRef} className="flex size-full min-w-0">
 				<ResizablePanelGroup orientation="horizontal">
 					<ResizablePanel
 						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
-						minSize="24rem"
+						minSize={backgroundInSheet ? '0%' : '24rem'}
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div className="flex min-w-0 flex-row items-center gap-x-1">
+								<div
+									className={
+										backgroundInSheet
+											? 'flex min-w-0 max-w-24 items-center gap-x-1'
+											: 'flex min-w-0 flex-row items-center gap-x-1'
+									}
+								>
 									<SidebarTrigger className="md:hidden" />
 									{/* The open session, named opposite its own
 									    settings. The sidebar is the only other
@@ -839,9 +942,14 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										</span>
 									)}
 								</div>
-								{/* Never squeezed by a long session name: the
-								    name truncates instead. */}
-								<div className="flex shrink-0 flex-row gap-x-1">
+								{/* Keep the panel menu reachable when chat space is narrow. */}
+								<div
+									className={
+										backgroundInSheet
+											? 'flex min-w-0 flex-1 flex-wrap justify-end gap-1'
+											: 'flex shrink-0 flex-row gap-x-1'
+									}
+								>
 									<RealtimeModelSelect
 										value={selectedRealtimeModel}
 										onChange={handleRealtimeModelChange}
@@ -862,7 +970,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
-										className="font-mono text-muted-foreground hover:text-foreground"
+										className="max-w-full font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
@@ -900,6 +1008,16 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="end" className="w-auto">
+											<DropdownMenuCheckboxItem
+												checked={backgroundOpen}
+												onCheckedChange={() => togglePanel('background')}
+												onSelect={(e) => {
+													if (!backgroundInSheet) e.preventDefault();
+												}}
+											>
+												<Activity />
+												{t('panel.background.title')}
+											</DropdownMenuCheckboxItem>
 											<DropdownMenuCheckboxItem
 												checked={isPanelOpen('plan')}
 												onCheckedChange={() => togglePanel('plan')}
@@ -1075,12 +1193,45 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 							</div>
 						</div>
 					</ResizablePanel>
-					{panelLayout.length > 0 && (
+					{dockLayout.length > 0 && (
 						<ResizableHandle withHandle className="bg-transparent w-1.5" />
 					)}
-					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
+					<PanelDock layout={dockLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
 			</main>
+			{backgroundInSheet && (
+				<Sheet
+					open={backgroundOpen}
+					onOpenChange={(open) => {
+						if (!open) closePanel('background');
+					}}
+				>
+					<SheetContent
+						className="gap-0 data-[side=right]:w-full sm:max-w-md"
+						aria-describedby={undefined}
+						showCloseButton={false}
+					>
+						<SheetHeader className="flex-row items-center justify-between gap-2">
+							<SheetTitle className="text-sm">{panels.background.title}</SheetTitle>
+							<div className="flex shrink-0 items-center gap-1">
+								{panels.background.actions}
+								<SheetClose asChild>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										aria-label={t('common.close')}
+									>
+										<X />
+									</Button>
+								</SheetClose>
+							</div>
+						</SheetHeader>
+						<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
+							{panels.background.content}
+						</div>
+					</SheetContent>
+				</Sheet>
+			)}
 			<CreateCredentialDialog open={credentialOpen} onOpenChange={setCredentialOpen} />
 		</>
 	);
