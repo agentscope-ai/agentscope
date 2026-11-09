@@ -956,9 +956,22 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
         peak = 0
         cancellations = 0
         reached_tail = asyncio.Event()
+        start_renewal = asyncio.Event()
+        original_renew = self.owner._renew_running_records
+
+        async def renew_after_setup() -> None:
+            """Keep registration latency out of the renewal queue order."""
+            await start_renewal.wait()
+            await original_renew()
+
         with (
             patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.2),
             patch(f"{_MANAGER_MODULE}._RENEWAL_CONCURRENCY", 2),
+            patch.object(
+                self.owner,
+                "_renew_running_records",
+                side_effect=renew_after_setup,
+            ),
         ):
             for _ in range(6):
                 await self._register(self.owner)
@@ -989,6 +1002,7 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                 "registry_get",
                 side_effect=stalled_head,
             ):
+                start_renewal.set()
                 await asyncio.wait_for(reached_tail.wait(), timeout=0.5)
                 self.assertEqual(peak, 2)
                 self.assertGreaterEqual(cancellations, 2)
