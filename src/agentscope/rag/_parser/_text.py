@@ -66,6 +66,34 @@ class TextParser(ParserBase):
         """
         self.encoding = encoding
 
+    def _decode(self, raw: bytes, filename: str) -> str:
+        """Decode file bytes, dropping a leading byte order mark.
+
+        The mark is an encoding signature rather than content; files
+        such as Excel's "CSV UTF-8" exports always start with one.
+
+        Args:
+            raw (`bytes`):
+                The file bytes.
+            filename (`str`):
+                The source filename, used in the error message.
+
+        Returns:
+            `str`:
+                The decoded text without a leading ``U+FEFF``.
+
+        Raises:
+            `ValueError`: If the bytes cannot be decoded with the
+                configured encoding.
+        """
+        try:
+            text = raw.decode(self.encoding)
+        except UnicodeDecodeError as e:
+            raise ValueError(
+                f"Failed to decode {filename!r} as {self.encoding!r}: {e}",
+            ) from e
+        return text.removeprefix("\ufeff")
+
     async def parse(
         self,
         file: bytes | str,
@@ -97,24 +125,11 @@ class TextParser(ParserBase):
         if isinstance(file, str):
             if os.path.isfile(file):
                 with open(file, "rb") as fp:
-                    raw = fp.read()
-                try:
-                    text = raw.decode(self.encoding)
-                except UnicodeDecodeError as e:
-                    raise ValueError(
-                        f"Failed to decode {filename!r} as "
-                        f"{self.encoding!r}: {e}",
-                    ) from e
+                    text = self._decode(fp.read(), filename)
             else:
                 text = file
         else:
-            try:
-                text = file.decode(self.encoding)
-            except UnicodeDecodeError as e:
-                raise ValueError(
-                    f"Failed to decode {filename!r} as "
-                    f"{self.encoding!r}: {e}",
-                ) from e
+            text = self._decode(file, filename)
 
         return [
             Section(

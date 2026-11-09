@@ -32,6 +32,7 @@ class _Storage:
 
     def __init__(self, content_type: str) -> None:
         self.record = SimpleNamespace(
+            status="pending",
             data=SimpleNamespace(
                 content_type=content_type,
                 filename="README.md",
