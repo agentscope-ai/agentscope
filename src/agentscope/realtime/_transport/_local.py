@@ -101,10 +101,8 @@ class LocalAudioTransport(TransportBase):
             self._in_stream.start()
             self._out_stream.start()
         except BaseException:
-            # ``TransportBase.__aenter__`` only calls ``close()`` when
-            # ``start()`` succeeds, so a failure halfway through would
-            # otherwise leave the microphone (and/or speaker) open until
-            # the process exits. Release whatever was acquired here.
+            # If start() fails, async with does not call __aexit__().
+            # Release partially acquired streams here to avoid leaks.
             self._loop = None
             for stream in (self._in_stream, self._out_stream):
                 if stream is None:
