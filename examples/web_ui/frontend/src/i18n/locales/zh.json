@@ -498,6 +498,7 @@
 		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
 		"backendFollows": "任务后端跟随 Chat 模型 · {{model}}",
 		"backendMissing": "请先选择 Chat 模型，再启动 GPT Live",
+		"pendingChatInteraction": "请先完成 Chat 中待处理的工具确认或外部执行，再启动 GPT Live。",
 		"start": "开始语音对话",
 		"stop": "结束语音对话"
 	},

@@ -19,7 +19,7 @@ from agentscope.app.storage import (
     SessionRecord,
 )
 from agentscope.middleware import RAGMiddleware
-from agentscope.message import UserMsg
+from agentscope.message import AssistantMsg, ToolCallBlock, UserMsg
 from agentscope.realtime import InteractionMode, RealtimeModelBase
 
 
@@ -273,6 +273,79 @@ class RealtimeServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         channel.chat_kind.assert_awaited_once_with("chat-1")
         channel.chat_name.assert_not_awaited()
+
+    async def test_gpt_live_rejects_pending_chat_interactions(self) -> None:
+        """Check freshly loaded state before allocating runtime resources."""
+        record = AgentRecord(
+            id="agent",
+            user_id="user",
+            data=AgentData(name="Friday"),
+        )
+        session = SessionRecord(
+            id="session",
+            user_id="user",
+            agent_id="agent",
+            config=SessionConfig(workspace_id="workspace"),
+        )
+        workspace_manager = SimpleNamespace(get_workspace=AsyncMock())
+        service = RealtimeService(
+            storage=SimpleNamespace(
+                get_session=AsyncMock(return_value=session),
+            ),
+            workspace_manager=workspace_manager,
+            scheduler_manager=object(),
+            background_task_manager=object(),
+            message_bus=object(),
+            resource_access_service=SimpleNamespace(
+                resolve_agent=AsyncMock(return_value=record),
+            ),
+        )
+        model = cast(
+            RealtimeModelBase,
+            SimpleNamespace(
+                card=SimpleNamespace(delegation_backend="session_chat"),
+            ),
+        )
+        for state in ("asking", "submitted"):
+            with self.subTest(state=state):
+                session.state.context = [
+                    AssistantMsg(
+                        name="Friday",
+                        content=[
+                            ToolCallBlock(
+                                id="old_tool",
+                                name="Write",
+                                input="{}",
+                                state=state,
+                            ),
+                        ],
+                    ),
+                ]
+                original = session.state.model_dump()
+                with self.assertRaises(ValueError) as raised:
+                    await service.create_agent(
+                        user_id="user",
+                        agent_id="agent",
+                        session_id="session",
+                        model=model,
+                    )
+                self.assertEqual(
+                    {
+                        "error": str(raised.exception),
+                        "state": session.state.model_dump(),
+                        "workspace_calls": (
+                            workspace_manager.get_workspace.await_count
+                        ),
+                    },
+                    {
+                        "error": (
+                            "Complete the pending Chat confirmation or "
+                            "external execution before starting GPT Live."
+                        ),
+                        "state": original,
+                        "workspace_calls": 0,
+                    },
+                )
 
     async def test_gpt_live_reuses_the_session_chat_agent(self) -> None:
         """Client delegation follows the current session chat model."""

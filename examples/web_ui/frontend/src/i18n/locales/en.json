@@ -498,6 +498,7 @@
 		"selectFirst": "Realtime voice is off. Select a model from Voice model (the waveform icon) at the top.",
 		"backendFollows": "Task backend follows Chat model · {{model}}",
 		"backendMissing": "Select a Chat model before starting GPT Live",
+		"pendingChatInteraction": "Complete the pending Chat confirmation or external execution before starting GPT Live.",
 		"start": "Start voice conversation",
 		"stop": "End voice conversation"
 	},

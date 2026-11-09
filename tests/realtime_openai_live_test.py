@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from agentscope.agent import RealtimeAgent
 from agentscope.credential import OpenAICredential
 from agentscope.event import (
+    AgentEvent,
     ConfirmResult,
     ExternalExecutionResultEvent,
     ReplyStartEvent,
@@ -19,6 +20,7 @@ from agentscope.event import (
     TextBlockDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    ToolResultDataDeltaEvent,
     ToolResultEndEvent,
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
@@ -693,6 +695,134 @@ class RealtimeAgentLiveTest(unittest.IsolatedAsyncioTestCase):
             "Order 42 shipped.",
         )
         self.assertDictEqual(agent._delegations, {})
+
+    async def test_completed_results_replay_before_interaction(self) -> None:
+        """Replay full hidden results with their persisted completion."""
+        for interaction_type in (
+            RequireUserConfirmEvent,
+            RequireExternalExecutionEvent,
+        ):
+            with self.subTest(interaction=interaction_type.__name__):
+                call = ToolCallBlock(id="read", name="Read", input="{}")
+                result = ToolResultBlock(
+                    id=call.id,
+                    name=call.name,
+                    output="contents",
+                    state=ToolResultState.SUCCESS,
+                )
+                events = [
+                    ReplyStartEvent(
+                        session_id="session",
+                        reply_id="backend",
+                        name="Friday",
+                    ),
+                    ToolCallStartEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        tool_call_name=call.name,
+                    ),
+                    ToolCallEndEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                    ),
+                    ToolResultStartEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        tool_call_name=call.name,
+                    ),
+                    ToolResultTextDeltaEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        delta="contents",
+                    ),
+                    ToolResultDataDeltaEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        media_type="image/png",
+                        data="aGVsbG8=",
+                    ),
+                    ToolResultEndEvent(
+                        reply_id="backend",
+                        tool_call_id=call.id,
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    interaction_type(
+                        reply_id="backend",
+                        tool_calls=[
+                            ToolCallBlock(
+                                id="write",
+                                name="Write",
+                                input="{}",
+                            ),
+                        ],
+                    ),
+                ]
+
+                class Backend:
+                    """Persist a result after yielding its end event."""
+
+                    def __init__(
+                        self,
+                        script: list[AgentEvent],
+                        completed: Msg,
+                    ) -> None:
+                        self.state = AgentState()
+                        self.script = script
+                        self.completed = completed
+
+                    # pylint: disable=unused-argument
+                    async def reply_stream(
+                        self,
+                        inputs: Msg,
+                        yield_final_msg: bool,
+                    ) -> AsyncIterator[AgentEvent]:
+                        """Complete Read before requesting outside input."""
+                        for event in self.script:
+                            yield event
+                            if isinstance(event, ToolResultEndEvent):
+                                self.state.context.append(self.completed)
+
+                    # pylint: enable=unused-argument
+
+                backend = Backend(
+                    events,
+                    AssistantMsg(
+                        id="backend",
+                        name="Friday",
+                        content=[call, result],
+                    ),
+                )
+                agent = RealtimeAgent(
+                    "Friday",
+                    "Be brief.",
+                    _model(),
+                    delegation_agent_factory=lambda _, current=backend: (
+                        current
+                    ),
+                )
+                await agent._on_model_event(
+                    DelegationCreatedEvent(
+                        delegation_id="task",
+                        target="client",
+                    ),
+                )
+                await asyncio.gather(*list(agent._tasks))
+                agent._cancel_delegation_timeout(agent._delegations["task"])
+                published = []
+                snapshots = []
+                for event in agent.drain_events():
+                    published.append(event.model_dump())
+                    if isinstance(event, ToolResultEndEvent):
+                        snapshot = agent.checkpoint_snapshot(event)
+                        assert snapshot is not None
+                        snapshots.append(snapshot.context[0].model_dump())
+                self.assertEqual(
+                    {"events": published, "snapshots": snapshots},
+                    {
+                        "events": [event.model_dump() for event in events],
+                        "snapshots": [backend.state.context[0].model_dump()],
+                    },
+                )
 
     async def test_client_delegation_resumes_after_confirmation(self) -> None:
         """Realtime control routes approval back to the delegated agent."""

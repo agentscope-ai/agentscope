@@ -140,7 +140,8 @@ class RealtimeService:
             RuntimeError:
                 If the session no longer exists.
             ValueError:
-                If a client-delegating model has no Chat model configured.
+                If a client-delegating model has no Chat model configured
+                or the session has a pending Chat interaction.
         """
         agent_record = await self._access.resolve_agent(user_id, agent_id)
         session = await self._storage.get_session(
@@ -150,6 +151,18 @@ class RealtimeService:
         )
         if session is None:
             raise RuntimeError(f"Session {session_id!r} no longer exists.")
+
+        card = getattr(model, "card", None)
+        uses_session_chat = (
+            getattr(card, "delegation_backend", "none") == "session_chat"
+        )
+        if uses_session_chat and session.state.has_awaiting_tool_calls(
+            agent_record.data.name,
+        ):
+            raise ValueError(
+                "Complete the pending Chat confirmation or "
+                "external execution before starting GPT Live.",
+            )
 
         workspace = await self._workspace_manager.get_workspace(
             user_id,
@@ -189,10 +202,6 @@ class RealtimeService:
             )
             if channel is not None and channel_origin is not None
             else []
-        )
-        card = getattr(model, "card", None)
-        uses_session_chat = (
-            getattr(card, "delegation_backend", "none") == "session_chat"
         )
         middlewares = (
             await self._build_delegation_middlewares(

@@ -1381,6 +1381,9 @@ class RealtimeAgent:
                             ToolCallDeltaEvent,
                             ToolCallEndEvent,
                             ToolResultStartEvent,
+                            ToolResultTextDeltaEvent,
+                            ToolResultDataDeltaEvent,
+                            ToolResultEndEvent,
                         ),
                     ):
                         delegation.buffered_events.append(item)
@@ -1517,6 +1520,9 @@ class RealtimeAgent:
                         ToolCallDeltaEvent,
                         ToolCallEndEvent,
                         ToolResultStartEvent,
+                        ToolResultTextDeltaEvent,
+                        ToolResultDataDeltaEvent,
+                        ToolResultEndEvent,
                     ),
                 ):
                     self._emit(event)

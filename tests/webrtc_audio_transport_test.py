@@ -46,7 +46,12 @@ from agentscope.event import (
     TextBlockStartEvent,
     ToolResultEndEvent,
 )
-from agentscope.message import ToolCallBlock, ToolResultState, UserMsg
+from agentscope.message import (
+    AssistantMsg,
+    ToolCallBlock,
+    ToolResultState,
+    UserMsg,
+)
 from agentscope.realtime import (
     AudioFrame,
     DashScopeAudioRealtimeModel,
@@ -55,6 +60,7 @@ from agentscope.realtime import (
     TimelineTranscriptDeltaEvent,
 )
 from agentscope.realtime import _events as me
+from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, Toolkit
 
 
@@ -897,6 +903,52 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
                 "model_calls": 0,
             },
         )
+
+    async def test_gpt_live_offer_rejects_pending_chat(self) -> None:
+        """Reject parked Chat interactions before WebRTC negotiation."""
+        self.model.card = SimpleNamespace(delegation_backend="session_chat")
+        self.session.config.chat_model_config = object()
+        self.access.resolve_agent.return_value = SimpleNamespace(
+            data=SimpleNamespace(name="Friday"),
+        )
+        for state in ("asking", "submitted"):
+            with self.subTest(state=state):
+                self.session.state = AgentState(
+                    context=[
+                        AssistantMsg(
+                            name="Friday",
+                            content=[
+                                ToolCallBlock(
+                                    id="old_tool",
+                                    name="Write",
+                                    input="{}",
+                                    state=state,
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+                with self.assertRaises(HTTPException) as raised:
+                    await self._offer()
+                self.assertEqual(
+                    {
+                        "status": raised.exception.status_code,
+                        "detail": raised.exception.detail,
+                        "negotiation_calls": (
+                            self.peer.setRemoteDescription.await_count
+                        ),
+                        "connections": self.connections,
+                    },
+                    {
+                        "status": 409,
+                        "detail": (
+                            "Complete the pending Chat confirmation or "
+                            "external execution before starting GPT Live."
+                        ),
+                        "negotiation_calls": 0,
+                        "connections": {},
+                    },
+                )
 
     async def test_offer_replaces_the_previous_connection(self) -> None:
         """A reconnect closes the previous local runner before reload."""

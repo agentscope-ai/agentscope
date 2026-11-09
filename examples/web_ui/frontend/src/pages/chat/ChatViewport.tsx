@@ -11,6 +11,7 @@ import {
 	UsersRound,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import type {
 	ASRModelConfig,
@@ -63,6 +64,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
 	turn_detection: ['none'],
@@ -1001,7 +1003,17 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									onMoveQueued={moveQueued}
 									onReorderQueued={reorderQueued}
 									voiceState={realtimeVoice.state}
-									onVoiceToggle={() => void realtimeVoice.toggle()}
+									onVoiceToggle={() => {
+										if (
+											!voiceBusy &&
+											realtimeUsesSessionChat &&
+											getPendingHitlCalls(msgs).length > 0
+										) {
+											toast.error(t('realtime.pendingChatInteraction'));
+											return;
+										}
+										void realtimeVoice.toggle();
+									}}
 									voiceDisabled={
 										!selectedRealtimeModel ||
 										!agentId ||
