@@ -383,17 +383,22 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    (
-                        formatted_group,
-                        has_history,
-                    ) = await self._format_agent_message_with_hints(
-                        group,
-                        is_first_agent_message,
-                        self._format_agent_message,
-                    )
-                    formatted_msgs.extend(formatted_group)
-                    if has_history:
-                        is_first_agent_message = False
+                    segments = self._split_agent_messages_at_hints(group)
+                    for is_hint, segment in segments:
+                        if is_hint:
+                            formatted_msgs.extend(
+                                await self._format_hint_message(segment),
+                            )
+                            continue
+
+                        formatted_group = await self._format_agent_message(
+                            segment,
+                            is_first_agent_message,
+                        )
+                        formatted_msgs.extend(formatted_group)
+                        # Image-only history does not emit the prompt.
+                        if any(msg["content"] for msg in formatted_group):
+                            is_first_agent_message = False
 
         return formatted_msgs
 
@@ -494,7 +499,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
             user_message["images"] = images
 
         formatted_msgs = []
-        if conversation_blocks:
+        if conversation_blocks or images:
             formatted_msgs.append(user_message)
 
         return formatted_msgs
