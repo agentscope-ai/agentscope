@@ -360,7 +360,7 @@ class MCPClient(BaseModel):
         For stateless connections, this method does nothing.
 
         Raises:
-            RuntimeError: If already connected.
+            RuntimeError: If already connected or a connection is in progress.
         """
         if not self.is_stateful:
             logger.debug(
@@ -373,6 +373,10 @@ class MCPClient(BaseModel):
             raise RuntimeError(
                 f"MCP '{self.name}' is already connected. "
                 "Call close() before reconnecting.",
+            )
+        if self._lifecycle_task is not None:
+            raise RuntimeError(
+                f"MCP '{self.name}' connection is already in progress.",
             )
 
         client = self._create_sdk_client()

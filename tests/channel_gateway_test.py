@@ -12,6 +12,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString
 
@@ -31,6 +32,7 @@ from agentscope.message import Msg, ToolCallBlock, ToolCallState
 from agentscope.state import AgentState
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.message_bus import MessageBusKeys
+from agentscope.app.message_bus import _in_memory_message_bus as _bus
 from agentscope.app.storage import (
     ChannelBinding,
     ChannelRecord,
@@ -311,6 +313,34 @@ class MediaBufferTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(content), 3)  # two buffered images + text
         self.assertIsInstance(content[0], DataBlock)
         self.assertIsInstance(content[-1], TextBlock)
+
+    async def test_new_media_refreshes_buffer_for_earlier_media(self) -> None:
+        """All buffered images survive until the last push's deadline."""
+        bus = InMemoryMessageBus()
+        gw = ChannelGateway(
+            storage=None,
+            message_bus=bus,
+            workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+        )
+        first = self._media_event("a.png")
+        second = self._media_event("b.png")
+        text = ChannelEvent(
+            channel_id="c",
+            channel_user_id="u",
+            chat_id="chat",
+            content=[TextBlock(text="look")],
+        )
+        with patch.object(_bus.time, "monotonic", return_value=0):
+            await gw._aggregate_media(first)
+        with patch.object(_bus.time, "monotonic", return_value=240):
+            await gw._aggregate_media(second)
+        with patch.object(_bus.time, "monotonic", return_value=360):
+            content = await gw._aggregate_media(text)
+
+        self.assertEqual(
+            content,
+            [*first.content, *second.content, *text.content],
+        )
 
 
 class _RecordingStorage:
