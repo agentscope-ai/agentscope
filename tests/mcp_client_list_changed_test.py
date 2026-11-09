@@ -88,36 +88,19 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
                 mcp_config=StdioMCPConfig(command="unused"),
             )
             await client.connect()
+            self.addAsyncCleanup(client.close)
         self.assertEqual(len(_FakeClient.instances), 1)
-        return client, _FakeClient.instances[0]
-
-    async def test_sdk_client_receives_message_handler(self) -> None:
-        """The SDK client must be built with a message handler."""
-        _, fake = await self._connect()
+        fake = _FakeClient.instances[0]
         self.assertIsNotNone(fake.message_handler)
-
-    async def test_tools_list_changed_invalidates_cached_tools(self) -> None:
-        """A tools/list_changed notification must drop cached tools."""
-        client, fake = await self._connect()
-
-        await client.list_raw_tools()
-        self.assertIsNotNone(client._cached_tools)
-        self.assertEqual(fake.list_calls, 1)
-
-        await fake.message_handler(
-            mcp.types.ToolListChangedNotification(
-                method="notifications/tools/list_changed",
-            ),
-        )
-        self.assertIsNone(client._cached_tools)
+        return client, fake
 
     async def test_get_tool_rediscovers_after_notification(self) -> None:
         """A tool added after the notification must be discoverable."""
         client, fake = await self._connect()
 
-        await client.list_raw_tools()
         with self.assertRaises(ValueError):
             await client.get_tool("echo_v2")
+        self.assertEqual(fake.list_calls, 1)
 
         fake.tool_names = ["echo", "echo_v2"]
         await fake.message_handler(
@@ -126,15 +109,25 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
             ),
         )
         tool = await client.get_tool("echo_v2")
-        self.assertEqual(tool.mcp_name, "list_changed")
-        self.assertEqual(fake.list_calls, 2)
+        self.assertEqual(
+            (tool.name, fake.list_calls),
+            ("mcp__list_changed__echo_v2", 2),
+        )
+        self.assertEqual(
+            client._cached_tools,
+            [
+                mcp.types.Tool(name="echo", inputSchema={"type": "object"}),
+                mcp.types.Tool(name="echo_v2", inputSchema={"type": "object"}),
+            ],
+        )
 
     async def test_unrelated_notifications_keep_cached_tools(self) -> None:
         """Notifications other than tools/list_changed keep the cache."""
         client, fake = await self._connect()
 
-        await client.list_raw_tools()
+        await client.get_tool("echo")
         cached = client._cached_tools
+        fake.tool_names = ["echo_v2"]
 
         await fake.message_handler(
             mcp.types.LoggingMessageNotification(
@@ -144,5 +137,10 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
                     data="unrelated",
                 ),
             ),
+        )
+        tool = await client.get_tool("echo")
+        self.assertEqual(
+            (tool.name, fake.list_calls),
+            ("mcp__list_changed__echo", 1),
         )
         self.assertIs(client._cached_tools, cached)
