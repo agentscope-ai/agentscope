@@ -7,7 +7,7 @@ import json
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 import httpx
@@ -118,7 +118,9 @@ class TestBackgroundTaskCompatibility(IsolatedAsyncioTestCase):
         self.assertEqual(local.summary, "Tool(x=1)")
 
 
-class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
+class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Exercise two workers sharing task metadata and cancellation signals."""
 
     def _make_bus(self) -> MessageBus:
@@ -160,6 +162,8 @@ class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
         for manager in (self.owner, self.reader):
             while manager._completion_tasks:
                 await asyncio.gather(*manager._completion_tasks)
+                # Done callbacks may still be queued after gather returns.
+                await asyncio.sleep(0)
 
     async def _renew_once(self) -> None:
         """Run one heartbeat pass without waiting for the lease interval."""
@@ -169,13 +173,26 @@ class TestBackgroundTaskRecords(IsolatedAsyncioTestCase):
             return_exceptions=True,
         )
         with patch(
-            f"{_MANAGER_MODULE}.asyncio.sleep",
-            side_effect=[None, asyncio.CancelledError],
+            f"{_MANAGER_MODULE}.asyncio",
+            wraps=asyncio,
+            sleep=AsyncMock(side_effect=[None, asyncio.CancelledError]),
         ):
             try:
                 await self.owner._renew_running_records()
             except asyncio.CancelledError:
                 pass
+
+    async def test_settle_waits_for_pending_done_callbacks(self) -> None:
+        """Completed tasks must be discarded before the helper returns."""
+        completed = asyncio.create_task(asyncio.sleep(0))
+        await completed
+        self.owner._completion_tasks.add(completed)
+        completed.add_done_callback(self.owner._completion_tasks.discard)
+
+        await self._settle()
+
+        self.assertEqual(self.owner._completion_tasks, set())
+        self.assertEqual(self.reader._completion_tasks, set())
 
     async def test_shared_lifecycle_and_isolation(self) -> None:
         """Running and completed records are identical on either worker."""
