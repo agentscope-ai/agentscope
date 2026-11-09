@@ -128,6 +128,102 @@ READ_ONLY_COMMANDS = {
     "pip show",
 }
 
+# Tokens a program word may follow: list/pipeline separators, and the
+# wrappers that execute the program named after them.
+_COMMAND_POSITION_PRECEDERS: Set[str] = {
+    "|",
+    "||",
+    "&&",
+    ";",
+    "&",
+    "(",
+    "{",
+    "!",
+    "then",
+    "do",
+    "else",
+    "sudo",
+    "command",
+    "exec",
+    "env",
+    "nohup",
+    "time",
+    "nice",
+    "xargs",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir",
+}
+
+# A command separator ends the `rm` command whose options are being scanned.
+# Without this, `rm -r build; cp -f a b` would read the `-f` that belongs to
+# `cp` and report a recursive force delete that nobody wrote.
+_RM_OPTION_SCAN_STOP_TOKENS: Set[str] = {";", "|", "||", "|&", "&", "&&", ")"}
+
+# shlex merges a run of punctuation into one token, so `(rm -r build); cp -f x`
+# arrives as `);` rather than as `)` followed by `;`. Matching the leading
+# character keeps merged runs (`);`, `>&`, `|&`) out of the option scan, which
+# an exact-token test would let through.
+_RM_OPTION_SCAN_STOP_CHARS: Set[str] = {token[0] for token in _RM_OPTION_SCAN_STOP_TOKENS}
+
+
+def _tokenize_for_flags(command: str) -> List[str]:
+    """Split a command into words, keeping separators as their own tokens."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="();<>|&;")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        return command.split()
+
+
+def _rm_is_force_recursive(command: str) -> bool:
+    """Report an ``rm`` invocation that combines recursive and force.
+
+    ``DANGEROUS_COMMANDS`` looks for the literal ``"rm -rf"``, but the same
+    deletion is routinely written ``rm -fr``, ``rm -Rf``, ``rm -r -f`` or
+    ``rm --recursive --force``, none of which contain that substring. The
+    options are matched the way ``rm`` itself reads them, so the spelling of
+    the flag does not decide whether the safety check fires.
+
+    Args:
+        command (`str`):
+            The normalized command to inspect.
+
+    Returns:
+        `bool`:
+            True when some ``rm`` in command position is both recursive and
+            forced.
+    """
+    tokens = _tokenize_for_flags(command)
+    for index, token in enumerate(tokens):
+        if token.rsplit("/", 1)[-1] != "rm":
+            continue
+        if index and tokens[index - 1] not in _COMMAND_POSITION_PRECEDERS:
+            continue
+
+        recursive = False
+        force = False
+        for arg in tokens[index + 1 :]:
+            if arg == "--" or arg[:1] in _RM_OPTION_SCAN_STOP_CHARS:
+                # "--" ends the options, a separator ends this rm command.
+                break
+            if not arg.startswith("-") or arg == "-":
+                continue
+            if arg.startswith("--"):
+                recursive = recursive or arg[2:] == "recursive"
+                force = force or arg[2:] == "force"
+                continue
+            recursive = recursive or "r" in arg[1:] or "R" in arg[1:]
+            force = force or "f" in arg[1:]
+
+        if recursive and force:
+            return True
+    return False
+
+
 FIND_MUTATING_PREDICATES = {
     "-delete",
     "-exec",
@@ -705,6 +801,11 @@ class BashCommandParser:
 
         # Normalize command for matching
         normalized = " ".join(command.split())
+
+        # "rm -rf" is stored as text, so equivalent flag spellings escape the
+        # substring match below. Match the options instead.
+        if _rm_is_force_recursive(normalized):
+            return "rm -rf"
 
         # Check each dangerous pattern
         for pattern in DANGEROUS_COMMANDS:
