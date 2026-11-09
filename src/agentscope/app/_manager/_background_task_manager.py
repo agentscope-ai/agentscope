@@ -288,10 +288,7 @@ class BackgroundTaskManager:
 
         def _on_done(_t: asyncio.Task) -> None:
             self.tasks.pop(task_id, None)
-            # Schedule async Redis cleanup (fire-and-forget). Wrap in a
-            # coroutine that logs failures so the bus error (e.g. Redis
-            # connection drop) does not surface as
-            # ``Task exception was never retrieved``.
+            # Clean up asynchronously; the helper logs registry errors.
             try:
                 asyncio.ensure_future(
                     self._safe_bg_task_unregister(session_id, task_id),
@@ -300,7 +297,6 @@ class BackgroundTaskManager:
                 # Event loop already closed during shutdown.
                 pass
 
-        # Register in the global Redis registry.
         metadata = json.dumps(
             {
                 "tool_name": tool_name,
@@ -317,8 +313,7 @@ class BackgroundTaskManager:
                 ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
             )
         finally:
-            # Install cleanup even if registration fails or is cancelled.
-            # Wait until the write exits to avoid deleting before it commits.
+            # Always install cleanup, after the write to avoid early deletion.
             asyncio_task.add_done_callback(_on_done)
 
         logger.info(

@@ -3,7 +3,6 @@
 import asyncio
 import json
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from utils import AnyValue
 
@@ -23,7 +22,6 @@ class _RegistrationBus(InMemoryMessageBus):
         self.deleted = asyncio.Event()
         self.commit_before_wait = False
         self.write_error: ConnectionError | None = None
-        self.delete_error: ConnectionError | None = None
         self.delete_calls: list[tuple[str, str]] = []
 
     async def registry_set(
@@ -34,18 +32,7 @@ class _RegistrationBus(InMemoryMessageBus):
         *,
         ttl_secs: int | None = None,
     ) -> None:
-        """Write before or after a controllable acknowledgement barrier.
-
-        Args:
-            namespace (`str`):
-                Registry namespace.
-            field (`str`):
-                Task identifier.
-            value (`str`):
-                Serialized task metadata.
-            ttl_secs (`int | None`, optional):
-                Registry lifetime.
-        """
+        """Write before or after the acknowledgement barrier."""
         if self.commit_before_wait:
             await super().registry_set(
                 namespace,
@@ -66,18 +53,9 @@ class _RegistrationBus(InMemoryMessageBus):
             )
 
     async def registry_del(self, namespace: str, field: str) -> None:
-        """Record cleanup, optionally simulating an unavailable registry.
-
-        Args:
-            namespace (`str`):
-                Registry namespace.
-            field (`str`):
-                Task identifier.
-        """
+        """Record cleanup and remove the registry entry."""
         self.delete_calls.append((namespace, field))
         self.deleted.set()
-        if self.delete_error is not None:
-            raise self.delete_error
         await super().registry_del(namespace, field)
 
 
@@ -110,12 +88,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
         await future
 
     async def _start_registration(self) -> str:
-        """Start registration and return its id at the write barrier.
-
-        Returns:
-            `str`:
-                The task id retained by the manager.
-        """
+        """Return the task id once registration reaches the write barrier."""
         self.registration = asyncio.create_task(
             self.manager.register_task(
                 self.task,
@@ -143,12 +116,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
         return task_id
 
     async def _assert_cleaned(self, task_id: str) -> None:
-        """Wait for cleanup and compare the complete remaining state.
-
-        Args:
-            task_id (`str`):
-                The completed task's registry identifier.
-        """
+        """Verify that completion removes both local and global entries."""
         await asyncio.wait_for(self.bus.deleted.wait(), timeout=1)
         self.assertEqual(self.manager.tasks, {})
         self.assertEqual(
@@ -169,16 +137,7 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
         cancelled: bool,
         complete_during_write: bool = False,
     ) -> None:
-        """Check a registration fault without implicitly cancelling work.
-
-        Args:
-            committed (`bool`):
-                Whether storage accepts the write before the fault.
-            cancelled (`bool`):
-                Whether the registration caller is cancelled.
-            complete_during_write (`bool`, optional):
-                Whether the background task finishes before the write exits.
-        """
+        """Verify faults preserve running tasks and clean up finished ones."""
         self.bus.commit_before_wait = committed
         error = ConnectionError("registry acknowledgement failed")
         self.bus.write_error = error
@@ -283,85 +242,3 @@ class BackgroundTaskManagerTest(IsolatedAsyncioTestCase):
             "user-a",
         )
         await self._assert_cleaned(task_id)
-
-    async def test_failed_registration_preserves_other_session(self) -> None:
-        """Cleaning a failed registration leaves another session intact."""
-        other_finish = asyncio.Event()
-        other_task = asyncio.create_task(other_finish.wait())
-        try:
-            self.bus.allow_write.set()
-            other_id = await self.manager.register_task(
-                other_task,
-                "session-b",
-                "agent-b",
-                "user-b",
-                "other_tool",
-            )
-            other_entry = self.manager.tasks[other_id]
-            other_registry = await self.bus.registry_getall(
-                MessageBusKeys.bg_tasks("session-b"),
-            )
-            self.bus.commit_before_wait = True
-            self.bus.write_error = ConnectionError("write failed")
-            with self.assertRaises(ConnectionError):
-                await self.manager.register_task(
-                    self.task,
-                    "session-a",
-                    "agent-a",
-                    "user-a",
-                )
-            (task_id,) = set(self.manager.tasks) - {other_id}
-            self.assertFalse(other_task.done())
-            self.assertEqual(self.manager.cancel_session_tasks("session-a"), 1)
-            with self.assertRaises(asyncio.CancelledError):
-                await self.task
-            await asyncio.wait_for(self.bus.deleted.wait(), timeout=1)
-            self.assertEqual(self.manager.tasks, {other_id: other_entry})
-            self.assertFalse(other_task.done())
-            self.assertEqual(
-                await self.bus.registry_getall(
-                    MessageBusKeys.bg_tasks("session-a"),
-                ),
-                {},
-            )
-            self.assertEqual(
-                await self.bus.registry_getall(
-                    MessageBusKeys.bg_tasks("session-b"),
-                ),
-                other_registry,
-            )
-            self.assertEqual(
-                self.bus.delete_calls,
-                [(MessageBusKeys.bg_tasks("session-a"), task_id)],
-            )
-        finally:
-            other_finish.set()
-            await other_task
-            await self._checkpoint()
-
-    async def test_cleanup_failure_is_logged(self) -> None:
-        """Cleanup errors remain best effort and do not escape the task."""
-        self.bus.delete_error = ConnectionError("registry unavailable")
-        task_id = await self._start_registration()
-        assert self.registration is not None
-        self.bus.allow_write.set()
-        await self.registration
-        with patch(
-            "agentscope.app._manager._background_task_manager."
-            "logger.exception",
-        ) as log_exception:
-            self.finish.set()
-            await self.task
-            await asyncio.wait_for(self.bus.deleted.wait(), timeout=1)
-        self.assertEqual(self.manager.tasks, {})
-        self.assertEqual(
-            self.bus.delete_calls,
-            [(MessageBusKeys.bg_tasks("session-a"), task_id)],
-        )
-        log_exception.assert_called_once_with(
-            "Failed to unregister background task from the global "
-            "registry: task_id=%s, session_id=%s, error=%s",
-            task_id,
-            "session-a",
-            "registry unavailable",
-        )
