@@ -171,6 +171,25 @@ class EmbeddingModelBase(Generic[InputT]):
             raise ValueError(
                 f"dimensions must be a positive integer, got {dimensions}.",
             )
+        if context_size <= 0:
+            raise ValueError(
+                f"context_size must be a positive integer, got "
+                f"{context_size}.",
+            )
+        if batch_size <= 0:
+            raise ValueError(
+                f"batch_size must be a positive integer, got {batch_size}.",
+            )
+        if max_retries < 0:
+            raise ValueError(
+                f"max_retries must be a non-negative integer, got "
+                f"{max_retries}.",
+            )
+        if retry_delay < 0:
+            raise ValueError(
+                f"retry_delay must be a non-negative number, got "
+                f"{retry_delay}.",
+            )
 
         self.credential = credential
         self.model = model

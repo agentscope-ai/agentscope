@@ -2,16 +2,50 @@
 # pylint: disable=protected-access
 """Unit tests for EmbeddingModelBase."""
 from dataclasses import asdict
-from typing import Literal
+from typing import Any, Literal
 from unittest import TestCase
 
 from utils import AnyString
 
+from agentscope.credential import CredentialBase
 from agentscope.embedding import (
     EmbeddingModelBase,
     EmbeddingResponse,
     EmbeddingUsage,
 )
+
+
+class _MinimalEmbedding(EmbeddingModelBase[str]):
+    """A concrete ``EmbeddingModelBase`` subclass for exercising the
+    base ``__init__`` validation without any provider behaviour."""
+
+    async def _call_api(
+        self,
+        inputs: list[Any],
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
+        """Unused: validation is tested before any API call."""
+        raise NotImplementedError
+
+
+def _make(
+    *,
+    context_size: int = 1024,
+    batch_size: int = 16,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+) -> _MinimalEmbedding:
+    """Construct an embedding instance with the given knobs."""
+    return _MinimalEmbedding(
+        credential=CredentialBase(),
+        model="test",
+        dimensions=8,
+        parameters=None,
+        context_size=context_size,
+        batch_size=batch_size,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
 
 
 def _resp(
@@ -119,3 +153,46 @@ class EmbeddingModelBaseTest(TestCase):
                 ),
             ),
         )
+
+
+class EmbeddingModelBaseInitTest(TestCase):
+    """Test constructor validation of batching and retry knobs."""
+
+    def test_valid_knobs_are_accepted(self) -> None:
+        """Non-negative retry knobs and positive sizes construct fine."""
+        model = _make()
+        self.assertEqual(model.context_size, 1024)
+        self.assertEqual(model.batch_size, 16)
+        self.assertEqual(model.max_retries, 3)
+        self.assertEqual(model.retry_delay, 1.0)
+
+    def test_zero_retries_and_zero_delay_are_legal(self) -> None:
+        """Zero retries (no retry) and zero delay (no sleep) are valid."""
+        model = _make(max_retries=0, retry_delay=0.0)
+        self.assertEqual(model.max_retries, 0)
+        self.assertEqual(model.retry_delay, 0.0)
+
+    def test_non_positive_context_size_raises(self) -> None:
+        """``context_size`` must be positive."""
+        with self.assertRaises(ValueError):
+            _make(context_size=0)
+        with self.assertRaises(ValueError):
+            _make(context_size=-1)
+
+    def test_non_positive_batch_size_raises(self) -> None:
+        """``batch_size`` must be positive — a non-positive value makes
+        :meth:`__call__`'s batching step divide-by-zero / loop forever."""
+        with self.assertRaises(ValueError):
+            _make(batch_size=0)
+        with self.assertRaises(ValueError):
+            _make(batch_size=-4)
+
+    def test_negative_max_retries_raises(self) -> None:
+        """A negative ``max_retries`` empties the retry loop, so reject it."""
+        with self.assertRaises(ValueError):
+            _make(max_retries=-1)
+
+    def test_negative_retry_delay_raises(self) -> None:
+        """A negative ``retry_delay`` breaks backoff, so reject it."""
+        with self.assertRaises(ValueError):
+            _make(retry_delay=-0.5)
