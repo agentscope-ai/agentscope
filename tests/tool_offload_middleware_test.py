@@ -93,6 +93,79 @@ class SlowTool(ToolBase):
         )
 
 
+class PolicyTool(ToolBase):
+    """A slow tool whose offload policy is configurable per instance."""
+
+    name: str = "policy_tool"
+    description: str = "A slow tool with a configurable offload policy."
+    input_schema: dict = _SlowToolParams.model_json_schema()
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_state_injected: bool = False
+    is_external_tool: bool = False
+    is_mcp: bool = False
+    mcp_name: str | None = None
+
+    def __init__(
+        self,
+        is_offloadable: bool = True,
+        offload_timeout_secs: float | None = None,
+    ) -> None:
+        """Set the per-instance offload policy.
+
+        Args:
+            is_offloadable (`bool`):
+                Whether the tool may be offloaded at all.
+            offload_timeout_secs (`float | None`):
+                Per-tool offload timeout override; ``None`` uses the
+                middleware default.
+        """
+        super().__init__()
+        self.is_offloadable = is_offloadable
+        self.offload_timeout_secs = offload_timeout_secs
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input parameters.
+            context (`PermissionContext`):
+                The permission context.
+
+        Returns:
+            `PermissionDecision`:
+                Always ALLOW.
+        """
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed",
+        )
+
+    async def __call__(  # type: ignore[override]
+        self,
+        delay: float,
+    ) -> ToolChunk:
+        """Sleep for *delay* seconds then return a result.
+
+        Args:
+            delay (`float`):
+                Seconds to sleep.
+
+        Returns:
+            `ToolChunk`:
+                A chunk containing the result text.
+        """
+        await asyncio.sleep(delay)
+        return ToolChunk(
+            content=[TextBlock(text=f"PolicyTool finished after {delay}s")],
+        )
+
+
 class _FastToolParams(BaseModel):
     """Parameters for the fast test tool."""
 
@@ -573,3 +646,86 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(self.bg_manager.tasks), 0)
         record = await self.bg_manager.get_task(task_id, user_id="u")
         self.assertEqual(record.status, TaskStatus.CANCELLED)
+
+    async def test_tool_opting_out_of_offload_runs_synchronously(
+        self,
+    ) -> None:
+        """A tool with ``is_offloadable=False`` never gets offloaded,
+        even when it outlives the middleware timeout."""
+
+        toolkit = Toolkit(tools=[PolicyTool(is_offloadable=False)])
+        agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
+
+        tool_call = ToolCallBlock(
+            id="call_no_offload",
+            name="policy_tool",
+            input=json.dumps({"delay": 0.5}),
+        )
+
+        results: list = []
+        # pylint: disable=protected-access
+        async for item in agent._acting(tool_call):
+            results.append(item)
+
+        # The real result must come back in this call, not a synthetic
+        # placeholder, and nothing may be registered in the background.
+        responses = [r for r in results if isinstance(r, ToolResponse)]
+        self.assertEqual(len(responses), 1)
+        text = responses[0].content[0].text  # type: ignore[union-attr]
+        self.assertIn("PolicyTool finished after 0.5s", text)
+        self.assertEqual(len(self.bg_manager.tasks), 0)
+
+    async def test_per_tool_timeout_override_extends_the_wait(
+        self,
+    ) -> None:
+        """A tool that overrides ``offload_timeout_secs`` with a longer
+        value is not offloaded at the middleware-wide deadline."""
+
+        toolkit = Toolkit(tools=[PolicyTool(offload_timeout_secs=1.0)])
+        agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
+
+        tool_call = ToolCallBlock(
+            id="call_longer_wait",
+            name="policy_tool",
+            input=json.dumps({"delay": 0.3}),
+        )
+
+        results: list = []
+        # pylint: disable=protected-access
+        async for item in agent._acting(tool_call):
+            results.append(item)
+
+        responses = [r for r in results if isinstance(r, ToolResponse)]
+        self.assertEqual(len(responses), 1)
+        text = responses[0].content[0].text  # type: ignore[union-attr]
+        self.assertIn("PolicyTool finished after 0.3s", text)
+        self.assertEqual(len(self.bg_manager.tasks), 0)
+
+    async def test_per_tool_timeout_override_shortens_the_wait(
+        self,
+    ) -> None:
+        """A tool that overrides ``offload_timeout_secs`` with a shorter
+        value is offloaded before the middleware-wide deadline fires."""
+
+        toolkit = Toolkit(tools=[PolicyTool(offload_timeout_secs=0.01)])
+        agent, _ = self._make_agent(toolkit, timeout_secs=5.0)
+
+        tool_call = ToolCallBlock(
+            id="call_shorter_wait",
+            name="policy_tool",
+            input=json.dumps({"delay": 0.5}),
+        )
+
+        results: list = []
+        # pylint: disable=protected-access
+        async for item in agent._acting(tool_call):
+            results.append(item)
+
+        responses = [r for r in results if isinstance(r, ToolResponse)]
+        self.assertEqual(len(responses), 1)
+        text = responses[0].content[0].text  # type: ignore[union-attr]
+        self.assertIn("running in background", text)
+        # The placeholder must report the effective (per-tool) timeout,
+        # not the middleware-wide one.
+        self.assertIn("for over 0.01s", text)
+        self.assertEqual(len(self.bg_manager.tasks), 1)

@@ -114,6 +114,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         ``agent.state`` object. Offloading them could race on shared
         state, so they are always executed synchronously instead.
 
+    .. note::
+        Tools can opt out of offloading or override the timeout per
+        tool via :attr:`~agentscope.tool.ToolBase.is_offloadable` and
+        :attr:`~agentscope.tool.ToolBase.offload_timeout_secs` — the
+        arguments below only provide the deployment-wide defaults.
+
     Args:
         bg_manager (`BackgroundTaskManager`):
             Application-level background task manager. Used to register
@@ -130,7 +136,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             ``user_id``.
         timeout_secs (`float`, defaults to ``10.0``):
             Maximum seconds to wait for a tool execution before
-            offloading it to the background.
+            offloading it to the background. Ignored for tools that
+            set :attr:`~agentscope.tool.ToolBase.offload_timeout_secs`.
     """
 
     def __init__(
@@ -188,8 +195,11 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
           the agent of the background task id is yielded instead.
 
         .. note::
-            Tools with ``is_state_injected=True`` or ``is_external_tool=True``
-            bypass this logic and are always executed synchronously.
+            Tools with ``is_state_injected=True``, ``is_external_tool=True``
+            or ``is_offloadable=False`` bypass this logic and are always
+            executed synchronously. Tools that set
+            ``offload_timeout_secs`` replace the timeout configured here
+            for that call.
 
         Args:
             agent (`Agent`):
@@ -216,9 +226,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # - is_external_tool: external tools wait for a human/external system
         #   to push a result back; offloading them makes no sense because the
         #   agent would lose track of the pending confirmation.
+        # - not is_offloadable: the tool author declared it must complete
+        #   within the reply (a delayed result would confuse the caller),
+        #   so it always runs synchronously.
         tool = await agent.toolkit.get_tool(tool_call.name)
         if tool is not None and (
-            tool.is_state_injected or tool.is_external_tool
+            tool.is_state_injected
+            or tool.is_external_tool
+            or not tool.is_offloadable
         ):
             async for item in next_handler(**input_kwargs):
                 yield item
@@ -254,7 +269,15 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # Consume items until the deadline or normal completion
         # ----------------------------------------------------------------
         loop = asyncio.get_event_loop()
-        deadline = loop.time() + self._timeout_secs
+        per_tool_timeout = (
+            tool.offload_timeout_secs if tool is not None else None
+        )
+        timeout_secs = (
+            self._timeout_secs
+            if per_tool_timeout is None
+            else per_tool_timeout
+        )
+        deadline = loop.time() + timeout_secs
         pre_collected: list = []
         completed = False
 
@@ -302,7 +325,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             "Tool '%s' timed out after %.1fs, offloading to background: "
             "session_id=%s, agent_id=%s",
             tool_name,
-            self._timeout_secs,
+            timeout_secs,
             session_id,
             agent.name,
         )
@@ -436,7 +459,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         )
 
         placeholder_text = f"""<system-reminder>Tool '{tool_name}' is \
-running in background (id={task_id}) for over {self._timeout_secs}s. \
+running in background (id={task_id}) for over {timeout_secs}s. \
 You will be notified automatically when it finishes, so **DO NOT** poll, \
 query, or wait for the result yourself. **DO NOT** call any waiting tool \
 such as `bash sleep`. You have exactly two valid options:
