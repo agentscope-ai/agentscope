@@ -1829,6 +1829,220 @@ class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
         self.assertIsNone(dispatcher._task)
         self.assertTrue(loop_task.cancelled() or loop_task.done())
 
+    async def test_subscription_failure_before_ready_fails_startup(
+        self,
+    ) -> None:
+        """A subscription that fails before ``on_ready`` raises from
+        ``__aenter__`` instead of hanging it."""
+
+        class _FailingBus(_FakeBus):
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                raise ConnectionError("subscription failed before on_ready")
+                yield {}  # pylint: disable=unreachable
+
+        bus = _FailingBus()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        with self.assertRaisesRegex(ConnectionError, "before on_ready"):
+            # pylint: disable=unnecessary-dunder-call
+            await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+        self.assertEqual(
+            bus._channel(MessageBusKeys.wakeup_signal()).qsize(),
+            0,
+        )
+
+    async def test_subscription_ending_before_ready_fails_startup(
+        self,
+    ) -> None:
+        """A subscription that ends without error before ``on_ready`` is
+        a startup failure too, not a successful start."""
+
+        class _EmptyBus(_FakeBus):
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                return
+                yield {}  # pylint: disable=unreachable
+
+        dispatcher = WakeupDispatcher(
+            message_bus=_EmptyBus(),
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "before it was ready"):
+            # pylint: disable=unnecessary-dunder-call
+            await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+
+        self.assertIsNone(dispatcher._task)
+
+    async def test_cancelled_startup_cancels_loop(self) -> None:
+        """Cancelling ``__aenter__`` before the subscription is live
+        cancels the loop task instead of leaving it behind."""
+
+        class _StalledBus(_FakeBus):
+            def __init__(self) -> None:
+                super().__init__()
+                self.subscribing = asyncio.Event()
+
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                self.subscribing.set()
+                await asyncio.Event().wait()
+                yield {}
+
+        bus = _StalledBus()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        # pylint: disable=unnecessary-dunder-call
+        startup = asyncio.create_task(dispatcher.__aenter__())
+        await asyncio.wait_for(bus.subscribing.wait(), timeout=1)
+        loop_task = dispatcher._task
+        self.assertIsNotNone(loop_task)
+
+        startup.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await startup
+
+        self.assertTrue(loop_task.cancelled())
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
+    async def test_cancelled_ready_startup_cleans_up_retries(self) -> None:
+        """Cancellation after readiness also cleans up dispatched retries."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        bus._locks.add(MessageBusKeys.session_lock("s"))
+        await enqueue_run_trigger(
+            bus,
+            user_id="u",
+            session_id="s",
+            agent_id="a",
+            signal=False,
+        )
+        started: list[asyncio.Task] = []
+
+        async def subscribe(
+            _key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            if on_ready is not None:
+                on_ready()
+            yield {}
+            # Dispatch can spawn retries before the readiness wait returns.
+            started.extend(dispatcher._retry_tasks)
+            startup.cancel()
+            await asyncio.Event().wait()
+
+        with patch.object(bus, "subscribe", subscribe), patch(
+            "agentscope.app._manager._wakeup_dispatcher."
+            "_RESUME_RETRY_BACKOFF_SECS",
+            60,
+        ):
+            # pylint: disable=unnecessary-dunder-call
+            startup = asyncio.create_task(dispatcher.__aenter__())
+            try:
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(startup, timeout=1)
+                self.assertEqual(
+                    (
+                        [task.done() for task in started],
+                        dispatcher._task,
+                        dispatcher._fallback_task,
+                        dispatcher._retry_tasks,
+                        dispatcher._chat_queue._closed,
+                    ),
+                    ([True], None, None, set(), True),
+                )
+            finally:
+                await dispatcher.__aexit__(None, None, None)
+
+    async def test_startup_returns_only_after_subscription_is_live(
+        self,
+    ) -> None:
+        """``__aenter__`` waits for ``on_ready`` and publishes the startup
+        signal only after the subscription is live."""
+
+        class _GatedBus(_FakeBus):
+            def __init__(self) -> None:
+                super().__init__()
+                self.order: list[str] = []
+                self.subscribing = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def publish(self, key: str, payload: dict) -> None:
+                self.order.append("publish")
+                await super().publish(key, payload)
+
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                self.subscribing.set()
+                await self.release.wait()
+                self.order.append("ready")
+                async for signal in super().subscribe(
+                    key,
+                    on_ready=on_ready,
+                ):
+                    yield signal
+
+        bus = _GatedBus()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        # pylint: disable=unnecessary-dunder-call
+        startup = asyncio.create_task(dispatcher.__aenter__())
+        await asyncio.wait_for(bus.subscribing.wait(), timeout=1)
+        await _yield_a_few_times()
+        self.assertFalse(startup.done())
+        self.assertEqual(bus.order, [])
+
+        bus.release.set()
+        self.assertIs(await asyncio.wait_for(startup, timeout=1), dispatcher)
+        self.assertEqual(bus.order[:2], ["ready", "publish"])
+        self.assertFalse(dispatcher._task.done())
+
+        await dispatcher.__aexit__(None, None, None)
+
     async def test_chat_service_strongly_retains_queue_nudge(self) -> None:
         """Detached nudge tasks stay referenced until completion."""
         bus = _FakeBus()
