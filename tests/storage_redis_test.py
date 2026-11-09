@@ -6,6 +6,8 @@ from datetime import datetime as DateTime
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+import asyncio
+
 import fakeredis.aioredis
 
 from utils import AnyString, AnyValue
@@ -2201,3 +2203,59 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         self.assertEqual(result, (record.model_dump_json(), AnyValue()))
         self.assertGreater(result[1], 0)
         self.assertLessEqual(result[1], 60)
+
+
+class TestUpsertMessageConcurrency(IsolatedAsyncioTestCase):
+    """Concurrent writers persisting the same message id store it once."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.addAsyncCleanup(self.storage._client.aclose)
+
+    def _with_round_trip_barriers(self) -> RedisStorage:
+        """Yield at every pipeline round trip to force task interleaving.
+
+        fakeredis completes commands synchronously, so awaiting them
+        never yields to the event loop and concurrent calls end up
+        running one after another. Yielding before each pipeline
+        execute simulates the scheduling of real network round trips,
+        where the read-then-insert window of ``upsert_message`` is
+        live in production.
+        """
+        real_pipeline = self.storage._client.pipeline
+
+        def barrier_pipeline(*args: object, **kwargs: object) -> object:
+            pipe = real_pipeline(*args, **kwargs)
+            real_execute = pipe.execute
+
+            async def barrier_execute(
+                *exec_args: object,
+                **exec_kwargs: object,
+            ) -> object:
+                await asyncio.sleep(0)
+                return await real_execute(*exec_args, **exec_kwargs)
+
+            pipe.execute = barrier_execute
+            return pipe
+
+        self.storage._client.pipeline = barrier_pipeline
+        return self.storage
+
+    async def test_concurrent_same_id_upsert_persists_once(self) -> None:
+        """Two racing upserts of one message id leave a single entry."""
+        storage = self._with_round_trip_barriers()
+        msg = UserMsg(name="alice", content="hello", id="m-1")
+
+        await asyncio.gather(
+            storage.upsert_message("u1", "s1", msg),
+            storage.upsert_message("u1", "s1", msg),
+        )
+
+        messages, _ = await storage.list_messages("u1", "s1")
+        self.assertEqual([m.id for m in messages], ["m-1"])
+        index_key = storage._message_index_key("u1", "s1")
+        self.assertEqual(
+            await storage._client.smembers(index_key),
+            {"m-1"},
+        )
