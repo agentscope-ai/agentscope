@@ -159,6 +159,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         self,
         include_usage: bool,
         tokens: int | None,
+        input_count: int = 1,
     ) -> None:
         """Exercise SDK parsing with an offline compatible endpoint."""
         import httpx
@@ -167,9 +168,6 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         payload: dict[str, Any] = {
             "object": "list",
             "model": "compatible-embedding",
-            "data": [
-                {"object": "embedding", "index": 0, "embedding": [0.1, 0.2]},
-            ],
         }
         if include_usage:
             payload["usage"] = (
@@ -182,9 +180,23 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         def handle(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.method, "POST")
             self.assertEqual(request.url.path, "/v1/embeddings")
-            self.assertEqual(json.loads(request.content)["input"], ["hello"])
+            batch = json.loads(request.content)["input"]
+            self.assertEqual(batch, ["hello"] * len(batch))
             requests.append(request)
-            return httpx.Response(200, json=payload)
+            return httpx.Response(
+                200,
+                json={
+                    **payload,
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": index,
+                            "embedding": [0.1, 0.2],
+                        }
+                        for index in range(len(batch))
+                    ],
+                },
+            )
 
         async with openai.AsyncClient(
             api_key="test-key",
@@ -201,13 +213,14 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
                     dimensions=2,
                     max_retries=0,
                 )
-            result = await model(["hello"])
+            result = await model(["hello"] * input_count)
 
-        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(requests), 1 if input_count == 1 else 2)
+        self.assertEqual(result.usage.tokens, tokens)
         self.assertDictEqual(
             asdict(result),
             {
-                "embeddings": [[0.1, 0.2]],
+                "embeddings": [[0.1, 0.2]] * input_count,
                 "id": A,
                 "created_at": A,
                 "type": "embedding",
@@ -227,6 +240,14 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
     async def test_sdk_null_usage(self) -> None:
         """Explicit null usage leaves the token count unknown."""
         await self._check_sdk_usage(include_usage=True, tokens=None)
+
+    async def test_sdk_omitted_usage_across_native_batches(self) -> None:
+        """Crossing the native 2048-input limit must not invent usage."""
+        await self._check_sdk_usage(
+            include_usage=False,
+            tokens=None,
+            input_count=2049,
+        )
 
     async def test_sdk_reported_usage(self) -> None:
         """Reported token counts are preserved after SDK parsing."""
