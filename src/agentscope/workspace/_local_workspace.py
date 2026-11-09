@@ -244,12 +244,49 @@ class LocalWorkspace(WorkspaceBase):
                 continue
 
             try:
-                await asyncio.to_thread(
+                os.mkdir(dest_path)
+            except FileExistsError:
+                logger.warning(
+                    "Failed to copy skill '%s' from %s: "
+                    "destination already exists",
+                    raw_name,
+                    skill_path,
+                )
+                continue
+
+            # Reserve this destination so cancellation can safely roll
+            # it back. The worker outlives cancellation of its asyncio
+            # waiter (same window add_skill guards against).
+            copy_task = asyncio.create_task(
+                asyncio.to_thread(
                     shutil.copytree,
                     skill_path,
                     dest_path,
-                    dirs_exist_ok=False,
-                )
+                    dirs_exist_ok=True,
+                ),
+            )
+            try:
+                await asyncio.shield(copy_task)
+            except asyncio.CancelledError:
+
+                async def rollback() -> None:
+                    """Finish writing before removing this install."""
+                    await asyncio.gather(
+                        copy_task,
+                        return_exceptions=True,
+                    )
+                    await self._backend.delete_path(dest_path)
+
+                cleanup = asyncio.create_task(rollback())
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        # Repeated cancellation must not abandon the
+                        # rollback while the worker can still write.
+                        continue
+                cleanup.result()
+                raise
             except Exception as e:
                 logger.warning(
                     "Failed to copy skill '%s' from %s: %s",
@@ -257,6 +294,15 @@ class LocalWorkspace(WorkspaceBase):
                     skill_path,
                     str(e),
                 )
+                # Remove the reservation this iteration created so a
+                # failed import does not leave a half-written skill.
+                try:
+                    await self._backend.delete_path(dest_path)
+                except Exception:
+                    logger.warning(
+                        "Failed to clean up '%s' after a copy error",
+                        dest_path,
+                    )
                 continue
 
             logger.info(
