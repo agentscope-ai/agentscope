@@ -286,7 +286,17 @@ class BackgroundTaskManager:
         task_id = bg_task.id
         self.tasks[task_id] = bg_task
 
-        # Register in the global Redis registry.
+        def _on_done(_t: asyncio.Task) -> None:
+            self.tasks.pop(task_id, None)
+            # Clean up asynchronously; the helper logs registry errors.
+            try:
+                asyncio.ensure_future(
+                    self._safe_bg_task_unregister(session_id, task_id),
+                )
+            except RuntimeError:
+                # Event loop already closed during shutdown.
+                pass
+
         metadata = json.dumps(
             {
                 "tool_name": tool_name,
@@ -295,12 +305,16 @@ class BackgroundTaskManager:
             },
             ensure_ascii=False,
         )
-        await self._message_bus.registry_set(
-            MessageBusKeys.bg_tasks(session_id),
-            task_id,
-            metadata,
-            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
-        )
+        try:
+            await self._message_bus.registry_set(
+                MessageBusKeys.bg_tasks(session_id),
+                task_id,
+                metadata,
+                ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+            )
+        finally:
+            # Always install cleanup, after the write to avoid early deletion.
+            asyncio_task.add_done_callback(_on_done)
 
         logger.info(
             "Background task registered: task_id=%s, session_id=%s, "
@@ -311,21 +325,6 @@ class BackgroundTaskManager:
             tool_name,
         )
 
-        def _on_done(_t: asyncio.Task) -> None:
-            self.tasks.pop(task_id, None)
-            # Schedule async Redis cleanup (fire-and-forget). Wrap in a
-            # coroutine that logs failures so the bus error (e.g. Redis
-            # connection drop) does not surface as
-            # ``Task exception was never retrieved``.
-            try:
-                asyncio.ensure_future(
-                    self._safe_bg_task_unregister(session_id, task_id),
-                )
-            except RuntimeError:
-                # Event loop already closed during shutdown.
-                pass
-
-        asyncio_task.add_done_callback(_on_done)
         return task_id
 
     async def _safe_bg_task_unregister(
