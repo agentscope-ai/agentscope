@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import fakeredis.aioredis
 
-from utils import AnyString
+from utils import AnyString, AnyValue
 
 from agentscope.app.storage import (
     RedisStorage,
@@ -2129,9 +2129,10 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
 
         await self.storage._set_with_ttl("probe", "new")
 
-        value, ttl = await self._value_and_ttl("probe")
-        self.assertEqual(value, "new")
-        self.assertTrue(0 < ttl <= 60)
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
 
     async def test_overwrite_keeps_key_expiring(self) -> None:
         """Overwriting an expiring or persistent key leaves it expiring."""
@@ -2142,13 +2143,23 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         for key in ("expiring", "persistent"):
             with self.subTest(key=key):
                 await self.storage._set_with_ttl(key, "new")
-                value, ttl = await self._value_and_ttl(key)
-                self.assertEqual(value, "new")
-                self.assertTrue(5 < ttl <= 60)
+                result = await self._value_and_ttl(key)
+                self.assertEqual(result, ("new", AnyValue()))
+                self.assertGreater(result[1], 5)
+                self.assertLessEqual(result[1], 60)
 
     async def test_no_ttl_configured_keeps_key_persistent(self) -> None:
         """With key_ttl None, records are written without an expiry."""
         self.storage.key_ttl = None
+
+        await self.storage._set_with_ttl("probe", "new")
+
+        self.assertEqual(await self._value_and_ttl("probe"), ("new", -1))
+
+    async def test_no_ttl_configured_clears_existing_expiry(self) -> None:
+        """With key_ttl None, overwriting a key removes its expiry."""
+        self.storage.key_ttl = None
+        await self.storage._client.set("probe", "old", ex=60)
 
         await self.storage._set_with_ttl("probe", "new")
 
@@ -2166,9 +2177,10 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
         ):
             await self.storage._set_with_ttl("probe", "new")
 
-        value, ttl = await self._value_and_ttl("probe")
-        self.assertEqual(value, "new")
-        self.assertTrue(0 < ttl <= 60)
+        result = await self._value_and_ttl("probe")
+        self.assertEqual(result, ("new", AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
 
     async def test_voice_profile_write_expires(self) -> None:
         """Voice profile records get the configured TTL like other records."""
@@ -2185,6 +2197,7 @@ class TestRecordKeyTTL(IsolatedAsyncioTestCase):
             user_id="owner",
             profile_id=record.id,
         )
-        value, ttl = await self._value_and_ttl(key)
-        self.assertEqual(value, record.model_dump_json())
-        self.assertTrue(0 < ttl <= 60)
+        result = await self._value_and_ttl(key)
+        self.assertEqual(result, (record.model_dump_json(), AnyValue()))
+        self.assertGreater(result[1], 0)
+        self.assertLessEqual(result[1], 60)
