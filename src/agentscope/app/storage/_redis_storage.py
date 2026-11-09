@@ -211,9 +211,19 @@ class RedisStorage(StorageBase):
         return template.format(**kwargs)
 
     async def _set_with_ttl(self, key: str, value: str) -> None:
-        """SET a key and optionally apply the sliding TTL."""
-        await self._client.set(key, value)
-        await self._refresh_key_ttl(key)
+        """SET a key and optionally apply the sliding TTL.
+
+        The expiry travels with the write in a single ``SET ... EX``
+        command.  Issuing ``SET`` and ``EXPIRE`` separately leaves a
+        window where a dropped connection (or a process that dies
+        between the two round-trips) stores the key without any expiry,
+        so a record written under a sliding-TTL policy would persist
+        forever.
+        """
+        if self.key_ttl is None:
+            await self._client.set(key, value)
+            return
+        await self._client.set(key, value, ex=self.key_ttl)
 
     async def _refresh_key_ttl(self, key: str) -> None:
         """Apply the sliding TTL to a key, if configured."""
