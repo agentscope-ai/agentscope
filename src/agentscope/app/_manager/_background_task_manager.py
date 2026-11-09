@@ -380,11 +380,8 @@ class BackgroundTaskManager:
                 await self._store_record(
                     BackgroundTaskRecord.model_validate(bg_task),
                 )
-            if (
-                self._renewal_task is None
-                or self._renewal_task.done()
-                or self._renewal_task.cancelling()
-            ):
+            # A round timeout can temporarily mark the scheduler cancelling.
+            if self._renewal_task is None or self._renewal_task.done():
                 self._renewal_task = asyncio.create_task(
                     self._renew_running_records(),
                 )
@@ -433,8 +430,7 @@ class BackgroundTaskManager:
                     bg_task.status = TaskStatus.CANCELLED
 
         self.tasks.pop(bg_task.id, None)
-        if not self.tasks and self._renewal_task is not None:
-            self._renewal_task.cancel()
+        # Let renewal exit when idle so new registrations can reuse it safely.
         if self._closed:
             return
         completion = asyncio.create_task(

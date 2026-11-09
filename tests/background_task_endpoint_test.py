@@ -997,6 +997,111 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
             self.assertEqual(active, set())
             self.assertTrue(self.owner._renewal_task.done())
 
+    async def test_registration_during_round_timeout_keeps_one_scheduler(
+        self,
+    ) -> None:
+        """Temporary timeout cancellation must not start a second scheduler."""
+        cancelling = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+        resumed = asyncio.Event()
+        original_renew = self.owner._renew_running_record
+
+        async def delayed_cleanup(task: BackgroundTask) -> None:
+            if not allow_cleanup.is_set():
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelling.set()
+                    await allow_cleanup.wait()
+                    raise
+            await original_renew(task)
+            resumed.set()
+
+        with (
+            patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.2),
+            patch(f"{_MANAGER_MODULE}._RENEWAL_CONCURRENCY", 2),
+            patch.object(
+                self.owner,
+                "_renew_running_record",
+                side_effect=delayed_cleanup,
+            ),
+        ):
+            await self._register(self.owner)
+            scheduler = self.owner._renewal_task
+            try:
+                await asyncio.wait_for(cancelling.wait(), timeout=2)
+                self.assertGreater(scheduler.cancelling(), 0)
+                self.assertFalse(scheduler.done())
+                for _ in range(3):
+                    await self._register(self.owner)
+                self.assertIs(self.owner._renewal_task, scheduler)
+
+                allow_cleanup.set()
+                await asyncio.wait_for(resumed.wait(), timeout=2)
+                self.assertIs(self.owner._renewal_task, scheduler)
+                self.assertFalse(scheduler.done())
+                await self.owner.__aexit__()
+                self.assertTrue(scheduler.done())
+                self.assertIs(self.owner._renewal_task, scheduler)
+            finally:
+                allow_cleanup.set()
+                scheduler.cancel()
+                await asyncio.gather(scheduler, return_exceptions=True)
+
+    async def test_renewal_reuses_live_scheduler_and_restarts_after_exit(
+        self,
+    ) -> None:
+        """New work reuses a live scheduler, including its idle interval."""
+        sleeping = asyncio.Event()
+        release_sleep = asyncio.Event()
+        original_sleep = asyncio.sleep
+
+        async def hold_first_sleep(delay: float) -> None:
+            if not sleeping.is_set():
+                sleeping.set()
+                try:
+                    await release_sleep.wait()
+                except asyncio.CancelledError:
+                    await release_sleep.wait()
+                    raise
+            else:
+                await original_sleep(delay)
+
+        with (
+            patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.2),
+            patch(
+                f"{_MANAGER_MODULE}.asyncio",
+                wraps=asyncio,
+                sleep=AsyncMock(side_effect=hold_first_sleep),
+            ),
+        ):
+            gate, task, _ = await self._register(self.owner)
+            scheduler = self.owner._renewal_task
+            try:
+                await asyncio.wait_for(sleeping.wait(), timeout=2)
+                gate.set()
+                await self._settle(task)
+                self.assertEqual(scheduler.cancelling(), 0)
+                self.assertFalse(scheduler.done())
+
+                gate, task, _ = await self._register(self.owner)
+                self.assertIs(self.owner._renewal_task, scheduler)
+                gate.set()
+                await self._settle(task)
+                release_sleep.set()
+                await asyncio.wait_for(asyncio.shield(scheduler), timeout=2)
+
+                await self._register(self.owner)
+                replacement = self.owner._renewal_task
+                self.assertIsNot(replacement, scheduler)
+                self.assertFalse(replacement.done())
+                await self.owner.__aexit__()
+                self.assertTrue(replacement.done())
+            finally:
+                release_sleep.set()
+                scheduler.cancel()
+                await asyncio.gather(scheduler, return_exceptions=True)
+
     async def test_heartbeat_restores_a_cleaned_running_record(self) -> None:
         """A live task reappears after its expired snapshot is deleted."""
         _, _, task_id = await self._register(self.owner)
