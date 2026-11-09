@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 from typing import Any, AsyncIterator, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from pydantic import Field
 
@@ -25,7 +25,8 @@ def _realtime_url(base_url: str, model: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"Invalid DashScope base_url: {base_url!r}.")
     scheme = "wss" if parsed.scheme == "https" else "ws"
-    return f"{scheme}://{parsed.netloc}{_REALTIME_PATH}?model={model}"
+    query = urlencode({"model": model})
+    return f"{scheme}://{parsed.netloc}{_REALTIME_PATH}?{query}"
 
 
 class DashScopeRealtimeModel(RealtimeModelBase):
