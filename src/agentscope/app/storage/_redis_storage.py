@@ -367,9 +367,7 @@ class RedisStorage(StorageBase):
         # Record and index entries commit atomically so an interrupted
         # upsert cannot leave a durable record outside every index.
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
             await pipe.execute()
         return record.id
@@ -489,9 +487,7 @@ class RedisStorage(StorageBase):
             mcp_record.updated_at = datetime.now()
 
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, mcp_record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, mcp_record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(
                 self._key(self.key_config.mcp_index, user_id=user_id),
                 mcp_record.id,
@@ -627,9 +623,7 @@ class RedisStorage(StorageBase):
             skill_record.updated_at = datetime.now()
 
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, skill_record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, skill_record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(
                 self._key(self.key_config.skill_index, user_id=user_id),
                 skill_record.id,
@@ -760,9 +754,7 @@ class RedisStorage(StorageBase):
         )
         index_key = self._key(self.key_config.agent_index, user_id=user_id)
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, agent_record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, agent_record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, agent_record.id)
             await pipe.execute()
         return agent_record.id
@@ -962,9 +954,7 @@ class RedisStorage(StorageBase):
             agent_id=agent_id,
         )
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
 
             if isinstance(record.origin, ScheduleOrigin):
@@ -1228,9 +1218,7 @@ class RedisStorage(StorageBase):
         )
         index_key = self._key(self.key_config.schedule_index, user_id=user_id)
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
             pipe.sadd(
                 self.key_config.schedule_global_index,
@@ -1363,14 +1351,10 @@ class RedisStorage(StorageBase):
             platform_bot_id=platform_bot_id,
         )
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
             pipe.sadd(self.key_config.channel_all_index, record.id)
-            pipe.set(botid_key, record.id)
-            if self.key_ttl is not None:
-                pipe.expire(botid_key, self.key_ttl)
+            pipe.set(botid_key, record.id, ex=self.key_ttl)
             await pipe.execute()
         return record.id
 
@@ -1670,24 +1654,13 @@ class RedisStorage(StorageBase):
     async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
         """Persist a procedure and index it under the user."""
         record.updated_at = datetime.now()
+        key = self._key(
+            self.key_config.sop,
+            user_id=user_id,
+            sop_id=record.id,
+        )
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(
-                self._key(
-                    self.key_config.sop,
-                    user_id=user_id,
-                    sop_id=record.id,
-                ),
-                record.model_dump_json(),
-            )
-            if self.key_ttl is not None:
-                pipe.expire(
-                    self._key(
-                        self.key_config.sop,
-                        user_id=user_id,
-                        sop_id=record.id,
-                    ),
-                    self.key_ttl,
-                )
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(
                 self._key(self.key_config.sop_index, user_id=user_id),
                 record.id,
@@ -1747,9 +1720,7 @@ class RedisStorage(StorageBase):
             sop_run_id=record.id,
         )
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(run_key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(run_key, self.key_ttl)
+            pipe.set(run_key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(
                 self._key(self.key_config.sop_run_index, user_id=user_id),
                 record.id,
@@ -1889,9 +1860,7 @@ class RedisStorage(StorageBase):
         )
         index_key = self._key(self.key_config.team_index, user_id=user_id)
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
             await pipe.execute()
         return record
@@ -2123,9 +2092,7 @@ class RedisStorage(StorageBase):
             user_id=user_id,
         )
         async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(key, record.model_dump_json())
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
+            pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
             pipe.sadd(index_key, record.id)
             await pipe.execute()
         return record
@@ -2476,9 +2443,7 @@ class RedisStorage(StorageBase):
                     record.lease_expires_at = new_deadline
                     record.updated_at = now
                     pipe.multi()
-                    pipe.set(key, record.model_dump_json())
-                    if self.key_ttl is not None:
-                        pipe.expire(key, self.key_ttl)
+                    pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
                     await pipe.execute()
                     return True
                 except _watch_error():
@@ -2520,9 +2485,7 @@ class RedisStorage(StorageBase):
                     record.lease_expires_at = new_deadline
                     record.updated_at = now
                     pipe.multi()
-                    pipe.set(key, record.model_dump_json())
-                    if self.key_ttl is not None:
-                        pipe.expire(key, self.key_ttl)
+                    pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
                     await pipe.execute()
                     return True
                 except _watch_error():
@@ -2558,9 +2521,7 @@ class RedisStorage(StorageBase):
                     record.lease_expires_at = None
                     record.updated_at = datetime.now()
                     pipe.multi()
-                    pipe.set(key, record.model_dump_json())
-                    if self.key_ttl is not None:
-                        pipe.expire(key, self.key_ttl)
+                    pipe.set(key, record.model_dump_json(), ex=self.key_ttl)
                     await pipe.execute()
                     return
                 except _watch_error():
