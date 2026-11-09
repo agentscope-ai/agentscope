@@ -479,9 +479,9 @@ class LocalWorkspace(WorkspaceBase):
     async def _list_partition_skills(self, skills_dir: str) -> list[Skill]:
         """List the skills held by one partition.
 
-        Compares the partition's mtime against its ``.index`` to
-        detect additions/removals made behind the workspace's back, and
-        reconciles the index when they differ.
+        Reconciles the partition on every call to detect manual changes,
+        including previously invalid skills whose SKILL.md is now valid.
+        Adding or editing that file need not change the partition's mtime.
 
         Args:
             skills_dir (`str`):
@@ -499,13 +499,13 @@ class LocalWorkspace(WorkspaceBase):
         if current_mtime is None:
             current_mtime = 0.0
 
-        # Detect if the partition has changed since last indexing
-        if current_mtime != skills_file["skills_dir_mtime"]:
-            skills_file = await self._reconcile_skills_dir(
-                skills_dir,
-                skills_file,
-                current_mtime,
-            )
+        # Retry unindexed directories even when the partition mtime is
+        # unchanged: a missing or invalid SKILL.md may have been completed.
+        skills_file = await self._reconcile_skills_dir(
+            skills_dir,
+            skills_file,
+            current_mtime,
+        )
 
         # Load skills from disk using the index for the agent-facing name
         tasks = [
@@ -536,16 +536,16 @@ class LocalWorkspace(WorkspaceBase):
         skills_file: _SkillsFile,
         current_mtime: float,
     ) -> _SkillsFile:
-        """Reconcile the .skills index after the skills directory has changed.
+        """Reconcile the index with the skill directories currently on disk.
 
         Handles:
         - Manually deleted subdirectories: removed from the index.
-        - Manually added subdirectories: validated and added with conflict
-          resolution for both directory name and agent-facing skill name.
+        - Unindexed subdirectories, including previously invalid skills:
+          validated and added with agent-facing name conflict resolution.
 
         Args:
             skills_dir (`str`): Path to the skills directory.
-            skills_file (`_SkillsFile`): The current (stale) index.
+            skills_file (`_SkillsFile`): The current index.
             current_mtime (`float`): The freshly-read mtime of skills_dir.
 
         Returns:
@@ -619,8 +619,7 @@ class LocalWorkspace(WorkspaceBase):
 
         # Save if index changed OR if mtime needs updating
         # (mtime change without index change means non-skill files were
-        # added/removed, we still need to record the new mtime to avoid
-        # re-reconciling on every list_skills call)
+        # added/removed; keep the stored directory metadata up to date)
         if updated or current_mtime != original_mtime:
             await self._save_skills_file(skills_dir, skills_file)
 
