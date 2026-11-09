@@ -16,7 +16,7 @@ from utils import AnyString
 
 from agentscope.agent import Agent
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock, UserMsg
-from agentscope.model import OllamaChatModel
+from agentscope.model import FinishedReason, OllamaChatModel
 from agentscope.tool import FunctionTool, ToolChoice, ToolChunk, Toolkit
 
 A = AnyString()
@@ -39,6 +39,7 @@ def _mock_completion(
     content: str = "",
     thinking: str | None = None,
     tool_calls: list | None = None,
+    done_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming Ollama response."""
     msg = MagicMock()
@@ -61,6 +62,7 @@ def _mock_completion(
     resp.prompt_eval_count = 10
     resp.eval_count = 5
     resp.id = None
+    resp.done_reason = done_reason
     return resp
 
 
@@ -141,6 +143,17 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
                 [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
             ),
         )
+
+    async def test_length_finish_reason_is_normalized(self) -> None:
+        """Ollama's done reason is retained and mapped to LENGTH."""
+        self.mock_client.chat = AsyncMock(
+            return_value=_mock_completion(done_reason="length"),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(result.metadata, {"raw_finish_reason": "length"})
 
     async def test_tool_call_response(self) -> None:
         """Parsing a tool-call response creates a ToolCallBlock."""

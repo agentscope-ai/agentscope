@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
 from ...exception import ContentBlockedError, ContentBlockedPhase
@@ -26,6 +27,10 @@ else:
 
 
 _DEFAULT_MAX_TOKENS = 8192
+
+_LENGTH_FINISH_REASONS = frozenset(
+    {"max_tokens", "model_context_window_exceeded"},
+)
 
 
 def _total_input_tokens(usage: Any) -> int:
@@ -477,7 +482,13 @@ class AnthropicChatModel(ChatModelBase):
         if response_id:
             resp_kwargs["id"] = response_id
 
-        return ChatResponse(**resp_kwargs)
+        chat_response = ChatResponse(**resp_kwargs)
+        _record_finish_reason(
+            chat_response,
+            getattr(response, "stop_reason", None),
+            _LENGTH_FINISH_REASONS,
+        )
+        return chat_response
 
     async def _parse_anthropic_stream_completion_response(
         self,
@@ -641,15 +652,21 @@ class AnthropicChatModel(ChatModelBase):
                             request_id=response_id,
                             partial_output=has_output,
                         )
+                    _record_finish_reason(
+                        delta_res,
+                        getattr(event.delta, "stop_reason", None),
+                        _LENGTH_FINISH_REASONS,
+                    )
                     if event.usage and usage is None:
                         u = event.usage
                         uncached_input_tokens = (
                             getattr(u, "input_tokens", 0) or 0
                         )
                         usage = _build_chat_usage(u, start_datetime)
-                        # Forward late usage through an empty chunk.
+                        # Forward late usage through an empty chunk. The
+                        # loop yields it below together with any finish
+                        # reason recorded on this same delta.
                         delta_res.usage = usage
-                        yield delta_res
 
                     elif event.usage:
                         usage.output_tokens = event.usage.output_tokens or 0
@@ -687,8 +704,12 @@ class AnthropicChatModel(ChatModelBase):
                             datetime.now() - start_datetime
                         ).total_seconds()
 
-                if delta_res.content:
-                    has_output = True
+                if (
+                    delta_res.content
+                    or delta_res.metadata
+                    or delta_res.usage is not None
+                ):
+                    has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
 
