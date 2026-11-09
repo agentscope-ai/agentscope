@@ -29,11 +29,15 @@ VCS_DIRECTORIES_TO_EXCLUDE = [
 # Default cap on grep results when head_limit is unspecified
 DEFAULT_HEAD_LIMIT = 250
 
-# A context line from ripgrep reads ``<path>-<number>-<text>``, while a
-# match reads ``<path>:<number>:<text>``.  The same delimiter must appear
-# on both sides of the line number, which keeps paths containing ``-`` or
+# A context line from ripgrep reads ``<number>-<text>`` when searching a
+# single file, or ``<path>-<number>-<text>`` when searching a directory.
+# A match uses ``:`` in the same positions.  Requiring the same delimiter
+# on both sides of the number keeps a path that itself contains ``-`` or
 # ``:`` from being mistaken for one form or the other.
-_CONTEXT_LINE_PATTERN = re.compile(r"^.*?-\d+-", re.DOTALL)
+_CONTEXT_LINE_PATTERN = re.compile(r"^(?:.*?-\d+-|-?\d+-)", re.DOTALL)
+
+# ripgrep prints this between two non-adjacent context groups.
+_GROUP_SEPARATOR = "--"
 
 
 class RipgrepTimeoutError(Exception):
@@ -266,7 +270,7 @@ class Grep(ToolBase):
 
     @staticmethod
     def _is_context_line(line: str) -> bool:
-        """Whether an output line carries context rather than a match.
+        """Whether an output line is not a match of its own.
 
         With context enabled, ripgrep joins ``path``, ``line_number`` and
         ``text`` with ``:`` for a match and with ``-`` for a context
@@ -274,8 +278,15 @@ class Grep(ToolBase):
         apart.  The path may itself contain both characters, so the
         delimiter is found by matching the ``<path><delim><number><same
         delim><text>`` shape instead of splitting on the first one.
+
+        ripgrep also prints ``--`` between two non-adjacent groups.  It
+        frames the output rather than reporting a result, so it must not
+        be counted as a match either.
         """
-        return _CONTEXT_LINE_PATTERN.match(line.rstrip("\r\n")) is not None
+        stripped = line.rstrip("\r\n")
+        if stripped == _GROUP_SEPARATOR:
+            return True
+        return _CONTEXT_LINE_PATTERN.match(stripped) is not None
 
     def _apply_head_limit(
         self,

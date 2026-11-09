@@ -62,3 +62,31 @@ class GrepContextHeadLimitTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             Grep._is_context_line(r"C:\logs\a-b\server:14:ERROR boom"),
         )
+
+    def test_group_separator_is_not_a_match(self) -> None:
+        """``--`` frames the output; it must not consume the budget."""
+        self.assertTrue(Grep._is_context_line("--"))
+
+    @unittest.skipUnless(_has_ripgrep(), "ripgrep is required")
+    async def test_two_isolated_matches_both_survive_head_limit(self) -> None:
+        """A ``--`` separator must not make the second hit disappear."""
+        lines = [f"line{index:02d}: all good" for index in range(1, 41)]
+        lines[2] = "line03: ERROR first failure"
+        lines[35] = "line36: ERROR second failure"
+        with open(
+            os.path.join(self.temp_dir, "separated.log"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write("\n".join(lines) + "\n")
+
+        result = await self.grep.call(
+            pattern="ERROR",
+            path=os.path.join(self.temp_dir, "separated.log"),
+            output_mode="content",
+            context=2,
+            head_limit=2,
+        )
+        text = result.content[0].text
+        self.assertIn("first failure", text)
+        self.assertIn("second failure", text)
