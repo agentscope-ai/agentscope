@@ -37,6 +37,7 @@ class TaskStatus(str, Enum):
 _MAX_RETAINED_TASKS = 50
 # Maximum number of terminal-state tasks retained per user.
 _RECORD_LEASE_SECS = 120
+_RENEWAL_CONCURRENCY = 16
 _IO_TIMEOUT_SECS = 2.0
 _RETRY_DELAY_SECS = 1.0
 _SHUTDOWN_TIMEOUT_SECS = 5.0
@@ -362,22 +363,23 @@ class BackgroundTaskManager:
         # The callback is attached after writes settle, so a fast task cannot
         # publish a terminal state before its initial running state.
         try:
-            await self._message_bus.registry_set(
-                MessageBusKeys.bg_tasks(session_id),
-                task_id,
-                json.dumps(
-                    {
-                        "tool_name": tool_name,
-                        "agent_id": agent_id,
-                        "started_at": bg_task.started_at,
-                    },
-                    ensure_ascii=False,
-                ),
-                ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
-            )
-            await self._store_record(
-                BackgroundTaskRecord.model_validate(bg_task),
-            )
+            async with asyncio.timeout(_IO_TIMEOUT_SECS):
+                await self._message_bus.registry_set(
+                    MessageBusKeys.bg_tasks(session_id),
+                    task_id,
+                    json.dumps(
+                        {
+                            "tool_name": tool_name,
+                            "agent_id": agent_id,
+                            "started_at": bg_task.started_at,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+                )
+                await self._store_record(
+                    BackgroundTaskRecord.model_validate(bg_task),
+                )
             if (
                 self._renewal_task is None
                 or self._renewal_task.done()
@@ -459,48 +461,72 @@ class BackgroundTaskManager:
         )
 
     async def _renew_running_records(self) -> None:
-        """Renew only locally running tasks without overwriting outcomes."""
+        """Renew leases in bounded, fair rounds without scheduling drift."""
+        pending: OrderedDict[str, BackgroundTask] = OrderedDict()
+        loop = asyncio.get_running_loop()
+        interval = _RECORD_LEASE_SECS / 4
+        deadline = loop.time() + interval
+
+        async def renew_pending() -> None:
+            """Share the queue without creating a worker for every task."""
+            while pending:
+                _, task = pending.popitem(last=False)
+                await self._renew_running_record(task)
+
         while self.tasks and not self._closed:
-            # Renew early enough to allow retries before expiry.
-            await asyncio.sleep(_RECORD_LEASE_SECS / 4)
-            for task in list(self.tasks.values()):
+            await asyncio.sleep(max(0, deadline - loop.time()))
+            deadline = loop.time() + interval
+            # Unvisited tasks stay ahead of retries and newly registered work.
+            pending.update(self.tasks)
+            try:
+                async with asyncio.timeout_at(deadline):
+                    async with asyncio.TaskGroup() as group:
+                        for _ in range(
+                            min(_RENEWAL_CONCURRENCY, len(pending)),
+                        ):
+                            group.create_task(renew_pending())
+            except TimeoutError:
+                logger.warning(
+                    "Background task renewal round exceeded its budget: "
+                    "unvisited=%d",
+                    len(pending),
+                )
+
+    async def _renew_running_record(self, task: BackgroundTask) -> None:
+        """Renew or restore one live record without overwriting outcomes."""
+        if task.asyncio_task.done():
+            return
+        try:
+            async with asyncio.timeout(_IO_TIMEOUT_SECS):
+                namespace = MessageBusKeys.bg_task_records(task.user_id)
+                value = await self._message_bus.registry_get(
+                    namespace,
+                    task.id,
+                )
                 if task.asyncio_task.done():
-                    continue
-                try:
-                    async with asyncio.timeout(_IO_TIMEOUT_SECS):
-                        namespace = MessageBusKeys.bg_task_records(
-                            task.user_id,
-                        )
-                        value = await self._message_bus.registry_get(
-                            namespace,
-                            task.id,
-                        )
-                        if task.asyncio_task.done():
-                            continue
-                        if value is None:
-                            payload = BackgroundTaskRecord.model_validate(
-                                task,
-                            ).model_dump(mode="json")
-                        else:
-                            payload = json.loads(value)
-                        if payload["status"] != TaskStatus.RUNNING:
-                            continue
-                        payload["_expires_at"] = (
-                            time.time() + _RECORD_LEASE_SECS
-                        )
-                        # A concurrent completion must win over this lease.
-                        await self._message_bus.registry_set_if(
-                            namespace,
-                            task.id,
-                            json.dumps(payload, ensure_ascii=False),
-                            expected=value,
-                            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
-                        )
-                except Exception:
-                    logger.exception(
-                        "Failed to renew background task lease: task_id=%s",
-                        task.id,
-                    )
+                    return
+                if value is None:
+                    payload = BackgroundTaskRecord.model_validate(
+                        task,
+                    ).model_dump(mode="json")
+                else:
+                    payload = json.loads(value)
+                if payload["status"] != TaskStatus.RUNNING:
+                    return
+                payload["_expires_at"] = time.time() + _RECORD_LEASE_SECS
+                # A concurrent completion must win over this lease.
+                await self._message_bus.registry_set_if(
+                    namespace,
+                    task.id,
+                    json.dumps(payload, ensure_ascii=False),
+                    expected=value,
+                    ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to renew background task lease: task_id=%s",
+                task.id,
+            )
 
     async def _finish_task(self, record: BackgroundTaskRecord) -> None:
         """Retry pending outcomes and cleanup until success or shutdown."""

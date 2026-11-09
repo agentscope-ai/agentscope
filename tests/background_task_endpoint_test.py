@@ -406,6 +406,113 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
             {},
         )
 
+    async def test_initial_write_timeout_cleans_up_all_outcomes(self) -> None:
+        """Either stalled initial write releases registration and handles."""
+        original_set = self.bus.registry_set
+        for namespace in (
+            MessageBusKeys.bg_tasks("s1"),
+            MessageBusKeys.bg_task_records("alice"),
+        ):
+            for completed in (False, True):
+                with self.subTest(namespace=namespace, completed=completed):
+                    started = asyncio.Event()
+                    cancelled = asyncio.Event()
+                    gate = asyncio.Event()
+                    task = asyncio.create_task(gate.wait())
+
+                    async def stall_initial_write(
+                        ns: str,
+                        field: str,
+                        value: str,
+                        *,
+                        ttl_secs: int | None = None,
+                    ) -> None:
+                        # Each subtest finishes this write before advancing.
+                        # pylint: disable=cell-var-from-loop
+                        payload = json.loads(value)
+                        if (
+                            ns == namespace
+                            and payload.get("status", "running") == "running"
+                        ):
+                            # The server may commit before the reply stalls.
+                            await original_set(
+                                ns,
+                                field,
+                                value,
+                                ttl_secs=ttl_secs,
+                            )
+                            started.set()
+                            try:
+                                await asyncio.Event().wait()
+                            finally:
+                                cancelled.set()
+                        await original_set(
+                            ns,
+                            field,
+                            value,
+                            ttl_secs=ttl_secs,
+                        )
+
+                    with (
+                        patch.object(
+                            self.bus,
+                            "registry_set",
+                            side_effect=stall_initial_write,
+                        ),
+                        patch(f"{_MANAGER_MODULE}._IO_TIMEOUT_SECS", 0.1),
+                    ):
+                        registration = asyncio.create_task(
+                            self.owner.register_task(
+                                task,
+                                "s1",
+                                "a1",
+                                "alice",
+                            ),
+                        )
+                        try:
+                            await asyncio.wait_for(started.wait(), timeout=1)
+                            (task_id,) = self.owner.tasks
+                            expected = BackgroundTaskRecord.model_validate(
+                                self.owner.tasks[task_id],
+                            ).model_dump()
+                            if completed:
+                                gate.set()
+                                await task
+                            done, _ = await asyncio.wait(
+                                {registration},
+                                timeout=0.5,
+                            )
+                            self.assertEqual(done, {registration})
+                            with self.assertRaises(TimeoutError):
+                                await registration
+                            self.assertTrue(cancelled.is_set())
+                            await asyncio.wait_for(self._settle(task), 1)
+                        finally:
+                            registration.cancel()
+                            await asyncio.gather(
+                                registration,
+                                return_exceptions=True,
+                            )
+                    self.assertEqual(self.owner.tasks, {})
+                    self.assertEqual(task.cancelled(), not completed)
+                    record = await self.reader.get_task(
+                        task_id,
+                        user_id="alice",
+                    )
+                    expected.update(
+                        status=TaskStatus.COMPLETED
+                        if completed
+                        else TaskStatus.CANCELLED,
+                        completed_at=record.completed_at,
+                    )
+                    self.assertEqual(record.model_dump(), expected)
+                    self.assertEqual(
+                        await self.bus.registry_getall(
+                            MessageBusKeys.bg_tasks("s1"),
+                        ),
+                        {},
+                    )
+
     async def test_failed_outcome_write_recovers_shared_status(self) -> None:
         """A failed write remains pending and is retried after recovery."""
         gate, task, task_id = await self._register(self.owner)
@@ -777,6 +884,118 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                 self.assertEqual(record.model_dump(), expected)
             gate.set()
             await self._settle(task)
+
+    async def test_slow_io_keeps_all_running_tasks_visible(self) -> None:
+        """Renewal latency must not accumulate across every running task."""
+        original_get = self.bus.registry_get
+        original_set_if = self.bus.registry_set_if
+
+        async def delayed_get(namespace: str, field: str) -> str | None:
+            await asyncio.sleep(0.04)
+            return await original_get(namespace, field)
+
+        async def delayed_set_if(
+            namespace: str,
+            field: str,
+            value: str,
+            *,
+            expected: str | None,
+            ttl_secs: int | None = None,
+        ) -> bool:
+            await asyncio.sleep(0.04)
+            return await original_set_if(
+                namespace,
+                field,
+                value,
+                expected=expected,
+                ttl_secs=ttl_secs,
+            )
+
+        with patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.6):
+            for _ in range(8):
+                await self._register(self.owner)
+            expected = {
+                task.id: BackgroundTaskRecord.model_validate(task).model_dump()
+                for task in self.owner.tasks.values()
+            }
+            with (
+                patch.object(
+                    self.bus,
+                    "registry_get",
+                    side_effect=delayed_get,
+                ),
+                patch.object(
+                    self.bus,
+                    "registry_set_if",
+                    side_effect=delayed_set_if,
+                ),
+            ):
+                await asyncio.sleep(0.65)
+                for _ in range(4):
+                    records = await self.reader.list_tasks(user_id="alice")
+                    self.assertEqual(
+                        {record.id: record.model_dump() for record in records},
+                        expected,
+                    )
+                    self.assertEqual(
+                        [
+                            task.asyncio_task.done()
+                            for task in self.owner.tasks.values()
+                        ],
+                        [False] * 8,
+                    )
+                    await asyncio.sleep(0.1)
+
+    async def test_renewal_budget_preserves_fairness_and_cancels_io(
+        self,
+    ) -> None:
+        """Slow tasks cannot starve the queue or leave I/O after shutdown."""
+        original_get = self.bus.registry_get
+        active: set[asyncio.Task] = set()
+        seen: set[str] = set()
+        peak = 0
+        cancellations = 0
+        reached_tail = asyncio.Event()
+        with (
+            patch(f"{_MANAGER_MODULE}._RECORD_LEASE_SECS", 0.2),
+            patch(f"{_MANAGER_MODULE}._RENEWAL_CONCURRENCY", 2),
+        ):
+            for _ in range(6):
+                await self._register(self.owner)
+            task_ids = list(self.owner.tasks)
+
+            async def stalled_head(namespace: str, field: str) -> str | None:
+                nonlocal peak, cancellations
+                current = asyncio.current_task()
+                assert current is not None
+                active.add(current)
+                peak = max(peak, len(active))
+                try:
+                    seen.add(field)
+                    if seen == set(task_ids):
+                        reached_tail.set()
+                    if field in task_ids[:2]:
+                        try:
+                            await asyncio.Event().wait()
+                        except asyncio.CancelledError:
+                            cancellations += 1
+                            raise
+                    return await original_get(namespace, field)
+                finally:
+                    active.remove(current)
+
+            with patch.object(
+                self.bus,
+                "registry_get",
+                side_effect=stalled_head,
+            ):
+                await asyncio.wait_for(reached_tail.wait(), timeout=0.5)
+                self.assertEqual(peak, 2)
+                self.assertGreaterEqual(cancellations, 2)
+                self.assertEqual(seen, set(task_ids))
+                await asyncio.wait_for(self.owner.__aexit__(), timeout=1)
+            self.assertEqual(active, set())
+            self.assertTrue(self.owner._renewal_task.done())
 
     async def test_heartbeat_restores_a_cleaned_running_record(self) -> None:
         """A live task reappears after its expired snapshot is deleted."""
