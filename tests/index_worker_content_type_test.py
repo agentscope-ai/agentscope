@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.app._service._index_worker import IndexWorker
 from agentscope.rag import Chunk, Section, TextParser
 from agentscope.message import TextBlock
@@ -200,11 +202,27 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
                     storage.statuses,
                     ["parsing", "chunking", "indexing", "ready"],
                 )
-                self.assertEqual(len(manager.knowledge.inserted_chunks), 1)
-                chunk = manager.knowledge.inserted_chunks[0]
-                self.assertIsInstance(chunk.content, TextBlock)
-                self.assertEqual(chunk.content.text, payload.decode())
-                self.assertEqual(chunk.source, filename)
+                self.assertEqual(
+                    [
+                        chunk.model_dump()
+                        for chunk in manager.knowledge.inserted_chunks
+                    ],
+                    [
+                        {
+                            "content": {
+                                "type": "text",
+                                "text": payload.decode(),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            "source": filename,
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "metadata": {},
+                        },
+                    ],
+                )
                 self.assertDictEqual(
                     manager.knowledge.inserted_metadata,
                     {
