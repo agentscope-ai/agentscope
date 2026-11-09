@@ -657,6 +657,98 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_multiagent_image_history_prompt(self) -> None:
+        """Emit the history prompt once, on the first textual history."""
+        fmt = OllamaMultiAgentFormatter(
+            conversation_history_prompt="Custom history instructions\n",
+        )
+        hint = AssistantMsg(
+            name="assistant",
+            content=[HintBlock(hint="Continue")],
+        )
+        hint_output = [{"role": "user", "content": "Continue"}]
+        tool = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="c1", name="inspect", input="{}"),
+                ToolResultBlock(
+                    id="c1",
+                    name="inspect",
+                    output="Done",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        tool_output: list[dict] = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "inspect", "arguments": {}}},
+                ],
+            },
+            {"role": "tool", "tool_name": "inspect", "content": "Done"},
+        ]
+        separators: list[tuple[Msg, list[dict]]] = [
+            (hint, hint_output),
+            (tool, tool_output),
+        ]
+        for name in ("", "viewer"):
+            for separator, expected_separator in separators:
+                with self.subTest(name=name, separator=separator.content):
+                    msgs = [
+                        UserMsg(
+                            name=name,
+                            content=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data=self.image_b64,
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        separator,
+                        UserMsg(name="user", content="Describe the image"),
+                        hint,
+                        UserMsg(name="user", content="More details"),
+                    ]
+                    first_content = (
+                        f"{fmt.conversation_history_prompt}"
+                        f"<history>\n{name}:\n</history>"
+                        if name
+                        else ""
+                    )
+                    later_prompt = (
+                        "" if name else fmt.conversation_history_prompt
+                    )
+                    self.assertListEqual(
+                        [
+                            {
+                                "role": "user",
+                                "content": first_content,
+                                "images": [self.image_b64],
+                            },
+                            *expected_separator,
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{later_prompt}<history>\n"
+                                    "user:\nDescribe the image\n</history>"
+                                ),
+                            },
+                            *hint_output,
+                            {
+                                "role": "user",
+                                "content": (
+                                    "<history>\nuser:\n"
+                                    "More details\n</history>"
+                                ),
+                            },
+                        ],
+                        await fmt.format(msgs),
+                    )
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
