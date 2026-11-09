@@ -1313,7 +1313,11 @@ class RedisStorage(StorageBase):
         )
         records = []
         for entry in entries:
-            user_id, schedule_id = entry.split(":", 1)
+            # Split from the right: a user id is caller-supplied and may
+            # itself contain ':', while the schedule id never does.  A
+            # left split would resolve such an owner to a nonexistent key
+            # and silently drop the record from every global sweep.
+            user_id, schedule_id = entry.rsplit(":", 1)
             raw = await self._client.get(
                 self._key(
                     self.key_config.schedule,
@@ -2539,7 +2543,12 @@ class RedisStorage(StorageBase):
         records: list[KnowledgeDocumentRecord] = []
         for token in tokens:
             try:
-                user_id, kb_id, document_id = token.split(":", 2)
+                # Split from the right: only the user id is caller-supplied
+                # and may contain ':', while the knowledge base and document
+                # ids never do.  A left split would misread such an owner
+                # as a shorter user id plus a longer knowledge base id, and
+                # silently drop the document from the sweep.
+                user_id, kb_id, document_id = token.rsplit(":", 2)
             except ValueError:
                 continue
             raw = await self._client.get(
@@ -2570,7 +2579,12 @@ class RedisStorage(StorageBase):
         records: list[KnowledgeDocumentRecord] = []
         for token in tokens:
             try:
-                user_id, kb_id, document_id = token.split(":", 2)
+                # Split from the right: only the user id is caller-supplied
+                # and may contain ':', while the knowledge base and document
+                # ids never do.  A left split would misread such an owner
+                # as a shorter user id plus a longer knowledge base id, and
+                # silently drop the document from the sweep.
+                user_id, kb_id, document_id = token.rsplit(":", 2)
             except ValueError:
                 continue
             raw = await self._client.get(
