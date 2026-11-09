@@ -110,6 +110,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         self._connected = False
         self._cold_start_buffer: str = ""
         self._cold_start_done: bool = False
+        self._cold_start_pending: str = ""
         self._accumulated_text: str = ""
 
     @classmethod
@@ -246,6 +247,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         self._connected = False
         self._cold_start_buffer = ""
         self._cold_start_done = False
+        self._cold_start_pending = ""
         await self.connect()
 
     async def push(
@@ -267,29 +269,39 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             return TTSResponse(content=None)
 
         previous_text = self._accumulated_text
-        self._accumulated_text += text
-
-        if self._cold_start_done:
-            text_to_send = text
-        else:
-            self._cold_start_buffer += text
-            if (
-                self.cold_start_length
-                and len(self._cold_start_buffer) < self.cold_start_length
-            ) or (
-                self.cold_start_words
-                and len(self._cold_start_buffer.split())
-                < self.cold_start_words
-            ):
-                return self._callback.get_audio_response(block=False)
+        # A repeat of the delta whose cold-start flush just failed is a
+        # retry of that push, not new text: it is already buffered and
+        # already counted, so counting it again would speak it twice.
+        retrying = (
+            not self._cold_start_done and text == self._cold_start_pending
+        )
+        if retrying:
             text_to_send = self._cold_start_buffer
+        else:
+            self._accumulated_text += text
+            if self._cold_start_done:
+                text_to_send = text
+            else:
+                self._cold_start_buffer += text
+                if (
+                    self.cold_start_length
+                    and len(self._cold_start_buffer) < self.cold_start_length
+                ) or (
+                    self.cold_start_words
+                    and len(self._cold_start_buffer.split())
+                    < self.cold_start_words
+                ):
+                    return self._callback.get_audio_response(block=False)
+                text_to_send = self._cold_start_buffer
 
         try:
             self._synthesizer.streaming_call(text_to_send)
         except Exception:
             if not self._cold_start_done:
                 # Cold-start flush failed: keep the buffer and flag intact
-                # so the next push retries the whole buffered text.
+                # so the next push retries the whole buffered text, and
+                # remember the delta so a caller retry is not counted twice.
+                self._cold_start_pending = text
                 return TTSResponse(content=None)
             # This delta is not buffered. Restore the accumulated text
             # before raising so a caller retry counts the delta only once.
@@ -301,6 +313,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             # and latch the flag.
             self._cold_start_buffer = ""
             self._cold_start_done = True
+            self._cold_start_pending = ""
 
         return self._callback.get_audio_response(block=False)
 
@@ -417,6 +430,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         """Reset per-utterance realtime tracking state."""
         self._cold_start_buffer = ""
         self._cold_start_done = False
+        self._cold_start_pending = ""
         self._accumulated_text = ""
 
     @staticmethod
