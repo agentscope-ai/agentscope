@@ -162,7 +162,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
             with self.subTest(newline=newline):
                 with open(path, "wb") as stream:
                     stream.write(
-                        newline.join([b"FIRST", b"", b"LAST", b"", b""])
+                        newline.join([b"FIRST", b"", b"LAST", b"", b""]),
                     )
                 blank = await self.grep_tool.call(
                     r"^\r?$",
