@@ -798,6 +798,8 @@ class LocalBackend(BackendBase):
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                # Inheriting a stdin pipe can hang CPython startup on Windows.
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 **kwargs,

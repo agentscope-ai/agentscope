@@ -9,6 +9,7 @@ import warnings
 
 from asyncio import Queue
 from copy import deepcopy
+from contextlib import aclosing
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
@@ -23,7 +24,13 @@ from typing import (
 import jsonschema
 from pydantic import BaseModel
 
-from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    InjectionConfig,
+    _validate_context_config_ratios,
+)
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -35,6 +42,7 @@ from .._utils._common import (
 )
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -184,6 +192,8 @@ class Agent:
                 DeprecationWarning,
                 stacklevel=2,
             )
+            # Other agents may share the caller's config.
+            self.context_config = self.context_config.model_copy(deep=True)
             self.context_config.context_buffer_ratio = (
                 self.injection_config.context_buffer_ratio
             )
@@ -252,34 +262,10 @@ class Agent:
                 If the reserved/buffer ratios don't leave room ahead of the
                 context compression threshold.
         """
-        if (
-            self.context_config.reserve_ratio
-            >= self.context_config.trigger_ratio
-        ):
-            raise ValueError(
-                "The 'reserve_ratio' of the context config must be smaller "
-                "than its 'trigger_ratio', got "
-                f"{self.context_config.reserve_ratio} and "
-                f"{self.context_config.trigger_ratio}.",
-            )
-
-        # The buffer is only consumed by the runtime state injection and
-        # the compression tool, so it's checked only when one of them is on
-        if (
-            self.injection_config.inject_runtime_state
-            or self.context_config.compression_tool_enabled
-        ) and (
-            self.context_config.context_buffer_ratio
-            >= self.context_config.trigger_ratio
-        ):
-            raise ValueError(
-                "The 'context_buffer_ratio' of the context config must be "
-                "smaller than its 'trigger_ratio', so that the context "
-                "length is injected and the compression tool takes effect "
-                "before the hard compression, got "
-                f"{self.context_config.context_buffer_ratio} and "
-                f"{self.context_config.trigger_ratio}.",
-            )
+        _validate_context_config_ratios(
+            self.context_config,
+            self.injection_config.inject_runtime_state,
+        )
 
     # =======================================================================
     # Agent public methods
@@ -321,13 +307,13 @@ class Agent:
             agent won't re-send the requiring events for the unconfirmed
             or unexecuted tool calls.
         """
-        async for chunk in self._reply(
-            inputs=inputs,
-            structured_schema=structured_schema,
-        ):
-            if isinstance(chunk, Msg) and not yield_final_msg:
-                continue
-            yield chunk
+        async with aclosing(
+            self._reply(inputs=inputs, structured_schema=structured_schema),
+        ) as stream:
+            async for chunk in stream:
+                if isinstance(chunk, Msg) and not yield_final_msg:
+                    continue
+                yield chunk
 
     async def reply(
         self,
@@ -929,11 +915,14 @@ class Agent:
                 structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(
-                        inputs=inputs,
-                        structured_schema=structured_schema,
-                    ):
-                        yield item
+                    async with aclosing(
+                        self._reply_impl(
+                            inputs=inputs,
+                            structured_schema=structured_schema,
+                        ),
+                    ) as stream:
+                        async for item in stream:
+                            yield item
                 else:
                     mw = self._reply_middlewares[index]
                     input_kwargs = {
@@ -944,28 +933,34 @@ class Agent:
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(
-                            index + 1,
-                            **{**input_kwargs, **kwargs},
-                        ):
-                            yield item
+                        async with aclosing(
+                            execute_chain(
+                                index + 1,
+                                **{**input_kwargs, **kwargs},
+                            ),
+                        ) as stream:
+                            async for item in stream:
+                                yield item
 
-                    async for item in mw.on_reply(
-                        agent=self,
-                        input_kwargs=input_kwargs,
-                        next_handler=next_handler,
-                    ):
-                        yield item
+                    async with aclosing(
+                        mw.on_reply(
+                            agent=self,
+                            input_kwargs=input_kwargs,
+                            next_handler=next_handler,
+                        ),
+                    ) as stream:
+                        async for item in stream:
+                            yield item
 
             agen = execute_chain()
 
         self._receive_reply_end = False
-        async for item in agen:
-            # Set before the yield: the suspended `_reply_impl` checks the
-            # flag once resumed by the next pull
-            if isinstance(item, ReplyEndEvent):
-                self._receive_reply_end = True
-            yield item
+        async with aclosing(agen):
+            async for item in agen:
+                # Set before yielding so the suspended loop can observe it.
+                if isinstance(item, ReplyEndEvent):
+                    self._receive_reply_end = True
+                yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -1095,6 +1090,10 @@ class Agent:
             #  - if incoming event and agent is waiting for an event
             #  - if event is None and agent is not waiting for an event
             # ===================================================================
+            if event is not None:
+                # Receive cancellation redirected by the service before a
+                # continuation can apply a decision or execute a tool.
+                await asyncio.sleep(0)
             is_awaiting = await self._check_incoming_event(event)
 
             # ===================================================================
@@ -1105,6 +1104,9 @@ class Agent:
             if is_awaiting:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
+                # Count the round if this event completed its last tool call.
+                if not self.state.get_unfinished_tool_calls(self.name):
+                    self.state.cur_iter += 1
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
@@ -1120,6 +1122,10 @@ class Agent:
                     reply_id=self.state.reply_id,
                     name=self.name,
                 )
+                # A consumer may re-arm cancellation while registering or
+                # publishing REPLY_START. Receive it inside this cleanup scope
+                # even when subsequent model/tool awaits complete inline.
+                await asyncio.sleep(0)
 
             # Update the structured output tool for new requirements or
             #  from the previous reply
@@ -2142,7 +2148,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls sequentially and yield the events.
@@ -2161,7 +2168,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
         """
         break_execution = False
@@ -2192,7 +2200,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls concurrently and yield the events.
@@ -2212,11 +2221,7 @@ class Agent:
         tasks are cancelled explicitly (to avoid orphan tasks), any events
         already queued by the workers (including interruption chunks emitted
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
-        flushed to the caller, and the generator returns normally. The
-        caller is expected to detect the interruption via the flushed
-        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
-        event-based propagation used by
-        :meth:`_execute_sequential_tool_calls`.
+        flushed to the caller before re-raising ``CancelledError``.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -2228,10 +2233,14 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
 
         Raises:
+            `asyncio.CancelledError`:
+                Re-raised after cancelling workers and draining queued events
+                when the caller task is cancelled.
             `ExceptionGroup`:
                 Raised after all tool calls finish when one or more of them
                 raised an exception. Each individual exception is included in
@@ -2298,13 +2307,9 @@ class Agent:
                 if event is sentinel:
                     continue
                 yield event
-            # Consume the cancel so this generator returns normally. The
-            # caller relies on the flushed ``ToolResultEndEvent(state=
-            # INTERRUPTED)`` events, not on the exception, to detect the
-            # interruption — mirroring the event-based propagation used by
-            # :meth:`_execute_sequential_tool_calls`.
-            asyncio.current_task().uncancel()
-            return
+            # Calls cancelled before reaching the toolkit emit no interrupted
+            # result, so propagate to let the reply loop close them
+            raise
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
@@ -2438,7 +2443,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute a single tool call with permission checking and context
@@ -2470,7 +2476,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the tool call execution.
         """
         # ===================================================================
@@ -2704,6 +2711,16 @@ class Agent:
 
                 else:
                     # Intermediate ToolChunk — convert to streaming events
+                    progress = chunk.metadata.get("mcp_progress")
+                    if progress is not None:
+                        yield CustomEvent(
+                            name="mcp_progress",
+                            value={
+                                **progress,
+                                "reply_id": self.state.reply_id,
+                                "tool_call_id": tool_call.id,
+                            },
+                        )
                     async for evt in self._convert_tool_chunk_to_event(
                         tool_call.id,
                         chunk.content,
@@ -3151,8 +3168,13 @@ class Agent:
                 min(len(truncated_text), reserved_tokens),
             )
 
-            reserved_text = truncated_text[:reserved_tokens]
-            offload_text = truncated_text[reserved_tokens:]
+            reserved_text = await self._fit_text_prefix_to_token_limit(
+                reserved_blocks=reserved_blocks,
+                text=truncated_text,
+                upper_bound=reserved_tokens,
+                text_block_id=boundary_block.id,
+            )
+            offload_text = truncated_text[len(reserved_text) :]
 
             if reserved_text:
                 if (
@@ -3209,6 +3231,58 @@ class Agent:
         )
 
         return reserved_tool_result, offload_tool_result
+
+    async def _fit_text_prefix_to_token_limit(
+        self,
+        *,
+        reserved_blocks: list,
+        text: str,
+        upper_bound: int,
+        text_block_id: str,
+    ) -> str:
+        """Return the longest prefix of ``text`` that stays within the limit.
+
+        The proportional estimate uses the block's average token density,
+        which breaks when the prefix has a different script mix: a Chinese
+        prefix of an ASCII-first block is denser and used to exceed the
+        limit. Recount the candidate with the same counter and binary-search
+        the prefix length, only when the proportional estimate overshoots.
+        """
+        limit = self.context_config.tool_result_limit
+
+        def candidate(length: int) -> list:
+            prefix = text[:length]
+            if reserved_blocks and reserved_blocks[-1].type == "text":
+                merged = reserved_blocks[-1].model_copy(deep=True)
+                merged.text += prefix
+                return [*reserved_blocks[:-1], merged]
+            return [
+                *reserved_blocks,
+                TextBlock(text=prefix, id=text_block_id),
+            ]
+
+        async def fits(length: int) -> bool:
+            return (
+                await self.model.count_tokens(
+                    [AssistantMsg(self.name, content=candidate(length))],
+                    None,
+                )
+                <= limit
+            )
+
+        if await fits(upper_bound):
+            return text[:upper_bound]
+
+        low, high = 0, upper_bound
+        best = 0
+        while low <= high:
+            middle = (low + high) // 2
+            if await fits(middle):
+                best = middle
+                low = middle + 1
+            else:
+                high = middle - 1
+        return text[:best]
 
     # ======================================================================
     # Agent internal utility methods
@@ -3915,6 +3989,8 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        # Keep the block id so replay groups one payload.
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
@@ -3922,6 +3998,7 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )

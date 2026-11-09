@@ -2,10 +2,14 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+import base64
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
+    Msg,
     UserMsg,
     AssistantMsg,
     SystemMsg,
@@ -15,6 +19,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -296,6 +301,97 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_formatters_read_percent_encoded_file_urls(self) -> None:
+        """Local file URLs are decoded before their paths are opened."""
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "image #1.png"
+            image_path.write_bytes(base64.b64decode(self.image_b64))
+            msgs = [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        DataBlock(
+                            source=URLSource(
+                                url=image_path.as_uri(),
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            ]
+
+            chat_result = await OllamaChatFormatter().format(msgs)
+            multiagent_result = await OllamaMultiAgentFormatter().format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [self.image_b64],
+                },
+            ],
+            chat_result,
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\nWhat is this?\n</history>"
+                    ),
+                    "images": [self.image_b64],
+                },
+            ],
+            multiagent_result,
+        )
+
+    async def test_formatters_preserve_local_file_uri_characters(self) -> None:
+        """Decode Unicode and literal percent escapes once, preserving '+'."""
+        with TemporaryDirectory() as directory:
+            for filename in ("caf\u00e9.png", "image%20.png", "image+1.png"):
+                path = Path(directory) / filename
+                path.write_bytes(base64.b64decode(self.image_b64))
+                # URI paths allow a literal '+'; form decoding would lose it.
+                url = path.as_uri().replace("%2B", "+")
+                source = URLSource(url=url, media_type="image/png")
+                self.assertEqual(str(source.url), url)
+                msgs = [
+                    UserMsg(
+                        name="user",
+                        content=[DataBlock(source=source)],
+                    ),
+                ]
+                for formatter, expected_content in (
+                    (OllamaChatFormatter(), ""),
+                    (
+                        OllamaMultiAgentFormatter(),
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\n</history>",
+                    ),
+                ):
+                    with self.subTest(
+                        filename=filename,
+                        formatter=type(formatter).__name__,
+                    ):
+                        result = await formatter.format(msgs)
+                        self.assertEqual(
+                            result,
+                            [
+                                {
+                                    "role": "user",
+                                    "content": expected_content,
+                                    "images": [self.image_b64],
+                                },
+                            ],
+                        )
+
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
     ) -> None:
@@ -527,6 +623,131 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
+
+    async def test_multiagent_formatter_image_only_message_kept(self) -> None:
+        """An agent message carrying only an image (no text) is preserved.
+
+        Regression test: the image-only turn used to be dropped because the
+        guard only considered text blocks.
+        """
+        fmt = OllamaMultiAgentFormatter()
+        msgs = [
+            Msg(
+                name="",
+                role="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_image_history_prompt(self) -> None:
+        """Emit the history prompt once, on the first textual history."""
+        fmt = OllamaMultiAgentFormatter(
+            conversation_history_prompt="Custom history instructions\n",
+        )
+        hint = AssistantMsg(
+            name="assistant",
+            content=[HintBlock(hint="Continue")],
+        )
+        hint_output = [{"role": "user", "content": "Continue"}]
+        tool = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="c1", name="inspect", input="{}"),
+                ToolResultBlock(
+                    id="c1",
+                    name="inspect",
+                    output="Done",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        tool_output: list[dict] = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "inspect", "arguments": {}}},
+                ],
+            },
+            {"role": "tool", "tool_name": "inspect", "content": "Done"},
+        ]
+        separators: list[tuple[Msg, list[dict]]] = [
+            (hint, hint_output),
+            (tool, tool_output),
+        ]
+        for name in ("", "viewer"):
+            for separator, expected_separator in separators:
+                with self.subTest(name=name, separator=separator.content):
+                    msgs = [
+                        UserMsg(
+                            name=name,
+                            content=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data=self.image_b64,
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        separator,
+                        UserMsg(name="user", content="Describe the image"),
+                        hint,
+                        UserMsg(name="user", content="More details"),
+                    ]
+                    first_content = (
+                        f"{fmt.conversation_history_prompt}"
+                        f"<history>\n{name}:\n</history>"
+                        if name
+                        else ""
+                    )
+                    later_prompt = (
+                        "" if name else fmt.conversation_history_prompt
+                    )
+                    self.assertListEqual(
+                        [
+                            {
+                                "role": "user",
+                                "content": first_content,
+                                "images": [self.image_b64],
+                            },
+                            *expected_separator,
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{later_prompt}<history>\n"
+                                    "user:\nDescribe the image\n</history>"
+                                ),
+                            },
+                            *hint_output,
+                            {
+                                "role": "user",
+                                "content": (
+                                    "<history>\nuser:\n"
+                                    "More details\n</history>"
+                                ),
+                            },
+                        ],
+                        await fmt.format(msgs),
+                    )
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,

@@ -137,7 +137,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             **kwargs,
         }
         if self.pass_dimensions:
-            api_kwargs["dimensions"] = self.dimensions
+            api_kwargs.setdefault("dimensions", self.dimensions)
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(

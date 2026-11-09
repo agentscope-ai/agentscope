@@ -5,12 +5,14 @@
 Tests cover both non-streaming and streaming modes.
 OpenAI Responses API uses event-based streaming with response.completed.
 """
+import asyncio
 from typing import Any, cast
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
-from openai import APIError
+import httpx
+from openai import APIError, AsyncOpenAI
 from openai.types.responses import ResponseOutputMessage
 from pydantic import BaseModel
 
@@ -200,6 +202,36 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
         self.model = _make_model(stream=False)
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_thinking_enable_nullable(self) -> None:
+        """False requests no reasoning, even with a stored effort value."""
+        self.assertIsNone(OpenAIResponseModel.Parameters().thinking_enable)
+        mock_create = AsyncMock(return_value=_mock_completion(text="Hi"))
+        self.mock_client.responses.create = mock_create
+
+        for params, disables_thinking in (
+            ({}, False),
+            ({"thinking_enable": None}, False),
+            ({"thinking_enable": False}, True),
+            ({"thinking_enable": True}, False),
+        ):
+            for effort in (None, "none", "high"):
+                with self.subTest(params=params, effort=effort):
+                    self.model.parameters = OpenAIResponseModel.Parameters(
+                        **params,
+                        reasoning_effort=effort,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "o4-mini",
+                        "input": [],
+                        "stream": False,
+                    }
+                    expected_effort = "none" if disables_thinking else effort
+                    if expected_effort is not None:
+                        expected["reasoning"] = {"effort": expected_effort}
+                    self.assertEqual(mock_create.call_args.kwargs, expected)
 
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
@@ -1612,3 +1644,64 @@ class TestOpenAIResponseFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
         self.assertIsNone(fmt_choice)
+
+
+class _TrackedBody(httpx.AsyncByteStream):
+    """HTTP body with observable cleanup."""
+
+    def __init__(self) -> None:
+        """Initialize the body state."""
+        self.closed = False
+        self.stop = asyncio.Event()
+
+    async def __aiter__(self) -> Any:
+        """Yield one SSE event and wait."""
+        yield (
+            b'data: {"type":"response.output_text.delta",'
+            b'"sequence_number":0,"item_id":"msg_1","output_index":0,'
+            b'"content_index":0,"delta":"hello"}\n\n'
+        )
+        await self.stop.wait()
+
+    async def aclose(self) -> None:
+        """Close and unblock the body."""
+        self.closed = True
+        self.stop.set()
+
+
+class TestPublicModelStreamClose(IsolatedAsyncioTestCase):
+    """Test public stream cleanup."""
+
+    async def test_aclose_closes_offline_httpx_response(self) -> None:
+        """Test cleanup through the OpenAI SDK and HTTPX transport."""
+        body = _TrackedBody()
+
+        def _handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+            )
+
+        transport = httpx.MockTransport(_handler)
+        client = AsyncOpenAI(
+            api_key="offline-test",
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+        model = _make_model(stream=True)
+        original_client = model.client
+        model.client = client
+        stream = None
+        try:
+            stream = await model([])
+            first = await anext(stream)
+            self.assertEqual(first.content[0].text, "hello")
+            self.assertFalse(body.closed)
+            await stream.aclose()
+            self.assertTrue(body.closed)
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            await body.aclose()
+            await client.close()
+            await original_client.close()

@@ -17,9 +17,13 @@
 # patch shell rc files (we don't need it — PATH already covers it).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates ripgrep \
+ && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && curl -LsSf https://astral.sh/uv/install.sh \
-        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+ && curl -LsSf -o /tmp/uv-installer.sh \
+        https://astral.sh/uv/{uv_version}/install.sh \
+ && env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 \
+        sh /tmp/uv-installer.sh \
+ && rm /tmp/uv-installer.sh
 
 {node_copy_block}ENV UV_PROJECT_ENVIRONMENT={gateway_home}/.venv \
     UV_LINK_MODE=copy \

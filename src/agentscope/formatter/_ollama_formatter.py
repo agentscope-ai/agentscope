@@ -4,6 +4,7 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
+from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
@@ -85,7 +86,7 @@ class _OllamaFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
-                file_path = url.removeprefix("file://")
+                file_path = url2pathname(url.removeprefix("file://"))
                 with open(file_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
                 return data
@@ -382,13 +383,22 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_group = await self._format_agent_message(
-                        group,
-                        is_first_agent_message,
-                    )
-                    formatted_msgs.extend(formatted_group)
-                    if formatted_group:
-                        is_first_agent_message = False
+                    segments = self._split_agent_messages_at_hints(group)
+                    for is_hint, segment in segments:
+                        if is_hint:
+                            formatted_msgs.extend(
+                                await self._format_hint_message(segment),
+                            )
+                            continue
+
+                        formatted_group = await self._format_agent_message(
+                            segment,
+                            is_first_agent_message,
+                        )
+                        formatted_msgs.extend(formatted_group)
+                        # Image-only history does not emit the prompt.
+                        if any(msg["content"] for msg in formatted_group):
+                            is_first_agent_message = False
 
         return formatted_msgs
 
@@ -400,6 +410,22 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
         return await OllamaChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the Ollama chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Ollama user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,
@@ -439,20 +465,18 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                 {"text": "\n".join(accumulated_text)},
             )
 
-        if conversation_blocks and is_first:
+        if conversation_blocks:
+            prompt = self.conversation_history_prompt if is_first else ""
             if conversation_blocks[0].get("text"):
                 conversation_blocks[0]["text"] = (
-                    self.conversation_history_prompt
-                    + "<history>\n"
-                    + conversation_blocks[0]["text"]
+                    prompt + "<history>\n" + conversation_blocks[0]["text"]
                 )
 
             else:
                 conversation_blocks.insert(
                     0,
                     {
-                        "text": self.conversation_history_prompt
-                        + "<history>\n",
+                        "text": prompt + "<history>\n",
                     },
                 )
 
@@ -475,7 +499,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
             user_message["images"] = images
 
         formatted_msgs = []
-        if conversation_blocks:
+        if conversation_blocks or images:
             formatted_msgs.append(user_message)
 
         return formatted_msgs
