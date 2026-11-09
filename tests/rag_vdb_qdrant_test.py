@@ -220,7 +220,9 @@ class QdrantMetricTest(IsolatedAsyncioTestCase):
         self.assertEqual(hits[0].score, -1.0)
 
 
-class QdrantStoreTest(IsolatedAsyncioTestCase):
+class QdrantStoreTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The test cases for the QdrantStore class."""
 
     async def asyncSetUp(self) -> None:
