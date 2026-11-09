@@ -737,11 +737,11 @@ class BashCommandParser:
     def _strip_shell_quotes(command: str) -> str:
         """Remove shell quoting so patterns match what the shell executes.
 
-        Handles single quotes, double quotes and backslash escapes. Quotes
-        with no closing partner are dropped as well, so a truncated command
-        cannot use them to hide a pattern. The result is concatenated without
-        adding spaces, which is what the shell does with adjacent fragments
-        such as ``chmod '-R'777 x``.
+        Handles single quotes, double quotes, backslash escapes and ANSI-C
+        quoting (``$'...'``). Quotes with no closing partner are dropped as
+        well, so a truncated command cannot use them to hide a pattern. The
+        result is concatenated without adding spaces, which is what the shell
+        does with adjacent fragments such as ``chmod '-R'777 x``.
 
         Args:
             command (`str`):
@@ -754,8 +754,17 @@ class BashCommandParser:
 
         stripped = []
         quote: Optional[str] = None
-        for char in command:
+        index = 0
+        while index < len(command):
+            char = command[index]
             if quote is None:
+                if command.startswith("$'", index):
+                    # ANSI-C quoting: the shell expands the escapes below
+                    # before running the command, so ``$'\\x37\\x37\\x37'``
+                    # must read as ``777``.
+                    quote = "$'"
+                    index += 2
+                    continue
                 if char in ("'", '"'):
                     quote = char
                 elif char == "\\":
@@ -766,12 +775,85 @@ class BashCommandParser:
             elif quote == "\\":
                 stripped.append(char)
                 quote = None
+            elif quote == "$'":
+                if char == "'":
+                    quote = None
+                elif char == "\\" and index + 1 < len(command):
+                    decoded, index = BashCommandParser._decode_ansi_c_escape(
+                        command,
+                        index,
+                    )
+                    stripped.append(decoded)
+                    continue
+                else:
+                    stripped.append(char)
             elif char == quote:
                 quote = None
             else:
                 stripped.append(char)
+            index += 1
 
         return "".join(stripped)
+
+    @staticmethod
+    def _decode_ansi_c_escape(
+        text: str,
+        index: int,
+    ) -> Tuple[str, int]:
+        """Decode one ANSI-C escape starting at ``text[index] == '\\\\'``.
+
+        Returns the decoded text and the index to resume from.
+        """
+
+        rest = text[index + 1 :]
+        simple = {
+            "a": "\a",
+            "b": "\b",
+            "e": "\x1b",
+            "E": "\x1b",
+            "f": "\f",
+            "n": "\n",
+            "r": "\r",
+            "t": "\t",
+            "v": "\v",
+            "\\": "\\",
+            "'": "'",
+            '"': '"',
+            "?": "?",
+        }
+        if not rest:
+            return "\\", index + 1
+        marker = rest[0]
+        if marker in simple:
+            return simple[marker], index + 2
+        if marker in ("x", "u", "U"):
+            digits = {"x": 2, "u": 4, "U": 8}[marker]
+            taken = 0
+            while (
+                taken < digits
+                and 1 + taken < len(rest)
+                and rest[1 + taken] in "0123456789abcdefABCDEF"
+            ):
+                taken += 1
+            if taken == 0:
+                # No digits: the shell keeps the marker literally.
+                return marker, index + 2
+            return chr(int(rest[1 : 1 + taken], 16)), index + 2 + taken
+        if marker in "01234567":
+            taken = 1
+            while (
+                taken < 3
+                and taken < len(rest)
+                and rest[taken] in "01234567"
+            ):
+                taken += 1
+            return chr(int(rest[:taken], 8)), index + 1 + taken
+        if marker == "c":
+            # ``\cX`` stops output; the character itself still came from the
+            # command line, so keep it rather than dropping the rest.
+            return rest[1:2], index + 3
+        # Unrecognized escapes keep the backslash, as bash does.
+        return "\\" + marker, index + 2
 
     # pylint: disable=too-many-return-statements, too-many-branches
     def check_sed_constraints(
