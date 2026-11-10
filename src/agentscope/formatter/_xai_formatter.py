@@ -159,6 +159,46 @@ class XAIChatFormatter(FormatterBase):
 
         xai_messages: List[Any] = []
 
+        def flush_assistant(
+            text_blocks: list[TextBlock],
+            tool_calls: list[ToolCallBlock],
+            media: list[DataBlock],
+        ) -> None:
+            """Emit one assistant segment before its tool results or hint."""
+            text = "\n".join(block.text for block in text_blocks)
+            media_args = _xai_user_args_from_blocks(
+                media,
+                image,
+                self.supported_input_media_types,
+            )
+            if media_args:
+                if text:
+                    xai_messages.append(assistant(text))
+                    text = ""
+                # Keep promoted media ahead of the tool call/result sequence.
+                xai_messages.append(user(*media_args))
+
+            if tool_calls:
+                msg_proto = chat_pb2.Message()
+                msg_proto.role = chat_pb2.MessageRole.Value("ROLE_ASSISTANT")
+                if text:
+                    msg_proto.content.add().text = text
+                for call in tool_calls:
+                    proto_call = msg_proto.tool_calls.add()
+                    proto_call.id = call.id
+                    proto_call.type = chat_pb2.ToolCallType.Value(
+                        "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                    )
+                    proto_call.function.name = call.name
+                    proto_call.function.arguments = call.input
+                xai_messages.append(msg_proto)
+            elif text:
+                xai_messages.append(assistant(text))
+
+            text_blocks.clear()
+            tool_calls.clear()
+            media.clear()
+
         for msg in msgs:
             blocks = msg.get_content_blocks()
 
@@ -211,7 +251,6 @@ class XAIChatFormatter(FormatterBase):
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
                 pending_media: list[Any] = []
-                # Media follows its assistant segment, before any next hint.
                 assistant_media: list[DataBlock] = []
 
                 for block in blocks:
@@ -223,34 +262,11 @@ class XAIChatFormatter(FormatterBase):
                         pending_media = []
 
                     if isinstance(block, ToolResultBlock):
-                        # Convert each ToolResultBlock to a tool_result
-                        # message.
-                        if pending_tool_calls:
-                            msg_proto = chat_pb2.Message()
-                            msg_proto.role = chat_pb2.MessageRole.Value(
-                                "ROLE_ASSISTANT",
-                            )
-                            if pending_text:
-                                c = msg_proto.content.add()
-                                c.text = "\n".join(
-                                    b.text for b in pending_text
-                                )
-                                pending_text = []
-                            for tc in pending_tool_calls:
-                                proto_tc = msg_proto.tool_calls.add()
-                                proto_tc.id = tc.id
-                                proto_tc.type = chat_pb2.ToolCallType.Value(
-                                    "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
-                                )
-                                proto_tc.function.name = tc.name
-                                proto_tc.function.arguments = tc.input
-                            xai_messages.append(msg_proto)
-                            pending_tool_calls = []
-                        elif pending_text:
-                            text = "\n".join(b.text for b in pending_text)
-                            if text:
-                                xai_messages.append(assistant(text))
-                            pending_text = []
+                        flush_assistant(
+                            pending_text,
+                            pending_tool_calls,
+                            assistant_media,
+                        )
 
                         (
                             textual_output,
@@ -289,44 +305,11 @@ class XAIChatFormatter(FormatterBase):
                         assistant_media.append(block)
 
                     elif isinstance(block, HintBlock):
-                        if pending_tool_calls or pending_text:
-                            if pending_tool_calls:
-                                msg_proto = chat_pb2.Message()
-                                msg_proto.role = chat_pb2.MessageRole.Value(
-                                    "ROLE_ASSISTANT",
-                                )
-                                if pending_text:
-                                    c = msg_proto.content.add()
-                                    c.text = "\n".join(
-                                        b.text for b in pending_text
-                                    )
-                                    pending_text = []
-                                for tc in pending_tool_calls:
-                                    proto_tc = msg_proto.tool_calls.add()
-                                    proto_tc.id = tc.id
-                                    proto_tc.type = (
-                                        chat_pb2.ToolCallType.Value(
-                                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
-                                        )
-                                    )
-                                    proto_tc.function.name = tc.name
-                                    proto_tc.function.arguments = tc.input
-                                xai_messages.append(msg_proto)
-                                pending_tool_calls = []
-                            elif pending_text:
-                                text = "\n".join(b.text for b in pending_text)
-                                if text:
-                                    xai_messages.append(assistant(text))
-                                pending_text = []
-                        if assistant_media:
-                            promo_args = _xai_user_args_from_blocks(
-                                assistant_media,
-                                image,
-                                self.supported_input_media_types,
-                            )
-                            if promo_args:
-                                xai_messages.append(user(*promo_args))
-                            assistant_media = []
+                        flush_assistant(
+                            pending_text,
+                            pending_tool_calls,
+                            assistant_media,
+                        )
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
@@ -339,40 +322,11 @@ class XAIChatFormatter(FormatterBase):
                                 xai_messages.append(user(*hint_args))
 
                 xai_messages.extend(pending_media)
-
-                if pending_tool_calls:
-                    # Assistant turn that triggered tool calls (history).
-                    msg_proto = chat_pb2.Message()
-                    msg_proto.role = chat_pb2.MessageRole.Value(
-                        "ROLE_ASSISTANT",
-                    )
-                    if pending_text:
-                        c = msg_proto.content.add()
-                        c.text = "\n".join(b.text for b in pending_text)
-                        pending_text = []
-                    for tc in pending_tool_calls:
-                        proto_tc = msg_proto.tool_calls.add()
-                        proto_tc.id = tc.id
-                        proto_tc.type = chat_pb2.ToolCallType.Value(
-                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
-                        )
-                        proto_tc.function.name = tc.name
-                        proto_tc.function.arguments = tc.input
-                    xai_messages.append(msg_proto)
-                elif pending_text:
-                    # Regular assistant text message.
-                    text = "\n".join(b.text for b in pending_text)
-                    if text:
-                        xai_messages.append(assistant(text))
-
-                if assistant_media:
-                    promo_args = _xai_user_args_from_blocks(
-                        assistant_media,
-                        image,
-                        self.supported_input_media_types,
-                    )
-                    if promo_args:
-                        xai_messages.append(user(*promo_args))
+                flush_assistant(
+                    pending_text,
+                    pending_tool_calls,
+                    assistant_media,
+                )
 
             else:
                 logger.warning(

@@ -556,7 +556,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
         self,
     ) -> None:
-        """Promoted media does not split parallel tool-result messages."""
+        """Assistant media precedes tools; result media follows all results."""
         fmt = XAIChatFormatter()
         picture = DataBlock(
             id="image_1",
@@ -570,6 +570,13 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 AssistantMsg(
                     name="assistant",
                     content=[
+                        TextBlock(text="Original chart."),
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
                         ToolCallBlock(
                             id="call_shot",
                             name="screenshot",
@@ -595,6 +602,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             output=[TextBlock(text="Example Domain")],
                             state=ToolResultState.SUCCESS,
                         ),
+                        TextBlock(text="New chart analysis."),
                     ],
                 ),
             ],
@@ -602,8 +610,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
 
         normalized_res = [
             (
-                res[0].role,
-                [part.text for part in res[0].content],
+                msg.role,
+                [part.text for part in msg.content],
                 [
                     (
                         tool_call.id,
@@ -611,14 +619,18 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                         tool_call.function.name,
                         tool_call.function.arguments,
                     )
-                    for tool_call in res[0].tool_calls
+                    for tool_call in msg.tool_calls
                 ],
-            ),
-            *res[1:],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
         ]
         self.assertListEqual(
             normalized_res,
             [
+                assistant("Original chart."),
+                user(image("https://example.com/original.png")),
                 (
                     2,
                     [],
@@ -655,6 +667,65 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     image("https://example.com/shot.png"),
                     "</system-reminder>",
                 ),
+                assistant("New chart analysis."),
+            ],
+        )
+
+    async def test_chat_formatter_media_before_separate_tool_result(
+        self,
+    ) -> None:
+        """Media must not separate a tool call from a later result message."""
+        res = await XAIChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
+                        ToolCallBlock(id="call_1", name="edit", input="{}"),
+                    ],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="edit",
+                            output="Done.",
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        normalized_res = [
+            (
+                msg.role,
+                [part.text for part in msg.content],
+                [
+                    (
+                        call.id,
+                        call.type,
+                        call.function.name,
+                        call.function.arguments,
+                    )
+                    for call in msg.tool_calls
+                ],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
+        ]
+        self.assertListEqual(
+            normalized_res,
+            [
+                user(image("https://example.com/original.png")),
+                (2, [], [("call_1", 1, "edit", "{}")]),
+                tool_result("Done.", tool_call_id="call_1"),
             ],
         )
 
