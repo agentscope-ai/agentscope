@@ -25,6 +25,11 @@ class BackgroundTaskInfo(BaseModel):
     started_at: datetime = Field(
         description="UTC timestamp when the task was registered.",
     )
+    execution_started_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when tool execution began, before "
+        "offload. Null when the original start time was not recorded.",
+    )
     completed_at: datetime | None = Field(
         default=None,
         description="UTC timestamp when the task reached a terminal "
@@ -66,6 +71,14 @@ def to_info(task: BackgroundTaskRecord) -> BackgroundTaskInfo:
         started_at=datetime.fromtimestamp(
             task.started_at,
             tz=timezone.utc,
+        ),
+        execution_started_at=(
+            datetime.fromtimestamp(
+                task.execution_started_at,
+                tz=timezone.utc,
+            )
+            if task.execution_started_at is not None
+            else None
         ),
         completed_at=(
             datetime.fromtimestamp(task.completed_at, tz=timezone.utc)
