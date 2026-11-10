@@ -63,14 +63,15 @@ class KnowledgeBaseData(BaseModel):
     chunker_config: ChunkerConfig | None = Field(
         default=None,
         description=(
-            "Chunker configuration pinned at creation time. "
+            "Current chunker configuration. Updating it requires "
+            "reindexing every existing document. "
             "``None`` only for legacy records created before "
             "per-KB chunker support was introduced; the index "
             "worker falls back to ``ApproxTokenChunker()`` in "
             "that case.  New records always have an explicit value."
         ),
     )
-    """Chunker configuration pinned at creation time.
+    """Current chunker configuration.
 
     ``None`` only for legacy records; new creations always set this.
     """
@@ -82,6 +83,12 @@ class KnowledgeBaseData(BaseModel):
         ),
     )
     """The vector store collection name (e.g. ``kb_<uuid_hex>``)."""
+
+    reindex_id: str | None = None
+    """Latest chunker-change batch, shared with its document records."""
+
+    reindex_pending: bool = False
+    """Whether documents still need to be dispatched for this batch."""
 
 
 class KnowledgeBaseRecord(_RecordBase):

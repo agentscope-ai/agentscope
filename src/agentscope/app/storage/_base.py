@@ -1134,6 +1134,16 @@ class StorageBase(ABC):
                 All knowledge base records belonging to the user.
         """
 
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Return knowledge bases with unfinished reindex dispatch.
+
+        Backends supporting chunker updates must implement this scan
+        so the index sweeper can resume dispatch after a process crash.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def delete_knowledge_base(
         self,
@@ -1303,7 +1313,9 @@ class StorageBase(ABC):
     ) -> bool:
         """Compare-and-swap acquisition of the document processing lease.
 
-        Succeeds only if no other worker currently holds a live lease —
+        Terminal documents (``ready`` / ``error``) cannot be acquired.
+        A retry must first reset them to ``pending``. Otherwise succeeds
+        only if no other worker currently holds a live lease —
         i.e. ``processing_node`` is unset or ``lease_expires_at`` is in
         the past relative to ``now``.  On success the record's
         ``processing_node`` and ``data.lease_expires_at`` fields are
@@ -1331,7 +1343,7 @@ class StorageBase(ABC):
         Returns:
             `bool`:
                 ``True`` when the lease was acquired by this caller,
-                ``False`` when another worker already holds it.
+                ``False`` when absent, terminal, or already leased.
         """
 
     @abstractmethod
@@ -1439,8 +1451,9 @@ class StorageBase(ABC):
 
         Args:
             threshold (`datetime`):
-                Cut-off creation time; only ``pending`` records
-                ``created_at < threshold`` are returned.
+                Cut-off for the current pending pass. Compare against
+                ``data.pending_since``, falling back to ``created_at``
+                for legacy records without a pending timestamp.
 
         Returns:
             `list[KnowledgeDocumentRecord]`:

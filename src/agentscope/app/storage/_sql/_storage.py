@@ -1944,6 +1944,26 @@ class AsyncSQLAlchemyStorage(StorageBase):
             )
         return [_to_record(r, KnowledgeBaseRecord) for r in rows]
 
+    async def list_pending_knowledge_base_reindexes(
+        self,
+    ) -> list[KnowledgeBaseRecord]:
+        """Return unfinished batches stored in the KB JSON payload."""
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        sa.select(KnowledgeBaseRow).where(
+                            KnowledgeBaseRow.payload["data"]["reindex_pending"]
+                            .as_boolean()
+                            .is_(True),
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(row, KnowledgeBaseRecord) for row in rows]
+
     async def delete_knowledge_base(
         self,
         user_id: str,
@@ -2104,6 +2124,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                     KnowledgeDocumentRow.user_id == user_id,
                     KnowledgeDocumentRow.knowledge_base_id
                     == knowledge_base_id,
+                    KnowledgeDocumentRow.status.notin_(("ready", "error")),
                     or_(
                         KnowledgeDocumentRow.processing_node.is_(None),
                         KnowledgeDocumentRow.lease_expires_at.is_(None),
@@ -2225,7 +2246,17 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .scalars()
                 .all()
             )
-        return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+        records = [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+        return [
+            record
+            for record in records
+            if (
+                _to_naive_utc(record.data.pending_since)
+                if record.data.pending_since is not None
+                else record.created_at
+            )
+            < threshold
+        ]
 
     # ---- Voice Profile ----
 

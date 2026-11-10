@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { knowledgeBaseApi } from '@/api';
-import type { KnowledgeDocumentStatus, KnowledgeDocumentView } from '@/api';
+import type { KnowledgeDocumentView } from '@/api';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { DocumentDetailDrawer } from '@/components/knowledge/DocumentDetailDrawer.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -36,8 +36,6 @@ interface KnowledgeDocumentsPanelProps {
 type Row =
 	| { kind: 'server'; doc: KnowledgeDocumentView; localTask: UploadTask | null }
 	| { kind: 'local'; task: UploadTask };
-
-const TERMINAL_SERVER_STATUSES: KnowledgeDocumentStatus[] = ['ready', 'error'];
 
 function formatSize(bytes: number): string {
 	if (!bytes) return '—';
@@ -105,20 +103,8 @@ function RowView({ row, onCancel, onDismiss, onDelete, onOpen }: RowViewProps) {
 	const filename = row.kind === 'server' ? row.doc.filename : row.task.filename;
 	const size = row.kind === 'server' ? row.doc.size : row.task.size;
 
-	// Phase resolution — the local task wins while the server hasn't
-	// caught up; once the server says `ready` / `error`, that's the
-	// truth.
-	const phase: UploadPhase = (() => {
-		if (row.kind === 'local') return row.task.phase;
-		const localPhase = row.localTask?.phase;
-		if (
-			localPhase &&
-			!TERMINAL_SERVER_STATUSES.includes(row.doc.status as KnowledgeDocumentStatus)
-		) {
-			return localPhase;
-		}
-		return row.doc.status;
-	})();
+	// Persisted status also covers reindexing after the upload finished.
+	const phase: UploadPhase = row.kind === 'local' ? row.task.phase : row.doc.status;
 
 	// Progress bar logic: byte-level during `uploading`; otherwise a
 	// coarse phase-derived value so the user gets visible movement.
@@ -313,7 +299,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 	// upload response and the next list refresh — which only happens
 	// when indexing finishes.
 	const rows: Row[] = useMemo(() => {
-		const unclaimed = new Map(documents.map((doc) => [doc.id, doc]));
+		const unclaimed = new Map(documents.map((doc) => [doc.id, statuses[doc.id] ?? doc]));
 		const taskRows: Row[] = tasks.map((task) => {
 			const doc = task.documentId ? unclaimed.get(task.documentId) : undefined;
 			if (!doc) return { kind: 'local', task };
@@ -326,7 +312,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 			localTask: null,
 		}));
 		return [...taskRows, ...documentRows];
-	}, [documents, tasks]);
+	}, [documents, statuses, tasks]);
 
 	const onUploadClick = useCallback(() => {
 		fileInputRef.current?.click();

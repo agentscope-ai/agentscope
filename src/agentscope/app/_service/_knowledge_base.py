@@ -20,12 +20,14 @@ mode.
 import asyncio
 import uuid
 from collections import Counter
+from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, AsyncIterator
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from ..access import ResourceKind
+from ..message_bus import MessageBusKeys
 from ..rag.knowledge_base_manager import (
     DimensionPolicyError,
     KnowledgeBaseNotFoundError,
@@ -43,6 +45,15 @@ from ._access import (
     KnowledgeBaseView,
     ResourceAccessService,
 )
+from ._knowledge_reindex import resume_knowledge_base_reindex
+
+
+_IN_FLIGHT_DOCUMENT_STATUSES = {
+    "pending",
+    "parsing",
+    "chunking",
+    "indexing",
+}
 
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
@@ -153,26 +164,8 @@ class KnowledgeBaseService:
                 invalid.
         """
         if chunker_config is None:
-            chunker_config = ChunkerConfig(
-                type=next(iter(self._chunkers_by_type)),
-                parameters={},
-            )
-        chunker_cls = self._chunkers_by_type.get(chunker_config.type)
-        if chunker_cls is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"Unknown chunker type: {chunker_config.type!r}, "
-                    f"available: {sorted(self._chunkers_by_type)}"
-                ),
-            )
-        try:
-            chunker_cls.Parameters(**chunker_config.parameters)
-        except (TypeError, ValueError, ValidationError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Invalid chunker parameters: {exc}",
-            ) from exc
+            chunker_config = self._default_chunker_config()
+        self._validate_chunker_config(chunker_config)
 
         try:
             return await self._manager.create_knowledge_base(
@@ -305,25 +298,152 @@ class KnowledgeBaseService:
         knowledge_base_id: str,
         name: str | None = None,
         description: str | None = None,
+        chunker_config: ChunkerConfig | None = None,
     ) -> "KnowledgeBaseRecord":
-        """Update mutable fields on a knowledge base, raising 404 if absent.
+        """Update a knowledge base and rebuild changed chunking.
 
-        Only ``name`` and ``description`` are mutable.  The embedding
-        model configuration is pinned at creation time.
+        A changed chunker configuration resets every terminal document
+        and dispatches it through the existing indexing pipeline. An
+        in-flight document blocks the change so two configurations cannot
+        write the same knowledge base concurrently.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                owner_id,
+                knowledge_base_id,
+            ),
+        ):
+            return await self._update_knowledge_base_locked(
+                owner_id=owner_id,
+                knowledge_base_id=knowledge_base_id,
+                name=name,
+                description=description,
+                chunker_config=chunker_config,
+            )
+
+    async def _update_knowledge_base_locked(
+        self,
+        owner_id: str,
+        knowledge_base_id: str,
+        name: str | None,
+        description: str | None,
+        chunker_config: ChunkerConfig | None,
+    ) -> "KnowledgeBaseRecord":
+        """Apply an update while holding the knowledge-base lock."""
+        documents: list[KnowledgeDocumentRecord] = []
+        chunker_changed = False
+        if chunker_config is not None:
+            self._validate_chunker_config(chunker_config)
+            current = await self._manager.get_knowledge_base(
+                owner_id,
+                knowledge_base_id,
+            )
+            if current is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Knowledge base {knowledge_base_id!r} not found.",
+                )
+            chunker_changed = not self._chunker_configs_match(
+                current.data.chunker_config,
+                chunker_config,
+            )
+            if chunker_changed:
+                if current.data.reindex_pending:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "The previous reindex is still being dispatched."
+                        ),
+                    )
+                documents = await self._storage.list_knowledge_documents(
+                    owner_id,
+                    knowledge_base_id,
+                )
+                in_flight = [
+                    document
+                    for document in documents
+                    if document.status in _IN_FLIGHT_DOCUMENT_STATUSES
+                ]
+                if in_flight:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Cannot change the chunker while "
+                            f"{len(in_flight)} document(s) are being indexed."
+                        ),
+                    )
+
         record = await self._manager.update_knowledge_base(
             user_id=owner_id,
             knowledge_base_id=knowledge_base_id,
             name=name,
             description=description,
+            chunker_config=chunker_config,
+            reindex_id=uuid.uuid4().hex if chunker_changed else None,
         )
         if record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Knowledge base {knowledge_base_id!r} not found.",
             )
-        return record
+
+        return await resume_knowledge_base_reindex(
+            self._storage,
+            self._bus,
+            record,
+        )
+
+    def _validate_chunker_config(
+        self,
+        chunker_config: ChunkerConfig,
+    ) -> None:
+        """Validate a persisted chunker type and parameter payload."""
+        chunker_cls = self._chunkers_by_type.get(chunker_config.type)
+        if chunker_cls is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Unknown chunker type: {chunker_config.type!r}, "
+                    f"available: {sorted(self._chunkers_by_type)}"
+                ),
+            )
+        try:
+            chunker_cls.Parameters(**chunker_config.parameters)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid chunker parameters: {exc}",
+            ) from exc
+
+    def _chunker_configs_match(
+        self,
+        current: ChunkerConfig | None,
+        requested: ChunkerConfig,
+    ) -> bool:
+        """Compare effective parameters, including schema defaults."""
+        if current is None:
+            current = ChunkerConfig(type=ApproxTokenChunker.chunker_type)
+        if current.type != requested.type:
+            return False
+        chunker_cls = self._chunkers_by_type.get(current.type)
+        if chunker_cls is None:
+            return False
+        try:
+            current_parameters = chunker_cls.Parameters(**current.parameters)
+            requested_parameters = chunker_cls.Parameters(
+                **requested.parameters,
+            )
+        except (TypeError, ValueError, ValidationError):
+            return False
+        return current_parameters == requested_parameters
+
+    def _default_chunker_config(self) -> ChunkerConfig:
+        """Build the configured default chunker payload."""
+        return ChunkerConfig(
+            type=next(iter(self._chunkers_by_type)),
+            parameters={},
+        )
 
     async def delete_knowledge_base(
         self,
@@ -338,6 +458,23 @@ class KnowledgeBaseService:
         the original files available for retry or recovery.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                owner_id,
+                knowledge_base_id,
+            ),
+        ):
+            await self._delete_knowledge_base_locked(
+                owner_id,
+                knowledge_base_id,
+            )
+
+    async def _delete_knowledge_base_locked(
+        self,
+        owner_id: str,
+        knowledge_base_id: str,
+    ) -> None:
+        """Delete the KB while excluding configuration and upload writes."""
         documents = await self._storage.list_knowledge_documents(
             owner_id,
             knowledge_base_id,
@@ -422,16 +559,39 @@ class KnowledgeBaseService:
                 size=size,
                 content_type=content_type,
                 blob_uri=blob_uri,
+                pending_since=datetime.now(timezone.utc),
             ),
         )
         try:
-            stored = await self._storage.upsert_knowledge_document(
-                owner_id,
-                record,
-            )
+            async with self._bus.acquire_lock(
+                MessageBusKeys.knowledge_base_mutation_lock(
+                    owner_id,
+                    knowledge_base_id,
+                ),
+            ):
+                knowledge_base = await self._manager.get_knowledge_base(
+                    owner_id,
+                    knowledge_base_id,
+                )
+                if knowledge_base is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="The knowledge base no longer exists.",
+                    )
+                record.data.reindex_id = knowledge_base.data.reindex_id
+                stored = await self._storage.upsert_knowledge_document(
+                    owner_id,
+                    record,
+                )
+                await enqueue_index_task(
+                    self._bus,
+                    user_id=owner_id,
+                    knowledge_base_id=knowledge_base_id,
+                    document_id=document_id,
+                )
         except (Exception, asyncio.CancelledError):
-            # Storage write failed or cancelled — drop the blob only if
-            # the record was not persisted, keeping it if already committed.
+            # Include cancellation while waiting for the KB lock. Keep
+            # the blob if persistence committed before an error occurred.
             await self._cleanup_unpersisted_blob(
                 owner_id,
                 knowledge_base_id,
@@ -439,13 +599,6 @@ class KnowledgeBaseService:
                 blob_uri,
             )
             raise
-
-        await enqueue_index_task(
-            self._bus,
-            user_id=owner_id,
-            knowledge_base_id=knowledge_base_id,
-            document_id=document_id,
-        )
         return stored
 
     async def list_documents(
@@ -786,6 +939,25 @@ class KnowledgeBaseService:
                 caller; ``403`` if visible but not editable.
         """
         owner_id = await self._require_edit(user_id, knowledge_base_id)
+        async with self._bus.acquire_lock(
+            MessageBusKeys.knowledge_base_mutation_lock(
+                owner_id,
+                knowledge_base_id,
+            ),
+        ):
+            await self._delete_document_locked(
+                owner_id,
+                knowledge_base_id,
+                document_id,
+            )
+
+    async def _delete_document_locked(
+        self,
+        owner_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
+        """Delete a document while excluding reindex resets."""
         record = await self._storage.get_knowledge_document(
             owner_id,
             knowledge_base_id,
@@ -796,7 +968,10 @@ class KnowledgeBaseService:
             # document is already gone.
             return
 
-        knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
+        knowledge = await self._manager.get_knowledge(
+            owner_id,
+            knowledge_base_id,
+        )
         await knowledge.delete_document(document_id)
         await self._storage.delete_knowledge_document(
             owner_id,
