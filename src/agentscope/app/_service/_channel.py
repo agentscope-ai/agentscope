@@ -112,13 +112,8 @@ class ChannelService:
         record = await self._require(channel_id)
         updates.pop("credentials", None)
         updates.pop("channel_type", None)
-        # ``model_copy(update=...)`` skips validators; re-run
-        # ``ChannelRecord.model_validate`` on the merged shape so an
-        # explicit ``null`` for a non-nullable field (``routing``,
-        # ``session``, ``platform_config``, ``enabled``) costs the caller a
-        # 422 instead of a stored-but-und-readable record — which would
-        # break the channel list and even its own DELETE, the same failure
-        # mode ``update_agent`` already guards against.
+        # model_copy(update=...) skips validation; reject invalid updates
+        # before they reach storage.
         try:
             updated = ChannelRecord.model_validate(
                 {
