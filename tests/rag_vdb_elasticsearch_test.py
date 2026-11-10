@@ -126,8 +126,7 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
 
         await self.store.insert(
             "kb-1",
-            [record],
-            metadata_filter={"tenant": "alpha"},
+            [record.model_copy(update={"scope": {"tenant": "alpha"}})],
         )
         alpha_id = self.client.bulk.await_args.kwargs["operations"][0][
             "index"
@@ -135,12 +134,11 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
 
         await self.store.insert(
             "kb-1",
-            [record],
-            metadata_filter={"tenant": "beta"},
+            [record.model_copy(update={"scope": {"tenant": "beta"}})],
         )
-        beta_id = self.client.bulk.await_args.kwargs["operations"][0][
-            "index"
-        ]["_id"]
+        beta_id = self.client.bulk.await_args.kwargs["operations"][0]["index"][
+            "_id"
+        ]
 
         self.assertEqual(len({unscoped_id, alpha_id, beta_id}), 3)
 

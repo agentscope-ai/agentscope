@@ -26,13 +26,10 @@ from pydantic import BaseModel, Field
 from .._document import Chunk
 
 
-def _record_identity_key(
-    record: "VectorRecord",
-    metadata_filter: dict[str, Any] | None = None,
-) -> str:
+def _record_identity_key(record: "VectorRecord") -> str:
     """Build a collision-free identity key for a vector record.
 
-    When ``metadata_filter`` is omitted or empty, returns the legacy
+    An omitted or empty scope returns the legacy
     ``f"{record.document_id}\\0{record.chunk.chunk_index}"`` string so
     unscoped collection IDs remain unchanged. When a non-empty scope
     filter is supplied, appends a NUL delimiter and the canonical JSON
@@ -41,10 +38,10 @@ def _record_identity_key(
     overlaps.
     """
     base_key = f"{record.document_id}\0{record.chunk.chunk_index}"
-    if not metadata_filter:
+    if not record.scope:
         return base_key
     scope_key = json.dumps(
-        metadata_filter,
+        record.scope,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -75,6 +72,9 @@ class VectorRecord(BaseModel):
 
     chunk: Chunk
     """The business payload — content, source, structural metadata."""
+
+    scope: dict[str, Any] | None = Field(default=None, exclude=True)
+    """Optional identity scope, excluded from serialized records."""
 
 
 class VectorSearchResult(BaseModel):
@@ -218,7 +218,6 @@ class VectorStoreBase(ABC):
         self,
         collection: str,
         records: list[VectorRecord],
-        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Insert records into a collection.
 
@@ -228,10 +227,6 @@ class VectorStoreBase(ABC):
             records (`list[VectorRecord]`):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
-            metadata_filter (`dict[str, Any] | None`, optional):
-                Optional scope filter to include in deterministic record ID
-                derivation so scoped ``KnowledgeBase`` instances sharing a
-                collection do not overwrite another scope's records.
         """
 
     @abstractmethod
