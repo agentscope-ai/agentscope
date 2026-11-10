@@ -253,9 +253,38 @@ class EmbeddingModelBase(Generic[InputT]):
             )
 
         # Dispatch all batches concurrently, each with retry.
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
+        tasks = [
+            asyncio.create_task(self._call_with_retry(batch, **kwargs))
+            for batch in batches
+        ]
+        batches_result = asyncio.gather(*tasks)
+        try:
+            results: list[EmbeddingResponse] = await asyncio.shield(
+                batches_result,
+            )
+        except BaseException as error:
+            # gather propagates a batch error without stopping its siblings.
+            # Finish owned coroutine cleanup before returning to the caller.
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            # Retrieve the original gather's exception on caller cancellation.
+            cleanup = asyncio.gather(
+                batches_result,
+                *tasks,
+                return_exceptions=True,
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(cleanup)
+                    break
+                except asyncio.CancelledError as exc:
+                    # Finish cleanup before propagating caller cancellation.
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from error
+            raise
 
         return self._merge_responses(results)
 
