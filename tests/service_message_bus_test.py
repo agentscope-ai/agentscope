@@ -172,6 +172,72 @@ class TestRegistryConditionalPrimitives(IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self.bus.registry_get("ns", "f"), "v2")
 
+    async def test_set_if_none_creates_only_missing_fields(self) -> None:
+        """Missing and empty fields differ; concurrent creators cannot win."""
+        for bus in (self.bus, InMemoryMessageBus()):
+            with self.subTest(backend=type(bus).__name__):
+                await bus.registry_set("ns", "empty", "")
+                self.assertFalse(
+                    await bus.registry_set_if(
+                        "ns",
+                        "empty",
+                        "replacement",
+                        expected=None,
+                    ),
+                )
+                results = await asyncio.gather(
+                    bus.registry_set_if("ns", "new", "v", expected=None),
+                    bus.registry_set_if("ns", "new", "v", expected=None),
+                )
+                self.assertEqual(sorted(results), [False, True])
+                self.assertTrue(
+                    await bus.registry_set_if(
+                        "ns",
+                        "empty",
+                        "updated",
+                        expected="",
+                    ),
+                )
+                self.assertFalse(
+                    await bus.registry_set_if(
+                        "ns",
+                        "missing",
+                        "v",
+                        expected="",
+                    ),
+                )
+                self.assertEqual(
+                    await bus.registry_getall("ns"),
+                    {"empty": "updated", "new": "v"},
+                )
+
+    async def test_set_if_none_refreshes_expiry_only_on_creation(self) -> None:
+        """Recovery sets hash TTL without renewing a competing outcome."""
+        self.assertTrue(
+            await self.bus.registry_set_if(
+                "ns",
+                "f",
+                "terminal",
+                expected=None,
+                ttl_secs=1000,
+            ),
+        )
+        self.assertGreater(await self.fr.ttl("ns"), 0)
+        self.assertFalse(
+            await self.bus.registry_set_if(
+                "ns",
+                "f",
+                "running",
+                expected=None,
+                ttl_secs=5000,
+            ),
+        )
+        self.assertLessEqual(await self.fr.ttl("ns"), 1000)
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"f": "terminal"},
+        )
+
     async def test_set_if_refreshes_the_expiry_only_when_it_writes(
         self,
     ) -> None:
@@ -207,6 +273,48 @@ class TestRegistryConditionalPrimitives(IsolatedAsyncioTestCase):
     async def test_pop_of_an_absent_field_is_not_an_error(self) -> None:
         """An expired session reads as gone, not as a failure."""
         self.assertIsNone(await self.bus.registry_pop("missing", "f"))
+
+    async def test_conditional_delete_preserves_newer_values(self) -> None:
+        """Both backends delete exactly one unchanged field, atomically."""
+        for bus in (self.bus, InMemoryMessageBus()):
+            with self.subTest(backend=type(bus).__name__):
+                await bus.registry_set("ns", "f", "new")
+                await bus.registry_set("ns", "keep", "value")
+                self.assertFalse(
+                    await bus.registry_del_if("ns", "f", expected="old"),
+                )
+                self.assertEqual(
+                    await bus.registry_getall("ns"),
+                    {"f": "new", "keep": "value"},
+                )
+                results = await asyncio.gather(
+                    bus.registry_del_if("ns", "f", expected="new"),
+                    bus.registry_del_if("ns", "f", expected="new"),
+                )
+                self.assertEqual(sorted(results), [False, True])
+                self.assertEqual(
+                    await bus.registry_getall("ns"),
+                    {"keep": "value"},
+                )
+                self.assertFalse(
+                    await bus.registry_del_if("missing", "f", expected=""),
+                )
+
+    async def test_default_conditional_delete_leaves_data_intact(self) -> None:
+        """Existing adapters inherit a safe no-op for conditional deletion."""
+        await self.bus.registry_set("ns", "f", "value")
+        self.assertFalse(
+            await MessageBus.registry_del_if(
+                self.bus,
+                "ns",
+                "f",
+                expected="value",
+            ),
+        )
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"f": "value"},
+        )
 
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):

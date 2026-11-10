@@ -663,6 +663,31 @@
 		"blockedBy": "blocked by"
 	},
 	"panel": {
+		"background": {
+			"title": "Background tools",
+			"runningCount": "Running: {{count}}",
+			"refresh": "Refresh background tools",
+			"duration": "Background duration: {{duration}}",
+			"totalDuration": "Total duration: {{duration}}",
+			"backgroundDuration": "Of which in background: {{duration}}",
+			"copyId": "Copy task ID",
+			"copied": "Task ID copied",
+			"errorDetails": "Failure details",
+			"noSession": "Select a conversation to view background tools",
+			"emptyTitle": "No background tools",
+			"emptyDescription": "Tools that continue running in the background will appear here.",
+			"noRunning": "No tools are running in the background.",
+			"recent": "Recently finished ({{count}})",
+			"retention": "Recent results are kept temporarily. This is not a complete history.",
+			"loadError": "Could not load background tools. Try again.",
+			"stale": "Could not refresh. Showing the last known status; tasks may have changed.",
+			"status": {
+				"running": "Running",
+				"completed": "Completed",
+				"failed": "Failed",
+				"cancelled": "Cancelled"
+			}
+		},
 		"plan": {
 			"title": "Plan",
 			"completed": "Completed: {{count}}",
