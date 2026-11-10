@@ -54,6 +54,36 @@ def _watch_error() -> type[BaseException]:
     return WatchError
 
 
+# Claim a message id and append the message as one atomic step, so two
+# writers of the same message cannot both pass an existence check and both
+# append it.  The script returns -1 when the session predates the id index
+# and the caller has to rebuild it from the list first, 0 when the id is
+# already stored (the caller updates it in place) and 1 when it appended.
+_UPSERT_MESSAGE_LUA = """
+local key = KEYS[1]
+local index_key = KEYS[2]
+local message_id = ARGV[1]
+local payload = ARGV[2]
+local ttl = ARGV[3]
+
+if redis.call('EXISTS', index_key) == 0 and redis.call('LLEN', key) > 0 then
+    return -1
+end
+
+if redis.call('SISMEMBER', index_key, message_id) == 1 then
+    return 0
+end
+
+redis.call('RPUSH', key, payload)
+redis.call('SADD', index_key, message_id)
+if ttl ~= '' then
+    redis.call('EXPIRE', key, ttl)
+    redis.call('EXPIRE', index_key, ttl)
+end
+return 1
+"""
+
+
 class RedisStorage(StorageBase):
     """The Redis storage implementation."""
 
@@ -1463,42 +1493,64 @@ class RedisStorage(StorageBase):
         session_id: str,
         msg: Msg,
     ) -> None:
-        """Persist a message to the session's message list."""
+        """Persist a message to the session's message list.
+
+        The id index decides whether the message is new, and claiming the
+        id and appending the message happen in one atomic step: two
+        writers of the same message (a retried request, two workers
+        storing the same reply) cannot both append it.
+        """
         key = self._message_key(user_id, session_id)
         index_key = self._message_index_key(user_id, session_id)
+        payload = msg.model_dump_json()
+        ttl = "" if self.key_ttl is None else int(self.key_ttl)
 
-        async with self._client.pipeline(transaction=False) as pipe:
-            pipe.exists(index_key)
-            pipe.sismember(index_key, msg.id)
-            index_exists, message_exists = await pipe.execute()
-        message_exists = bool(message_exists)
-        if not index_exists:
+        async def _claim() -> int:
+            """Claim the id, appending the message when it is new."""
+            return int(
+                await self._client.eval(
+                    _UPSERT_MESSAGE_LUA,
+                    2,
+                    key,
+                    index_key,
+                    msg.id,
+                    payload,
+                    ttl,
+                ),
+            )
+
+        claimed = await _claim()
+        if claimed == -1:
+            # A session stored before the id index existed: rebuild it from
+            # the list (SADD is idempotent, so concurrent rebuilds agree)
+            # and claim again.
             raw_messages = await self._client.lrange(key, 0, -1)
             message_ids = {
                 Msg.model_validate_json(raw).id for raw in raw_messages
             }
-            message_exists = msg.id in message_ids
             if message_ids:
                 await self._client.sadd(index_key, *message_ids)
+                claimed = await _claim()
+        if claimed == 1:
+            return
 
-        payload = msg.model_dump_json()
-        if message_exists:
-            index = await self._find_message_index(key, msg.id)
-            if index is not None:
-                async with self._client.pipeline(transaction=True) as pipe:
-                    pipe.lset(key, index, payload)
-                    if self.key_ttl is not None:
-                        pipe.expire(key, self.key_ttl)
-                        pipe.expire(index_key, self.key_ttl)
-                    await pipe.execute()
-                return
+        # The id is already indexed: overwrite the stored message in place.
+        # An index entry whose message is gone from the list falls through
+        # to an append.
+        index = await self._find_message_index(key, msg.id)
+        if index is not None:
+            async with self._client.pipeline(transaction=True) as pipe:
+                pipe.lset(key, index, payload)
+                if self.key_ttl is not None:
+                    pipe.expire(key, self.key_ttl)
+                    pipe.expire(index_key, self.key_ttl)
+                await pipe.execute()
+            return
 
         async with self._client.pipeline(transaction=True) as pipe:
             pipe.rpush(key, payload)
-            pipe.sadd(index_key, msg.id)
             if self.key_ttl is not None:
                 pipe.expire(key, self.key_ttl)
-                pipe.expire(index_key, self.key_ttl)
             await pipe.execute()
 
     async def delete_message(
