@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
+
 import base64
 import mimetypes
 import tempfile
@@ -16,6 +17,16 @@ from ..message import (
     TextBlock,
     URLSource,
 )
+
+
+def _read_file_as_base64(path: str) -> str:
+    """Read a local file and return its bytes base64-encoded.
+
+    Deliberately blocking: always run through ``asyncio.to_thread`` so that
+    reading a large file cannot stall the event loop.
+    """
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 
 class FormatterBase(BaseModel):

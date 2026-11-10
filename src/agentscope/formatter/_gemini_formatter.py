@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Google Gemini API formatter in agentscope."""
+
+import asyncio
 import base64
 import fnmatch
 from abc import ABC
@@ -7,9 +9,13 @@ from typing import Any
 from urllib.request import url2pathname
 
 import requests
+
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import (
+    FormatterBase,
+    _read_file_as_base64,
+)
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -29,7 +35,7 @@ class _GeminiFormatterBase(FormatterBase, ABC):
     """Base class for Gemini formatters, providing shared data block
     formatting logic."""
 
-    def _format_gemini_data_block(
+    async def _format_gemini_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -59,10 +65,10 @@ class _GeminiFormatterBase(FormatterBase, ABC):
             )
             return None
 
-        return self._format_media_source(source, block.model_extra)
+        return await self._format_media_source(source, block.model_extra)
 
-    @staticmethod
-    def _format_media_source(
+    async def _format_media_source(
+        self,
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -87,13 +93,17 @@ class _GeminiFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
-                # Local file - read and convert to base64
+                # Local file - read and convert to base64, off the event loop
                 file_path = url2pathname(url.removeprefix("file://"))
-                with open(file_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
+                data = await asyncio.to_thread(
+                    _read_file_as_base64,
+                    file_path,
+                )
             else:
-                # Remote URL - download and convert to base64
-                response = requests.get(url, timeout=30)
+                # Remote URL - download and convert to base64, off the loop
+                response = await asyncio.to_thread(
+                    requests.get, url, timeout=30
+                )
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
         else:
@@ -222,8 +232,10 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                                 if sub.text:
                                     hint_parts.append({"text": sub.text})
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_gemini_data_block(
-                                    sub,
+                                formatted_sub = (
+                                    await self._format_gemini_data_block(
+                                        sub,
+                                    )
                                 )
                                 if formatted_sub:
                                     hint_parts.append(formatted_sub)
@@ -240,7 +252,7 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         )
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_gemini_data_block(block)
+                    formatted = await self._format_gemini_data_block(block)
                     if formatted:
                         parts.append(formatted)
 
@@ -296,8 +308,10 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                             if isinstance(item, TextBlock):
                                 promoted_parts.append({"text": item.text})
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_gemini_data_block(
-                                    item,
+                                fmt_item = (
+                                    await self._format_gemini_data_block(
+                                        item,
+                                    )
                                 )
                                 if fmt_item is not None:
                                     promoted_parts.append(fmt_item)
@@ -463,7 +477,7 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
                         )
                         accumulated_text = []
 
-                    formatted = self._format_gemini_data_block(block)
+                    formatted = await self._format_gemini_data_block(block)
                     if formatted:
                         conversation_parts.append(formatted)
 
