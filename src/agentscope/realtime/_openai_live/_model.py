@@ -149,8 +149,8 @@ class OpenAILiveModel(RealtimeModelBase):
 
         Raises:
             asyncio.TimeoutError:
-                If the provider does not acknowledge startup before
-                ``startup_timeout_s``.
+                If sending startup and receiving its acknowledgement
+                together exceed ``startup_timeout_s``.
             ModelDisconnectedError:
                 If the connection closes before startup completes.
             asyncio.CancelledError:
@@ -191,13 +191,11 @@ class OpenAILiveModel(RealtimeModelBase):
                 self._read(),
                 name="openai-live",
             )
-            await self._send(
-                self._session_start(instructions),
-            )
-            await asyncio.wait_for(
-                asyncio.shield(self._started),
-                timeout=self.parameters.startup_timeout_s,
-            )
+            async with asyncio.timeout(self.parameters.startup_timeout_s):
+                await self._send(
+                    self._session_start(instructions),
+                )
+                await asyncio.shield(self._started)
         except (Exception, asyncio.CancelledError):
             await self._abort()
             raise

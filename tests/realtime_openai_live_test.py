@@ -605,21 +605,75 @@ class OpenAILiveLifecycleTest(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(replacement.closed)
 
     async def test_startup_timeout_settles_the_shielded_future(self) -> None:
-        """A timed-out startup leaves neither a reader nor a pending future."""
-        ws = _PendingStartupWebSocket(False)
+        """Both startup phases time out and release their resources."""
+        for block_send in (False, True):
+            with self.subTest(block_send=block_send):
+                ws = _PendingStartupWebSocket(block_send)
+                model = _model()
+                model.parameters.startup_timeout_s = 0.01
+                self.addAsyncCleanup(model.close)
+                with patch("websockets.connect", AsyncMock(return_value=ws)):
+                    connection = asyncio.create_task(model.connect("Brief."))
+                    await asyncio.wait_for(ws.reading.wait(), timeout=1)
+                    reader, started = model._reader, model._started
+                    assert reader is not None and started is not None
+                    with self.assertRaises(asyncio.TimeoutError):
+                        await asyncio.wait_for(connection, timeout=1)
+                self.assertEqual(
+                    {
+                        "guard_cancelled": connection.cancelled(),
+                        "socket_closed": ws.closed,
+                        "reader_done": reader.done(),
+                        "startup_cancelled": started.cancelled(),
+                        "socket": model._ws,
+                        "reader": model._reader,
+                        "startup": model._started,
+                    },
+                    {
+                        "guard_cancelled": False,
+                        "socket_closed": True,
+                        "reader_done": True,
+                        "startup_cancelled": True,
+                        "socket": None,
+                        "reader": None,
+                        "startup": None,
+                    },
+                )
+
+    async def test_startup_phases_share_one_timeout(self) -> None:
+        """Sending must consume part of the acknowledgement deadline."""
+        ws = _FakeWebSocket()
         model = _model()
-        model.parameters.startup_timeout_s = 0.01
+        model.parameters.startup_timeout_s = 0.1
         self.addAsyncCleanup(model.close)
-        with patch("websockets.connect", AsyncMock(return_value=ws)):
-            connection = asyncio.create_task(model.connect("Brief."))
-            await asyncio.wait_for(ws.reading.wait(), timeout=1)
-            reader, started = model._reader, model._started
-            assert reader is not None and started is not None
+        acknowledgement: asyncio.TimerHandle | None = None
+
+        async def delayed_send(raw: str) -> None:
+            """Each phase fits alone, but their combined delay does not."""
+            nonlocal acknowledgement
+            ws.sent.append(json.loads(raw))
+            await asyncio.sleep(0.06)
+            acknowledgement = asyncio.get_running_loop().call_later(
+                0.06,
+                ws.incoming.put_nowait,
+                json.dumps(
+                    {"type": "session.started", "session": {"id": "late"}},
+                ),
+            )
+
+        with (
+            patch("websockets.connect", AsyncMock(return_value=ws)),
+            patch.object(ws, "send", delayed_send),
+        ):
             with self.assertRaises(asyncio.TimeoutError):
-                await connection
+                try:
+                    await asyncio.wait_for(model.connect("Brief."), timeout=1)
+                finally:
+                    if acknowledgement is not None:
+                        acknowledgement.cancel()
         self.assertEqual(
-            (ws.closed, reader.done(), started.cancelled(), model._started),
-            (True, True, True, None),
+            (ws.closed, model._ws, model._reader, model._started),
+            (True, None, None, None),
         )
 
     async def test_startup_error_is_preserved_after_cleanup(self) -> None:
