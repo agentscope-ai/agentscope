@@ -419,13 +419,18 @@ class GeminiChatModel(ChatModelBase):
                                 thinking=part.text or "",
                                 **metadata,
                             )
-                        else:
+                        elif metadata:
                             delta_res.content.append(
                                 TextBlock(
                                     id=current_block_id,
                                     text=part.text or "",
                                     **metadata,
                                 ),
+                            )
+                        else:
+                            delta_res.append_text(
+                                block_id=current_block_id,
+                                text=part.text,
                             )
                         # Keep following unsigned text separate as well.
                         if metadata:

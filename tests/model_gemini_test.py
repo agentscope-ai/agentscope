@@ -8,11 +8,14 @@ Gemini uses google.genai client with async iterator streaming.
 import base64
 import copy
 import json
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, Annotated, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 
 from pydantic import BaseModel, Field
 
@@ -26,9 +29,10 @@ from agentscope.message import (
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
+    UserMsg,
 )
 from agentscope.message._base import Usage
-from agentscope.model import GeminiChatModel
+from agentscope.model import ChatResponse, GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
@@ -1672,3 +1676,297 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+def _text_signature(value: str) -> str:
+    """Encode an opaque test signature exactly as the wire represents it."""
+    return base64.b64encode(value.encode()).decode()
+
+
+def _text_signature_response(parts: list[dict], finished: bool = True) -> dict:
+    """Build a real SDK GenerateContentResponse JSON payload."""
+    response: dict[str, Any] = {
+        "candidates": [
+            {"content": {"role": "model", "parts": parts}, "index": 0},
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 1,
+            "candidatesTokenCount": 1,
+            "totalTokenCount": 2,
+        },
+    }
+    if finished:
+        response["candidates"][0]["finishReason"] = "STOP"
+    return response
+
+
+class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
+    """Signed text remains on its corresponding part across model turns."""
+
+    async def _round_trip(self, streaming: bool) -> None:
+        """Exercise SDK responses, public accumulation and JSON restoration."""
+        try:
+            from google.genai import types
+        except ImportError:
+            self.skipTest("Gemini extra is not installed")
+        expected: list[dict[str, Any]] = [
+            {
+                "text": "Let me think.",
+                "thought": True,
+                "thoughtSignature": _text_signature("thought"),
+            },
+            {"text": "Answer", "thoughtSignature": _text_signature("answer")},
+            {
+                "text": "Another.",
+                "thoughtSignature": _text_signature("another"),
+            },
+            {"text": "", "thoughtSignature": _text_signature("empty")},
+            {
+                "text": "",
+                "thought": True,
+                "thoughtSignature": _text_signature("empty-thought"),
+            },
+            {"thoughtSignature": _text_signature("omitted-text")},
+            {
+                "text": "",
+                "thought": False,
+                "thoughtSignature": _text_signature("explicit-false"),
+            },
+        ]
+        deltas: list[list[dict[str, Any]]] = [
+            [{"text": "Let me think.", "thought": True}],
+            [
+                {
+                    "text": "",
+                    "thought": True,
+                    "thoughtSignature": _text_signature("thought"),
+                },
+            ],
+            [{"text": "Answer"}],
+            [{"text": "", "thoughtSignature": _text_signature("answer")}],
+            [
+                {
+                    "text": "Another.",
+                    "thoughtSignature": _text_signature("another"),
+                },
+            ],
+            [{"text": "Suffix."}],
+            [{"thoughtSignature": _text_signature("omitted-text")}],
+            [
+                {
+                    "text": "",
+                    "thought": False,
+                    "thoughtSignature": _text_signature("explicit-false"),
+                },
+            ],
+        ]
+        captured = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            if streaming:
+                data = "".join(
+                    "data: "
+                    + json.dumps(
+                        _text_signature_response(
+                            parts,
+                            index == len(deltas) - 1,
+                        ),
+                    )
+                    + "\n\n"
+                    for index, parts in enumerate(deltas)
+                )
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    content=data,
+                )
+            return httpx.Response(200, json=_text_signature_response(expected))
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handle),
+        ) as client:
+            model = GeminiChatModel(
+                credential=GeminiCredential(api_key="offline-test"),
+                model="gemini-3-flash-preview",
+                stream=streaming,
+                client_kwargs={
+                    "http_options": types.HttpOptions(
+                        base_url="http://offline.test",
+                        httpx_async_client=client,
+                    ),
+                },
+            )
+            # Compare full SDK response history on the next request. Older
+            # SDKs curate away signature-only Parts, so replay comprehensive
+            # history explicitly rather than relying on that filtering.
+            native_chat = model.client.aio.chats.create(
+                model="gemini-3-flash-preview",
+                config={"automatic_function_calling": {"disable": True}},
+            )
+            if streaming:
+                async for _ in await native_chat.send_message_stream(
+                    "Explain.",
+                ):
+                    pass
+            else:
+                await native_chat.send_message("Explain.")
+            native_kwargs = {
+                "model": "gemini-3-flash-preview",
+                "contents": native_chat.get_history(curated=False)
+                + [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text="Continue.")],
+                    ),
+                ],
+                "config": {"automatic_function_calling": {"disable": True}},
+            }
+            if streaming:
+                native_stream = (
+                    await model.client.aio.models.generate_content_stream(
+                        **native_kwargs,
+                    )
+                )
+                async for _ in native_stream:
+                    pass
+            else:
+                await model.client.aio.models.generate_content(**native_kwargs)
+            history = [UserMsg(name="user", content="Explain.")]
+            result = await model(history)
+            if streaming:
+                chunks = [chunk async for chunk in result]
+                result = chunks[-1]
+                self.assertTrue(result.is_last)
+            saved = AssistantMsg(name="assistant", content=result.content)
+            restored = Msg.model_validate_json(saved.model_dump_json())
+            history.extend(
+                [restored, UserMsg(name="user", content="Continue.")],
+            )
+            next_result = await model(history)
+            if streaming:
+                async for _ in next_result:
+                    pass
+        native_parts = [
+            part
+            for content in captured[1]["contents"]
+            if content["role"] == "model"
+            for part in content["parts"]
+        ]
+        replayed_parts = [
+            part
+            for content in captured[3]["contents"]
+            if content["role"] == "model"
+            for part in content["parts"]
+        ]
+        expected_parts = (
+            [part for parts in deltas for part in parts]
+            if streaming
+            else expected
+        )
+        self.assertEqual(native_parts, expected_parts)
+        self.assertEqual(replayed_parts, native_parts)
+        self.assertEqual(len(restored.content), len(expected_parts))
+
+    async def test_nonstream_signed_parts_survive_two_turns(self) -> None:
+        """Adjacent non-streaming parts retain their own signatures."""
+        await self._round_trip(False)
+
+    async def test_stream_late_signatures_survive_two_turns(self) -> None:
+        """Late signatures survive accumulation and persistence."""
+        await self._round_trip(True)
+
+    async def test_unsigned_parts_accumulate_without_losing_text(self) -> None:
+        """Multiple Parts per SDK chunk survive public delta accumulation."""
+        try:
+            from google.genai import types
+        except ImportError:
+            self.skipTest("Gemini extra is not installed")
+
+        for chunks in (
+            [[{"text": "hello"}, {"text": " world"}]],
+            [
+                [{"text": "hello"}],
+                [{"text": " "}, {"text": "world"}],
+                [{"text": "!"}],
+            ],
+        ):
+            with self.subTest(chunks=chunks):
+                data = "".join(
+                    "data: "
+                    + json.dumps(
+                        _text_signature_response(
+                            parts,
+                            index == len(chunks) - 1,
+                        ),
+                    )
+                    + "\n\n"
+                    for index, parts in enumerate(chunks)
+                )
+                expected = "".join(
+                    part["text"] for parts in chunks for part in parts
+                )
+                captured = []
+
+                def handle(
+                    request: httpx.Request,
+                    recorded: list,
+                    payload: str,
+                ) -> httpx.Response:
+                    recorded.append(json.loads(request.content))
+                    return httpx.Response(
+                        200,
+                        headers={"content-type": "text/event-stream"},
+                        content=payload,
+                    )
+
+                async with httpx.AsyncClient(
+                    transport=httpx.MockTransport(
+                        partial(handle, recorded=captured, payload=data),
+                    ),
+                ) as client:
+                    model = GeminiChatModel(
+                        credential=GeminiCredential(api_key="offline-test"),
+                        model="gemini-3-flash-preview",
+                        stream=True,
+                        client_kwargs={
+                            "http_options": types.HttpOptions(
+                                base_url="http://offline.test",
+                                httpx_async_client=client,
+                            ),
+                        },
+                    )
+                    accumulated = ChatResponse(content=[], is_last=False)
+                    async for response in await model(
+                        [UserMsg(name="user", content="Explain.")],
+                    ):
+                        if not response.is_last:
+                            accumulated.append_chat_response(
+                                copy.deepcopy(response),
+                            )
+                        else:
+                            final = response
+
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(len(accumulated.content), 1)
+                self.assertEqual(accumulated.content[0].text, expected)
+                self.assertEqual(final.content[0].text, expected)
+                restored = Msg.model_validate_json(
+                    AssistantMsg(
+                        name="assistant",
+                        content=accumulated.content,
+                    ).model_dump_json(),
+                )
+                self.assertEqual(restored.content[0].text, expected)
+
+    async def test_unsigned_history_keeps_its_existing_shape(self) -> None:
+        """Old unsigned messages keep their shape without a migration."""
+        message = AssistantMsg(name="assistant", content="old answer")
+        dumped = message.model_dump_json()
+        restored = Msg.model_validate_json(dumped)
+        formatted = await GeminiChatFormatter().format([restored])
+        self.assertEqual(
+            formatted,
+            [{"role": "model", "parts": [{"text": "old answer"}]}],
+        )
+        self.assertNotIn("gemini_thought_signature", dumped)
