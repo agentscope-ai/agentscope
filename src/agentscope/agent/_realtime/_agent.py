@@ -216,7 +216,10 @@ class RealtimeAgent:
                 Builds a chat agent for each client-delegated Live task from
                 the supplied isolated session state. Its model, toolkit, and
                 permission state normally come from the current persisted
-                chat session.
+                chat session. The returned agent must have the same name
+                as this realtime agent so tool routing and checkpoint
+                recovery use the same assistant identity. A mismatched
+                name fails the delegation before backend execution.
         """
         self.name = name
         self.system_prompt = system_prompt
@@ -1243,6 +1246,11 @@ class RealtimeAgent:
             agent = self._delegation_agent_factory(
                 self._copy_delegation_state(),
             )
+            if agent.name != self.name:
+                raise ValueError(
+                    f"Delegation backend name {agent.name!r} must match "
+                    f"RealtimeAgent name {self.name!r}.",
+                )
         except Exception:  # noqa: BLE001
             logger.exception(
                 "RealtimeAgent: failed to create delegation backend",
