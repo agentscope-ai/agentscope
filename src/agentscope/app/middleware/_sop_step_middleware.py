@@ -117,7 +117,8 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
                 ReplyFinishedReason.COMPLETED,
                 ReplyFinishedReason.EXCEED_MAX_ITERS,
             ):
-                # Interrupted or failed endings cannot be continued.
+                # Interrupted, rejected or failed endings cannot be
+                # continued.
                 yield event
                 continue
 
