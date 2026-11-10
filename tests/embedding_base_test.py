@@ -219,7 +219,7 @@ class EmbeddingBatchLifecycleTest(IsolatedAsyncioTestCase):
                             await asyncio.gather(call, return_exceptions=True)
 
     async def test_parent_cancellation_joins_batches(self) -> None:
-        """Cancellation waits for all batch cleanup before propagating."""
+        """Repeated cancellation waits for all batch cleanup to finish."""
         model = _LocalEmbedding()
         started = [asyncio.Event(), asyncio.Event()]
         finished = []
@@ -234,7 +234,7 @@ class EmbeddingBatchLifecycleTest(IsolatedAsyncioTestCase):
             finally:
                 if index == 1:
                     cleaning.set()
-                    await release.wait()
+                await release.wait()
                 finished.append(index)
 
         with patch.object(model, "_call_api", side_effect=call_api):
@@ -248,6 +248,10 @@ class EmbeddingBatchLifecycleTest(IsolatedAsyncioTestCase):
                 await asyncio.wait_for(cleaning.wait(), 1)
                 await asyncio.sleep(0)
                 self.assertFalse(call.done())
+                for _ in range(2):
+                    call.cancel()
+                    await asyncio.sleep(0)
+                    self.assertFalse(call.done())
                 release.set()
                 with self.assertRaises(asyncio.CancelledError):
                     await asyncio.wait_for(call, 1)
