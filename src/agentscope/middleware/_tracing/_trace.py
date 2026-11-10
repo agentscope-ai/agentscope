@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """TracingMiddleware and supporting utilities for OpenTelemetry tracing."""
+import asyncio
 import json
 from typing import (
     Any,
@@ -99,7 +100,15 @@ async def _trace_async_generator_wrapper(
 
     except BaseException as e:
         has_error = True
-        _set_span_error_status(span, e)
+        if isinstance(e, (GeneratorExit, asyncio.CancelledError)):
+            # Closing or cancelling a stream early is not a failed operation:
+            # keep whatever the last chunk produced, but end the span without
+            # an ERROR status or a synthetic exception (issue #3924).
+            if last_chunk is not None:
+                span.set_attributes(_get_llm_response_attributes(last_chunk))
+            span.end()
+        else:
+            _set_span_error_status(span, e)
         raise
 
     finally:
@@ -225,7 +234,13 @@ class TracingMiddleware(MiddlewareBase):
                 yield item
         except BaseException as e:
             has_error = True
-            error_exc = e
+            if isinstance(e, (GeneratorExit, asyncio.CancelledError)):
+                # Closing or cancelling the reply stream early is not a
+                # failed operation: end the span without an ERROR status or
+                # a synthetic exception (issue #3924).
+                error_exc = None
+            else:
+                error_exc = e
             raise
         finally:
             reply_id = observed_reply_id or agent.state.reply_id
@@ -246,6 +261,14 @@ class TracingMiddleware(MiddlewareBase):
                 )
             if has_error and error_exc is not None:
                 _set_span_error_status(span, error_exc)
+            elif has_error:
+                # cancelled or closed early: not a failure, but the reply did
+                # not run to completion either, so leave the status unset
+                if last_msg is not None:
+                    span.set_attributes(
+                        _get_agent_response_attributes(last_msg),
+                    )
+                span.end()
             else:
                 if last_msg is not None:
                     span.set_attributes(
@@ -363,7 +386,18 @@ class TracingMiddleware(MiddlewareBase):
                 yield item
         except BaseException as e:
             has_error = True
-            _set_span_error_status(span, e)
+            if isinstance(e, (GeneratorExit, asyncio.CancelledError)):
+                # Closing or cancelling a stream early is not a failed
+                # operation: keep whatever the last chunk produced, but end
+                # the span without an ERROR status or a synthetic exception
+                # (issue #3924).
+                if last_item is not None:
+                    span.set_attributes(
+                        _get_tool_response_attributes(last_item),
+                    )
+                span.end()
+            else:
+                _set_span_error_status(span, e)
             raise
         finally:
             if not has_error:
