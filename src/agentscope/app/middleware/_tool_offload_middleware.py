@@ -450,9 +450,7 @@ any tool, which ends the current reasoning loop — just do nothing and end \
 this run.
 </system-reminder>"""
 
-        # Machine-readable marker: downstream consumers (UIs, gate
-        # middlewares, user code) can distinguish this placeholder from
-        # a real tool success without parsing the placeholder text.
+        # Identify background placeholders without parsing their text.
         offload_metadata = {
             "background_task_id": task_id,
             "tool_name": tool_name,
