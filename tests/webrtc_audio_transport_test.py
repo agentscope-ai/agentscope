@@ -1676,6 +1676,124 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(session._task, return_exceptions=True)
             await asyncio.gather(*close_tasks, return_exceptions=True)
 
+    async def test_cancelled_close_caller_keeps_transport_cleanup_alive(
+        self,
+    ) -> None:
+        """Caller cancellation must not strand a partially closed transport."""
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        transport = WebRTCAudioTransport(16_000, 24_000)
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _read_input() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_entered.set()
+                await release_cleanup.wait()
+
+        transport._input_task = asyncio.create_task(_read_input())
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=AsyncMock(),
+            storage=_FakeStorage(),
+            message_bus=_BlockedMessageBus(),
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_tasks: list[asyncio.Task[None]] = []
+        try:
+            await asyncio.sleep(0)
+            close_tasks.append(asyncio.create_task(session.close()))
+            await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+            close_tasks[0].cancel()
+            await asyncio.gather(close_tasks[0], return_exceptions=True)
+            close_tasks.append(asyncio.create_task(session.close()))
+            release_cleanup.set()
+            await asyncio.wait_for(asyncio.shield(close_tasks[1]), timeout=1)
+            self.assertEqual(
+                {
+                    "input_task": transport._input_task,
+                    "transport_closed": transport._closed,
+                    "peer_closed": peer_connection.closed,
+                    "closed_sessions": closed_sessions,
+                },
+                {
+                    "input_task": None,
+                    "transport_closed": True,
+                    "peer_closed": True,
+                    "closed_sessions": [session],
+                },
+            )
+        finally:
+            release_cleanup.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_close_preserves_final_write_after_startup_failure(
+        self,
+    ) -> None:
+        """Failed startup must finish persistence before releasing its lock."""
+        write_entered = asyncio.Event()
+        release_write = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        closed_sessions: list[WebRTCSession] = []
+
+        class BlockingStorage(_LockAwareStorage):
+            """Pause the final write after startup has failed."""
+
+            async def update_session_state(self, **kwargs: object) -> None:
+                """Wait before committing the final snapshot."""
+                write_entered.set()
+                await release_write.wait()
+                await super().update_session_state(**kwargs)
+
+        agent = AsyncMock()
+        agent.state = SimpleNamespace(context=[])
+        agent.__aenter__.side_effect = RuntimeError("Setup failed.")
+        storage = BlockingStorage(message_bus)
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_task: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(write_entered.wait(), timeout=1)
+            close_task = asyncio.create_task(session.close())
+            done, _ = await asyncio.wait([close_task], timeout=0.01)
+            self.assertEqual(done, set())
+            release_write.set()
+            await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+            self.assertEqual(
+                storage.calls,
+                [
+                    {
+                        "method": "update_session_state",
+                        "user_id": "alice",
+                        "agent_id": "agent-1",
+                        "session_id": "session-1",
+                        "state": agent.state,
+                    },
+                ],
+            )
+            self.assertEqual(storage.writes_under_session_lock, [True])
+            self.assertEqual(message_bus.held_locks, set())
+            self.assertEqual(closed_sessions, [session])
+            agent.close.assert_awaited_once_with()
+        finally:
+            release_write.set()
+            if session._task is not None:
+                await asyncio.gather(session._task, return_exceptions=True)
+            if close_task is not None:
+                await asyncio.gather(close_task, return_exceptions=True)
+
     async def test_checkpoint_boundaries_persist_state(self) -> None:
         """Persist tool boundaries but not ordinary text block endings."""
         message = {"id": "message-1", "role": "assistant"}

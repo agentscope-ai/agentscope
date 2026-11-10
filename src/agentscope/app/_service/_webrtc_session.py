@@ -58,6 +58,7 @@ class WebRTCSession:
         self._closing = False
         self._closed = False
         self._startup_complete = False
+        self._finalizing = False
         self._lock_acquired = asyncio.Event()
         self._persisted_messages: dict[str, str] = {}
         self._open_user_replies: set[str] = set()
@@ -67,7 +68,11 @@ class WebRTCSession:
 
     def start(self) -> None:
         """Start the agent pump after WebRTC negotiation succeeds."""
-        if self._task is not None or self._closing:
+        if (
+            self._task is not None
+            or self._closing
+            or self._close_task is not None
+        ):
             raise RuntimeError("The WebRTC session is running or closed.")
         self._task = asyncio.create_task(
             self._run(),
@@ -76,10 +81,10 @@ class WebRTCSession:
 
     def request_close(self) -> None:
         """Schedule one owned close task from a synchronous callback."""
-        if self._closing or self._close_task is not None:
+        if self._close_task is not None:
             return
         self._close_task = asyncio.create_task(
-            self.close(),
+            self._close(),
             name=f"webrtc-session-close-{self.session_id}",
         )
         self._close_task.add_done_callback(self._on_close_done)
@@ -98,6 +103,12 @@ class WebRTCSession:
 
     async def close(self) -> None:
         """End the transport and wait for persistence to finish."""
+        self.request_close()
+        assert self._close_task is not None
+        await asyncio.shield(self._close_task)
+
+    async def _close(self) -> None:
+        """Own shutdown independently of cancellation of close callers."""
         task = self._task
         async with self._close_lock:
             if not self._closing:
@@ -107,6 +118,7 @@ class WebRTCSession:
                     task is not None
                     and task is not asyncio.current_task()
                     and not self._startup_complete
+                    and not self._finalizing
                 ):
                     task.cancel()
 
@@ -139,6 +151,8 @@ class WebRTCSession:
 
     async def _run(self) -> None:
         """Hold the session lock while forwarding events to the SSE log."""
+        if self._close_task is not None:
+            return
         try:
             async with self.message_bus.acquire_lock(
                 MessageBusKeys.session_lock(self.session_id),
@@ -212,6 +226,7 @@ class WebRTCSession:
                                             exc,
                                         )
                 finally:
+                    self._finalizing = True
                     try:
                         async with self.message_bus.acquire_lock(
                             MessageBusKeys.session_event_checkpoint_lock(
