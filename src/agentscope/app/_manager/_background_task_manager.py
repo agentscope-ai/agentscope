@@ -73,6 +73,9 @@ class BackgroundTask:
         error_summary (`str | None`):
             Brief description of the failure reason when
             ``status == FAILED``.
+        execution_started_at (`float | None`):
+            Unix epoch (UTC) when tool execution began, before offload.
+            ``None`` when the original start time was not recorded.
     """
 
     asyncio_task: asyncio.Task
@@ -108,6 +111,9 @@ class BackgroundTask:
     error_summary: str | None = None
     """Brief failure description (populated only for FAILED tasks)."""
 
+    execution_started_at: float | None = None
+    """Unix epoch (UTC) when tool execution began, if known."""
+
 
 class BackgroundTaskRecord(BaseModel):
     """Serializable task snapshot, independent of the local task handle."""
@@ -124,6 +130,7 @@ class BackgroundTaskRecord(BaseModel):
     completed_at: float | None
     status: TaskStatus
     error_summary: str | None
+    execution_started_at: float | None = None
 
 
 class _ToolStopParams(BaseModel):
@@ -322,6 +329,7 @@ class BackgroundTaskManager:
         tool_name: str = "",
         *,
         summary: str = "",
+        execution_started_at: float | None = None,
     ) -> str:
         """Register an already-running asyncio task.
 
@@ -343,6 +351,9 @@ class BackgroundTaskManager:
             summary (`str`, optional):
                 Short human-readable summary of the tool invocation
                 for frontend display.
+            execution_started_at (`float | None`, optional):
+                Unix epoch (UTC) when execution began, before offload.
+                Omit when the original start time is unknown.
 
         Returns:
             `str`:
@@ -355,6 +366,7 @@ class BackgroundTaskManager:
             user_id=user_id,
             tool_name=tool_name,
             summary=summary,
+            execution_started_at=execution_started_at,
         )
         task_id = bg_task.id
         self.tasks[task_id] = bg_task

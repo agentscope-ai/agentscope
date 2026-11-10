@@ -5,7 +5,7 @@ import asyncio
 import json
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import BaseModel
 
@@ -279,6 +279,49 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         # Background task should be registered
         self.assertEqual(len(self.bg_manager.tasks), 1)
+
+    async def test_execution_start_is_captured_before_offload(self) -> None:
+        """Capture execution start before the handler changes the clock."""
+        agent, middleware = self._make_agent(
+            Toolkit(tools=[SlowTool()]),
+            timeout_secs=0.01,
+        )
+        gate = asyncio.Event()
+        tool_call = ToolCallBlock(
+            id="call_start",
+            name="slow_tool",
+            input='{"delay": 30}',
+        )
+        with patch(f"{ToolOffloadMiddleware.__module__}.time") as clock:
+            clock.time.return_value = 100.0
+
+            async def handler(**_kwargs: Any) -> AsyncGenerator:
+                """Advance wall time after execution has already begun."""
+                clock.time.return_value = 110.0
+                await gate.wait()
+                yield ToolResponse(content=[TextBlock(text="done")])
+
+            async for _ in middleware.on_acting(
+                agent,
+                {"tool_call": tool_call},
+                handler,
+            ):
+                pass
+            (bg_task,) = self.bg_manager.tasks.values()
+            self.assertEqual(
+                {
+                    "execution_started_at": bg_task.execution_started_at,
+                    "tool_name": bg_task.tool_name,
+                    "clock_at_offload": clock.time(),
+                },
+                {
+                    "execution_started_at": 100.0,
+                    "tool_name": "slow_tool",
+                    "clock_at_offload": 110.0,
+                },
+            )
+            gate.set()
+            await asyncio.wait_for(bg_task.asyncio_task, timeout=1)
 
     async def test_background_task_result_injected_into_context(
         self,
