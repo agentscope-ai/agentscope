@@ -153,10 +153,12 @@ class GeminiChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="Whether to enable thinking output.",
+            description="Whether to enable thinking output."
+            " When None, no ``thinking_config`` is sent and the"
+            " model's default behavior applies.",
         )
 
         thinking_budget: int | None = Field(
@@ -285,7 +287,7 @@ class GeminiChatModel(ChatModelBase):
         """
         formatted_messages = await self.formatter.format(messages)
 
-        config: dict[str, Any] = {**config_kwargs}
+        config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
             config["max_output_tokens"] = self.parameters.max_tokens
@@ -296,16 +298,20 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable:
-            config["thinking_config"] = {
-                "include_thoughts": True,
-                "thinking_budget": self.parameters.thinking_budget or 1024,
-            }
-        else:
-            config["thinking_config"] = {
-                "include_thoughts": False,
-                "thinking_budget": 0,
-            }
+        if self.parameters.thinking_enable is not None:
+            if self.parameters.thinking_enable:
+                config["thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_budget": self.parameters.thinking_budget or 1024,
+                }
+            else:
+                config["thinking_config"] = {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                }
+
+        # Per-call config takes precedence over model-level defaults.
+        config.update(config_kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -395,7 +401,8 @@ class GeminiChatModel(ChatModelBase):
                     # Tool call
                     if part.function_call:
                         if part.thought_signature:
-                            call_id = base64.b64encode(
+                            # Mark signature IDs for the history formatter.
+                            call_id = "gemini_ts:" + base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
@@ -452,7 +459,8 @@ class GeminiChatModel(ChatModelBase):
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
                     if part.thought_signature:
-                        call_id = base64.b64encode(
+                        # Mark signature IDs for the history formatter.
+                        call_id = "gemini_ts:" + base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
                     else:

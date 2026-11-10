@@ -2,6 +2,7 @@
 """Tests for the model router middleware."""
 from typing import Any, Mapping
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from pydantic import BaseModel
 
@@ -12,9 +13,13 @@ from agentscope.classifier import (
     ClassifierModelBase,
     ClassifierQuestion,
     ClassifierResponse,
+    RefusalAnswer,
 )
 from agentscope.credential import CredentialBase
-from agentscope.event import ModelCallStartEvent, ReplyStartEvent
+from agentscope.event import (
+    ModelCallStartEvent,
+    UserConfirmResultEvent,
+)
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import (
     Base64Source,
@@ -23,8 +28,12 @@ from agentscope.message import (
     TextBlock,
     UserMsg,
 )
-from agentscope.middleware import ChatModelCandidate, ModelRouterMiddleware
-from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.middleware import (
+    ChatModelCandidate,
+    MiddlewareBase,
+    ModelRouterMiddleware,
+)
+from agentscope.model import ChatModelBase, ChatResponse, StructuredResponse
 
 
 class _MockClassifier(ClassifierModelBase):
@@ -87,6 +96,27 @@ class _MockRoutingChatModel(MockModel):
             },
         )
         return StructuredResponse(content={"choice": self.outcome})
+
+
+class _ModelSpy(MiddlewareBase):
+    """A middleware nested inside the router that records which model the
+    agent exposes each time a reply is entered."""
+
+    def __init__(self) -> None:
+        """Start with an empty log."""
+        self.seen: list[ChatModelBase] = []
+
+    async def on_reply(
+        self,
+        agent: Agent,
+        input_kwargs: dict,
+        next_handler: Any,
+    ) -> Any:
+        """Record ``agent.model`` before anything else runs, then pass
+        through."""
+        self.seen.append(agent.model)
+        async for event in next_handler(**input_kwargs):
+            yield event
 
 
 class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
@@ -195,7 +225,7 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
     async def test_resumed_reply_keeps_its_route(self) -> None:
-        """A reply resumed without a ReplyStartEvent reuses its route."""
+        """A reply resumed with a HITL event reuses its parked route."""
         middleware = ModelRouterMiddleware(
             _MockClassifier(["reasoning"]),
             self.candidates,
@@ -208,18 +238,58 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
 
         async def resume(**_: Any) -> Any:
             active.append(agent.model)
-            yield ReplyStartEvent(
-                session_id=agent.state.session_id,
-                reply_id="another-reply",
-                name=agent.name,
+            # A resumption never emits ReplyStartEvent: the reply it belongs
+            # to has already started, so only the model call is streamed.
+            yield ModelCallStartEvent(
+                reply_id=agent.state.reply_id,
+                model_name=agent.model.model,
             )
             active.append(agent.model)
 
-        async for _ in middleware.on_reply(agent, {"inputs": None}, resume):
+        async for _ in middleware.on_reply(
+            agent,
+            {
+                "inputs": UserConfirmResultEvent(
+                    reply_id=agent.state.reply_id,
+                    confirm_results=[],
+                ),
+            },
+            resume,
+        ):
             pass
 
-        # The resumed reply keeps the route, a new one is routed again
-        self.assertListEqual(active, [self.reasoning, self.primary])
+        # The resumption keeps the route the parked reply was given
+        self.assertListEqual(active, [self.reasoning, self.reasoning])
+        self.assertIs(agent.model, self.primary)
+
+    async def test_no_input_reply_does_not_inherit_the_route(
+        self,
+    ) -> None:
+        """A reply started without input is a new reply, so a middleware
+        nested inside the router must not see the previous reply's model."""
+        middleware = ModelRouterMiddleware(
+            _MockClassifier(["reasoning"]),
+            self.candidates,
+        )
+        spy = _ModelSpy()
+        agent = Agent(
+            name="Friday",
+            system_prompt="Help the user.",
+            model=self.primary,
+            middlewares=[middleware, spy],
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+
+        async for _ in agent.reply_stream(
+            UserMsg(name="user", content=[TextBlock(text="Prove this.")]),
+        ):
+            pass
+        async for _ in agent.reply_stream():
+            pass
+
+        # Both replies are entered on the agent's own model; the routed model
+        # only becomes visible once ReplyStartEvent has been handled.
+        self.assertListEqual(spy.seen, [self.primary, self.primary])
         self.assertIs(agent.model, self.primary)
 
     async def test_new_reply_is_gated_by_its_own_routing(self) -> None:
@@ -336,6 +406,32 @@ class ModelRouterMiddlewareTest(IsolatedAsyncioTestCase):
             [_["state"] for _ in classifier.calls],
             ["Error.", "Unknown."],
         )
+        self.assertDictEqual(
+            agent.state.middle_context,
+            {"ModelRouterMiddleware": {agent.state.reply_id: None}},
+        )
+
+    async def test_refusal_keeps_the_agents_model(self) -> None:
+        """A classifier refusal leaves the reply on the original model."""
+        middleware = ModelRouterMiddleware(
+            _MockClassifier([]),
+            self.candidates,
+        )
+        with patch.object(
+            _MockClassifier,
+            "__call__",
+            new=AsyncMock(
+                return_value=ClassifierResponse(
+                    model="classifier",
+                    content={"chat_model": RefusalAnswer()},
+                ),
+            ),
+        ):
+            agent, called = await self._reply(
+                middleware,
+                [TextBlock(text="Hi.")],
+            )
+        self.assertListEqual(called, ["primary"])
         self.assertDictEqual(
             agent.state.middle_context,
             {"ModelRouterMiddleware": {agent.state.reply_id: None}},

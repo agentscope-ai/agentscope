@@ -152,10 +152,14 @@ class Msg(BaseModel):
         typs = [block_type] if isinstance(block_type, str) else block_type
         return any(b.type in typs for b in self.content)
 
-    def get_text_content(self, separator: str = "\n") -> str | None:
-        """Get the concatenated text from all TextBlocks."""
+    def get_text_content(self, separator: str = "\n") -> str:
+        """Join all top-level TextBlocks, returning "" if none are present.
+
+        Use ``has_content_blocks("text")`` to distinguish missing text
+        blocks from text blocks containing empty strings.
+        """
         gathered = [b.text for b in self.content if b.type == "text"]
-        return separator.join(gathered) if gathered else None
+        return separator.join(gathered)
 
     @overload
     def get_content_blocks(
@@ -250,6 +254,7 @@ class Msg(BaseModel):
         content blocks are appended/updated by block-level events,
         ``finished_at`` is stamped by ``REPLY_END``, and ``usage`` is
         initialized then accumulated across each ``MODEL_CALL_END``.
+        Custom events are skipped because they do not update message content.
         Events whose ``reply_id`` does not match ``self.id`` are skipped with
         a warning. Block-level delta/end events whose target block cannot be
         found are also skipped with a warning.
@@ -259,6 +264,9 @@ class Msg(BaseModel):
                 The event to apply.
         """
         from ..event import EventType  # local import to avoid circular dep
+
+        if event.type == EventType.CUSTOM:
+            return self
 
         if event.reply_id != self.id:
             logger.warning(
@@ -448,9 +456,33 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    block.output.append(
-                        DataBlock(id=event.block_id, source=src),
-                    )
+                    # Merge same-id Base64 chunks like
+                    # ToolResponse.append_chunk.
+                    merge_target: DataBlock | None = None
+                    for output_block in block.output:
+                        if (
+                            isinstance(output_block, DataBlock)
+                            and output_block.id == event.block_id
+                            and isinstance(output_block.source, Base64Source)
+                        ):
+                            merge_target = output_block
+                            break
+                    if merge_target is not None and isinstance(
+                        src,
+                        Base64Source,
+                    ):
+                        existing = base64.b64decode(merge_target.source.data)
+                        incoming = base64.b64decode(src.data)
+                        merge_target.source.data = base64.b64encode(
+                            existing + incoming,
+                        ).decode("ascii")
+                        merge_target.source.media_type = (
+                            src.media_type or merge_target.source.media_type
+                        )
+                    else:
+                        block.output.append(
+                            DataBlock(id=event.block_id, source=src),
+                        )
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The realtime model card."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, Self, Type
 
@@ -34,6 +34,10 @@ class RealtimeModelCard(BaseModel):
     deprecated_at: datetime | None = Field(
         default=None,
         description="When the model was deprecated, if applicable.",
+    )
+    release_date: date | None = Field(
+        default=None,
+        description="The model release date, if known.",
     )
 
     input_types: list[str] = Field(

@@ -18,10 +18,13 @@ import unittest
 import uuid
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiofiles
 from fastapi.testclient import TestClient
+from mcp.types import Tool, ToolAnnotations
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.app.workspace_manager import BubblewrapWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig
@@ -32,7 +35,7 @@ from agentscope.workspace._bubblewrap._constants import (
     BWRAP_SMOKE_PROBE_ARGV,
     SANDBOX_WORKDIR,
 )
-from agentscope.workspace._gateway_client import GatewayClient
+from agentscope.workspace._gateway_client import GatewayClient, GatewayMCPTool
 from agentscope.workspace._mcp_gateway._mcp_gateway_app import (
     _State,
     _build_app,
@@ -707,6 +710,24 @@ class TestBubblewrapWorkspaceCache(IsolatedAsyncioTestCase):
         self.assertFalse(os.path.exists(workdir))
 
 
+class TestGatewayMCPTool(unittest.TestCase):
+    """Tests for gateway-backed MCP tools."""
+
+    def test_preserves_read_only_hint(self) -> None:
+        """Gateway tools preserve MCP 2.x read-only annotations."""
+        tool = GatewayMCPTool(
+            mcp_name="gateway",
+            tool=Tool(
+                name="read_data",
+                input_schema={"type": "object"},
+                annotations=ToolAnnotations(read_only_hint=True),
+            ),
+            gateway=MagicMock(spec=GatewayClient),
+        )
+
+        self.assertTrue(tool.is_read_only)
+
+
 class TestGatewayAuth(unittest.TestCase):
     """Pure FastAPI tests for optional gateway authentication."""
 
@@ -781,8 +802,10 @@ class TestGatewayAuth(unittest.TestCase):
     _BWRAP_OK and _BWRAP_INTEGRATION_ENABLED,
     _INTEGRATION_SKIP_REASON,
 )
-class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
+class TestBubblewrapWorkspace(CheckoutWheelTestCase):
     """Integration tests against live Bubblewrap."""
+
+    workspace_type = BubblewrapWorkspace
 
     _shared_workdir: tempfile.TemporaryDirectory[str]
     _shared_cache: tempfile.TemporaryDirectory[str]
@@ -1018,9 +1041,8 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
             is_stateful=True,
             mcp_config=StdioMCPConfig(
                 command="uvx",
-                # Constrained because the client is pinned to mcp<2:
-                # unpinned, uvx now resolves an mcp 2.x server, whose
-                # handshake this client cannot complete.
+                # mcp-server-time currently requires MCP 1.x and runs
+                # in an isolated uvx environment.
                 args=["--with", "mcp<2.0.0", "mcp-server-time"],
             ),
         )
@@ -1031,15 +1053,18 @@ class TestBubblewrapWorkspace(IsolatedAsyncioTestCase):
         self.assertGreater(len(tools), 0)
         tool = await mcps[0].get_tool("get_current_time")
         result = await tool(timezone="Asia/Tokyo")
-        self.assertIsNotNone(result)
+        self.assertTrue(result.is_last)
+        self.assertGreater(len(result.content), 0)
 
 
 @unittest.skipUnless(
     _BWRAP_OK and _BWRAP_INTEGRATION_ENABLED,
     _INTEGRATION_SKIP_REASON,
 )
-class TestBubblewrapWorkspaceConcurrency(IsolatedAsyncioTestCase):
+class TestBubblewrapWorkspaceConcurrency(CheckoutWheelTestCase):
     """Concurrency scenarios that need multiple live workspaces."""
+
+    workspace_type = BubblewrapWorkspace
 
     async def asyncSetUp(self) -> None:
         """Create a shared bootstrap cache for live concurrency tests."""

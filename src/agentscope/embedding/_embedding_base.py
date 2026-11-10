@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any, Generic, TypeVar, Type, Union
+from typing import Any, Generic, Literal, TypeVar, Type, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -253,9 +253,38 @@ class EmbeddingModelBase(Generic[InputT]):
             )
 
         # Dispatch all batches concurrently, each with retry.
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
+        tasks = [
+            asyncio.create_task(self._call_with_retry(batch, **kwargs))
+            for batch in batches
+        ]
+        batches_result = asyncio.gather(*tasks)
+        try:
+            results: list[EmbeddingResponse] = await asyncio.shield(
+                batches_result,
+            )
+        except BaseException as error:
+            # gather propagates a batch error without stopping its siblings.
+            # Finish owned coroutine cleanup before returning to the caller.
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            # Retrieve the original gather's exception on caller cancellation.
+            cleanup = asyncio.gather(
+                batches_result,
+                *tasks,
+                return_exceptions=True,
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(cleanup)
+                    break
+                except asyncio.CancelledError as exc:
+                    # Finish cleanup before propagating caller cancellation.
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from error
+            raise
 
         return self._merge_responses(results)
 
@@ -283,13 +312,21 @@ class EmbeddingModelBase(Generic[InputT]):
         all_embeddings: list = []
         total_tokens = 0
         total_time = 0.0
+        sources: set[str] = set()
 
         for resp in responses:
             all_embeddings.extend(resp.embeddings)
+            if resp.source:
+                sources.add(resp.source)
             if resp.usage:
-                total_time += resp.usage.time
+                total_time = max(total_time, resp.usage.time)
                 if resp.usage.tokens:
                     total_tokens += resp.usage.tokens
+
+        # Mark the merged response as cached only if every batch is cached.
+        merged_source: Literal["cache", "api"] = (
+            "cache" if sources and sources == {"cache"} else "api"
+        )
 
         return EmbeddingResponse(
             embeddings=all_embeddings,
@@ -297,7 +334,7 @@ class EmbeddingModelBase(Generic[InputT]):
                 tokens=total_tokens,
                 time=total_time,
             ),
-            source="api",
+            source=merged_source,
         )
 
     # ------------------------------------------------------------------

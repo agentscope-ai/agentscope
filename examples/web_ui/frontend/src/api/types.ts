@@ -10,10 +10,19 @@ export interface ChatModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	model_class: string;
 	parameters: Record<string, unknown>;
 }
 
 export interface TTSModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	voice_profile_id?: string | null;
+	parameters: Record<string, unknown>;
+}
+
+export interface ASRModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
@@ -157,6 +166,8 @@ export interface SessionConfig {
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** ASR model configuration. null means speech input is not enabled. */
+	asr_model_config: ASRModelConfig | null;
 	/** Realtime voice model configuration. null disables voice mode. */
 	realtime_model_config: RealtimeModelConfig | null;
 	/** Knowledge bases attached to this session + KB middleware parameters. */
@@ -196,6 +207,8 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional ASR model. Omit (or pass null) for no speech input. */
+	asr_model_config?: ASRModelConfig | null;
 	/** Optional realtime voice model. Omit (or pass null) for none. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/** Optional knowledge base attachment. Omit (or null) for none. */
@@ -227,6 +240,8 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/** New ASR model, or null to disable speech input. */
+	asr_model_config?: ASRModelConfig | null;
 	/** New realtime voice model, or null to disable voice mode. */
 	realtime_model_config?: RealtimeModelConfig | null;
 	/**
@@ -513,6 +528,8 @@ export interface HttpMCPConfig {
 export interface MCPClient {
 	name: string;
 	is_stateful: boolean;
+	/** Opt in to tool progress streaming; omitted means false. */
+	stream_progress?: boolean;
 	mcp_config: StdioMCPConfig | HttpMCPConfig;
 }
 
@@ -540,15 +557,6 @@ export interface Skill {
 	dir: string;
 	markdown: string;
 	updated_at: number;
-}
-
-/**
- * @deprecated The path is resolved on the server, which only means
- * anything for a single-host deployment. Upload a folder or install
- * from the library instead.
- */
-export interface AddSkillRequest {
-	skill_path: string;
 }
 
 // ─── Hub ──────────────────────────────────────────────────────────────────────
@@ -788,6 +796,8 @@ export interface CreateScheduleRequest {
 	description?: string;
 	cron_expression: string;
 	timezone?: string;
+	started_at?: string | null;
+	ended_at?: string | null;
 	agent_id: string;
 	chat_model_config: ChatModelConfig;
 	enabled?: boolean;
@@ -818,6 +828,7 @@ export interface ScheduleListResponse {
 
 export interface ModelCard {
 	type: 'chat_model';
+	model_class: string;
 	name: string;
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
@@ -846,6 +857,7 @@ export interface RealtimeModelCard {
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
+	release_date: string | null;
 	input_types: string[];
 	output_types: string[];
 	input_sample_rate: number;
@@ -1310,6 +1322,33 @@ export interface ChannelChatIdsResponse {
 	chats: { chat_id: string; name: string; source: string }[];
 }
 
+// ─── ASR ──────────────────────────────────────────────────────────────────────
+
+export interface ASRModelCard {
+	type: 'asr_model';
+	name: string;
+	label: string;
+	input_types: string[];
+	output_types: string[];
+	realtime: boolean;
+	parameter_schema: Record<string, unknown>;
+	parameters_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListASRModelResponse {
+	models: ASRModelCard[];
+	total: number;
+}
+
+export interface TranscriptionResponse {
+	text: string;
+}
+
+export interface RealtimeASRTokenResponse {
+	token: string;
+	expires_at: number;
+}
+
 // ─── TTS ──────────────────────────────────────────────────────────────────────
 
 export interface TTSModelCard {
@@ -1321,6 +1360,7 @@ export interface TTSModelCard {
 	input_types: string[];
 	output_types: string[];
 	realtime: boolean;
+	voice_cloning: boolean;
 	parameter_schema: Record<string, unknown>;
 	parameters_overrides: Record<string, Record<string, unknown>>;
 }

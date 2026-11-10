@@ -290,7 +290,9 @@ def _memory_components(
                 },
                 "parameters": {
                     "max_tokens": 65_536,
-                    "thinking_enable": False,
+                    # Preserve the pre-tristate fallback behavior: omit
+                    # thinking controls and use the provider default.
+                    "thinking_enable": None,
                 },
             },
         },

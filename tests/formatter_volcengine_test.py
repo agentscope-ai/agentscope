@@ -3,7 +3,12 @@
 VolcengineMultiAgentFormatter, with exact ground-truth comparisons.
 """
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
+
+from nturl2path import url2pathname as windows_url2pathname
 
 from agentscope.formatter import (
     VolcengineChatFormatter,
@@ -822,3 +827,300 @@ class TestVolcengineFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class TestVolcengineAudio(IsolatedAsyncioTestCase):
+    """Compare complete formatted requests without network access."""
+
+    async def test_audio_sources_and_formats(self) -> None:
+        """Both formatters preserve audio-only URL and base64 messages."""
+        for media_type, audio_format in (
+            ("audio/mpeg", "mp3"),
+            ("audio/mp3", "mp3"),
+            ("audio/wav", "wav"),
+            ("audio/aac", "aac"),
+            ("audio/mp4", "m4a"),
+        ):
+            for source, payload in (
+                (
+                    Base64Source(data="YXVkaW8=", media_type=media_type),
+                    {"data": "YXVkaW8=", "format": audio_format},
+                ),
+                (
+                    URLSource(
+                        url="https://example.com/audio?token=abc%2B123",
+                        media_type=media_type,
+                    ),
+                    {
+                        "url": "https://example.com/audio?token=abc%2B123",
+                        "format": audio_format,
+                    },
+                ),
+            ):
+                msg = UserMsg(
+                    name="user",
+                    content=[DataBlock(source=source)],
+                )
+                for formatter in (
+                    VolcengineChatFormatter(),
+                    VolcengineMultiAgentFormatter(),
+                ):
+                    with self.subTest(
+                        media_type=media_type,
+                        source=source.type,
+                        formatter=type(formatter).__name__,
+                    ):
+                        self.assertEqual(
+                            await formatter.format([msg]),
+                            [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "input_audio",
+                                            "input_audio": payload,
+                                        },
+                                    ],
+                                },
+                            ],
+                        )
+
+    async def test_local_audio_files(self) -> None:
+        """Native file URIs decode special characters exactly once."""
+        with TemporaryDirectory() as directory:
+            for filename in (
+                "audio #1.wav",
+                "café.wav",
+                "audio%20.wav",
+                "audio+1.wav",
+            ):
+                path = Path(directory) / filename
+                path.write_bytes(b"audio")
+                msg = UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url=path.as_uri(),
+                                media_type="audio/wav",
+                            ),
+                        ),
+                    ],
+                )
+                for formatter in (
+                    VolcengineChatFormatter(),
+                    VolcengineMultiAgentFormatter(),
+                ):
+                    with self.subTest(filename=filename):
+                        self.assertEqual(
+                            await formatter.format([msg]),
+                            [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "input_audio",
+                                            "input_audio": {
+                                                "data": "YXVkaW8=",
+                                                "format": "wav",
+                                            },
+                                        },
+                                    ],
+                                },
+                            ],
+                        )
+
+    async def test_windows_file_uris(self) -> None:
+        """Windows drive and UNC URIs use the native path converter."""
+        module = "agentscope.formatter._volcengine_formatter"
+        for uri, expected_path in (
+            ("file:///C:/audio%20clip.wav", "C:\\audio clip.wav"),
+            (
+                "file://server/share/audio%20clip.wav",
+                "\\\\server\\share\\audio clip.wav",
+            ),
+        ):
+            with (
+                self.subTest(uri=uri),
+                patch(
+                    f"{module}.url2pathname",
+                    side_effect=windows_url2pathname,
+                ),
+                patch(f"{module}.Path") as mock_path,
+            ):
+                mock_path.return_value.read_bytes.return_value = b"audio"
+                result = await VolcengineChatFormatter().format(
+                    [
+                        UserMsg(
+                            name="user",
+                            content=[
+                                DataBlock(
+                                    source=URLSource(
+                                        url=uri,
+                                        media_type="audio/wav",
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+                mock_path.assert_called_once_with(expected_path)
+                self.assertEqual(
+                    result,
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": {
+                                        "data": "YXVkaW8=",
+                                        "format": "wav",
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
+
+    async def test_hint_audio_and_text(self) -> None:
+        """Hints remain standalone user messages with text and audio."""
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                HintBlock(hint="Listen carefully."),
+                HintBlock(
+                    hint=[
+                        TextBlock(text="Transcribe this."),
+                        DataBlock(
+                            source=Base64Source(
+                                data="YXVkaW8=",
+                                media_type="audio/aac",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        audio = {
+            "type": "input_audio",
+            "input_audio": {"data": "YXVkaW8=", "format": "aac"},
+        }
+        expected = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Listen carefully."}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Transcribe this."},
+                    audio,
+                ],
+            },
+        ]
+        for formatter in (
+            VolcengineChatFormatter(),
+            VolcengineMultiAgentFormatter(),
+        ):
+            with self.subTest(formatter=type(formatter).__name__):
+                self.assertEqual(await formatter.format([msg]), expected)
+
+    async def test_tool_audio(self) -> None:
+        """Both formatters promote tool audio after the tool response."""
+        msg = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="call_1", name="record", input="{}"),
+                ToolResultBlock(
+                    id="call_1",
+                    name="record",
+                    state=ToolResultState.SUCCESS,
+                    output=[
+                        DataBlock(
+                            id="audio_1",
+                            source=Base64Source(
+                                data="YXVkaW8=",
+                                media_type="audio/mp4",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        expected = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "record", "arguments": "{}"},
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "name": "record",
+                "content": (
+                    "<system-reminder>A(n) audio file is returned and will "
+                    "be presented to you with the identifier "
+                    "[audio_1].</system-reminder>"
+                ),
+            },
+            {
+                "role": "user",
+                "name": "system-reminder",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<system-reminder>The multimodal data and "
+                        "their identifiers are listed as follows:",
+                    },
+                    {"type": "text", "text": "- audio_1 (audio file): "},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "YXVkaW8=", "format": "m4a"},
+                    },
+                    {"type": "text", "text": "</system-reminder>"},
+                ],
+            },
+        ]
+        for formatter in (
+            VolcengineChatFormatter(),
+            VolcengineMultiAgentFormatter(),
+        ):
+            self.assertEqual(await formatter.format([msg]), expected)
+
+    async def test_audio_filtering(self) -> None:
+        """Configured input types still filter audio; unknown formats fail."""
+        for formatter_class in (
+            VolcengineChatFormatter,
+            VolcengineMultiAgentFormatter,
+        ):
+            for media_type, input_types in (
+                ("audio/wav", ["text/plain"]),
+                ("audio/ogg", None),
+            ):
+                formatter = (
+                    formatter_class(input_types=input_types)
+                    if input_types is not None
+                    else formatter_class()
+                )
+                msg = UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=Base64Source(
+                                data="YXVkaW8=",
+                                media_type=media_type,
+                            ),
+                        ),
+                    ],
+                )
+                self.assertEqual(await formatter.format([msg]), [])
+
+            with self.assertRaisesRegex(TypeError, "audio/ogg"):
+                await formatter_class(input_types=["audio/*"]).format([msg])

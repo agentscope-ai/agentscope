@@ -69,13 +69,15 @@ class OpenAIResponseModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for reasoning models "
-                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
-                "control the depth of reasoning."
+                "None and True forward reasoning_effort as reasoning.effort "
+                "when it is set, including 'none'. If reasoning_effort is "
+                "unset, neither adds reasoning parameters; the provider "
+                "default applies. False overrides reasoning.effort with "
+                "'none' to request that reasoning be disabled."
             ),
         )
 
@@ -90,6 +92,9 @@ class OpenAIResponseModel(ChatModelBase):
                 "model-dependent and may include: none, minimal, low, "
                 "medium, high, xhigh."
             ),
+            json_schema_extra={
+                "x-reset-hidden-on-change": {"thinking_enable": None},
+            },
         )
 
         temperature: float | None = Field(
@@ -218,10 +223,9 @@ class OpenAIResponseModel(ChatModelBase):
         if self.parameters.temperature is not None:
             api_kwargs["temperature"] = self.parameters.temperature
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.thinking_enable is False:
+            api_kwargs["reasoning"] = {"effort": "none"}
+        elif self.parameters.reasoning_effort is not None:
             api_kwargs["reasoning"] = {
                 "effort": self.parameters.reasoning_effort,
             }
@@ -281,12 +285,14 @@ class OpenAIResponseModel(ChatModelBase):
         """
         usage: ChatUsage | None = None
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
+        text_block_ids: dict[tuple[str, int], str] = {}
         reasoning_block_ids: dict[str, dict[tuple[str, int], str]] = {}
         # Mapping from Responses API item id (fc_xxx) to (call_id, name)
         # so subsequent argument deltas can be routed to the right tool
         # call block.
         tool_call_mapping: dict = OrderedDict()
+        # The item ids of the function calls that received argument text
+        tool_calls_with_input: set[str] = set()
 
         async with response as stream:
             async for event in stream:
@@ -333,8 +339,19 @@ class OpenAIResponseModel(ChatModelBase):
                         ),
                     )
 
-                elif event_type == "response.output_text.delta":
-                    delta_res.append_text(event.delta, block_id=text_id)
+                elif event_type in (
+                    "response.output_text.delta",
+                    "response.refusal.delta",
+                ):
+                    # Keep message content parts separate while accumulating
+                    # fragmented deltas into their original ordered blocks.
+                    delta_res.append_text(
+                        event.delta,
+                        block_id=text_block_ids.setdefault(
+                            (event.item_id, event.content_index),
+                            _generate_id(),
+                        ),
+                    )
 
                 elif event_type == "response.output_item.added":
                     item = event.item
@@ -345,7 +362,8 @@ class OpenAIResponseModel(ChatModelBase):
                         # Only record the mapping here — do NOT emit an
                         # empty-input delta so downstream consumers don't see
                         # a leading no-op chunk. The block is created on the
-                        # first argument delta below.
+                        # first argument delta below, or on the arguments-done
+                        # event when the call carries no arguments at all.
                         tool_call_mapping[item.id] = (
                             item.call_id,
                             getattr(item, "name", "") or "unknown",
@@ -353,12 +371,29 @@ class OpenAIResponseModel(ChatModelBase):
 
                 elif event_type == "response.function_call_arguments.delta":
                     item_id = event.item_id
-                    if item_id in tool_call_mapping:
+                    if item_id in tool_call_mapping and event.delta:
+                        call_id, name = tool_call_mapping[item_id]
+                        tool_calls_with_input.add(item_id)
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=name,
+                            input=event.delta,
+                        )
+
+                elif event_type == "response.function_call_arguments.done":
+                    # A call without arguments streams no argument deltas, so
+                    # the block would never be created above; close it with
+                    # the empty object the non-streaming response carries.
+                    item_id = event.item_id
+                    if (
+                        item_id in tool_call_mapping
+                        and item_id not in tool_calls_with_input
+                    ):
                         call_id, name = tool_call_mapping[item_id]
                         delta_res.append_tool_call(
                             block_id=call_id,
                             name=name,
-                            input=event.delta or "",
+                            input=event.arguments or "{}",
                         )
 
                 elif event_type == "response.completed":
@@ -367,8 +402,8 @@ class OpenAIResponseModel(ChatModelBase):
                         u = resp.usage
                         details = getattr(u, "input_tokens_details", None)
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens,
-                            output_tokens=u.output_tokens,
+                            input_tokens=u.input_tokens or 0,
+                            output_tokens=u.output_tokens or 0,
                             time=(
                                 datetime.now() - start_datetime
                             ).total_seconds(),
@@ -377,6 +412,7 @@ class OpenAIResponseModel(ChatModelBase):
                                 "cached_tokens",
                                 0,
                             )
+                            or 0
                             if details
                             else 0,
                         )
@@ -476,6 +512,10 @@ class OpenAIResponseModel(ChatModelBase):
                         content_blocks.append(
                             TextBlock(type="text", text=part.text),
                         )
+                    elif getattr(part, "type", None) == "refusal":
+                        content_blocks.append(
+                            TextBlock(type="text", text=part.refusal),
+                        )
 
             elif item_type == "function_call":
                 content_blocks.append(
@@ -491,14 +531,15 @@ class OpenAIResponseModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.input_tokens or 0,
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )

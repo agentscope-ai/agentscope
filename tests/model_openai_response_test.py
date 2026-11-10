@@ -5,15 +5,18 @@
 Tests cover both non-streaming and streaming modes.
 OpenAI Responses API uses event-based streaming with response.completed.
 """
-from typing import Any
+import asyncio
+from typing import Any, cast
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
-from openai import APIError
+import httpx
+from openai import APIError, AsyncOpenAI
+from openai.types.responses import ResponseOutputMessage
 from pydantic import BaseModel
 
-from utils import AnyString
+from utils import AnyString, AnyValue
 
 from agentscope.message import (
     AssistantMsg,
@@ -26,7 +29,7 @@ from agentscope.message import (
     ToolResultState,
     ThinkingBlock,
 )
-from agentscope.model import OpenAIResponseModel
+from agentscope.model import ChatResponse, ChatUsage, OpenAIResponseModel
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
 
@@ -127,6 +130,9 @@ def _mock_completion(
 
 def _make_event(event_type: str, **kwargs: Any) -> MagicMock:
     """Build a mock Responses API streaming event."""
+    if event_type in ("response.output_text.delta", "response.refusal.delta"):
+        kwargs.setdefault("item_id", "msg_test123")
+        kwargs.setdefault("content_index", 0)
     event = MagicMock()
     event.type = event_type
     for key, val in kwargs.items():
@@ -135,6 +141,27 @@ def _make_event(event_type: str, **kwargs: Any) -> MagicMock:
     if "response" not in kwargs:
         event.response = None
     return event
+
+
+def _mock_message(
+    item_id: str,
+    parts: list[tuple[str, str]],
+) -> ResponseOutputMessage:
+    """Build SDK message parts for text/refusal parser comparisons."""
+    return ResponseOutputMessage.model_validate(
+        {
+            "id": item_id,
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+                {"type": kind, "text": text, "annotations": []}
+                if kind == "output_text"
+                else {"type": kind, "refusal": text}
+                for kind, text in parts
+            ],
+        },
+    )
 
 
 class _MockAsyncEventStream:
@@ -175,6 +202,36 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
         self.model = _make_model(stream=False)
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_thinking_enable_nullable(self) -> None:
+        """False requests no reasoning, even with a stored effort value."""
+        self.assertIsNone(OpenAIResponseModel.Parameters().thinking_enable)
+        mock_create = AsyncMock(return_value=_mock_completion(text="Hi"))
+        self.mock_client.responses.create = mock_create
+
+        for params, disables_thinking in (
+            ({}, False),
+            ({"thinking_enable": None}, False),
+            ({"thinking_enable": False}, True),
+            ({"thinking_enable": True}, False),
+        ):
+            for effort in (None, "none", "high"):
+                with self.subTest(params=params, effort=effort):
+                    self.model.parameters = OpenAIResponseModel.Parameters(
+                        **params,
+                        reasoning_effort=effort,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "o4-mini",
+                        "input": [],
+                        "stream": False,
+                    }
+                    expected_effort = "none" if disables_thinking else effort
+                    if expected_effort is not None:
+                        expected["reasoning"] = {"effort": expected_effort}
+                    self.assertEqual(mock_create.call_args.kwargs, expected)
 
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
@@ -619,6 +676,132 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         self.model = _make_model(stream=True)
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_stream_text_and_refusal_part_boundaries(self) -> None:
+        """Mixed parts match non-streaming without repeating done text."""
+        for output in (
+            [_mock_message("msg_one", [("refusal", "Cannot help.")])],
+            [
+                _mock_message(
+                    "msg_one",
+                    [
+                        ("output_text", "Before."),
+                        ("refusal", "Cannot help."),
+                        ("output_text", "After."),
+                    ],
+                ),
+            ],
+            [
+                _mock_message("msg_one", [("output_text", "First.")]),
+                _mock_message("msg_two", [("refusal", "Cannot help.")]),
+            ],
+            [
+                _mock_message(
+                    "msg_one",
+                    [("output_text", "First."), ("output_text", "Second.")],
+                ),
+            ],
+        ):
+            with self.subTest(output=output):
+                completed = _mock_completion()
+                completed.output = output
+                completed.usage.input_tokens_details = MagicMock(
+                    cached_tokens=3,
+                )
+                parts = [
+                    (item.id, index, part.type, part.text)
+                    if part.type == "output_text"
+                    else (item.id, index, part.type, part.refusal)
+                    for item in output
+                    for index, part in enumerate(item.content)
+                ]
+                expected = ChatResponse(
+                    id=A,
+                    created_at=A,
+                    is_last=True,
+                    content=[
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=text,
+                        )
+                        for _, _, _, text in parts
+                    ],
+                    usage=ChatUsage(
+                        input_tokens=10,
+                        output_tokens=5,
+                        cache_input_tokens=3,
+                        time=cast(float, AnyValue()),
+                    ),
+                )
+                self.model.stream = False
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=completed,
+                )
+                self.assertEqual(await self.model([]), expected)
+                self.mock_client.responses.create.assert_awaited_once()
+
+                events = [
+                    _make_event(
+                        f"response.{kind}.delta",
+                        item_id=item_id,
+                        content_index=index,
+                        delta=text[:2] if fragment == 0 else text[2:],
+                    )
+                    for fragment in range(2)
+                    for item_id, index, kind, text in parts
+                ]
+                events.extend(
+                    _make_event(
+                        f"response.{kind}.done",
+                        item_id=item_id,
+                        content_index=index,
+                        **(
+                            {"text": text}
+                            if kind == "output_text"
+                            else {"refusal": text}
+                        ),
+                    )
+                    for item_id, index, kind, text in parts
+                )
+                events.append(
+                    _make_event("response.completed", response=completed),
+                )
+                self.model.stream = True
+                self.mock_client.responses.create = AsyncMock(
+                    return_value=_MockAsyncEventStream(events),
+                )
+                responses = [r async for r in await self.model([])]
+                self.assertEqual(
+                    responses[:-1],
+                    [
+                        ChatResponse(
+                            id=A,
+                            created_at=A,
+                            is_last=False,
+                            content=[
+                                TextBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    text=text[:2]
+                                    if fragment == 0
+                                    else text[2:],
+                                ),
+                            ],
+                        )
+                        for fragment in range(2)
+                        for _, _, _, text in parts
+                    ],
+                )
+                self.assertEqual(responses[-1], expected)
+                self.mock_client.responses.create.assert_awaited_once()
+                self.assertEqual(
+                    AssistantMsg(
+                        name="assistant",
+                        content=responses[-1].content,
+                    ).get_text_content(),
+                    "\n".join(text for _, _, _, text in parts),
+                )
 
     async def test_stream_errors_propagate(self) -> None:
         """Failed stream events raise APIError instead of a partial reply."""
@@ -1237,6 +1420,106 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_function_call_without_arguments(self) -> None:
+        """A function call with no arguments still streams as a {} block.
+
+        Empty-argument calls may emit no argument delta or an empty one, so
+        the block used to be dropped entirely instead of matching the
+        non-streaming ``input or "{}"`` result.
+        """
+        fc_item = MagicMock()
+        fc_item.type = "function_call"
+        fc_item.id = "fc_1"
+        fc_item.call_id = "call-1"
+        fc_item.name = "get_current_time"
+        fc_item.arguments = ""
+
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-4"
+        completed_resp.output = []
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 10
+        completed_resp.usage.output_tokens = 5
+        completed_resp.usage.input_tokens_details = None
+
+        non_stream_model = _make_model(stream=False)
+        non_stream_model.client = self.mock_client
+        non_stream_resp = _mock_completion(
+            function_calls=[
+                {
+                    "id": "fc_1",
+                    "call_id": "call-1",
+                    "name": "get_current_time",
+                    "arguments": "",
+                },
+            ],
+            response_id="resp-4",
+        )
+
+        cases = {
+            "no_delta": [],
+            "empty_delta": [
+                _make_event(
+                    "response.function_call_arguments.delta",
+                    item_id="fc_1",
+                    delta="",
+                ),
+            ],
+        }
+        expected_block = ToolCallBlock.model_construct(
+            id="call-1",
+            created_at=A,
+            name="get_current_time",
+            input="{}",
+        )
+        for name, argument_events in cases.items():
+            with self.subTest(name=name):
+                events = [
+                    _make_event(
+                        "response.output_item.added",
+                        item=fc_item,
+                        response=MagicMock(id="resp-4"),
+                    ),
+                    *argument_events,
+                    _make_event(
+                        "response.function_call_arguments.done",
+                        item_id="fc_1",
+                        arguments="",
+                    ),
+                    _make_event(
+                        "response.completed",
+                        response=completed_resp,
+                    ),
+                ]
+                self.mock_client.responses.create = AsyncMock(
+                    side_effect=[
+                        _MockAsyncEventStream(events),
+                        non_stream_resp,
+                    ],
+                )
+
+                gen = await self.model([])
+                responses = [r async for r in gen]
+                non_stream = await non_stream_model([])
+
+                self.assertListEqual(
+                    [(r.is_last, r.content) for r in responses],
+                    [
+                        (False, [expected_block]),
+                        (True, [expected_block]),
+                    ],
+                )
+                self.assertListEqual(
+                    [
+                        (block.id, block.name, block.input)
+                        for block in (
+                            responses[-1].content[0],
+                            non_stream.content[0],
+                        )
+                    ],
+                    [("call-1", "get_current_time", "{}")] * 2,
+                )
+
 
 # ---------------------------------------------------------------------------
 # _format_tools tests
@@ -1361,3 +1644,64 @@ class TestOpenAIResponseFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
         self.assertIsNone(fmt_choice)
+
+
+class _TrackedBody(httpx.AsyncByteStream):
+    """HTTP body with observable cleanup."""
+
+    def __init__(self) -> None:
+        """Initialize the body state."""
+        self.closed = False
+        self.stop = asyncio.Event()
+
+    async def __aiter__(self) -> Any:
+        """Yield one SSE event and wait."""
+        yield (
+            b'data: {"type":"response.output_text.delta",'
+            b'"sequence_number":0,"item_id":"msg_1","output_index":0,'
+            b'"content_index":0,"delta":"hello"}\n\n'
+        )
+        await self.stop.wait()
+
+    async def aclose(self) -> None:
+        """Close and unblock the body."""
+        self.closed = True
+        self.stop.set()
+
+
+class TestPublicModelStreamClose(IsolatedAsyncioTestCase):
+    """Test public stream cleanup."""
+
+    async def test_aclose_closes_offline_httpx_response(self) -> None:
+        """Test cleanup through the OpenAI SDK and HTTPX transport."""
+        body = _TrackedBody()
+
+        def _handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+            )
+
+        transport = httpx.MockTransport(_handler)
+        client = AsyncOpenAI(
+            api_key="offline-test",
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+        model = _make_model(stream=True)
+        original_client = model.client
+        model.client = client
+        stream = None
+        try:
+            stream = await model([])
+            first = await anext(stream)
+            self.assertEqual(first.content[0].text, "hello")
+            self.assertFalse(body.closed)
+            await stream.aclose()
+            self.assertTrue(body.closed)
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            await body.aclose()
+            await client.close()
+            await original_client.close()
