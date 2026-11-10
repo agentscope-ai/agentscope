@@ -205,6 +205,7 @@ class _ConfirmingDelegationAgent:
             id="tool_1",
             name="update_order",
             input='{"order_id":"42"}',
+            state="asking",
         )
 
     async def reply_stream(
@@ -223,6 +224,8 @@ class _ConfirmingDelegationAgent:
     ]:
         """Yield a confirmation on the first call and finish on resume."""
         if isinstance(inputs, Msg):
+            self.state.reply_id = "backend_reply"
+            self.state.append_context("Friday", [self.tool_call])
             yield ReplyStartEvent(
                 session_id=self.state.session_id,
                 reply_id="backend_reply",
@@ -257,6 +260,18 @@ class _ConfirmingDelegationAgent:
             tool_call_id=self.tool_call.id,
             state=ToolResultState.SUCCESS,
         )
+        self.tool_call.state = "finished"
+        self.state.append_context(
+            "Friday",
+            [
+                ToolResultBlock(
+                    id=self.tool_call.id,
+                    name=self.tool_call.name,
+                    output="Updated",
+                    state="success",
+                ),
+            ],
+        )
         result = AssistantMsg(name="Friday", content="Order 42 updated.")
         if yield_final_msg:
             yield result
@@ -271,6 +286,7 @@ class _ExternalDelegationAgent:
             id="external_1",
             name="ask_user",
             input='{"question":"Which order?"}',
+            state="submitted",
         )
         self.received: list[
             Msg | ExternalExecutionResultEvent | UserInterruptEvent
@@ -290,6 +306,8 @@ class _ExternalDelegationAgent:
         """Request external execution once and finish on resumption."""
         self.received.append(inputs)
         if isinstance(inputs, Msg):
+            self.state.reply_id = "external_reply"
+            self.state.append_context("Friday", [self.tool_call])
             yield ReplyStartEvent(
                 session_id=self.state.session_id,
                 reply_id="external_reply",
@@ -309,6 +327,7 @@ class _ExternalDelegationAgent:
                 tool_calls=[self.tool_call],
             )
             return
+        self.tool_call.state = "finished"
         if isinstance(inputs, UserInterruptEvent):
             result = AssistantMsg(name="Friday", content="Interrupted.")
             if yield_final_msg:
@@ -610,15 +629,32 @@ class OpenAILiveLifecycleTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(block_send=block_send):
                 ws = _PendingStartupWebSocket(block_send)
                 model = _model()
-                model.parameters.startup_timeout_s = 0.01
+                model.parameters.startup_timeout_s = 0.1
                 self.addAsyncCleanup(model.close)
-                with patch("websockets.connect", AsyncMock(return_value=ws)):
+                resources: list[asyncio.Future | None] = []
+
+                async def capture_startup(
+                    payload: dict,
+                    current: OpenAILiveModel = model,
+                    capture: Callable[
+                        [asyncio.Future | None],
+                        None,
+                    ] = resources.append,
+                ) -> None:
+                    """Save references before startup can suspend or expire."""
+                    capture(current._reader)
+                    capture(current._started)
+                    await OpenAILiveModel._send(current, payload)
+
+                with (
+                    patch("websockets.connect", AsyncMock(return_value=ws)),
+                    patch.object(model, "_send", capture_startup),
+                ):
                     connection = asyncio.create_task(model.connect("Brief."))
-                    await asyncio.wait_for(ws.reading.wait(), timeout=1)
-                    reader, started = model._reader, model._started
-                    assert reader is not None and started is not None
                     with self.assertRaises(asyncio.TimeoutError):
                         await asyncio.wait_for(connection, timeout=1)
+                reader, started = resources
+                assert reader is not None and started is not None
                 self.assertEqual(
                     {
                         "guard_cancelled": connection.cancelled(),

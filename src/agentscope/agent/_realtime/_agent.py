@@ -1281,7 +1281,6 @@ class RealtimeAgent:
         ),
     ) -> None:
         """Run or resume a delegated chat-agent reply in the background."""
-        self._cancel_delegation_timeout(delegation)
         task = asyncio.create_task(
             self._drive_client_delegation(delegation, inputs),
             name=f"live-delegation-{delegation.delegation_id}",
@@ -1376,13 +1375,67 @@ class RealtimeAgent:
         """Run a chat agent and return its verified result to GPT-Live."""
         if delegation.generation != self._connection_generation:
             return
-        final: Msg | None = None
-        waiting_for_external_input = False
-        pending_result_end: ToolResultEndEvent | None = None
-        try:
-            if delegation.agent is None:
-                raise RuntimeError("The delegation backend is unavailable.")
-            async with self._delegation_lock:
+        async with self._delegation_lock:
+            # Routing happened before this task waited for the lock.
+            if (
+                delegation.generation != self._connection_generation
+                or self._delegations.get(delegation.delegation_id)
+                is not delegation
+                or self._active_delegation_id != delegation.delegation_id
+            ):
+                return
+            if isinstance(
+                inputs,
+                (UserConfirmResultEvent, ExternalExecutionResultEvent),
+            ):
+                if (
+                    self._closing
+                    or delegation.expiring
+                    or delegation.agent is None
+                    or inputs.reply_id != delegation.agent.state.reply_id
+                ):
+                    return
+                awaiting = {
+                    tool_call.id: tool_call.state
+                    for tool_call in (
+                        delegation.agent.state.get_awaiting_tool_calls(
+                            self.name,
+                        )
+                    )
+                }
+                if isinstance(inputs, UserConfirmResultEvent):
+                    confirmations = [
+                        result
+                        for result in inputs.confirm_results
+                        if awaiting.get(result.tool_call.id)
+                        == ToolCallState.ASKING
+                    ]
+                    if not confirmations:
+                        return
+                    inputs = inputs.model_copy(
+                        update={"confirm_results": confirmations},
+                    )
+                else:
+                    results = [
+                        result
+                        for result in inputs.execution_results
+                        if awaiting.get(result.id) == ToolCallState.SUBMITTED
+                    ]
+                    if not results:
+                        return
+                    inputs = inputs.model_copy(
+                        update={"execution_results": results},
+                    )
+            # An earlier queued input may have parked and rearmed the timer.
+            self._cancel_delegation_timeout(delegation)
+            final: Msg | None = None
+            waiting_for_external_input = False
+            pending_result_end: ToolResultEndEvent | None = None
+            try:
+                if delegation.agent is None:
+                    raise RuntimeError(
+                        "The delegation backend is unavailable.",
+                    )
                 async for item in delegation.agent.reply_stream(
                     inputs,
                     yield_final_msg=True,
@@ -1444,96 +1497,103 @@ class RealtimeAgent:
                             self._sync_delegation_state(delegation)
                         self._emit(item)
 
-            self._sync_delegation_state(delegation)
-            if pending_result_end is not None:
-                self._emit(pending_result_end)
-            if waiting_for_external_input or (
-                delegation.agent.state.has_awaiting_tool_calls(self.name)
-            ):
-                if not self._closing:
-                    self._schedule_delegation_timeout(delegation)
-                return
-            if final is None:
-                raise RuntimeError(
-                    "The delegation backend ended without a final result.",
-                )
-
-            if self._closing:
-                self._finish_client_delegation(delegation.delegation_id)
-                return
-            content = (
-                result_override or (final.get_text_content() or "").strip()
-            )
-            if not content:
-                content = "The delegated task completed without a text result."
-            await self._send_delegation_result(
-                delegation.delegation_id,
-                content,
-                delegation.generation,
-            )
-            self._finish_client_delegation(delegation.delegation_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "RealtimeAgent: client delegation %s failed",
-                delegation.delegation_id,
-            )
-            if (
-                not self._closing
-                and not delegation.expiring
-                and isinstance(inputs, ExternalExecutionResultEvent)
-                and delegation.agent is not None
-                and delegation.agent.state.has_awaiting_tool_calls(self.name)
-            ):
-                # A rejected external answer leaves the backend parked.
-                # Retain its route for retry and publish any earlier result
-                # accepted from the same batch before validation failed.
                 self._sync_delegation_state(delegation)
                 if pending_result_end is not None:
                     self._emit(pending_result_end)
-                awaiting_ids = {
-                    call.id
-                    for call in delegation.agent.state.get_awaiting_tool_calls(
-                        self.name,
+                if waiting_for_external_input or (
+                    delegation.agent.state.has_awaiting_tool_calls(self.name)
+                ):
+                    if not self._closing:
+                        self._schedule_delegation_timeout(delegation)
+                    return
+                if final is None:
+                    raise RuntimeError(
+                        "The delegation backend ended without a final result.",
                     )
-                }
-                rejected_ids = [
-                    result.id
-                    for result in inputs.execution_results
-                    if result.id in awaiting_ids
-                ]
-                if rejected_ids:
-                    self._emit(
-                        CustomEvent(
-                            name="external_execution_result_rejected",
-                            value={
-                                "request_id": inputs.id,
-                                "reply_id": delegation.agent.state.reply_id,
-                                "tool_call_ids": rejected_ids,
-                                "message": (
-                                    "The submitted result was rejected. "
-                                    "Please check your answer and submit "
-                                    "again."
-                                ),
-                            },
-                        ),
+
+                if self._closing:
+                    self._finish_client_delegation(delegation.delegation_id)
+                    return
+                content = (
+                    result_override or (final.get_text_content() or "").strip()
+                )
+                if not content:
+                    content = (
+                        "The delegated task completed without a text result."
                     )
-                self._schedule_delegation_timeout(delegation)
-                return
-            if self._closing:
-                self._sync_delegation_state(delegation)
-                self._finish_client_delegation(delegation.delegation_id)
-                return
-            try:
                 await self._send_delegation_result(
                     delegation.delegation_id,
-                    "The delegated task failed. Ask the user to try again.",
+                    content,
                     delegation.generation,
                 )
+                self._finish_client_delegation(delegation.delegation_id)
             except Exception:  # noqa: BLE001
                 logger.exception(
-                    "RealtimeAgent: failed to report delegation failure",
+                    "RealtimeAgent: client delegation %s failed",
+                    delegation.delegation_id,
                 )
-            self._finish_client_delegation(delegation.delegation_id)
+                if (
+                    not self._closing
+                    and not delegation.expiring
+                    and isinstance(inputs, ExternalExecutionResultEvent)
+                    and delegation.agent is not None
+                    and delegation.agent.state.has_awaiting_tool_calls(
+                        self.name,
+                    )
+                ):
+                    # A rejected external answer leaves the backend parked.
+                    # Retain its route for retry and publish any earlier result
+                    # accepted from the same batch before validation failed.
+                    self._sync_delegation_state(delegation)
+                    if pending_result_end is not None:
+                        self._emit(pending_result_end)
+                    awaiting_calls = (
+                        delegation.agent.state.get_awaiting_tool_calls(
+                            self.name,
+                        )
+                    )
+                    awaiting_ids = {call.id for call in awaiting_calls}
+                    rejected_ids = [
+                        result.id
+                        for result in inputs.execution_results
+                        if result.id in awaiting_ids
+                    ]
+                    if rejected_ids:
+                        self._emit(
+                            CustomEvent(
+                                name="external_execution_result_rejected",
+                                value={
+                                    "request_id": inputs.id,
+                                    "reply_id": (
+                                        delegation.agent.state.reply_id
+                                    ),
+                                    "tool_call_ids": rejected_ids,
+                                    "message": (
+                                        "The submitted result was rejected. "
+                                        "Please check your answer and submit "
+                                        "again."
+                                    ),
+                                },
+                            ),
+                        )
+                    self._schedule_delegation_timeout(delegation)
+                    return
+                if self._closing:
+                    self._sync_delegation_state(delegation)
+                    self._finish_client_delegation(delegation.delegation_id)
+                    return
+                try:
+                    await self._send_delegation_result(
+                        delegation.delegation_id,
+                        "The delegated task failed. "
+                        "Ask the user to try again.",
+                        delegation.generation,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "RealtimeAgent: failed to report delegation failure",
+                    )
+                self._finish_client_delegation(delegation.delegation_id)
 
     def _build_delegation_prompt(self) -> str:
         """Build a bounded task prompt from the current Live transcript."""
