@@ -15,6 +15,7 @@ from agentscope.agent import Agent
 from agentscope.event import ToolResultStartEvent
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
+from agentscope.exception import DeveloperOrientedException
 from agentscope.message import (
     AssistantMsg,
     TextBlock,
@@ -781,6 +782,36 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_add",
             },
+        )
+
+    async def test_fatal_exception_yields_no_terminal_response(self) -> None:
+        """A DeveloperOrientedException must propagate with zero
+        ToolResponse objects yielded — no empty SUCCESS that could be
+        mistaken for a completed tool call."""
+
+        def boom() -> ToolChunk:
+            """A tool that raises a fatal, developer-oriented error."""
+            raise DeveloperOrientedException("boom: fatal tool failure")
+
+        toolkit = Toolkit(tools=[FunctionTool(boom)])
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_boom",
+            name="boom",
+            input=json.dumps({}),
+        )
+
+        responses = []
+        with self.assertRaises(DeveloperOrientedException):
+            async for result in toolkit.call_tool(tool_call, state):
+                if isinstance(result, ToolResponse):
+                    responses.append(result)
+
+        self.assertEqual(
+            len(responses),
+            0,
+            "no ToolResponse should be yielded when a "
+            "DeveloperOrientedException propagates",
         )
 
     async def test_sync_function_returning_plain_string(self) -> None:
