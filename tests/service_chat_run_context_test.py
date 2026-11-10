@@ -2,6 +2,7 @@
 # pylint: disable=protected-access, using-constant-test
 """ChatService resolves team/channel context once and fans it out."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
@@ -81,6 +82,15 @@ class _WorkspaceManager:
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
         return SimpleNamespace(workdir="/tmp/agentscope-run-ctx-test")
+
+    @asynccontextmanager
+    async def hold_session(
+        self,
+        *_: object,
+        **__: object,
+    ) -> AsyncGenerator[None, None]:
+        """Lease nothing — this workspace is never swept."""
+        yield
 
 
 class TestRunContextResolution(IsolatedAsyncioTestCase):

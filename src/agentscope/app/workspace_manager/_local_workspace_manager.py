@@ -63,7 +63,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         unrelated ``get_workspace`` callers.
         """
         expired_ids = [
-            wid for wid, (_, ts) in self._cache.items() if now - ts > self._ttl
+            wid
+            for wid, (_, ts) in self._cache.items()
+            if now - ts > self._ttl and not self._is_held(wid)
         ]
         return [self._cache.pop(wid)[0] for wid in expired_ids]
 

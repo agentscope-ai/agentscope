@@ -317,7 +317,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             expired_ids = [
                 wid
                 for wid, (_, ts) in self._cache.items()
-                if now - ts > self._ttl
+                if now - ts > self._ttl and not self._is_held(wid)
             ]
             evicted = [self._cache.pop(wid)[0] for wid in expired_ids]
         if not evicted:

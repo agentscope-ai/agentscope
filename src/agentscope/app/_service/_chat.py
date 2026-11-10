@@ -351,14 +351,22 @@ class ChatService:
                 Internal queue caller already saved this initial input.
         """
         try:
-            await self._run_impl(
+            # Lease the workspace for the whole turn: a run touches it
+            # once when assembling the agent and may then keep working
+            # in it for longer than the manager's TTL.
+            async with self._workspace_manager.hold_session(
                 user_id,
-                session_id,
                 agent_id,
-                input_msg,
-                sop_dispatch,
-                input_persisted=input_persisted,
-            )
+                session_id,
+            ):
+                await self._run_impl(
+                    user_id,
+                    session_id,
+                    agent_id,
+                    input_msg,
+                    sop_dispatch,
+                    input_persisted=input_persisted,
+                )
         except Exception as e:
             logger.exception(
                 "ChatService.run failed for user_id=%s session_id=%s "

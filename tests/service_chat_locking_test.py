@@ -138,6 +138,15 @@ class _WorkspaceManager:
         assert workspace_id == "workspace-1"
         return SimpleNamespace(workdir="/tmp/agentscope-chat-lock-test")
 
+    @asynccontextmanager
+    async def hold_session(
+        self,
+        *_: object,
+        **__: object,
+    ) -> AsyncGenerator[None, None]:
+        """Lease nothing — this workspace is never swept."""
+        yield
+
 
 class _AgentController:
     """Coordinate two fake agents across the contested lock."""
