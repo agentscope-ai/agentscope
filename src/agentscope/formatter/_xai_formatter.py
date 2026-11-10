@@ -265,12 +265,7 @@ class XAIChatFormatter(FormatterBase):
                             ),
                         )
 
-                        # Promote media that came back inside the tool
-                        # result into a following user message, which is what
-                        # the other formatters do via the same shared helper.
-                        # ``xai_sdk`` re-hydrates binary tool results and
-                        # ``input_types`` already advertises images, so the
-                        # textual hint alone would lose the picture.
+                        # Keep tool results together before emitting media.
                         if multimodal_data:
                             promo_args = _xai_user_args_from_blocks(
                                 multimodal_data,
@@ -290,11 +285,7 @@ class XAIChatFormatter(FormatterBase):
                         pass
 
                     elif isinstance(block, DataBlock):
-                        # xAI carries media on user turns only, so an
-                        # assistant-authored block is promoted into a user
-                        # message *after* the assistant turn rather than
-                        # dropped.  The other formatters forward the same
-                        # message inline.
+                        # xAI requires media in user messages.
                         assistant_media.append(block)
 
                     elif isinstance(block, HintBlock):
@@ -374,8 +365,6 @@ class XAIChatFormatter(FormatterBase):
                     if text:
                         xai_messages.append(assistant(text))
 
-                # Assistant media follows the turn that produced it, since
-                # xAI accepts media on user turns only.
                 if assistant_media:
                     promo_args = _xai_user_args_from_blocks(
                         assistant_media,
