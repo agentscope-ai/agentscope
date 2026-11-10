@@ -306,8 +306,16 @@ def _diff_stats(diff: str) -> tuple[int, int]:
         `tuple[int, int]`: The added and removed line counts.
     """
     lines = diff.splitlines()
-    # Only the leading ``---``/``+++`` pair is a header, not every such line
-    body = lines[2:] if lines[:1] and lines[0].startswith("--- ") else lines
+    # A unified diff may carry a preamble (``diff --git``, ``index``, ...)
+    # before the ``---``/``+++`` file-header pair, so the header is not
+    # always the first two lines. Skip only that pair; later body lines that
+    # happen to start with ``--- ``/``+++ `` are still real changes.
+    body_start = 0
+    for index, line in enumerate(lines[:-1]):
+        if line.startswith("--- ") and lines[index + 1].startswith("+++ "):
+            body_start = index + 2
+            break
+    body = lines[body_start:]
     return (
         sum(_.startswith("+") for _ in body),
         sum(_.startswith("-") for _ in body),
