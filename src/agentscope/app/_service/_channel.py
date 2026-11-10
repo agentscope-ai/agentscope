@@ -8,6 +8,8 @@ instances against storage. Holds no channel instances.
 import time
 from datetime import datetime
 
+from pydantic import ValidationError
+
 from ..._utils._common import _generate_id
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import (
@@ -110,9 +112,21 @@ class ChannelService:
         record = await self._require(channel_id)
         updates.pop("credentials", None)
         updates.pop("channel_type", None)
-        updated = record.model_copy(
-            update={**updates, "updated_at": datetime.now()},
-        )
+        # model_copy(update=...) skips validation; reject invalid updates
+        # before they reach storage.
+        try:
+            updated = ChannelRecord.model_validate(
+                {
+                    **record.model_dump(),
+                    **updates,
+                    "updated_at": datetime.now(),
+                },
+            )
+        except ValidationError as exc:
+            raise ChannelError(
+                f"Invalid channel update: {exc.errors()}",
+                422,
+            ) from exc
         bot_id = self._types.extract_platform_bot_id(
             updated.channel_type,
             updated.credentials,
