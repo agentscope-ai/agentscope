@@ -245,6 +245,158 @@ class RealtimeDelegationDedupTest(IsolatedAsyncioTestCase):
 class RealtimeDelegationErrorTest(IsolatedAsyncioTestCase):
     """Exercise validation and cleanup with a real Agent and AskUser."""
 
+    async def test_model_failure_preserves_completed_tool_history(
+        self,
+    ) -> None:
+        """Keep successful tool records when subsequent reasoning fails."""
+        executed: list[str] = []
+
+        def write(value: str) -> str:
+            """Record one execution before the model fails."""
+            executed.append(value)
+            return value
+
+        for needs_confirmation in (False, True):
+            with self.subTest(needs_confirmation=needs_confirmation):
+                executed.clear()
+                model = MockModel(context_size=10000)
+                model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[
+                                ToolCallBlock(
+                                    id="write-1",
+                                    name="write",
+                                    input=json.dumps({"value": "saved"}),
+                                ),
+                            ],
+                            is_last=True,
+                        ),
+                        RuntimeError("Model failed after tool execution."),
+                    ],
+                )
+                live = _create_live_agent(
+                    model,
+                    Toolkit(
+                        tools=[
+                            FunctionTool(
+                                write,
+                                is_read_only=not needs_confirmation,
+                            ),
+                        ],
+                    ),
+                )
+                self.addAsyncCleanup(live.close)
+                live._start_client_delegation("task")
+                backend = live._delegations["task"].agent
+                assert backend is not None
+                if needs_confirmation:
+                    await asyncio.gather(*list(live._tasks))
+                    pending = backend.state.get_awaiting_tool_calls("Friday")
+                    await live.send(
+                        UserConfirmResultEvent(
+                            reply_id=backend.state.reply_id,
+                            confirm_results=[
+                                ConfirmResult(
+                                    confirmed=True,
+                                    tool_call=pending[0],
+                                ),
+                            ],
+                        ),
+                    )
+                with self.assertLogs("as", level="ERROR"):
+                    await asyncio.gather(*list(live._tasks))
+                reply = backend.state.get_reply_message("Friday")
+                assert reply is not None
+                self.assertEqual(
+                    {
+                        "executed": executed,
+                        "model_calls": model.cnt,
+                        "results": [
+                            (
+                                block.id,
+                                block.state,
+                                [
+                                    item.text
+                                    for item in block.output
+                                    if isinstance(item, TextBlock)
+                                ],
+                            )
+                            for block in reply.get_content_blocks(
+                                "tool_result",
+                            )
+                        ],
+                        "active": live._active_delegation_id,
+                        "delegations": live._delegations,
+                        "routes": live._delegated_tool_calls,
+                    },
+                    {
+                        "executed": ["saved"],
+                        "model_calls": 2,
+                        "results": [("write-1", "success", ["saved"])],
+                        "active": None,
+                        "delegations": {},
+                        "routes": {},
+                    },
+                )
+                expected = reply.model_copy(deep=True)
+                expected.content = [
+                    block
+                    for block in expected.content
+                    if block.type in {"tool_call", "tool_result"}
+                ]
+                expected_context = [expected.model_dump(mode="json")]
+                self.assertEqual(
+                    live.state.model_dump(mode="json")["context"],
+                    expected_context,
+                )
+                live.model.send_delegation_result.assert_awaited_once_with(
+                    "task",
+                    "The delegated task failed. Ask the user to try again.",
+                )
+                await live.close()
+                self.assertEqual(
+                    live.state.model_dump(mode="json")["context"],
+                    expected_context,
+                )
+
+    async def test_model_failure_publishes_accepted_external_result(
+        self,
+    ) -> None:
+        """Publish a pending result END even when no next event is yielded."""
+        live = await self._start_delegation(["last"])
+        backend = live._delegations["task"].agent
+        assert backend is not None
+        backend.model.set_responses([RuntimeError("Model failed.")])
+        result = self._result("last", True)
+        with self.assertLogs("as", level="ERROR"):
+            await live.send(
+                ExternalExecutionResultEvent(
+                    reply_id=backend.state.reply_id,
+                    execution_results=[result],
+                ),
+            )
+            await asyncio.gather(*list(live._tasks))
+        self.assertEqual(
+            [
+                (event.tool_call_id, event.state)
+                for event in live.drain_events()
+                if isinstance(event, ToolResultEndEvent)
+            ],
+            [("last", "success")],
+        )
+        reply = live.state.get_reply_message("Friday")
+        assert reply is not None
+        self.assertEqual(
+            reply.get_content_blocks("tool_result"),
+            [result],
+        )
+        self.assertEqual(live._delegations, {})
+        live.model.send_delegation_result.assert_awaited_once_with(
+            "task",
+            "The delegated task failed. Ask the user to try again.",
+        )
+
     async def _start_delegation(self, call_ids: list[str]) -> RealtimeAgent:
         """Park the backend on one or more external questions."""
         model = MockModel(context_size=10000)

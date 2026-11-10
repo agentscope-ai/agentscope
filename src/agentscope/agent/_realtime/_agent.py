@@ -1500,6 +1500,7 @@ class RealtimeAgent:
                 self._sync_delegation_state(delegation)
                 if pending_result_end is not None:
                     self._emit(pending_result_end)
+                    pending_result_end = None
                 if waiting_for_external_input or (
                     delegation.agent.state.has_awaiting_tool_calls(self.name)
                 ):
@@ -1532,6 +1533,10 @@ class RealtimeAgent:
                     "RealtimeAgent: client delegation %s failed",
                     delegation.delegation_id,
                 )
+                # Completed tools must survive a later backend failure.
+                self._sync_delegation_state(delegation)
+                if pending_result_end is not None:
+                    self._emit(pending_result_end)
                 if (
                     not self._closing
                     and not delegation.expiring
@@ -1542,11 +1547,7 @@ class RealtimeAgent:
                     )
                 ):
                     # A rejected external answer leaves the backend parked.
-                    # Retain its route for retry and publish any earlier result
-                    # accepted from the same batch before validation failed.
-                    self._sync_delegation_state(delegation)
-                    if pending_result_end is not None:
-                        self._emit(pending_result_end)
+                    # Retain its route for retry after syncing valid results.
                     awaiting_calls = (
                         delegation.agent.state.get_awaiting_tool_calls(
                             self.name,
@@ -1579,7 +1580,6 @@ class RealtimeAgent:
                     self._schedule_delegation_timeout(delegation)
                     return
                 if self._closing:
-                    self._sync_delegation_state(delegation)
                     self._finish_client_delegation(delegation.delegation_id)
                     return
                 try:
