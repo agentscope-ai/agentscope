@@ -1467,10 +1467,23 @@ class RealtimeAgent:
                         reply = delegation.agent.state.get_reply_message(
                             self.name,
                         )
-                        if reply is not None and any(
-                            call.id == item.tool_call_id
-                            and call.state == ToolCallState.FINISHED
-                            for call in reply.get_content_blocks("tool_call")
+                        if (
+                            reply is not None
+                            and any(
+                                call.id == item.tool_call_id
+                                and call.state == ToolCallState.FINISHED
+                                for call in reply.get_content_blocks(
+                                    "tool_call",
+                                )
+                            )
+                            and any(
+                                result.id == item.tool_call_id
+                                and result.state == item.state
+                                and result.state != ToolResultState.RUNNING
+                                for result in reply.get_content_blocks(
+                                    "tool_result",
+                                )
+                            )
                         ):
                             # Local tools commit before END. Persist now,
                             # before the next model request can block.
@@ -1479,7 +1492,8 @@ class RealtimeAgent:
                                 item,
                             )
                         else:
-                            # External results commit after yielding END.
+                            # External and interrupted results may commit
+                            # after yielding END.
                             pending_result_end = item
                         continue
                     if isinstance(

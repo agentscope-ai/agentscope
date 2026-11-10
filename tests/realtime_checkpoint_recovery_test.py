@@ -21,6 +21,7 @@ from agentscope.event import (
     ExternalExecutionResultEvent,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
+    ToolResultEndEvent,
     UserConfirmResultEvent,
     UserInterruptEvent,
 )
@@ -40,6 +41,106 @@ from agentscope.tool import FunctionTool, Toolkit
 
 class RealtimeCheckpointRecoveryTest(IsolatedAsyncioTestCase):
     """Exercise serialized checkpoints rather than the in-memory backend."""
+
+    async def test_interrupted_tool_end_checkpoint_has_its_result(
+        self,
+    ) -> None:
+        """Restore interruption from END without relying on ReplyEnd."""
+
+        def write() -> str:
+            """Never execute a tool whose approval is interrupted."""
+            self.fail("The interrupted tool must not execute.")
+
+        toolkit = Toolkit(tools=[FunctionTool(write)])
+        model = MockModel(context_size=10000)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(id="write", name="write", input="{}"),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        def factory(state: AgentState) -> Agent:
+            """Create a real backend that waits for user approval."""
+            return Agent(
+                "Friday",
+                "Be brief.",
+                model,
+                state=state,
+                toolkit=toolkit,
+            )
+
+        live_model = OpenAILiveModel(
+            "gpt-live-1",
+            OpenAICredential(api_key="test"),
+        )
+        live_model.send_delegation_result = AsyncMock()
+        live = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            live_model,
+            delegation_agent_factory=factory,
+        )
+        self.addAsyncCleanup(live.close)
+        live._start_client_delegation("task")
+        await asyncio.gather(*list(live._tasks))
+        delegation = live._delegations["task"]
+        assert delegation.agent is not None
+        list(live.drain_events())
+        await live._drive_client_delegation(
+            delegation,
+            UserInterruptEvent(reply_id=delegation.agent.state.reply_id),
+        )
+        restored = None
+        for event in live.drain_events():
+            if isinstance(event, ToolResultEndEvent):
+                self.assertIsNone(restored)
+                snapshot = live.checkpoint_snapshot(event)
+                assert snapshot is not None
+                restored = AgentState.model_validate_json(
+                    snapshot.model_dump_json(),
+                )
+        assert restored is not None
+        reply = restored.get_reply_message("Friday")
+        assert reply is not None
+        self.assertEqual(
+            {
+                "calls": [
+                    (block.id, block.state)
+                    for block in reply.get_content_blocks("tool_call")
+                ],
+                "results": [
+                    (block.id, block.state, block.output)
+                    for block in reply.get_content_blocks("tool_result")
+                ],
+            },
+            {
+                "calls": [("write", "finished")],
+                "results": [
+                    (
+                        "write",
+                        "interrupted",
+                        "<system-reminder>The tool call has been interrupted "
+                        "by the user.</system-reminder>",
+                    ),
+                ],
+            },
+        )
+
+        expected = reply.model_dump(mode="json")
+        model.set_responses(
+            [ChatResponse(content=[TextBlock(text="Done")], is_last=True)],
+        )
+        recovered = factory(restored)
+        await recovered.reply(UserMsg("user", "Continue."))
+        self.assertEqual(
+            restored.context[0].model_dump(mode="json"),
+            expected,
+        )
 
     async def test_hidden_tool_checkpoint_before_next_model_response(
         self,
