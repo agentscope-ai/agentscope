@@ -503,10 +503,8 @@ class MCPClient(BaseModel):
             RuntimeError: If not connected (for stateful connections), or
                 if tool-list notifications invalidate both discovery attempts.
         """
-        # A notification can invalidate the catalog while tools/list is in
-        # flight. Never publish that older snapshot as a valid cache. Retry
-        # once; a continuously changing server must not keep discovery busy.
-        for _attempt in range(2):
+        # Retry once if a notification invalidates the in-flight tool list.
+        for _ in range(2):
             if not self.is_stateful:
                 async with self._get_client_gen() as client:
                     generation = self._tool_list_generation

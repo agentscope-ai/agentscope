@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import mcp.types
 
-from agentscope.mcp import MCPClient, StdioMCPConfig
+from agentscope.mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 
 
 class _FakeTransport:
@@ -144,3 +144,102 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
             ("mcp__list_changed__echo", 1),
         )
         self.assertIs(client._cached_tools, cached)
+
+
+class MCPClientListGenerationTest(IsolatedAsyncioTestCase):
+    """Reject tool lists invalidated during discovery."""
+
+    async def test_discovery_crossing_notification_uses_new_catalog(
+        self,
+    ) -> None:
+        """Retry stale responses once in both connection modes."""
+        for stateful in (False, True):
+            for entry in ("list", "get"):
+                for repeated in (False, True):
+                    with self.subTest(
+                        stateful=stateful,
+                        entry=entry,
+                        repeated=repeated,
+                    ):
+                        await self._check(stateful, entry, repeated)
+
+    async def _check(
+        self,
+        stateful: bool,
+        entry: str,
+        repeated: bool,
+    ) -> None:
+        calls = 0
+
+        class RacingClient(_FakeClient):
+            """Notify after taking a tool-list snapshot."""
+
+            async def __aenter__(self) -> "RacingClient":
+                # Pre-request notifications must not invalidate the response.
+                await self.message_handler(
+                    mcp.types.ToolListChangedNotification(
+                        method="notifications/tools/list_changed",
+                    ),
+                )
+                return self
+
+            async def list_tools(
+                self,
+                **_kwargs: Any,
+            ) -> mcp.types.ListToolsResult:
+                nonlocal calls
+                calls += 1
+                if calls > 3:
+                    raise AssertionError("Discovery retried without a bound")
+                name = "old" if calls == 1 else "new"
+                snapshot = mcp.types.ListToolsResult(
+                    tools=[
+                        mcp.types.Tool(
+                            name=name,
+                            inputSchema={"type": "object"},
+                        ),
+                    ],
+                )
+                if calls == 1 or repeated:
+                    await self.message_handler(
+                        mcp.types.ToolListChangedNotification(
+                            method="notifications/tools/list_changed",
+                        ),
+                    )
+                return snapshot
+
+        with patch(
+            "agentscope.mcp._mcp_client.stdio_client",
+            return_value=_FakeTransport(),
+        ), patch("agentscope.mcp._mcp_client.SDKClient", RacingClient):
+            client = MCPClient(
+                name="generation",
+                is_stateful=stateful,
+                mcp_config=StdioMCPConfig(command="unused")
+                if stateful
+                else HttpMCPConfig(url="http://mcp.invalid/mcp"),
+            )
+            if stateful:
+                await client.connect()
+            try:
+                if repeated:
+                    with self.assertRaisesRegex(RuntimeError, "changed"):
+                        if entry == "get":
+                            await client.get_tool("new")
+                        else:
+                            await client.list_raw_tools()
+                    self.assertIsNone(client._cached_tools)
+                else:
+                    if entry == "list":
+                        result = await client.list_raw_tools()
+                        self.assertEqual(
+                            [tool.name for tool in result],
+                            ["new"],
+                        )
+                    await client.get_tool("new")
+                    with self.assertRaises(ValueError):
+                        await client.get_tool("old")
+                self.assertEqual(calls, 2)
+            finally:
+                if stateful:
+                    await client.close()
