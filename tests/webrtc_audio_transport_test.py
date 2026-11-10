@@ -20,6 +20,7 @@ from av import AudioFrame as AVAudioFrame
 from fastapi import HTTPException
 
 from agentscope.agent import RealtimeAgent
+from agentscope.credential import GeminiCredential
 from agentscope.app._router._realtime import _create_realtime_offer
 from agentscope.app._router._schema import (
     RealtimeOfferRequest,
@@ -49,7 +50,9 @@ from agentscope.message import ToolCallBlock, ToolResultState, UserMsg
 from agentscope.realtime import (
     AudioFrame,
     DashScopeAudioRealtimeModel,
+    GeminiRealtimeModel,
     RealtimeModelBase,
+    RealtimeModelCard,
 )
 from agentscope.realtime import _events as me
 from agentscope.tool import FunctionTool, Toolkit
@@ -163,6 +166,34 @@ class _FakeAgent:
         ):
             return self.state
         return None
+
+
+class _UnacknowledgedSetupSocket:
+    """Keep a real Gemini connect waiting for its setup acknowledgement."""
+
+    def __init__(self) -> None:
+        self.setup_sent = asyncio.Event()
+        self.closed = False
+        self._incoming: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def send(self, frame: str) -> None:
+        """Record that the model sent its setup frame."""
+        del frame
+        self.setup_sent.set()
+
+    def __aiter__(self) -> "_UnacknowledgedSetupSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        frame = await self._incoming.get()
+        if frame is None:
+            raise StopAsyncIteration
+        return frame
+
+    async def close(self) -> None:
+        """Close the socket and release the provider's reader."""
+        self.closed = True
+        self._incoming.put_nowait(None)
 
 
 class _FakeTransport:
@@ -1624,6 +1655,383 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 "closed_sessions": [session],
             },
         )
+
+    async def test_closed_session_rejects_a_late_start(self) -> None:
+        """A retired session must not launch another provider connection."""
+        create_agent = AsyncMock()
+        session = _make_session(
+            agent_factory=create_agent,
+            storage=_FakeStorage(),
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        await session.close()
+        try:
+            with self.assertRaises(RuntimeError):
+                session.start()
+            create_agent.assert_not_awaited()
+        finally:
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+
+    async def test_close_before_runner_starts_is_idempotent(self) -> None:
+        """Cancellation before the task's first step still owns cleanup."""
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        create_agent = AsyncMock()
+        closed_sessions: list[WebRTCSession] = []
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=create_agent,
+            storage=_FakeStorage(),
+            message_bus=_FakeMessageBus(),
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        await session.close()
+        await session.close()
+        create_agent.assert_not_awaited()
+        self.assertTrue(transport.closed)
+        self.assertTrue(peer_connection.closed)
+        self.assertEqual(closed_sessions, [session])
+
+    async def test_close_cancels_agent_assembly_after_lock_acquisition(
+        self,
+    ) -> None:
+        """Owning the run lock does not make unfinished startup drainable."""
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        message_bus = _FakeMessageBus()
+        storage = _FakeStorage()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> _FakeAgent:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            raise AssertionError("The blocked factory must be cancelled.")
+
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_task: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            self.assertTrue(await session.wait_until_lock_acquired(1))
+            close_task = asyncio.create_task(session.close())
+            await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+            self.assertTrue(cancelled.is_set())
+            self.assertTrue(transport.closed)
+            self.assertTrue(peer_connection.closed)
+            self.assertFalse(message_bus.held_locks)
+            self.assertEqual(storage.calls, [])
+            self.assertEqual(closed_sessions, [session])
+        finally:
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            if close_task is not None:
+                await asyncio.gather(close_task, return_exceptions=True)
+
+    async def test_close_cancels_provider_setup_and_closes_its_socket(
+        self,
+    ) -> None:
+        """A cancelled agent __aenter__ must still release its model reader."""
+        socket = _UnacknowledgedSetupSocket()
+        model = GeminiRealtimeModel(
+            "test-gemini",
+            credential=GeminiCredential(api_key="test-key"),
+            model_card=RealtimeModelCard(
+                name="test-gemini",
+                label="test",
+                input_sample_rate=16_000,
+                output_sample_rate=24_000,
+            ),
+        )
+        agent = RealtimeAgent(name="test", system_prompt="", model=model)
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        message_bus = _FakeMessageBus()
+        storage = _LockAwareStorage(message_bus)
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> RealtimeAgent:
+            return agent
+
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        close_task: asyncio.Task[None] | None = None
+        with patch("websockets.connect", AsyncMock(return_value=socket)):
+            session.start()
+            try:
+                await asyncio.wait_for(socket.setup_sent.wait(), timeout=1)
+                self.assertTrue(await session.wait_until_lock_acquired(1))
+                close_task = asyncio.create_task(session.close())
+                await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+                self.assertTrue(socket.closed)
+                self.assertIsNone(model._reader)
+                self.assertTrue(peer_connection.closed)
+                self.assertTrue(transport.closed)
+                self.assertFalse(message_bus.held_locks)
+                self.assertEqual(storage.writes_under_session_lock, [True])
+                self.assertEqual(closed_sessions, [session])
+            finally:
+                if session._task is not None:
+                    session._task.cancel()
+                    await asyncio.gather(session._task, return_exceptions=True)
+                if close_task is not None:
+                    await asyncio.gather(close_task, return_exceptions=True)
+                await agent.close()
+
+    async def test_repeated_close_does_not_cancel_startup_cleanup(
+        self,
+    ) -> None:
+        """Concurrent close callers must share one startup cancellation."""
+        entered = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> _FakeAgent:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_entered.set()
+                await release_cleanup.wait()
+                cleanup_finished.set()
+            raise AssertionError("The blocked factory must be cancelled.")
+
+        session = _make_session(
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=_FakeStorage(),
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        close_tasks: list[asyncio.Task[None]] = []
+        session.start()
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            close_tasks.append(asyncio.create_task(session.close()))
+            await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+            close_tasks.append(asyncio.create_task(session.close()))
+            done, _ = await asyncio.wait(close_tasks, timeout=0.01)
+            self.assertFalse(done)
+            self.assertFalse(peer_connection.closed)
+            release_cleanup.set()
+            await asyncio.wait_for(asyncio.gather(*close_tasks), timeout=1)
+            self.assertTrue(cleanup_finished.is_set())
+            self.assertFalse(message_bus.held_locks)
+            self.assertEqual(closed_sessions, [session])
+        finally:
+            release_cleanup.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_cancelled_close_caller_keeps_final_persistence_alive(
+        self,
+    ) -> None:
+        """Closing an active session waits for its owned persistence task."""
+        write_entered = asyncio.Event()
+        release_write = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        class BlockingStorage(_LockAwareStorage):
+            """Hold the final write until the close callers are waiting."""
+
+            async def update_session_state(self, **kwargs: object) -> None:
+                """Wait before committing the owned final state snapshot."""
+                write_entered.set()
+                await release_write.wait()
+                await super().update_session_state(**kwargs)
+
+        storage = BlockingStorage(message_bus)
+        agent = _FakeAgent({"id": "existing-message", "role": "assistant"}, [])
+
+        async def _create_agent() -> _FakeAgent:
+            return agent
+
+        session = _make_session(
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        close_tasks: list[asyncio.Task[None]] = []
+        session.start()
+        try:
+            await asyncio.wait_for(write_entered.wait(), timeout=1)
+            close_tasks = [
+                asyncio.create_task(session.close()),
+                asyncio.create_task(session.close()),
+            ]
+            done, _ = await asyncio.wait(close_tasks, timeout=0.01)
+            self.assertFalse(done)
+            close_tasks[0].cancel()
+            await asyncio.gather(close_tasks[0], return_exceptions=True)
+            self.assertIsNotNone(session._task)
+            self.assertFalse(session._task.done())
+            self.assertIn(
+                MessageBusKeys.session_lock("session-1"),
+                message_bus.held_locks,
+            )
+            release_write.set()
+            await asyncio.wait_for(close_tasks[1], timeout=1)
+            self.assertEqual(storage.writes_under_session_lock, [True])
+            self.assertFalse(message_bus.held_locks)
+            self.assertTrue(peer_connection.closed)
+            self.assertEqual(closed_sessions, [session])
+        finally:
+            release_write.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_cancelled_close_caller_keeps_transport_cleanup_alive(
+        self,
+    ) -> None:
+        """Caller cancellation must not strand a partially closed transport."""
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        transport = WebRTCAudioTransport(16_000, 24_000)
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _read_input() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_entered.set()
+                await release_cleanup.wait()
+
+        transport._input_task = asyncio.create_task(_read_input())
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=AsyncMock(),
+            storage=_FakeStorage(),
+            message_bus=_BlockedMessageBus(),
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_tasks: list[asyncio.Task[None]] = []
+        try:
+            await asyncio.sleep(0)
+            close_tasks.append(asyncio.create_task(session.close()))
+            await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+            close_tasks[0].cancel()
+            await asyncio.gather(close_tasks[0], return_exceptions=True)
+            close_tasks.append(asyncio.create_task(session.close()))
+            release_cleanup.set()
+            await asyncio.wait_for(asyncio.shield(close_tasks[1]), timeout=1)
+            self.assertEqual(
+                {
+                    "input_task": transport._input_task,
+                    "transport_closed": transport._closed,
+                    "peer_closed": peer_connection.closed,
+                    "closed_sessions": closed_sessions,
+                },
+                {
+                    "input_task": None,
+                    "transport_closed": True,
+                    "peer_closed": True,
+                    "closed_sessions": [session],
+                },
+            )
+        finally:
+            release_cleanup.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_close_preserves_final_write_after_startup_failure(
+        self,
+    ) -> None:
+        """Failed startup must finish persistence before releasing its lock."""
+        write_entered = asyncio.Event()
+        release_write = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        closed_sessions: list[WebRTCSession] = []
+
+        class BlockingStorage(_LockAwareStorage):
+            """Pause the final write after startup has failed."""
+
+            async def update_session_state(self, **kwargs: object) -> None:
+                """Wait before committing the final snapshot."""
+                write_entered.set()
+                await release_write.wait()
+                await super().update_session_state(**kwargs)
+
+        agent = AsyncMock()
+        agent.state = SimpleNamespace(context=[])
+        agent.__aenter__.side_effect = RuntimeError("Setup failed.")
+        storage = BlockingStorage(message_bus)
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_task: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(write_entered.wait(), timeout=1)
+            close_task = asyncio.create_task(session.close())
+            done, _ = await asyncio.wait([close_task], timeout=0.01)
+            self.assertEqual(done, set())
+            release_write.set()
+            await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+            self.assertEqual(
+                storage.calls,
+                [
+                    {
+                        "method": "update_session_state",
+                        "user_id": "alice",
+                        "agent_id": "agent-1",
+                        "session_id": "session-1",
+                        "state": agent.state,
+                    },
+                ],
+            )
+            self.assertEqual(storage.writes_under_session_lock, [True])
+            self.assertEqual(message_bus.held_locks, set())
+            self.assertEqual(closed_sessions, [session])
+            agent.close.assert_awaited_once_with()
+        finally:
+            release_write.set()
+            if session._task is not None:
+                await asyncio.gather(session._task, return_exceptions=True)
+            if close_task is not None:
+                await asyncio.gather(close_task, return_exceptions=True)
 
     async def test_checkpoint_boundaries_persist_state(self) -> None:
         """Persist tool boundaries but not ordinary text block endings."""
