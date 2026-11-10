@@ -235,14 +235,8 @@ class KnowledgeBase:
 
         Raises:
             `ValueError`:
-                If ``top_k`` is not positive, or if the embedding model
-                returns a number of vectors that does not match the
-                number of queries.
+                If ``top_k`` is not positive.
         """
-        # A non-positive ``top_k`` would silently mean something else:
-        # the result list is sliced with ``[:top_k]``, so ``-2`` drops
-        # the last two hits instead of returning none, and the vector
-        # store receives the same meaningless bound.
         if top_k < 1:
             raise ValueError("top_k must be positive.")
 
