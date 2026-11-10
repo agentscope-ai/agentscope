@@ -1733,6 +1733,19 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         self.assertIn("good_one", names)
         self.assertNotIn("bad_one", names)
 
+    async def test_initialize_ignores_non_object_mcps(self) -> None:
+        """A v2 .mcp whose ``mcps`` value is not an object must not crash
+        initialize(); the scope falls back to ``default_mcps``."""
+        mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+        async with aiofiles.open(mcp_file, "w", encoding="utf-8") as f:
+            await f.write(json.dumps({"version": 2, "mcps": ["oops"]}))
+
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        self.assertTrue(ws.is_alive)
+        self.assertEqual(await ws.list_mcps(), [])
+
     # -----------------------------------------------------------------
     #  default_mcps + connect failure
     # -----------------------------------------------------------------
