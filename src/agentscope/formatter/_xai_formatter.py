@@ -211,9 +211,7 @@ class XAIChatFormatter(FormatterBase):
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
                 pending_media: list[Any] = []
-                # Media authored by the assistant itself.  It is promoted
-                # after the assistant turn has been emitted, so the turn
-                # keeps its place in the conversation.
+                # Media follows its assistant segment, before any next hint.
                 assistant_media: list[DataBlock] = []
 
                 for block in blocks:
@@ -329,6 +327,15 @@ class XAIChatFormatter(FormatterBase):
                                 if text:
                                     xai_messages.append(assistant(text))
                                 pending_text = []
+                        if assistant_media:
+                            promo_args = _xai_user_args_from_blocks(
+                                assistant_media,
+                                image,
+                                self.supported_input_media_types,
+                            )
+                            if promo_args:
+                                xai_messages.append(user(*promo_args))
+                            assistant_media = []
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:

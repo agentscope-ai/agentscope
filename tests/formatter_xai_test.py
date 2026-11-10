@@ -290,6 +290,43 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_chat_formatter_assistant_media(self) -> None:
+        """Assistant images follow their text and precede the next user."""
+        picture = DataBlock(
+            source=Base64Source(
+                data="SU1HX0RBVEE=",
+                media_type="image/png",
+            ),
+            detail="high",
+        )
+        for text in ("Here is the chart.", ""):
+            with self.subTest(text=text):
+                content = (
+                    [TextBlock(text=text), picture] if text else [picture]
+                )
+                res = await XAIChatFormatter().format(
+                    [
+                        UserMsg(name="user", content="Draw a chart."),
+                        AssistantMsg(name="assistant", content=content),
+                        UserMsg(name="user", content="Explain the chart."),
+                    ],
+                )
+                expected = [user("Draw a chart.")]
+                if text:
+                    expected.append(assistant(text))
+                expected.extend(
+                    [
+                        user(
+                            image(
+                                "data:image/png;base64,SU1HX0RBVEE=",
+                                detail="high",
+                            ),
+                        ),
+                        user("Explain the chart."),
+                    ],
+                )
+                self.assertListEqual(expected, res)
+
     async def test_chat_formatter_system_message(self) -> None:
         """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
@@ -1029,6 +1066,52 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+    async def test_chat_formatter_assistant_media_around_hint(self) -> None:
+        """Assistant images stay with their segment on either side of hints."""
+        before = DataBlock(
+            source=URLSource(
+                url="https://example.com/before.png",
+                media_type="image/png",
+            ),
+        )
+        after = DataBlock(
+            source=URLSource(
+                url="https://example.com/after.png",
+                media_type="image/png",
+            ),
+        )
+        for hint in (
+            "Revise the chart.",
+            [TextBlock(text="Revise the chart.")],
+        ):
+            for text in ("Original chart.", ""):
+                with self.subTest(hint=hint, text=text):
+                    content = [TextBlock(text=text)] if text else []
+                    res = await XAIChatFormatter().format(
+                        [
+                            AssistantMsg(
+                                name="assistant",
+                                content=[
+                                    *content,
+                                    before,
+                                    HintBlock(hint=hint),
+                                    TextBlock(text="Revised chart."),
+                                    after,
+                                ],
+                            ),
+                        ],
+                    )
+                    expected = [assistant(text)] if text else []
+                    expected.extend(
+                        [
+                            user(image("https://example.com/before.png")),
+                            user("Revise the chart."),
+                            assistant("Revised chart."),
+                            user(image("https://example.com/after.png")),
+                        ],
+                    )
+                    self.assertListEqual(expected, res)
 
     async def test_chat_formatter_hint_block_multimodal(self) -> None:
         """Multimodal HintBlock becomes one user() stub carrying text +
