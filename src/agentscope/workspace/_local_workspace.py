@@ -74,6 +74,8 @@ class LocalWorkspace(WorkspaceBase):
         └── sessions/     # per-session context and tool-result files
     """
 
+    is_alive: bool
+
     def __init__(
         self,
         *,
@@ -853,12 +855,36 @@ class LocalWorkspace(WorkspaceBase):
                     f"Skill path {skill_path!r} resolves outside skills_dir.",
                 )
 
-            await asyncio.to_thread(
-                shutil.copytree,
-                skill_path,
-                dest_path,
-                dirs_exist_ok=False,
+            # Reserve this destination so cancellation can safely roll it back.
+            # The worker outlives cancellation of its asyncio waiter.
+            os.mkdir(dest_path)
+            copy_task = asyncio.create_task(
+                asyncio.to_thread(
+                    shutil.copytree,
+                    skill_path,
+                    dest_path,
+                    dirs_exist_ok=True,
+                ),
             )
+            try:
+                await asyncio.shield(copy_task)
+            except asyncio.CancelledError:
+
+                async def rollback() -> None:
+                    """Finish writing before removing this install's files."""
+                    await asyncio.gather(copy_task, return_exceptions=True)
+                    await self._backend.delete_path(dest_path)
+
+                cleanup = asyncio.create_task(rollback())
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        # Repeated cancellation must not release _skill_lock
+                        # while the worker or its rollback can still write.
+                        continue
+                cleanup.result()
+                raise
 
             logger.info(
                 "Copied skill '%s' (agent name: '%s') from %s to %s",

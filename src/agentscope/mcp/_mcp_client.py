@@ -43,7 +43,8 @@ class MCPClient(BaseModel):
     - _lifecycle_task: Owns the stateful client context from enter to exit
     - _close_requested: Signals the lifecycle task to exit the client context
     - _is_connected: Connection state flag
-    - _cached_tools: Cached list of tools
+    - _cached_tools: Cached list of tools, invalidated when the server
+      announces a tools/list_changed notification
     - _http_client: The live HTTP client, while one is open
     - _static_headers: Its headers before any runtime override
     - _runtime_headers: See :meth:`set_runtime_headers`
@@ -221,7 +222,24 @@ class MCPClient(BaseModel):
         return SDKClient(
             transport,
             mode="auto",
+            message_handler=self._handle_server_message,
         )
+
+    async def _handle_server_message(self, message: Any) -> None:
+        """Watch server notifications for tool-list changes.
+
+        An MCP server may add, remove, or update tools while the
+        connection is alive, announcing each change with a
+        ``notifications/tools/list_changed`` notification. The MCP
+        SDK's response cache evicts the matching entry on its own, but
+        the tool descriptors cached in ``_cached_tools`` are a second
+        copy that only this class can invalidate. Dropping it here
+        makes the next :meth:`get_tool` / :meth:`list_tools` call
+        re-resolve against the live server instead of serving schemas
+        from a connection that no longer matches them.
+        """
+        if isinstance(message, mcp.types.ToolListChangedNotification):
+            self._cached_tools = None
 
     def _create_http_client(
         self,
@@ -340,7 +358,7 @@ class MCPClient(BaseModel):
         For stateless connections, this method does nothing.
 
         Raises:
-            RuntimeError: If already connected.
+            RuntimeError: If already connected or a connection is in progress.
         """
         if not self.is_stateful:
             logger.debug(
@@ -353,6 +371,10 @@ class MCPClient(BaseModel):
             raise RuntimeError(
                 f"MCP '{self.name}' is already connected. "
                 "Call close() before reconnecting.",
+            )
+        if self._lifecycle_task is not None:
+            raise RuntimeError(
+                f"MCP '{self.name}' connection is already in progress.",
             )
 
         client = self._create_sdk_client()
