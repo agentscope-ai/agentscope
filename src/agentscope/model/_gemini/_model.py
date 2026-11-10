@@ -26,11 +26,16 @@ def _text_signature_metadata(part: Any) -> dict[str, Any]:
     """Retain opaque Gemini text metadata in a JSON-compatible form."""
     signature = getattr(part, "thought_signature", None)
     if signature:
-        return {
+        metadata: dict[str, Any] = {
             "gemini_thought_signature": base64.b64encode(signature).decode(
                 "ascii",
             ),
         }
+        if part.text is None:
+            metadata["gemini_text_omitted"] = True
+        if part.thought is False:
+            metadata["gemini_thought_false"] = True
+        return metadata
     return {}
 
 
@@ -396,15 +401,15 @@ class GeminiChatModel(ChatModelBase):
             ):
                 for part in chunk.candidates[0].content.parts:
                     metadata = _text_signature_metadata(part)
-                    if part.text or (
-                        metadata
-                        and current_block_id is not None
-                        and not part.function_call
-                    ):
+                    if part.text or (metadata and not part.function_call):
                         kind = "thinking" if part.thought else "text"
-                        if not part.text and part.thought is None:
-                            kind = current_kind or "text"
-                        if current_block_id is None or kind != current_kind:
+                        # A signed Part is opaque, including empty text.
+                        # Never attach its signature to a preceding Part.
+                        if (
+                            metadata
+                            or current_block_id is None
+                            or kind != current_kind
+                        ):
                             current_block_id = _generate_id()
                         current_kind = kind
 
@@ -422,8 +427,7 @@ class GeminiChatModel(ChatModelBase):
                                     **metadata,
                                 ),
                             )
-                        # A signature closes its logical part. Later text
-                        # must not be merged into that signed history part.
+                        # Keep following unsigned text separate as well.
                         if metadata:
                             current_block_id = None
 
@@ -479,15 +483,18 @@ class GeminiChatModel(ChatModelBase):
             and response.candidates[0].content.parts
         ):
             for part in response.candidates[0].content.parts:
-                if part.text:
-                    metadata = _text_signature_metadata(part)
+                metadata = _text_signature_metadata(part)
+                if part.text or (metadata and not part.function_call):
                     if part.thought:
                         content_blocks.append(
-                            ThinkingBlock(thinking=part.text, **metadata),
+                            ThinkingBlock(
+                                thinking=part.text or "",
+                                **metadata,
+                            ),
                         )
                     else:
                         content_blocks.append(
-                            TextBlock(text=part.text, **metadata),
+                            TextBlock(text=part.text or "", **metadata),
                         )
 
                 if part.function_call:

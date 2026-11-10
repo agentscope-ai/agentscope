@@ -18,9 +18,9 @@ def _signature(value: str) -> str:
     return base64.b64encode(value.encode()).decode()
 
 
-def _response(parts: list[dict]) -> dict:
+def _response(parts: list[dict], finished: bool = True) -> dict:
     """Build a real SDK GenerateContentResponse JSON payload."""
-    return {
+    response: dict[str, Any] = {
         "candidates": [
             {"content": {"role": "model", "parts": parts}, "index": 0},
         ],
@@ -30,6 +30,9 @@ def _response(parts: list[dict]) -> dict:
             "totalTokenCount": 2,
         },
     }
+    if finished:
+        response["candidates"][0]["finishReason"] = "STOP"
+    return response
 
 
 class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
@@ -49,10 +52,21 @@ class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
             },
             {"text": "Answer", "thoughtSignature": _signature("answer")},
             {"text": "Another.", "thoughtSignature": _signature("another")},
+            {"text": "", "thoughtSignature": _signature("empty")},
+            {
+                "text": "",
+                "thought": True,
+                "thoughtSignature": _signature("empty-thought"),
+            },
+            {"thoughtSignature": _signature("omitted-text")},
+            {
+                "text": "",
+                "thought": False,
+                "thoughtSignature": _signature("explicit-false"),
+            },
         ]
         deltas: list[list[dict[str, Any]]] = [
-            [{"text": "Let ", "thought": True}],
-            [{"text": "me think.", "thought": True}],
+            [{"text": "Let me think.", "thought": True}],
             [
                 {
                     "text": "",
@@ -63,6 +77,15 @@ class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
             [{"text": "Answer"}],
             [{"text": "", "thoughtSignature": _signature("answer")}],
             [{"text": "Another.", "thoughtSignature": _signature("another")}],
+            [{"text": "Suffix."}],
+            [{"thoughtSignature": _signature("omitted-text")}],
+            [
+                {
+                    "text": "",
+                    "thought": False,
+                    "thoughtSignature": _signature("explicit-false"),
+                },
+            ],
         ]
         captured = []
 
@@ -70,8 +93,10 @@ class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
             captured.append(json.loads(request.content))
             if streaming:
                 data = "".join(
-                    "data: " + json.dumps(_response(parts)) + "\n\n"
-                    for parts in deltas
+                    "data: "
+                    + json.dumps(_response(parts, index == len(deltas) - 1))
+                    + "\n\n"
+                    for index, parts in enumerate(deltas)
                 )
                 return httpx2.Response(
                     200,
@@ -94,6 +119,18 @@ class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
                     ),
                 },
             )
+            # Feed the identical transport to the native Chat implementation
+            # rather than assuming where a streamed signature belongs.
+            native_chat = model.client.aio.chats.create(
+                model="gemini-3-flash-preview",
+                config={"automatic_function_calling": {"disable": True}},
+            )
+            for text in ("Explain.", "Continue."):
+                if streaming:
+                    async for _ in await native_chat.send_message_stream(text):
+                        pass
+                else:
+                    await native_chat.send_message(text)
             history = [UserMsg(name="user", content="Explain.")]
             result = await model(history)
             if streaming:
@@ -109,8 +146,26 @@ class GeminiTextSignatureTest(IsolatedAsyncioTestCase):
             if streaming:
                 async for _ in next_result:
                     pass
-        self.assertEqual(captured[1]["contents"][1]["parts"], expected)
-        self.assertEqual(len(restored.content), 3)
+        native_parts = [
+            part
+            for content in captured[1]["contents"]
+            if content["role"] == "model"
+            for part in content["parts"]
+        ]
+        replayed_parts = [
+            part
+            for content in captured[3]["contents"]
+            if content["role"] == "model"
+            for part in content["parts"]
+        ]
+        expected_parts = (
+            [part for parts in deltas for part in parts]
+            if streaming
+            else expected
+        )
+        self.assertEqual(native_parts, expected_parts)
+        self.assertEqual(replayed_parts, native_parts)
+        self.assertEqual(len(restored.content), len(expected_parts))
 
     async def test_nonstream_signed_parts_survive_two_turns(self) -> None:
         """Adjacent non-streaming parts retain their own signatures."""

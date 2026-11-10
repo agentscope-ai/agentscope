@@ -31,10 +31,15 @@ def _format_text_part(
     thought: bool = False,
 ) -> dict[str, Any]:
     """Restore text-part metadata without exposing it as visible text."""
-    part: dict[str, Any] = {"text": text}
+    extra = extra or {}
+    signature = extra.get("gemini_thought_signature")
+    part: dict[str, Any] = {}
+    if not (signature and extra.get("gemini_text_omitted")):
+        part["text"] = text
     if thought:
         part["thought"] = True
-    signature = (extra or {}).get("gemini_thought_signature")
+    elif signature and extra.get("gemini_thought_false"):
+        part["thought"] = False
     if signature:
         part["thought_signature"] = base64.b64decode(signature)
     return part
@@ -209,7 +214,9 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     promoted_parts = []
 
                 if isinstance(block, TextBlock):
-                    if block.text:
+                    if block.text or (block.model_extra or {}).get(
+                        "gemini_thought_signature",
+                    ):
                         parts.append(
                             _format_text_part(block.text, block.model_extra),
                         )
@@ -218,11 +225,12 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     # Gemini API requires `thought: true` to mark a part as a
                     # thinking/reasoning block so the model can distinguish it
                     # from normal text and maintain reasoning continuity.
-                    # Skip empty thinking — Gemini rejects a thought part
-                    # whose text is empty with a 400
-                    # ("contents.parts must not be empty"). Empty thinking
-                    # occurs when a reasoning model returns no summary.
-                    if block.thinking:
+                    # Unsigned empty thoughts have no usable content. A
+                    # signed empty Part still carries opaque model state
+                    # and must be sent back unchanged.
+                    if block.thinking or (block.model_extra or {}).get(
+                        "gemini_thought_signature",
+                    ):
                         parts.append(
                             _format_text_part(
                                 block.thinking,
