@@ -240,6 +240,7 @@ class MCPRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
             },
         )
 
@@ -457,6 +458,7 @@ class GatewayMCPClientRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
             },
         )
 
@@ -492,6 +494,7 @@ class GatewayMCPClientRuntimeHeadersTest(IsolatedAsyncioTestCase):
                 "enable_tools": None,
                 "disable_tools": None,
                 "execution_timeout": None,
+                "stream_progress": False,
                 "runtime_headers": {"Authorization": "Bearer runtime"},
             },
         )

@@ -27,3 +27,7 @@ parameter_overrides:
     maximum: 1048576
   thinking_enable:
     hidden: true
+  temperature:
+    hidden: true
+  top_p:
+    hidden: true

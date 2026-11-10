@@ -312,8 +312,11 @@ class Grep(ToolBase):
 
         raw = result.stdout.decode("utf-8", errors="ignore")
 
+        if not raw:
+            return []
+        # Only the terminal separator is framing; empty records are matches.
         lines = [
-            line.rstrip("\r") for line in raw.split("\n") if line.rstrip("\r")
+            line.rstrip("\r") for line in raw.removesuffix("\n").split("\n")
         ]
         return lines
 

@@ -53,6 +53,7 @@ scripts/model_examples/
 │
 ├── volcengine_call.py               # Volcengine Ark / Doubao
 ├── volcengine_multiagent.py
+├── volcengine_multimodal.py         # Image, video, and audio input
 │
 ├── xai_call.py                     # xAI Grok
 ├── xai_multiagent.py

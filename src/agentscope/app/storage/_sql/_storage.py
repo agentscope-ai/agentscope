@@ -19,6 +19,8 @@ need no dialect-specific timezone handling.
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
+import sqlalchemy as sa
+
 from .._base import StorageBase
 from .._model._session import _origin_kwargs
 from .._model import (
@@ -37,6 +39,7 @@ from .._model import (
     SOPRecord,
     SOPRunRecord,
     TeamRecord,
+    VoiceProfileRecord,
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
@@ -55,6 +58,7 @@ from ._tables import (
     SOPRow,
     SOPRunRow,
     TeamRow,
+    VoiceProfileRow,
 )
 from ....credential import CredentialBase
 from ....message import Msg
@@ -236,7 +240,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         alembic_dir = Path(__file__).resolve().parent / "_alembic"
         cfg = Config(str(alembic_dir / "alembic.ini"))
         cfg.set_main_option("script_location", str(alembic_dir))
-        cfg.set_main_option("sqlalchemy.url", self._url)
+        # ConfigParser requires literal percent signs to be escaped.
+        cfg.set_main_option("sqlalchemy.url", self._url.replace("%", "%%"))
 
         await asyncio.to_thread(command.upgrade, cfg, "head")
 
@@ -2221,3 +2226,113 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .all()
             )
         return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+
+    # ---- Voice Profile ----
+
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Insert a voice profile or update it under an ownership predicate.
+
+        Primary-key collisions never transfer ownership. Concurrent writes
+        from the same owner may update the payload; a different owner gets
+        ``PermissionError``. Updates preserve the stored creation time.
+        """
+        record.user_id = user_id
+        record.created_at = _to_naive_utc(record.created_at)
+        record.updated_at = _utcnow()
+        row = _from_record(VoiceProfileRow, record)
+        async with self._session() as sess:
+            try:
+                await sess.execute(
+                    sa.insert(VoiceProfileRow).values(
+                        id=record.id,
+                        user_id=user_id,
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        payload=row.payload,
+                    ),
+                )
+            except sa.exc.IntegrityError as exc:
+                await sess.rollback()
+                # Ownership is enforced by the write itself, not a precheck.
+                owned = (
+                    VoiceProfileRow.id == record.id,
+                    VoiceProfileRow.user_id == user_id,
+                )
+                result = await sess.execute(
+                    sa.update(VoiceProfileRow)
+                    .where(*owned)
+                    .values(payload=row.payload, updated_at=record.updated_at),
+                )
+                if result.rowcount == 0:
+                    owner = await sess.scalar(
+                        sa.select(VoiceProfileRow.user_id).where(
+                            VoiceProfileRow.id == record.id,
+                        ),
+                    )
+                    if owner is not None and owner != user_id:
+                        raise PermissionError(
+                            "Cannot overwrite another user's voice profile.",
+                        ) from exc
+                    raise
+                record.created_at = (
+                    await sess.execute(
+                        sa.select(VoiceProfileRow.created_at).where(*owned),
+                    )
+                ).scalar_one()
+            await sess.commit()
+        return record.id
+
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch one voice profile; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(VoiceProfileRow, profile_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, VoiceProfileRecord)
+
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """Return all voice profiles for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(VoiceProfileRow).where(
+                            VoiceProfileRow.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, VoiceProfileRecord) for r in rows]
+
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(VoiceProfileRow).where(
+                    VoiceProfileRow.id == profile_id,
+                    VoiceProfileRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0

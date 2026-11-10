@@ -5,9 +5,10 @@
 import asyncio
 import json
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from fractions import Fraction
+from itertools import count
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,8 @@ from aiortc.mediastreams import MediaStreamError
 from av import AudioFrame as AVAudioFrame
 from fastapi import HTTPException
 
+from agentscope.agent import RealtimeAgent
+from agentscope.credential import GeminiCredential
 from agentscope.app._router._realtime import _create_realtime_offer
 from agentscope.app._router._schema import (
     RealtimeOfferRequest,
@@ -28,8 +31,10 @@ from agentscope.app._service._webrtc_audio_transport import (
     WebRTCAudioTransport,
 )
 from agentscope.app._service._webrtc_session import WebRTCSession
-from agentscope.app.message_bus import MessageBusKeys
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.app._bus_ops import enqueue_chat_input
 from agentscope.app.storage import CredentialRecord, RealtimeModelConfig
+from agentscope.credential import OpenAICredential
 from agentscope.event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
@@ -42,8 +47,24 @@ from agentscope.event import (
     TextBlockStartEvent,
     ToolResultEndEvent,
 )
-from agentscope.message import ToolCallBlock, ToolResultState
-from agentscope.realtime import AudioFrame, DashScopeAudioRealtimeModel
+from agentscope.message import (
+    AssistantMsg,
+    ToolCallBlock,
+    ToolResultState,
+    UserMsg,
+)
+from agentscope.realtime import (
+    AudioFrame,
+    DashScopeAudioRealtimeModel,
+    GeminiRealtimeModel,
+    OpenAILiveModel,
+    RealtimeModelBase,
+    RealtimeModelCard,
+    TimelineTranscriptDeltaEvent,
+)
+from agentscope.realtime import _events as me
+from agentscope.state import AgentState
+from agentscope.tool import FunctionTool, Toolkit
 
 
 class _FakeDataChannel:
@@ -142,6 +163,10 @@ class _FakeAgent:
         for event in self.events:
             yield event
 
+    def drain_events(self) -> Iterator[Any]:
+        """No additional cleanup events for the default fixture."""
+        return iter(())
+
     def checkpoint_snapshot(self, event: Any) -> object | None:
         """Return state for the same boundaries as the real agent."""
         if isinstance(
@@ -154,6 +179,72 @@ class _FakeAgent:
         ):
             return self.state
         return None
+
+
+class _FailingClosingAgent(_FakeAgent):
+    """Fail after starting a reply and enqueue terminal events on exit."""
+
+    def __init__(self) -> None:
+        super().__init__({"id": "reply-1"}, [])
+        self.failure = RuntimeError("stream failed")
+        self.started = ReplyStartEvent(
+            session_id="session-1",
+            reply_id="reply-1",
+            name="Friday",
+        )
+        self.terminal = [
+            ToolResultEndEvent(
+                reply_id="reply-1",
+                tool_call_id="tool-1",
+                state=ToolResultState.INTERRUPTED,
+            ),
+            ReplyEndEvent(session_id="session-1", reply_id="reply-1"),
+        ]
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.events.extend(self.terminal)
+
+    async def reply_stream(
+        self,
+        transport: object,
+    ) -> AsyncIterator[Any]:
+        """Start the reply before simulating a provider stream error."""
+        del transport
+        yield self.started
+        raise self.failure
+
+    def drain_events(self) -> Iterator[Any]:
+        """Consume the events produced by context-manager cleanup."""
+        events, self.events = self.events, []
+        return iter(events)
+
+
+class _UnacknowledgedSetupSocket:
+    """Keep a real Gemini connect waiting for its setup acknowledgement."""
+
+    def __init__(self) -> None:
+        self.setup_sent = asyncio.Event()
+        self.closed = False
+        self._incoming: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def send(self, frame: str) -> None:
+        """Record that the model sent its setup frame."""
+        del frame
+        self.setup_sent.set()
+
+    def __aiter__(self) -> "_UnacknowledgedSetupSocket":
+        return self
+
+    async def __anext__(self) -> str:
+        frame = await self._incoming.get()
+        if frame is None:
+            raise StopAsyncIteration
+        return frame
+
+    async def close(self) -> None:
+        """Close the socket and release the provider's reader."""
+        self.closed = True
+        self._incoming.put_nowait(None)
 
 
 class _FakeTransport:
@@ -882,6 +973,59 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_gpt_live_offer_rejects_pending_chat(self) -> None:
+        """Reject parked Chat interactions before WebRTC negotiation."""
+        self.model.card = SimpleNamespace(delegation_backend="session_chat")
+        self.session.config.chat_model_config = object()
+        self.access.resolve_agent.return_value = SimpleNamespace(
+            data=SimpleNamespace(name="Friday"),
+        )
+        for state in ("asking", "submitted"):
+            with self.subTest(state=state):
+                self.session.state = AgentState(
+                    context=[
+                        AssistantMsg(
+                            name="Friday",
+                            content=[
+                                ToolCallBlock(
+                                    id="old_tool",
+                                    name="Write",
+                                    input="{}",
+                                    state=state,
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+                self.session.state.reply_id = self.session.state.context[0].id
+                self.session.state.context.extend(
+                    [
+                        UserMsg("user", "Later speech"),
+                        AssistantMsg("Friday", "Voice response"),
+                    ],
+                )
+                with self.assertRaises(HTTPException) as raised:
+                    await self._offer()
+                self.assertEqual(
+                    {
+                        "status": raised.exception.status_code,
+                        "detail": raised.exception.detail,
+                        "negotiation_calls": (
+                            self.peer.setRemoteDescription.await_count
+                        ),
+                        "connections": self.connections,
+                    },
+                    {
+                        "status": 409,
+                        "detail": (
+                            "Complete the pending Chat confirmation or "
+                            "external execution before starting GPT Live."
+                        ),
+                        "negotiation_calls": 0,
+                        "connections": {},
+                    },
+                )
+
     async def test_offer_replaces_the_previous_connection(self) -> None:
         """A reconnect closes the previous local runner before reload."""
         previous = SimpleNamespace(close=AsyncMock())
@@ -955,8 +1099,184 @@ class RealtimeOfferTest(unittest.IsolatedAsyncioTestCase):
         self.peer.close.assert_awaited_once_with()
 
 
+# pylint: disable-next=too-many-public-methods
 class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
     """Verify that a WebRTC run keeps the normal session contract."""
+
+    async def test_sampled_live_checkpoint_persists_immediately(self) -> None:
+        """Persist a sampled transcript snapshot at its published cursor."""
+
+        class _LiveFakeAgent(_FakeAgent):
+            allows_open_user_reply_checkpoint = True
+
+            def checkpoint_snapshot(self, event: Any) -> object | None:
+                if isinstance(event, TextBlockDeltaEvent):
+                    return self.state
+                return super().checkpoint_snapshot(event)
+
+        events = [
+            ReplyStartEvent(
+                session_id="session-1",
+                reply_id="user-1",
+                name="user",
+                role="user",
+            ),
+            TextBlockDeltaEvent(
+                reply_id="user-1",
+                block_id="text-1",
+                delta="hello",
+            ),
+        ]
+        agent = _LiveFakeAgent(
+            {"id": "user-1", "role": "user"},
+            events,
+        )
+        message_bus = _FakeMessageBus(sequence_entries=True)
+        storage = _FakeStorage()
+        closed = asyncio.Event()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=lambda _: closed.set(),
+        )
+
+        session.start()
+        await asyncio.wait_for(closed.wait(), timeout=1)
+
+        self.assertDictEqual(
+            {
+                "storage_methods": [item["method"] for item in storage.calls],
+                "cursor_values": [
+                    item["value"]
+                    for item in message_bus.calls
+                    if item["method"] == "registry_set"
+                ],
+            },
+            {
+                "storage_methods": [
+                    "update_session_state",
+                    "update_session_state",
+                ],
+                "cursor_values": ["2-0"],
+            },
+        )
+
+    async def test_older_checkpoint_cannot_regress_cursor(self) -> None:
+        """A delayed flush cannot overwrite a newer checkpoint cursor."""
+        message_bus = _FakeMessageBus()
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=_FakeStorage(),
+            message_bus=message_bus,
+            on_closed=lambda _: None,
+        )
+        session._checkpoint_entry_id = "2-0"
+        session._persist_state = AsyncMock()  # type: ignore[method-assign]
+
+        await session._checkpoint_state("1-0", cast(Any, object()))
+
+        self.assertDictEqual(
+            {
+                "persist_calls": session._persist_state.await_args_list,
+                "checkpoint_entry_id": session._checkpoint_entry_id,
+                "registry_calls": [
+                    item
+                    for item in message_bus.calls
+                    if item["method"] == "registry_set"
+                ],
+            },
+            {
+                "persist_calls": [],
+                "checkpoint_entry_id": "2-0",
+                "registry_calls": [],
+            },
+        )
+
+    async def test_transcript_between_responses_preserves_full_reply(
+        self,
+    ) -> None:
+        """Persist opening text, tools and the final answer under one ID."""
+
+        def stream_tool(q: str) -> str:
+            """Return a deterministic tool result for persistence."""
+            return f"{q}-final"
+
+        model = MagicMock(
+            spec=RealtimeModelBase,
+            model="scripted",
+            output_sample_rate=24000,
+            input_transcription_enabled=True,
+        )
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            toolkit=Toolkit(
+                tools=[FunctionTool(stream_tool, is_read_only=True)],
+            ),
+        )
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=storage,
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        session.agent = agent
+        for event in [
+            me.SpeechStartedEvent(item_id="u1"),
+            me.SpeechEndedEvent(item_id="u1"),
+            me.ResponseCreatedEvent(item_id="r1"),
+            me.TranscriptDeltaEvent(item_id="r1", delta="Let me check."),
+            me.InputTranscriptionEvent(item_id="u1", text="Weather?"),
+            me.ResponseCreatedEvent(item_id="r2"),
+            me.ToolCallEvent(
+                item_id="r2",
+                tool_call=ToolCallBlock(
+                    id="c1",
+                    name="stream_tool",
+                    input='{"q": "x"}',
+                ),
+            ),
+            me.ResponseDoneEvent(item_id="r2"),
+        ]:
+            await agent._on_model_event(event)
+        await asyncio.gather(*agent._tasks)
+        for event in [
+            me.ResponseCreatedEvent(item_id="r3"),
+            me.TranscriptDeltaEvent(item_id="r3", delta="It is sunny."),
+            me.ResponseDoneEvent(item_id="r3"),
+        ]:
+            await agent._on_model_event(event)
+
+        while not agent._out.empty():
+            queued = agent._out.get_nowait()
+            if queued.checkpoint is not None:
+                await session._persist_state(queued.checkpoint)
+        await session._persist_state()
+        self.assertEqual(
+            {
+                "context_ids": [msg.id for msg in agent.state.context],
+                "saved": {
+                    key: value.model_dump(mode="json")
+                    for key, value in storage.messages.items()
+                },
+                "blocks": [
+                    block.type for block in agent.state.context[0].content
+                ],
+                "text": agent.state.context[0].get_text_content(),
+            },
+            {
+                "context_ids": ["r1", "u1"],
+                "saved": {
+                    msg.id: msg.model_dump(mode="json")
+                    for msg in agent.state.context
+                },
+                "blocks": ["text", "tool_call", "tool_result", "text"],
+                "text": "Let me check.\nIt is sunny.",
+            },
+        )
 
     async def test_request_close_owns_and_deduplicates_the_task(self) -> None:
         """Synchronous callbacks share one retained asynchronous close."""
@@ -1199,6 +1519,155 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             ["6-0"],
         )
 
+    async def test_overlapping_transcripts_remain_replayable(self) -> None:
+        """A new page can replay an older turn after a newer one settles."""
+        for old_event, old_text in [
+            (me.InputTranscriptionEvent(item_id="u1", text="first"), "first"),
+            (me.InputTranscriptionFailedEvent(item_id="u1"), ""),
+            (me.InputTranscriptionEvent(item_id="u1", text=""), ""),
+        ]:
+            with self.subTest(event=old_event):
+                await self._check_transcript_replay(old_event, old_text)
+
+    async def _check_transcript_replay(
+        self,
+        old_event: me.ModelEvent,
+        old_text: str,
+    ) -> None:
+        """Check replay and persistence for one delayed transcript result."""
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            MagicMock(
+                spec=RealtimeModelBase,
+                output_sample_rate=24000,
+                input_transcription_enabled=True,
+            ),
+        )
+        storage = _FakeStorage()
+        message_bus = _FakeMessageBus(sequence_entries=True)
+        closed = asyncio.Event()
+        emitted = {}
+        reload_messages = {}
+        reload_cursor = 0
+        boundaries = []
+
+        async def stream(transport: object) -> AsyncIterator[Any]:
+            """Drive real agent events through the session runner."""
+            nonlocal reload_cursor
+            del transport
+            events = [
+                me.SpeechStartedEvent(item_id="u1"),
+                me.SpeechEndedEvent(item_id="u1"),
+                me.SpeechStartedEvent(item_id="u2"),
+                me.SpeechEndedEvent(item_id="u2"),
+                me.InputTranscriptionEvent(
+                    item_id="u2",
+                    text="second",
+                ),
+                old_event,
+            ]
+            for index, model_event in enumerate(events):
+                if index in (3, 5):
+                    cursors = [
+                        call["value"]
+                        for call in message_bus.calls
+                        if call["method"] == "registry_set"
+                    ]
+                    boundaries.append(
+                        {
+                            "cursors": cursors,
+                            "messages": list(storage.messages),
+                        },
+                    )
+                    reload_cursor = (
+                        int(cursors[-1].split("-")[0]) if cursors else 0
+                    )
+                    reload_messages.update(storage.messages)
+                await agent._on_model_event(model_event)
+                while not agent._out.empty():
+                    queued = agent._out.get_nowait()
+                    event = queued.event
+                    emitted[event.id] = event
+                    agent._yielded_checkpoint = (
+                        (event.id, queued.checkpoint)
+                        if queued.checkpoint is not None
+                        else None
+                    )
+                    try:
+                        yield event
+                    finally:
+                        agent._yielded_checkpoint = None
+
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=lambda _: closed.set(),
+        )
+        with (
+            patch(
+                "agentscope.agent._realtime._aggregator.time",
+                SimpleNamespace(monotonic=count(step=1.0).__next__),
+            ),
+            patch.object(agent, "connect", new=AsyncMock()),
+            patch.object(agent, "reply_stream", new=stream),
+        ):
+            session.start()
+            await asyncio.wait_for(closed.wait(), timeout=1)
+
+        # Replay at page load, then apply live events by reply ID.
+        for call in message_bus.calls:
+            if call["method"] != "publish":
+                continue
+            payload = call["event"]
+            if int(payload["_entry_id"].split("-")[0]) <= (reload_cursor):
+                continue
+            event = emitted[payload["id"]]
+            if isinstance(event, ReplyStartEvent):
+                reload_messages.setdefault(
+                    event.reply_id,
+                    UserMsg(
+                        id=event.reply_id,
+                        name="user",
+                        content=[],
+                    ),
+                )
+            elif event.reply_id in reload_messages:
+                reload_messages[event.reply_id].append_event(event)
+
+        final_cursor = "10-0" if old_text else "7-0"
+        self.assertEqual(
+            {
+                "boundaries": boundaries,
+                "replayed": {
+                    key: msg.get_text_content()
+                    for key, msg in reload_messages.items()
+                },
+                "saved": {
+                    key: msg.get_text_content()
+                    for key, msg in storage.messages.items()
+                },
+                "cursors": [
+                    call["value"]
+                    for call in message_bus.calls
+                    if call["method"] == "registry_set"
+                ],
+                "pending": list(agent._pending_user_turns),
+            },
+            {
+                "boundaries": [
+                    {"cursors": [], "messages": []},
+                    {"cursors": [], "messages": []},
+                ],
+                "replayed": {"u1": old_text, "u2": "second"},
+                "saved": {"u2": "second"}
+                | ({"u1": old_text} if old_text else {}),
+                "cursors": [final_cursor],
+                "pending": [],
+            },
+        )
+
     async def test_checkpoint_deletes_message_removed_from_context(
         self,
     ) -> None:
@@ -1261,6 +1730,193 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
                 ],
             },
         )
+
+    async def test_pruned_live_segments_remain_in_message_history(
+        self,
+    ) -> None:
+        """Checkpoint pruning bounds state without erasing voice history."""
+        agent = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            OpenAILiveModel(
+                "gpt-live-1",
+                OpenAICredential(api_key="fake"),
+            ),
+        )
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(),
+            storage=storage,
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        session.agent = agent
+        for index in range(50):
+            for role in ("user", "assistant"):
+                await agent._on_model_event(
+                    TimelineTranscriptDeltaEvent(
+                        role=role,
+                        delta=role[0] * 1_000,
+                        start_ms=index * 2_100,
+                        end_ms=index * 2_100 + 100,
+                    ),
+                )
+                for event in agent.drain_events():
+                    snapshot = agent.checkpoint_snapshot(event)
+                    if snapshot is not None:
+                        await session._persist_state(snapshot)
+        await agent.close()
+        for event in agent.drain_events():
+            snapshot = agent.checkpoint_snapshot(event)
+            if snapshot is not None:
+                await session._persist_state(snapshot)
+        await session._persist_state()
+        self.assertEqual(
+            {
+                "history": {
+                    role: "".join(
+                        msg.get_text_content() or ""
+                        for msg in storage.messages.values()
+                        if msg.role == role
+                    )
+                    for role in ("user", "assistant")
+                },
+                "deletions": [
+                    call
+                    for call in storage.calls
+                    if call["method"] == "delete_message"
+                ],
+                "cached_ids": set(session._persisted_messages),
+            },
+            {
+                "history": {
+                    "user": "u" * 50_000,
+                    "assistant": "a" * 50_000,
+                },
+                "deletions": [],
+                "cached_ids": {msg.id for msg in agent.state.context},
+            },
+        )
+        self.assertLessEqual(
+            sum(
+                len(msg.get_text_content() or "")
+                for msg in agent.state.context
+            ),
+            32_000,
+        )
+        self.assertLess(len(agent.state.context), len(storage.messages))
+
+    async def test_close_events_are_published_before_final_persistence(
+        self,
+    ) -> None:
+        """Events emitted by Agent exit are not stranded in its queue."""
+        ended = ReplyEndEvent(
+            session_id="session-1",
+            reply_id="reply-1",
+        )
+
+        class ClosingAgent(_FakeAgent):
+            """Emit the final reply only after the runtime closes."""
+
+            def drain_events(self) -> Iterator[Any]:
+                return iter([ended])
+
+        agent = ClosingAgent({"id": "reply-1"}, [])
+        bus = _FakeMessageBus()
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=bus,
+            on_closed=lambda _: None,
+        )
+        await session._run()
+        self.assertEqual(session._last_entry_id, "1-0")
+        self.assertEqual(session._checkpoint_entry_id, "1-0")
+        self.assertEqual(session.transport.errors, [])
+
+    async def test_failed_stream_publishes_close_events(self) -> None:
+        """Publish terminal events and their checkpoint before reporting."""
+        agent = _FailingClosingAgent()
+        bus = _FakeMessageBus(sequence_entries=True)
+        storage = _FakeStorage()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=bus,
+            on_closed=lambda _: None,
+        )
+        with self.assertLogs("as", level="ERROR"):
+            await session._run()
+        self.assertEqual(
+            {
+                "published": [
+                    call["event"]
+                    for call in bus.calls
+                    if call["method"] == "publish"
+                ],
+                "cursor": session._checkpoint_entry_id,
+                "errors": session.transport.errors,
+                "transport_closed": session.transport.closed,
+                "peer_closed": session.peer_connection.closed,
+                "remaining": list(agent.drain_events()),
+            },
+            {
+                "published": [
+                    {
+                        **event.model_dump(mode="json"),
+                        "_entry_id": f"{index}-0",
+                    }
+                    for index, event in enumerate(
+                        [agent.started, *agent.terminal],
+                        1,
+                    )
+                ],
+                "cursor": "3-0",
+                "errors": ["stream failed"],
+                "transport_closed": True,
+                "peer_closed": True,
+                "remaining": [],
+            },
+        )
+
+    async def test_failed_stream_preserves_original_exception(self) -> None:
+        """Drain closing events before propagating the same exception."""
+        agent = _FailingClosingAgent()
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=_FakeStorage(),
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        session.agent = agent
+        events = []
+        with self.assertRaises(RuntimeError) as raised:
+            async for event in session._agent_events():
+                events.append(event)
+        self.assertIs(raised.exception, agent.failure)
+        self.assertEqual(events, [agent.started, *agent.terminal])
+
+    async def test_event_generator_close_does_not_yield(self) -> None:
+        """Explicit generator close and cancellation must not yield."""
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                agent = _FailingClosingAgent()
+                session = _make_session(
+                    agent_factory=AsyncMock(return_value=agent),
+                    storage=_FakeStorage(),
+                    message_bus=_FakeMessageBus(),
+                    on_closed=lambda _: None,
+                )
+                session.agent = agent
+                events = session._agent_events()
+                self.assertEqual(await anext(events), agent.started)
+                if cancel:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await events.athrow(asyncio.CancelledError())
+                else:
+                    await events.aclose()
+                self.assertEqual(list(agent.drain_events()), agent.terminal)
 
     async def test_pcm_events_are_not_published_to_session_events(
         self,
@@ -1382,6 +2038,385 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_closed_session_rejects_a_late_start(self) -> None:
+        """A retired session must not launch another provider connection."""
+        create_agent = AsyncMock()
+        session = _make_session(
+            agent_factory=create_agent,
+            storage=_FakeStorage(),
+            message_bus=_FakeMessageBus(),
+            on_closed=lambda _: None,
+        )
+        await session.close()
+        try:
+            with self.assertRaises(RuntimeError):
+                session.start()
+            create_agent.assert_not_awaited()
+        finally:
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+
+    async def test_close_before_runner_starts_is_idempotent(self) -> None:
+        """Cancellation before the task's first step still owns cleanup."""
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        create_agent = AsyncMock()
+        closed_sessions: list[WebRTCSession] = []
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=create_agent,
+            storage=_FakeStorage(),
+            message_bus=_FakeMessageBus(),
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        await session.close()
+        await session.close()
+        create_agent.assert_not_awaited()
+        self.assertTrue(transport.closed)
+        self.assertTrue(peer_connection.closed)
+        self.assertEqual(closed_sessions, [session])
+
+    async def test_close_cancels_agent_assembly_after_lock_acquisition(
+        self,
+    ) -> None:
+        """Owning the run lock does not make unfinished startup drainable."""
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        message_bus = _FakeMessageBus()
+        storage = _FakeStorage()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> _FakeAgent:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            raise AssertionError("The blocked factory must be cancelled.")
+
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_task: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            self.assertTrue(await session.wait_until_lock_acquired(1))
+            close_task = asyncio.create_task(session.close())
+            await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+            self.assertTrue(cancelled.is_set())
+            self.assertTrue(transport.closed)
+            self.assertTrue(peer_connection.closed)
+            self.assertFalse(message_bus.held_locks)
+            self.assertEqual(storage.calls, [])
+            self.assertEqual(closed_sessions, [session])
+        finally:
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            if close_task is not None:
+                await asyncio.gather(close_task, return_exceptions=True)
+
+    async def test_close_cancels_provider_setup_and_closes_its_socket(
+        self,
+    ) -> None:
+        """A cancelled agent __aenter__ must still release its model reader."""
+        socket = _UnacknowledgedSetupSocket()
+        model = GeminiRealtimeModel(
+            "test-gemini",
+            credential=GeminiCredential(api_key="test-key"),
+            model_card=RealtimeModelCard(
+                name="test-gemini",
+                label="test",
+                input_sample_rate=16_000,
+                output_sample_rate=24_000,
+            ),
+        )
+        agent = RealtimeAgent(name="test", system_prompt="", model=model)
+        transport = _FakeTransport()
+        peer_connection = _FakePeerConnection()
+        message_bus = _FakeMessageBus()
+        storage = _LockAwareStorage(message_bus)
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> RealtimeAgent:
+            return agent
+
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        close_task: asyncio.Task[None] | None = None
+        with patch("websockets.connect", AsyncMock(return_value=socket)):
+            session.start()
+            try:
+                await asyncio.wait_for(socket.setup_sent.wait(), timeout=1)
+                self.assertTrue(await session.wait_until_lock_acquired(1))
+                close_task = asyncio.create_task(session.close())
+                await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+                self.assertTrue(socket.closed)
+                self.assertIsNone(model._reader)
+                self.assertTrue(peer_connection.closed)
+                self.assertTrue(transport.closed)
+                self.assertFalse(message_bus.held_locks)
+                self.assertEqual(storage.writes_under_session_lock, [True])
+                self.assertEqual(closed_sessions, [session])
+            finally:
+                if session._task is not None:
+                    session._task.cancel()
+                    await asyncio.gather(session._task, return_exceptions=True)
+                if close_task is not None:
+                    await asyncio.gather(close_task, return_exceptions=True)
+                await agent.close()
+
+    async def test_repeated_close_does_not_cancel_startup_cleanup(
+        self,
+    ) -> None:
+        """Concurrent close callers must share one startup cancellation."""
+        entered = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _create_agent() -> _FakeAgent:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_entered.set()
+                await release_cleanup.wait()
+                cleanup_finished.set()
+            raise AssertionError("The blocked factory must be cancelled.")
+
+        session = _make_session(
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=_FakeStorage(),
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        close_tasks: list[asyncio.Task[None]] = []
+        session.start()
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            close_tasks.append(asyncio.create_task(session.close()))
+            await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+            close_tasks.append(asyncio.create_task(session.close()))
+            done, _ = await asyncio.wait(close_tasks, timeout=0.01)
+            self.assertFalse(done)
+            self.assertFalse(peer_connection.closed)
+            release_cleanup.set()
+            await asyncio.wait_for(asyncio.gather(*close_tasks), timeout=1)
+            self.assertTrue(cleanup_finished.is_set())
+            self.assertFalse(message_bus.held_locks)
+            self.assertEqual(closed_sessions, [session])
+        finally:
+            release_cleanup.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_cancelled_close_caller_keeps_final_persistence_alive(
+        self,
+    ) -> None:
+        """Closing an active session waits for its owned persistence task."""
+        write_entered = asyncio.Event()
+        release_write = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        class BlockingStorage(_LockAwareStorage):
+            """Hold the final write until the close callers are waiting."""
+
+            async def update_session_state(self, **kwargs: object) -> None:
+                """Wait before committing the owned final state snapshot."""
+                write_entered.set()
+                await release_write.wait()
+                await super().update_session_state(**kwargs)
+
+        storage = BlockingStorage(message_bus)
+        agent = _FakeAgent({"id": "existing-message", "role": "assistant"}, [])
+
+        async def _create_agent() -> _FakeAgent:
+            return agent
+
+        session = _make_session(
+            peer_connection=peer_connection,
+            agent_factory=_create_agent,
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        close_tasks: list[asyncio.Task[None]] = []
+        session.start()
+        try:
+            await asyncio.wait_for(write_entered.wait(), timeout=1)
+            close_tasks = [
+                asyncio.create_task(session.close()),
+                asyncio.create_task(session.close()),
+            ]
+            done, _ = await asyncio.wait(close_tasks, timeout=0.01)
+            self.assertFalse(done)
+            close_tasks[0].cancel()
+            await asyncio.gather(close_tasks[0], return_exceptions=True)
+            self.assertIsNotNone(session._task)
+            self.assertFalse(session._task.done())
+            self.assertIn(
+                MessageBusKeys.session_lock("session-1"),
+                message_bus.held_locks,
+            )
+            release_write.set()
+            await asyncio.wait_for(close_tasks[1], timeout=1)
+            self.assertEqual(storage.writes_under_session_lock, [True])
+            self.assertFalse(message_bus.held_locks)
+            self.assertTrue(peer_connection.closed)
+            self.assertEqual(closed_sessions, [session])
+        finally:
+            release_write.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_cancelled_close_caller_keeps_transport_cleanup_alive(
+        self,
+    ) -> None:
+        """Caller cancellation must not strand a partially closed transport."""
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        transport = WebRTCAudioTransport(16_000, 24_000)
+        peer_connection = _FakePeerConnection()
+        closed_sessions: list[WebRTCSession] = []
+
+        async def _read_input() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_entered.set()
+                await release_cleanup.wait()
+
+        transport._input_task = asyncio.create_task(_read_input())
+        session = _make_session(
+            transport=transport,
+            peer_connection=peer_connection,
+            agent_factory=AsyncMock(),
+            storage=_FakeStorage(),
+            message_bus=_BlockedMessageBus(),
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_tasks: list[asyncio.Task[None]] = []
+        try:
+            await asyncio.sleep(0)
+            close_tasks.append(asyncio.create_task(session.close()))
+            await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+            close_tasks[0].cancel()
+            await asyncio.gather(close_tasks[0], return_exceptions=True)
+            close_tasks.append(asyncio.create_task(session.close()))
+            release_cleanup.set()
+            await asyncio.wait_for(asyncio.shield(close_tasks[1]), timeout=1)
+            self.assertEqual(
+                {
+                    "input_task": transport._input_task,
+                    "transport_closed": transport._closed,
+                    "peer_closed": peer_connection.closed,
+                    "closed_sessions": closed_sessions,
+                },
+                {
+                    "input_task": None,
+                    "transport_closed": True,
+                    "peer_closed": True,
+                    "closed_sessions": [session],
+                },
+            )
+        finally:
+            release_cleanup.set()
+            if session._task is not None:
+                session._task.cancel()
+                await asyncio.gather(session._task, return_exceptions=True)
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+
+    async def test_close_preserves_final_write_after_startup_failure(
+        self,
+    ) -> None:
+        """Failed startup must finish persistence before releasing its lock."""
+        write_entered = asyncio.Event()
+        release_write = asyncio.Event()
+        message_bus = _FakeMessageBus()
+        closed_sessions: list[WebRTCSession] = []
+
+        class BlockingStorage(_LockAwareStorage):
+            """Pause the final write after startup has failed."""
+
+            async def update_session_state(self, **kwargs: object) -> None:
+                """Wait before committing the final snapshot."""
+                write_entered.set()
+                await release_write.wait()
+                await super().update_session_state(**kwargs)
+
+        agent = AsyncMock()
+        agent.state = SimpleNamespace(context=[])
+        agent.__aenter__.side_effect = RuntimeError("Setup failed.")
+        agent.drain_events = MagicMock(return_value=iter(()))
+        storage = BlockingStorage(message_bus)
+        session = _make_session(
+            agent_factory=AsyncMock(return_value=agent),
+            storage=storage,
+            message_bus=message_bus,
+            on_closed=closed_sessions.append,
+        )
+        session.start()
+        close_task: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(write_entered.wait(), timeout=1)
+            close_task = asyncio.create_task(session.close())
+            done, _ = await asyncio.wait([close_task], timeout=0.01)
+            self.assertEqual(done, set())
+            release_write.set()
+            await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+            self.assertEqual(
+                storage.calls,
+                [
+                    {
+                        "method": "update_session_state",
+                        "user_id": "alice",
+                        "agent_id": "agent-1",
+                        "session_id": "session-1",
+                        "state": agent.state,
+                    },
+                ],
+            )
+            self.assertEqual(storage.writes_under_session_lock, [True])
+            self.assertEqual(message_bus.held_locks, set())
+            self.assertEqual(closed_sessions, [session])
+            agent.close.assert_awaited_once_with()
+            self.assertEqual(session.transport.errors, ["Setup failed."])
+        finally:
+            release_write.set()
+            if session._task is not None:
+                await asyncio.gather(session._task, return_exceptions=True)
+            if close_task is not None:
+                await asyncio.gather(close_task, return_exceptions=True)
+
     async def test_checkpoint_boundaries_persist_state(self) -> None:
         """Persist tool boundaries but not ordinary text block endings."""
         message = {"id": "message-1", "role": "assistant"}
@@ -1415,7 +2450,7 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
         transport = _FakeTransport()
         peer_connection = _FakePeerConnection()
         storage = _FakeStorage()
-        message_bus = _FakeMessageBus()
+        message_bus = _FakeMessageBus(sequence_entries=True)
         closed = asyncio.Event()
 
         async def _create_agent() -> _FakeAgent:
@@ -1449,10 +2484,63 @@ class WebRTCSessionTest(unittest.IsolatedAsyncioTestCase):
             {
                 "storage_methods": ["update_session_state"] * 3,
                 "published_event_types": [event.type for event in events],
-                "cursor_values": ["1-0"] * 2,
+                "cursor_values": ["2-0", "3-0"],
             },
         )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebRTCQueueWakeupTest(unittest.IsolatedAsyncioTestCase):
+    """Realtime lock release promptly makes ordinary queued input eligible."""
+
+    async def test_nudge_follows_session_lock_release(self) -> None:
+        """Closing voice queues a durable trigger without a recovery tick."""
+        async with InMemoryMessageBus() as bus:
+            await enqueue_chat_input(
+                bus,
+                "alice",
+                "session-1",
+                "agent-1",
+                UserMsg("u", "next"),
+            )
+            await bus.queue_drain(MessageBusKeys.wakeup_queue())
+            original_push = bus.queue_push
+
+            async def checked_push(key: str, payload: dict) -> str:
+                self.assertFalse(
+                    await bus.is_locked(
+                        MessageBusKeys.session_lock("session-1"),
+                    ),
+                )
+                return await original_push(key, payload)
+
+            session = _make_session(
+                agent_factory=AsyncMock(
+                    return_value=_FakeAgent(
+                        {"id": "voice", "role": "assistant"},
+                        [],
+                    ),
+                ),
+                storage=_FakeStorage(),
+                message_bus=bus,
+                on_closed=lambda _: None,
+            )
+            with patch.object(bus, "queue_push", checked_push):
+                await session._run()
+            triggers = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+            self.assertEqual(
+                [payload for _, payload in triggers],
+                [
+                    {
+                        "user_id": "alice",
+                        "session_id": "session-1",
+                        "agent_id": "agent-1",
+                        "kind": "queued_message",
+                        "input": None,
+                    },
+                ],
+            )
+            self.assertEqual(session.transport.errors, [])
