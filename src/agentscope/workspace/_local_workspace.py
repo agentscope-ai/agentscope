@@ -44,6 +44,13 @@ class _SkillsFile(TypedDict):
     """Mapping from directory name (relative to the partition) to entry."""
 
 
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
 def _sanitize_dir_name(name: str) -> str:
     """Sanitize a skill name into a safe directory name.
 
@@ -59,7 +66,10 @@ def _sanitize_dir_name(name: str) -> str:
             A sanitized string safe to use as a directory name on Windows,
             macOS, and Linux.
     """
-    return re.sub(r"[^\w一-鿿-]", "_", name)
+    sanitized = re.sub(r"[^\w一-鿿-]", "_", name)
+    if not sanitized or sanitized.upper() in _WINDOWS_RESERVED_NAMES:
+        sanitized += "_"
+    return sanitized
 
 
 class LocalWorkspace(WorkspaceBase):
