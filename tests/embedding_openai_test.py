@@ -114,23 +114,26 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         self,
         mock_client_cls: Any,
     ) -> None:
-        """Unchanged requests must still hit cache keys from older versions."""
+        """Requests with extra arguments hit the endpoint-specific cache."""
         embeddings = [[0.1, 0.2]]
         mock_client = mock_client_cls.return_value
+        mock_client.base_url = "https://api.openai.com/v1/"
         mock_client.embeddings.create = AsyncMock(
             return_value=_make_response(embeddings, 1),
         )
         with TemporaryDirectory() as cache_dir:
             cache = FileEmbeddingCache(cache_dir=cache_dir)
-            # Older requests appended dimensions after per-call arguments.
             await cache.store(
                 embeddings=embeddings,
                 identifier={
-                    "input": ["hello"],
-                    "model": "text-embedding-3-small",
-                    "encoding_format": "float",
-                    "user": "test-user",
-                    "dimensions": 2,
+                    "base_url": "https://api.openai.com/v1/",
+                    "api_kwargs": {
+                        "input": ["hello"],
+                        "model": "text-embedding-3-small",
+                        "encoding_format": "float",
+                        "user": "test-user",
+                        "dimensions": 2,
+                    },
                 },
             )
             model = OpenAIEmbeddingModel(
