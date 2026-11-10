@@ -184,6 +184,7 @@
 		},
 		"externalExecution": {
 			"title": "{{name}} 正在等待外部执行器",
+			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
 			"description": "该工具需要由宿主应用提供的集成完成。"
 		},
 		"newSession": "新会话",

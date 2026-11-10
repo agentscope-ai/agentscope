@@ -184,6 +184,7 @@
 		},
 		"externalExecution": {
 			"title": "{{name}} is waiting for an external executor",
+			"rejected": "The result was not accepted. Please check your answer and submit again.",
 			"description": "This tool must be completed by an integration provided by the host application."
 		},
 		"newSession": "New Session",

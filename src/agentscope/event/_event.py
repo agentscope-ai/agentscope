@@ -550,6 +550,10 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"external_execution_result_rejected"`` — a Live result
+              submission needs retry. ``value`` contains ``request_id``
+              (the submitted event ID), ``reply_id``, ``tool_call_ids``
+              (only unaccepted results), and a safe ``message``.
             - ``"chat_input_started"`` — one or more FIFO-queued user
               messages have started their agent turn.
             - ``"chat_input_failed"`` — a dequeued user turn failed before

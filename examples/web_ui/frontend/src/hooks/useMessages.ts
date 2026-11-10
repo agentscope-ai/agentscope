@@ -7,6 +7,7 @@ import type {
 	DataBlockEndEvent,
 	ExternalExecutionResultEvent,
 	ReplyStartEvent,
+	ToolResultEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
@@ -138,11 +139,27 @@ export function useMessages(
 	const { t } = useTranslation();
 	// A new identity for each visit also rejects late responses after A -> B -> A.
 	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
+	const externalSubmissionsRef = useRef(
+		new Map<
+			string,
+			{
+				replyId: string;
+				toolCallIds: Set<string>;
+				resolve: () => void;
+				reject: (error: Error) => void;
+			}
+		>(),
+	);
 	const activeSessionRef = useRef<typeof session | null>(null);
 	useLayoutEffect(() => {
 		activeSessionRef.current = session;
+		const externalSubmissions = externalSubmissionsRef.current;
 		return () => {
 			activeSessionRef.current = null;
+			for (const pending of externalSubmissions.values()) {
+				pending.reject(new Error('The session closed before the result was acknowledged.'));
+			}
+			externalSubmissions.clear();
 		};
 	}, [session]);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -214,7 +231,23 @@ export function useMessages(
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
-				if (custom.name === 'tts_error') {
+				if (custom.name === 'external_execution_result_rejected') {
+					const failure = custom.value as {
+						request_id: string;
+						reply_id: string;
+						tool_call_ids: string[];
+					};
+					const pending = externalSubmissionsRef.current.get(failure.request_id);
+					if (
+						pending?.replyId === failure.reply_id &&
+						failure.tool_call_ids.some((id) => pending.toolCallIds.has(id))
+					) {
+						externalSubmissionsRef.current.delete(failure.request_id);
+						const error = new Error(t('chat.externalExecution.rejected'));
+						pending.reject(error);
+						toast.error(error.message);
+					}
+				} else if (custom.name === 'tts_error') {
 					const failure = custom.value as { stage?: string; reply_id?: string };
 					const sessionKey = JSON.stringify([agentId, sessionId]);
 					if (failure.stage === 'configuration') {
@@ -286,6 +319,23 @@ export function useMessages(
 					toast.error(value.message ?? t('chatQueue.steerFailed'));
 				}
 				return;
+			}
+			if (event.type === EventType.TOOL_RESULT_END) {
+				const result = event as ToolResultEndEvent;
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (pending.replyId !== result.reply_id) continue;
+					pending.toolCallIds.delete(result.tool_call_id);
+					if (pending.toolCallIds.size === 0) {
+						externalSubmissionsRef.current.delete(requestId);
+						pending.resolve();
+					}
+				}
+			} else if (event.type === EventType.REPLY_END) {
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (pending.replyId !== event.reply_id) continue;
+					externalSubmissionsRef.current.delete(requestId);
+					pending.reject(new Error(t('chat.externalExecution.rejected')));
+				}
 			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
@@ -608,13 +658,28 @@ export function useMessages(
 
 	const onExternalExecutionResult = useCallback(
 		async (event: ExternalExecutionResultEvent) => {
-			if (!agentId || !sessionId) return;
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 			try {
 				if (
 					optionsRef.current?.isRealtimeAudioActive?.() &&
 					optionsRef.current.sendRealtimeExternalExecutionResult
 				) {
-					await optionsRef.current.sendRealtimeExternalExecutionResult(event);
+					// Sending a DataChannel frame does not acknowledge its result.
+					// Register first so even an immediate SSE response is matched.
+					const receipt = new Promise<void>((resolve, reject) => {
+						externalSubmissionsRef.current.set(event.id, {
+							replyId: event.reply_id,
+							toolCallIds: new Set(
+								event.execution_results.map((result) => result.id),
+							),
+							resolve,
+							reject,
+						});
+					});
+					await Promise.all([
+						receipt,
+						optionsRef.current.sendRealtimeExternalExecutionResult(event),
+					]);
 				} else {
 					await chatApi.trigger({
 						agent_id: agentId,
@@ -623,11 +688,13 @@ export function useMessages(
 					});
 				}
 			} catch (e) {
-				setError(e as Error);
+				if (activeSessionRef.current === session) setError(e as Error);
 				throw e;
+			} finally {
+				externalSubmissionsRef.current.delete(event.id);
 			}
 		},
-		[agentId, sessionId],
+		[agentId, sessionId, session],
 	);
 
 	/** Abort the current SSE connection. */

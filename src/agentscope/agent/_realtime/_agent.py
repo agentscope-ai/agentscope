@@ -30,6 +30,7 @@ from ..._utils._common import _json_loads_with_repair
 from ...event import (
     AgentEvent,
     ConfirmResult,
+    CustomEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -1489,6 +1490,33 @@ class RealtimeAgent:
                 self._sync_delegation_state(delegation)
                 if pending_result_end is not None:
                     self._emit(pending_result_end)
+                awaiting_ids = {
+                    call.id
+                    for call in delegation.agent.state.get_awaiting_tool_calls(
+                        self.name,
+                    )
+                }
+                rejected_ids = [
+                    result.id
+                    for result in inputs.execution_results
+                    if result.id in awaiting_ids
+                ]
+                if rejected_ids:
+                    self._emit(
+                        CustomEvent(
+                            name="external_execution_result_rejected",
+                            value={
+                                "request_id": inputs.id,
+                                "reply_id": delegation.agent.state.reply_id,
+                                "tool_call_ids": rejected_ids,
+                                "message": (
+                                    "The submitted result was rejected. "
+                                    "Please check your answer and submit "
+                                    "again."
+                                ),
+                            },
+                        ),
+                    )
                 self._schedule_delegation_timeout(delegation)
                 return
             if self._closing:
