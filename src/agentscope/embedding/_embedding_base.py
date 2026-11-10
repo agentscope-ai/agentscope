@@ -259,13 +259,23 @@ class EmbeddingModelBase(Generic[InputT]):
         ]
         try:
             results: list[EmbeddingResponse] = await asyncio.gather(*tasks)
-        except BaseException:
+        except BaseException as error:
             # gather propagates a batch error without stopping its siblings.
             # Finish owned coroutine cleanup before returning to the caller.
             for task in tasks:
                 if not task.done() and not task.cancelling():
                     task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            cleanup = asyncio.gather(*tasks, return_exceptions=True)
+            cancellation: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(cleanup)
+                    break
+                except asyncio.CancelledError as exc:
+                    # Finish cleanup before propagating caller cancellation.
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from error
             raise
 
         return self._merge_responses(results)
