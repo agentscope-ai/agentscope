@@ -153,6 +153,8 @@ class OpenAILiveModel(RealtimeModelBase):
                 ``startup_timeout_s``.
             ModelDisconnectedError:
                 If the connection closes before startup completes.
+            asyncio.CancelledError:
+                If startup is cancelled, after releasing the connection.
         """
         import websockets
 
@@ -196,7 +198,7 @@ class OpenAILiveModel(RealtimeModelBase):
                 asyncio.shield(self._started),
                 timeout=self.parameters.startup_timeout_s,
             )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             await self._abort()
             raise
 
@@ -504,6 +506,14 @@ class OpenAILiveModel(RealtimeModelBase):
 
     async def _abort(self) -> None:
         """Release transport resources without waiting for finalization."""
+        started = self._started
+        self._started = None
+        if started is not None:
+            if not started.done():
+                started.cancel()
+            elif not started.cancelled():
+                # Startup may have failed before connect began awaiting it.
+                started.exception()
         ws = self._ws
         self._ws = None
         if ws is not None:

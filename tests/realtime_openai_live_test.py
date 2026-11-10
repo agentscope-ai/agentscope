@@ -115,6 +115,27 @@ class _FakeWebSocket:
         self.incoming.put_nowait(None)
 
 
+class _PendingStartupWebSocket(_FakeWebSocket):
+    """Pause startup either during send or while awaiting acknowledgement."""
+
+    def __init__(self, block_send: bool) -> None:
+        super().__init__()
+        self.block_send = block_send
+        self.startup_sent = asyncio.Event()
+        self.reading = asyncio.Event()
+
+    async def send(self, raw: str) -> None:
+        """Record startup without automatically acknowledging it."""
+        self.sent.append(json.loads(raw))
+        self.startup_sent.set()
+        if self.block_send:
+            await asyncio.Event().wait()
+
+    async def __anext__(self) -> str:
+        self.reading.set()
+        return await super().__anext__()
+
+
 class _FakeTransport(TransportBase):
     """Capture output audio without opening a real sound device."""
 
@@ -526,6 +547,105 @@ class OpenAILivePayloadTest(unittest.TestCase):
 
 class OpenAILiveLifecycleTest(unittest.IsolatedAsyncioTestCase):
     """Connection startup, audio validation, and graceful close."""
+
+    async def test_cancel_startup_releases_resources_and_reconnects(
+        self,
+    ) -> None:
+        """Cancellation closes resources before propagating to the caller."""
+        for block_send in (False, True):
+            with self.subTest(block_send=block_send):
+                ws = _PendingStartupWebSocket(block_send)
+                replacement = _FakeWebSocket()
+                model = _model()
+                self.addAsyncCleanup(model.close)
+                with patch(
+                    "websockets.connect",
+                    AsyncMock(side_effect=[ws, replacement]),
+                ):
+                    connection = asyncio.create_task(model.connect("Brief."))
+                    await asyncio.wait_for(ws.startup_sent.wait(), timeout=1)
+                    await asyncio.wait_for(ws.reading.wait(), timeout=1)
+                    reader, started = model._reader, model._started
+                    assert reader is not None and started is not None
+                    self.assertFalse(reader.done())
+                    connection.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await connection
+                    self.assertEqual(
+                        {
+                            "socket_closed": ws.closed,
+                            "socket": model._ws,
+                            "reader": model._reader,
+                            "reader_done": reader.done(),
+                            "startup_cancelled": started.cancelled(),
+                            "startup": model._started,
+                            "session_id": model._session_id,
+                        },
+                        {
+                            "socket_closed": True,
+                            "socket": None,
+                            "reader": None,
+                            "reader_done": True,
+                            "startup_cancelled": True,
+                            "startup": None,
+                            "session_id": "",
+                        },
+                    )
+                    await model.connect("Retry.")
+                    self.assertIs(model._ws, replacement)
+                    self.assertEqual(model._session_id, "live_1")
+                    self.assertEqual(
+                        await asyncio.wait_for(
+                            anext(model.events()),
+                            timeout=1,
+                        ),
+                        SessionStartedEvent(session_id="live_1"),
+                    )
+                    await model.close()
+                    self.assertTrue(replacement.closed)
+
+    async def test_startup_timeout_settles_the_shielded_future(self) -> None:
+        """A timed-out startup leaves neither a reader nor a pending future."""
+        ws = _PendingStartupWebSocket(False)
+        model = _model()
+        model.parameters.startup_timeout_s = 0.01
+        self.addAsyncCleanup(model.close)
+        with patch("websockets.connect", AsyncMock(return_value=ws)):
+            connection = asyncio.create_task(model.connect("Brief."))
+            await asyncio.wait_for(ws.reading.wait(), timeout=1)
+            reader, started = model._reader, model._started
+            assert reader is not None and started is not None
+            with self.assertRaises(asyncio.TimeoutError):
+                await connection
+        self.assertEqual(
+            (ws.closed, reader.done(), started.cancelled(), model._started),
+            (True, True, True, None),
+        )
+
+    async def test_startup_error_is_preserved_after_cleanup(self) -> None:
+        """Provider startup errors still reach the caller after cleanup."""
+        ws = _PendingStartupWebSocket(False)
+        model = _model()
+        self.addAsyncCleanup(model.close)
+        with patch("websockets.connect", AsyncMock(return_value=ws)):
+            connection = asyncio.create_task(model.connect("Brief."))
+            await asyncio.wait_for(ws.reading.wait(), timeout=1)
+            reader = model._reader
+            assert reader is not None
+            ws.incoming.put_nowait(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {"message": "Startup rejected"},
+                    },
+                ),
+            )
+            with self.assertRaisesRegex(RuntimeError, "Startup rejected"):
+                await connection
+        self.assertEqual(
+            (ws.closed, reader.done(), model._reader, model._started),
+            (True, True, None, None),
+        )
 
     async def test_connect_audio_and_close(self) -> None:
         """The adapter waits for startup and preserves final usage."""
