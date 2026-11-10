@@ -345,37 +345,48 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             input=json.dumps({"delay": 0.5}),
         )
 
-        results: list = []
-        # pylint: disable=protected-access
-        async for item in agent._acting(tool_call):
-            results.append(item)
+        offloaded_at = 1794240000.0
+        with patch(
+            "agentscope.app.middleware._tool_offload_middleware.time",
+        ) as mock_time:
+            mock_time.time.return_value = offloaded_at
+            results = [item async for item in agent._acting(tool_call)]
 
-        # Should yield a synthetic ToolResponse immediately
-        responses = [r for r in results if isinstance(r, ToolResponse)]
-        self.assertEqual(len(responses), 1)
-        self.assertDictEqual(
-            responses[0].model_dump(),
-            {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": AnyString(),
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-                "state": "success",
-                "metadata": {},
-                "id": "call_slow",
+        self.assertEqual(len(self.bg_manager.tasks), 1)
+        task_id = next(iter(self.bg_manager.tasks))
+        expected_response = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": AnyString(),
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "success",
+            "metadata": {
+                "background_task_id": task_id,
+                "tool_name": "slow_tool",
+                "tool_state": "running",
+                "offloaded_at": offloaded_at,
             },
+            "id": "call_slow",
+        }
+        self.assertEqual(
+            [item.model_dump() for item in results],
+            [
+                {
+                    **expected_response,
+                    "id": AnyString(),
+                    "is_last": True,
+                },
+                expected_response,
+            ],
         )
-        text = responses[0].content[0].text  # type: ignore[union-attr]
+        text = results[1].content[0].text  # type: ignore[union-attr]
         self.assertIn("background", text)
         self.assertIn("id=", text)
-
-        # Background task should be registered
-        self.assertEqual(len(self.bg_manager.tasks), 1)
 
     async def test_execution_start_is_captured_before_offload(self) -> None:
         """Capture execution start before the handler changes the clock."""
