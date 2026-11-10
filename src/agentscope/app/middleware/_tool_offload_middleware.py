@@ -21,6 +21,7 @@ bus/wakeup infrastructure, which works correctly across processes.
 """
 import asyncio
 import json
+import time
 from copy import deepcopy
 from typing import Any, AsyncGenerator, Callable
 
@@ -248,6 +249,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 await queue.put(_QUEUE_SENTINEL)
             return response
 
+        execution_started_at = time.time()
         drain_task: asyncio.Task = asyncio.create_task(_drain_to_queue())
 
         # ----------------------------------------------------------------
@@ -424,6 +426,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             user_id=self._user_id,
             tool_name=tool_name,
             summary=_make_summary(tool_name, tool_call.input),
+            execution_started_at=execution_started_at,
         )
 
         logger.info(
