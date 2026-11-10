@@ -741,10 +741,12 @@ class Agent:
                 and self._get_reply_usage() is None
             ):
                 self.state.append_context(self.name, [])
-                self.state.context[-1].usage = current_reply_usage
+                reply = self.state.get_reply_message(self.name)
+                assert reply is not None
+                reply.usage = current_reply_usage
 
             # The compression call is not covered by the model call events,
-            # so record its cost on the context tail to keep it in the token
+            # so record its cost in the context to keep it in the token
             # accounting
             if res is not None and res.usage is not None:
                 if not self.state.context:
@@ -752,7 +754,11 @@ class Agent:
                     # empty message, which is skipped by the formatters
                     self.state.append_context(self.name, [])
 
-                self.state.context[-1].append_usage(
+                usage_message = (
+                    self.state.get_reply_message(self.name)
+                    or self.state.context[-1]
+                )
+                usage_message.append_usage(
                     Usage(
                         input_tokens=res.usage.input_tokens,
                         output_tokens=res.usage.output_tokens,
@@ -970,11 +976,8 @@ class Agent:
     ]:
         """Close the unfinished tool calls on interruption, so the next
         input will be handled normally."""
-        if not self.state.context:
-            return
-
-        last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != self.name:
+        last_msg = self.state.get_reply_message(self.name)
+        if last_msg is None:
             return
 
         # Searching for tool calls that requires user confirmation or external
@@ -1954,7 +1957,8 @@ class Agent:
                 The events generated during the handling of the incoming event.
         """
         # Return directly if no event
-        if event is None or len(self.state.context) == 0:
+        last_msg = self.state.get_reply_message(self.name)
+        if event is None or last_msg is None:
             return
 
         if isinstance(event, UserConfirmResultEvent):
@@ -1964,7 +1968,6 @@ class Agent:
             }
 
             # Update the state with the confirmed tool calls
-            last_msg = self.state.context[-1]
             for tool_call in last_msg.get_content_blocks("tool_call"):
                 if len(confirmed_tool_calls) == 0:
                     break
@@ -3489,10 +3492,8 @@ class Agent:
             state (`ToolCallState`):
                 The new state of the tool call.
         """
-        if len(self.state.context) == 0:
-            return
-        last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != self.name:
+        last_msg = self.state.get_reply_message(self.name)
+        if last_msg is None:
             return
         for block in last_msg.get_content_blocks():
             if isinstance(block, ToolCallBlock) and block.id == tool_call_id:
@@ -3549,16 +3550,13 @@ class Agent:
         self.state.append_context(self.name, persisted_blocks)
 
         if msg_usage is not None:
-            self.state.context[-1].append_usage(msg_usage)
+            reply = self.state.get_reply_message(self.name)
+            assert reply is not None
+            reply.append_usage(msg_usage)
 
     def _get_last_msg(self) -> Msg | None:
-        """Get the last message in the context that belongs to this agent."""
-        if len(self.state.context) == 0:
-            return None
-        last_msg = self.state.context[-1]
-        if last_msg.role == "assistant" and last_msg.name == self.name:
-            return last_msg
-        return None
+        """Get the current reply without assuming it is the context tail."""
+        return self.state.get_reply_message(self.name)
 
     def _get_reply_usage(self) -> Usage | None:
         """Get a copy of the accumulated usage for the current reply."""

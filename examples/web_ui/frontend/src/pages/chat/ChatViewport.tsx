@@ -3,6 +3,7 @@ import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import {
 	Activity,
 	BookText,
+	BrainCircuit,
 	ChevronDown,
 	Database,
 	ListTodo,
@@ -13,6 +14,7 @@ import {
 	X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import type {
 	ASRModelConfig,
@@ -70,6 +72,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
 	turn_detection: ['none'],
@@ -319,6 +322,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		moveQueued,
 		reorderQueued,
 		onUserConfirm,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
@@ -328,6 +332,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onSessionUpdated: handleSessionUpdated,
 		isRealtimeAudioActive: () => voiceBusy,
 		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
+		sendRealtimeExternalExecutionResult: realtimeVoice.externalExecutionResult,
 	});
 	const {
 		mcps,
@@ -665,7 +670,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model, selectedModel?.model_class]);
+	}, [groups, selectedModel]);
 
 	const selectedRealtimeModelCard = useMemo(() => {
 		if (!selectedRealtimeModel) return null;
@@ -682,6 +687,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}
 		return null;
 	}, [realtimeGroups, selectedRealtimeModel]);
+	const realtimeUsesSessionChat =
+		selectedRealtimeModelCard?.delegation_backend === 'session_chat';
 
 	const selectedASRModelCard = useMemo(() => {
 		if (!selectedASRModel) return null;
@@ -985,7 +992,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -997,7 +1004,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onTTSChange={handleTTSChange}
 										selectedASRModel={selectedASRModel}
 										onASRChange={handleASRChange}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<PermissionModeSelect
 										id="tour-permission-mode"
@@ -1060,6 +1067,23 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									</DropdownMenu>
 								</div>
 							</div>
+							{realtimeUsesSessionChat && (
+								<div
+									className={
+										'flex min-h-7 items-center justify-end gap-1.5 px-2 ' +
+										'text-xs text-muted-foreground'
+									}
+								>
+									<BrainCircuit className="size-3.5 shrink-0" />
+									<span className="max-w-full truncate">
+										{selectedModel
+											? t('realtime.backendFollows', {
+													model: selectedModel.model,
+												})
+											: t('realtime.backendMissing')}
+									</span>
+								</div>
+							)}
 							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
@@ -1079,6 +1103,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onExternalExecutionResult={onExternalExecutionResult}
 									onInterrupt={interrupt}
 									onUpdateQueued={updateQueued}
 									onDeleteQueued={deleteQueued}
@@ -1086,8 +1111,23 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									onMoveQueued={moveQueued}
 									onReorderQueued={reorderQueued}
 									voiceState={realtimeVoice.state}
-									onVoiceToggle={() => void realtimeVoice.toggle()}
-									voiceDisabled={!selectedRealtimeModel || !agentId || !sessionId}
+									onVoiceToggle={() => {
+										if (
+											!voiceBusy &&
+											realtimeUsesSessionChat &&
+											getPendingHitlCalls(msgs).length > 0
+										) {
+											toast.error(t('realtime.pendingChatInteraction'));
+											return;
+										}
+										void realtimeVoice.toggle();
+									}}
+									voiceDisabled={
+										!selectedRealtimeModel ||
+										!agentId ||
+										!sessionId ||
+										(realtimeUsesSessionChat && !selectedModel)
+									}
 									asrInputTypes={selectedASRModelCard?.input_types ?? []}
 									onTranscribe={handleTranscribe}
 									asrRealtime={!!selectedASRModelCard?.realtime}
