@@ -255,7 +255,6 @@ class MongoDBStore(VectorStoreBase):
         self,
         collection: str,
         records: list[VectorRecord],
-        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Insert records into a collection.
 
@@ -270,10 +269,6 @@ class MongoDBStore(VectorStoreBase):
             records (`list[VectorRecord]`):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
-            metadata_filter (`dict[str, Any] | None`, optional):
-                Optional scope filter included in ``_id`` derivation so
-                scoped ``KnowledgeBase`` instances sharing a collection
-                do not overwrite another scope's records.
         """
         if not records:
             return
@@ -283,9 +278,9 @@ class MongoDBStore(VectorStoreBase):
         col = self._col(collection)
         operations = [
             ReplaceOne(
-                {"_id": self._record_id(record, metadata_filter)},
+                {"_id": self._record_id(record)},
                 {
-                    "_id": self._record_id(record, metadata_filter),
+                    "_id": self._record_id(record),
                     "document_id": record.document_id,
                     "vector": record.vector,
                     "chunk": record.chunk.model_dump(mode="json"),
@@ -297,20 +292,16 @@ class MongoDBStore(VectorStoreBase):
         await col.bulk_write(operations, ordered=False)
 
     @staticmethod
-    def _record_id(
-        record: VectorRecord,
-        metadata_filter: dict[str, Any] | None = None,
-    ) -> str:
-        """Deterministic MongoDB ``_id`` for ``(document_id, chunk_index[, metadata_filter])``.
+    def _record_id(record: VectorRecord) -> str:
+        """Derive the MongoDB ID from the document, chunk, and scope.
 
-        Preserves the legacy ``f"{record.document_id}_{record.chunk.chunk_index}"``
-        format when unscoped, and returns a SHA-256 hex digest of the
-        scoped identity key when ``metadata_filter`` is non-empty so
-        scoped inserts cannot collide across scopes or with unscoped IDs.
+        Unscoped records retain the legacy document ID and chunk index
+        separated by an underscore. Scoped records use a SHA-256 digest
+        of the scoped identity key.
         """
-        if not metadata_filter:
+        if not record.scope:
             return f"{record.document_id}_{record.chunk.chunk_index}"
-        raw = _record_identity_key(record, metadata_filter)
+        raw = _record_identity_key(record)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def delete(

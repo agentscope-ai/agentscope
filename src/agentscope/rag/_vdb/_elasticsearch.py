@@ -121,7 +121,6 @@ class ElasticsearchStore(VectorStoreBase):
         self,
         collection: str,
         records: list[VectorRecord],
-        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Bulk-index records using deterministic, retry-safe IDs."""
         if not records:
@@ -134,7 +133,7 @@ class ElasticsearchStore(VectorStoreBase):
                     {
                         "index": {
                             "_index": collection,
-                            "_id": self._record_id(record, metadata_filter),
+                            "_id": self._record_id(record),
                         },
                     },
                     {
@@ -390,12 +389,9 @@ class ElasticsearchStore(VectorStoreBase):
         return [by_index[index] for index in sorted(by_index)]
 
     @staticmethod
-    def _record_id(
-        record: VectorRecord,
-        metadata_filter: dict[str, Any] | None = None,
-    ) -> str:
+    def _record_id(record: VectorRecord) -> str:
         """Build a stable ID so re-indexing replaces the same chunk."""
-        raw = _record_identity_key(record, metadata_filter)
+        raw = _record_identity_key(record)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod

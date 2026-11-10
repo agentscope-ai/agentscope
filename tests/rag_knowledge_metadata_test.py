@@ -9,7 +9,55 @@ from unittest.mock import AsyncMock
 
 from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
 from agentscope.message import TextBlock
-from agentscope.rag import Chunk, KnowledgeBase, QdrantStore
+from agentscope.rag import (
+    Chunk,
+    KnowledgeBase,
+    QdrantStore,
+    VectorRecord,
+    VectorStoreBase,
+)
+
+
+class LegacyScopedStoreTest(IsolatedAsyncioTestCase):
+    """Cover scoped insertion through the existing extension interface."""
+
+    async def test_scoped_insert_keeps_legacy_store_signature(self) -> None:
+        """Preserve scoped metadata when a custom store uses the old API."""
+
+        async def insert(
+            collection: str,
+            records: list[VectorRecord],
+        ) -> None:
+            """Capture a record through the existing two-argument API."""
+            self.assertEqual(collection, "documents")
+            self.assertEqual(records[0].chunk.metadata, {"corpus": "A"})
+            self.assertNotIn("scope", records[0].model_dump())
+
+        store = AsyncMock(spec=VectorStoreBase)
+        store.has_collection.return_value = True
+        store.insert.side_effect = insert
+        embedding = AsyncMock(spec=EmbeddingModelBase)
+        embedding.return_value = EmbeddingResponse(embeddings=[[1.0]])
+        knowledge = KnowledgeBase(
+            name="documents",
+            description="Test documents",
+            embedding_model=embedding,
+            vector_store=store,
+            collection="documents",
+            metadata_filter={"corpus": "A"},
+        )
+        chunk = Chunk(
+            content=TextBlock(text="Reference document"),
+            source="reference.txt",
+            chunk_index=0,
+            total_chunks=1,
+        )
+
+        self.assertEqual(
+            await knowledge.insert_document([chunk], document_id="doc"),
+            "doc",
+        )
+        store.insert.assert_awaited_once()
 
 
 @skipUnless(find_spec("qdrant_client"), "qdrant-client is not installed")
@@ -165,10 +213,10 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
             before,
         )
 
-    async def test_scoped_inserts_with_overlapping_document_id_do_not_overwrite(
+    async def test_scoped_inserts_keep_overlapping_documents_isolated(
         self,
     ) -> None:
-        """Scoped KnowledgeBase instances sharing a collection keep overlapping document_ids isolated."""
+        """Keep overlapping document IDs isolated in a shared collection."""
         kb_a = self._knowledge("A")
         kb_b = self._knowledge("B")
         chunks_a = [
@@ -197,13 +245,13 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
         stored_b = await kb_b.list_chunks("shared-doc")
         self.assertEqual(len(stored_a), 1)
         self.assertEqual(len(stored_b), 1)
-        self.assertEqual(stored_a[0].content["text"], "Alpha document")
+        self.assertEqual(stored_a[0].content.text, "Alpha document")
         self.assertEqual(stored_a[0].metadata["corpus"], "A")
-        self.assertEqual(stored_b[0].content["text"], "Beta document")
+        self.assertEqual(stored_b[0].content.text, "Beta document")
         self.assertEqual(stored_b[0].metadata["corpus"], "B")
 
         await kb_a.delete_document("shared-doc")
         self.assertEqual(await kb_a.list_chunks("shared-doc"), [])
         remaining_b = await kb_b.list_chunks("shared-doc")
         self.assertEqual(len(remaining_b), 1)
-        self.assertEqual(remaining_b[0].content["text"], "Beta document")
+        self.assertEqual(remaining_b[0].content.text, "Beta document")

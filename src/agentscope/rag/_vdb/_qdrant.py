@@ -185,7 +185,6 @@ class QdrantStore(VectorStoreBase):
         self,
         collection: str,
         records: list[VectorRecord],
-        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Insert records into a collection.
 
@@ -195,7 +194,7 @@ class QdrantStore(VectorStoreBase):
         can remove all records of one document.
 
         Point IDs are derived deterministically from
-        ``(document_id, chunk_index)`` (and ``metadata_filter`` when
+        ``(document_id, chunk_index)`` (and the record's scope when
         scoped) so that re-indexing the same document after a
         mid-pipeline crash upserts over the previous records instead of
         duplicating them, without colliding across scopes.
@@ -206,8 +205,6 @@ class QdrantStore(VectorStoreBase):
             records (`list[VectorRecord]`):
                 The records to insert (each carrying a
                 :class:`Chunk` and its embedding vector).
-            metadata_filter (`dict[str, Any] | None`, optional):
-                Optional scope filter included in point ID derivation.
         """
 
         from qdrant_client import models
@@ -218,7 +215,7 @@ class QdrantStore(VectorStoreBase):
             collection_name=collection,
             points=[
                 models.PointStruct(
-                    id=self._point_id(record, metadata_filter),
+                    id=self._point_id(record),
                     vector=record.vector,
                     payload={
                         "document_id": record.document_id,
@@ -230,28 +227,22 @@ class QdrantStore(VectorStoreBase):
         )
 
     @staticmethod
-    def _point_id(
-        record: VectorRecord,
-        metadata_filter: dict[str, Any] | None = None,
-    ) -> str:
-        """Deterministic point ID for ``(document_id, chunk_index[, metadata_filter])``.
+    def _point_id(record: VectorRecord) -> str:
+        """Derive the point ID from the document, chunk, and scope.
 
-        ``\0`` separates the fields because it cannot occur in either,
-        so no pair can collide with another. Re-inserting the same
+        Re-inserting the same
         chunk therefore upserts in place — the idempotency the indexing
         pipeline relies on when it retries after a crash.
 
         Args:
             record (`VectorRecord`):
                 The record to derive an ID for.
-            metadata_filter (`dict[str, Any] | None`, optional):
-                Optional scope filter to isolate IDs across scopes.
 
         Returns:
             `str`:
                 A UUIDv5 string (Qdrant requires UUID-shaped IDs).
         """
-        raw = _record_identity_key(record, metadata_filter)
+        raw = _record_identity_key(record)
         return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
     async def delete(

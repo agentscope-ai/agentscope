@@ -984,7 +984,7 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(miss, [])
 
-    async def test_scoped_inserts_with_overlapping_document_id_do_not_overwrite(
+    async def test_scoped_inserts_keep_overlapping_documents_isolated(
         self,
     ) -> None:
         """Scoped inserts with the same document_id and chunk_index coexist."""
@@ -994,16 +994,9 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
         rec_b = _make_record("beta", [0.0, 1.0, 0.0], document_id="shared")
         rec_b.chunk.metadata["kb_scope"] = "kb-b"
 
-        await self.store.insert(
-            "kb-1",
-            [rec_a],
-            metadata_filter={"kb_scope": "kb-a"},
-        )
-        await self.store.insert(
-            "kb-1",
-            [rec_b],
-            metadata_filter={"kb_scope": "kb-b"},
-        )
+        rec_a.scope = {"kb_scope": "kb-a"}
+        rec_b.scope = {"kb_scope": "kb-b"}
+        await self.store.insert("kb-1", [rec_a, rec_b])
 
         chunks_a = await self.store.list_chunks(
             "kb-1",
