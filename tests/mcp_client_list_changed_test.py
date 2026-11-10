@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for tool-cache invalidation on tools/list_changed notifications."""
 # pylint: disable=protected-access
+import asyncio
 from types import TracebackType
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -144,6 +145,261 @@ class MCPClientListChangedTest(IsolatedAsyncioTestCase):
             ("mcp__list_changed__echo", 1),
         )
         self.assertIs(client._cached_tools, cached)
+
+
+class MCPClientConcurrentDiscoveryTest(IsolatedAsyncioTestCase):
+    """Coordinate concurrent discovery and connection cleanup with events."""
+
+    def setUp(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.connections: list[_FakeClient] = []
+        self.closed: list[_FakeClient] = []
+        self.closing = asyncio.Event()
+        self.close_gate: asyncio.Event | None = None
+        self.notify_on_enter = True
+        self.error: Exception | None = None
+        self.catalog = [
+            mcp.types.Tool(name=name, inputSchema={"type": "object"})
+            for name in ("echo", "hidden")
+        ]
+        case = self
+
+        class ControlledClient(_FakeClient):
+            """Hold a snapshot until the test releases its response."""
+
+            async def __aenter__(self) -> "ControlledClient":
+                case.connections.append(self)
+                if case.notify_on_enter:
+                    await self.message_handler(
+                        mcp.types.ToolListChangedNotification(
+                            method="notifications/tools/list_changed",
+                        ),
+                    )
+                return self
+
+            async def list_tools(
+                self,
+                **_kwargs: Any,
+            ) -> mcp.types.ListToolsResult:
+                snapshot = mcp.types.ListToolsResult(tools=case.catalog)
+                case.started.set()
+                await case.release.wait()
+                if case.error is not None:
+                    raise case.error
+                return snapshot
+
+            async def __aexit__(self, *args: Any) -> bool:
+                if case.close_gate is not None:
+                    case.closing.set()
+                    await case.close_gate.wait()
+                case.closed.append(self)
+                return False
+
+        self.enterContext(
+            patch("agentscope.mcp._mcp_client.SDKClient", ControlledClient),
+        )
+        self.client = MCPClient(
+            name="concurrent",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(url="http://mcp.invalid/mcp"),
+        )
+
+    async def _start(
+        self,
+        entry: str = "list",
+        name: str = "echo",
+    ) -> asyncio.Task[Any]:
+        """Wait until the caller has joined discovery before returning."""
+        joined = asyncio.Event()
+
+        async def lookup() -> Any:
+            joined.set()
+            if entry == "get":
+                return await self.client.get_tool(name)
+            return await self.client.list_raw_tools()
+
+        task = asyncio.create_task(lookup())
+        self.addAsyncCleanup(self._cancel, task)
+        await joined.wait()
+        return task
+
+    async def _cancel(self, task: asyncio.Task[Any]) -> None:
+        """Drain caller tasks even when an assertion fails."""
+        if self.close_gate is not None:
+            self.close_gate.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def test_concurrent_discovery_shares_one_connection(self) -> None:
+        """Connection notifications must not multiply discovery attempts."""
+        for notify in (False, True):
+            for callers in (2, 8):
+                with self.subTest(notify=notify, callers=callers):
+                    self.notify_on_enter = notify
+                    self.started.clear()
+                    self.release.clear()
+                    self.connections.clear()
+                    self.closed.clear()
+                    tasks = [await self._start() for _ in range(callers)]
+                    await self.started.wait()
+                    self.release.set()
+                    results = await asyncio.gather(*tasks)
+                    self.assertEqual(results, [self.catalog] * callers)
+                    self.assertEqual(len(self.connections), 1)
+                    self.assertEqual(self.closed, self.connections)
+                    self.assertIsNone(self.client._discovery_task)
+
+    async def test_get_and_list_share_unfiltered_discovery(self) -> None:
+        """Filtering must not hide tools from concurrent direct lookups."""
+        self.client.enable_tools = ["echo"]
+        listed = await self._start()
+        hidden = await self._start("get", "hidden")
+        await self.started.wait()
+        self.release.set()
+        raw, tool = await asyncio.gather(listed, hidden)
+        self.assertEqual(raw, self.catalog[:1])
+        self.assertEqual(tool.name, "mcp__concurrent__hidden")
+        self.assertEqual(self.client._cached_tools, self.catalog)
+        self.assertEqual(len(self.connections), 1)
+
+    async def test_connection_notifications_do_not_cause_ping_pong(
+        self,
+    ) -> None:
+        """Sibling connection notifications must not exhaust both attempts."""
+        entered = [asyncio.Event() for _ in range(4)]
+        case = self
+
+        class PingPongClient(_FakeClient):
+            """Release each old response after the next connection opens."""
+
+            index: int = 0
+
+            async def __aenter__(self) -> "PingPongClient":
+                self.index = len(case.connections)
+                case.connections.append(self)
+                if self.index:
+                    await self.message_handler(
+                        mcp.types.ToolListChangedNotification(
+                            method="notifications/tools/list_changed",
+                        ),
+                    )
+                entered[self.index].set()
+                return self
+
+            async def list_tools(
+                self,
+                **_kwargs: Any,
+            ) -> mcp.types.ListToolsResult:
+                if self.index == 0:
+                    await case.release.wait()
+                elif self.index < 3:
+                    await entered[self.index + 1].wait()
+                return mcp.types.ListToolsResult(tools=case.catalog)
+
+        with patch("agentscope.mcp._mcp_client.SDKClient", PingPongClient):
+            first = await self._start()
+            await entered[0].wait()
+            second = await self._start()
+            self.release.set()
+            results = await asyncio.wait_for(
+                asyncio.gather(first, second, return_exceptions=True),
+                timeout=5,
+            )
+        self.assertEqual(results, [self.catalog, self.catalog])
+        self.assertEqual(self.client._cached_tools, self.catalog)
+        self.assertEqual(len(self.connections), 1)
+
+    async def test_other_session_notification_fences_shared_cache(
+        self,
+    ) -> None:
+        """A notification outside discovery must still reject its snapshot."""
+        callers = [await self._start() for _ in range(2)]
+        await self.started.wait()
+        self.catalog = [
+            mcp.types.Tool(name="new", inputSchema={"type": "object"}),
+        ]
+        async with self.client._get_client_gen():
+            self.release.set()
+            results = await asyncio.gather(*callers)
+        self.assertEqual(results, [self.catalog, self.catalog])
+        self.assertEqual(self.client._cached_tools, self.catalog)
+        self.assertEqual(len(self.connections), 3)
+
+    async def test_cancelled_caller_does_not_cancel_other_waiters(
+        self,
+    ) -> None:
+        """Either the first caller or a follower may cancel independently."""
+        for cancelled in (0, 1):
+            with self.subTest(cancelled=cancelled):
+                self.started.clear()
+                self.release.clear()
+                self.connections.clear()
+                self.closed.clear()
+                callers = [await self._start() for _ in range(2)]
+                await self.started.wait()
+                await self._cancel(callers[cancelled])
+                self.assertEqual(self.closed, [])
+                self.release.set()
+                result = await callers[1 - cancelled]
+                self.assertEqual(result, self.catalog)
+                self.assertEqual(self.closed, self.connections)
+                self.assertEqual(len(self.connections), 1)
+                self.assertIsNone(self.client._discovery_task)
+
+    async def test_last_cancelled_caller_closes_connection(self) -> None:
+        """Abandoned discovery must close and allow a subsequent request."""
+        callers = [await self._start() for _ in range(2)]
+        await self.started.wait()
+        for caller in callers:
+            await self._cancel(caller)
+        self.assertEqual(self.closed, self.connections)
+        self.assertEqual(len(self.connections), 1)
+        self.assertIsNone(self.client._discovery_task)
+        self.assertIsNone(self.client._cached_tools)
+        self.release.set()
+        self.assertEqual(await self.client.list_raw_tools(), self.catalog)
+        self.assertEqual(len(self.connections), 2)
+
+    async def test_failed_discovery_reaches_all_callers_and_can_retry(
+        self,
+    ) -> None:
+        """A failed shared task must not poison later discovery."""
+        self.error = RuntimeError("discovery failed")
+        callers = [await self._start() for _ in range(2)]
+        await self.started.wait()
+        self.release.set()
+        results = await asyncio.gather(*callers, return_exceptions=True)
+        self.assertEqual(results, [self.error, self.error])
+        self.assertEqual(self.closed, self.connections)
+        self.assertEqual(len(self.connections), 1)
+        self.assertIsNone(self.client._discovery_task)
+        self.error = None
+        self.assertEqual(await self.client.list_raw_tools(), self.catalog)
+        self.assertEqual(len(self.connections), 2)
+
+    async def test_cancelled_cleanup_does_not_clear_new_discovery(
+        self,
+    ) -> None:
+        """A fresh caller may arrive while the abandoned connection closes."""
+        self.close_gate = asyncio.Event()
+        first = await self._start()
+        await self.started.wait()
+        first.cancel()
+        await self.closing.wait()
+        self.started.clear()
+        second = await self._start()
+        await self.started.wait()
+        active = self.client._discovery_task
+        self.close_gate.set()
+        await asyncio.gather(first, return_exceptions=True)
+        self.assertIs(self.client._discovery_task, active)
+        self.assertFalse(second.done())
+        self.release.set()
+        self.assertEqual(await second, self.catalog)
+        self.assertEqual(self.closed, self.connections)
+        self.assertEqual(len(self.connections), 2)
+        self.assertIsNone(self.client._discovery_task)
 
 
 class MCPClientListGenerationTest(IsolatedAsyncioTestCase):

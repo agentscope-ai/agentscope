@@ -138,6 +138,10 @@ class MCPClient(BaseModel):
     _is_connected: bool = PrivateAttr(default=False)
     _cached_tools: list[mcp.types.Tool] | None = PrivateAttr(default=None)
     _tool_list_generation: int = PrivateAttr(default=0)
+    _discovery_task: asyncio.Task[list[mcp.types.Tool]] | None = PrivateAttr(
+        default=None,
+    )
+    _discovery_waiters: int = PrivateAttr(default=0)
     _http_client: httpx2.AsyncClient | None = PrivateAttr(default=None)
     _static_headers: httpx2.Headers | None = PrivateAttr(default=None)
     _runtime_headers: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -503,6 +507,46 @@ class MCPClient(BaseModel):
             RuntimeError: If not connected (for stateful connections), or
                 if tool-list notifications invalidate both discovery attempts.
         """
+        available_tools = await self._discover_tools()
+        if self.enable_tools is not None:
+            available_tools = [
+                tool
+                for tool in available_tools
+                if tool.name in self.enable_tools
+            ]
+        if self.disable_tools is not None:
+            available_tools = [
+                _ for _ in available_tools if _.name not in self.disable_tools
+            ]
+        return available_tools
+
+    async def _discover_tools(self) -> list[mcp.types.Tool]:
+        """Share stateless discovery without sharing caller cancellation."""
+        if self.is_stateful:
+            return await self._fetch_tools()
+
+        task = self._discovery_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._fetch_tools())
+            self._discovery_task = task
+            self._discovery_waiters = 0
+        self._discovery_waiters += 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if self._discovery_task is task:
+                self._discovery_waiters -= 1
+                if self._discovery_waiters == 0:
+                    self._discovery_task = None
+                    if not task.done():
+                        # No callers remain to use the temporary connection.
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                    elif not task.cancelled():
+                        task.exception()
+
+    async def _fetch_tools(self) -> list[mcp.types.Tool]:
+        """Fetch and cache a catalog that survives the invalidation fence."""
         # Retry once if a notification invalidates the in-flight tool list.
         for _ in range(2):
             if not self.is_stateful:
@@ -515,25 +559,11 @@ class MCPClient(BaseModel):
                 res = await self._client.list_tools(cache_mode="refresh")
             if generation == self._tool_list_generation:
                 self._cached_tools = res.tools
-                break
-        else:
-            raise RuntimeError(
-                f"MCP {self.name!r} tool list changed during discovery; "
-                "retry the lookup.",
-            )
-
-        available_tools: list = self._cached_tools
-        if self.enable_tools is not None:
-            available_tools = [
-                tool
-                for tool in available_tools
-                if tool.name in self.enable_tools
-            ]
-        if self.disable_tools is not None:
-            available_tools = [
-                _ for _ in available_tools if _.name not in self.disable_tools
-            ]
-        return available_tools
+                return res.tools
+        raise RuntimeError(
+            f"MCP {self.name!r} tool list changed during discovery; "
+            "retry the lookup.",
+        )
 
     async def list_tools(self) -> list[ToolBase]:
         """List available tools from the MCP server as wrapped
@@ -576,10 +606,11 @@ class MCPClient(BaseModel):
         # Avoid circular import by importing here
         from ..tool import MCPTool
 
-        if self._cached_tools is None:
-            await self.list_raw_tools()
+        tools = self._cached_tools
+        if tools is None:
+            tools = await self._discover_tools()
         target_tool = next(
-            (tool for tool in self._cached_tools or [] if tool.name == name),
+            (tool for tool in tools if tool.name == name),
             None,
         )
         if target_tool is None:
