@@ -113,7 +113,7 @@ tools = [
 ]
 # ------------ Realtime voice ------------
 realtime = [
-    "websockets>=13",
+    "websockets>=14",
 ]
 realtime-local = ["sounddevice"]
 # ------------ Terminal UI ------------

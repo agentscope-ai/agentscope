@@ -231,7 +231,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # ----------------------------------------------------------------
         # Wrap next_handler in a Task, draining output into a Queue
         # ----------------------------------------------------------------
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue | None = asyncio.Queue()
 
         async def _drain_to_queue() -> ToolResponse | None:
             """Drain output and return the terminal tool outcome."""
@@ -240,18 +240,23 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 async for item in next_handler(**input_kwargs):
                     if isinstance(item, ToolResponse):
                         response = item
-                    await queue.put(item)
+                    if queue is not None:
+                        queue.put_nowait(item)
+                    del item
             except Exception as exc:  # pylint: disable=broad-except
-                await queue.put(exc)
+                if queue is not None:
+                    queue.put_nowait(exc)
                 response = ToolResponse(
                     id=tool_call.id,
                     state=ToolResultState.ERROR,
                     content=[TextBlock(text=str(exc))],
                 )
             finally:
-                await queue.put(_QUEUE_SENTINEL)
+                if queue is not None:
+                    queue.put_nowait(_QUEUE_SENTINEL)
             return response
 
+        execution_started_at = time.time()
         drain_task: asyncio.Task = asyncio.create_task(_drain_to_queue())
 
         # ----------------------------------------------------------------
@@ -295,6 +300,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 yield item
             drain_task.cancel()
             return
+
+        # The deliverer awaits the final response directly. Drop the queue
+        # and foreground references before yielding: nobody consumes further
+        # stream events, and a bounded queue here would deadlock the producer.
+        # No await separates this transition from the producer's queue check.
+        queue = None
+        pre_collected.clear()
+        item = None
 
         # ----------------------------------------------------------------
         # Timeout path: spawn deliverer, register drain_task, yield synthetic
@@ -428,6 +441,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             user_id=self._user_id,
             tool_name=tool_name,
             summary=_make_summary(tool_name, tool_call.input),
+            execution_started_at=execution_started_at,
         )
 
         logger.info(

@@ -7,7 +7,12 @@ from typing import AsyncGenerator, Callable, Sequence, TYPE_CHECKING
 from ._base import MiddlewareBase
 from .._logging import logger
 from ..classifier import ChoiceAnswer, ChoiceQuestion, ClassifierModelBase
-from ..event import ReplyStartEvent
+from ..event import (
+    ExternalExecutionResultEvent,
+    ReplyStartEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
 from ..message import Msg, SystemMsg, UserMsg
 from ..model import ChatModelBase
 
@@ -90,8 +95,17 @@ class ModelRouterMiddleware(MiddlewareBase):
         """Swap ``agent.model`` for the selected candidate during the reply."""
         key = await self.get_middleware_key()
         original_model = agent.model
-        # Before ReplyStartEvent, reply_id still names the previous reply
-        new_reply = isinstance(input_kwargs["inputs"], (Msg, list))
+        # Mirror Agent._reply_impl, which treats only a HITL event as a
+        # resumption: ``None`` starts a new reply, so it must not inherit the
+        # previous reply's route while ``reply_id`` still names that reply.
+        new_reply = not isinstance(
+            input_kwargs["inputs"],
+            (
+                UserConfirmResultEvent,
+                UserInterruptEvent,
+                ExternalExecutionResultEvent,
+            ),
+        )
         routed = agent.state.middle_context.get(key, {})
         agent.model = self._models.get(
             None if new_reply else routed.get(agent.state.reply_id),
