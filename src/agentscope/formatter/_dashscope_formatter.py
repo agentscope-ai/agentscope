@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The DashScope formatter module (OpenAI-compatible format)."""
 
-import base64
+import asyncio
 from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
@@ -9,7 +9,7 @@ from urllib.request import url2pathname
 
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, _read_local_file_as_base64
 from .._logging import logger
 from ..message import (
     Msg,
@@ -61,7 +61,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         in the conversation history."""
         return "application/x-thinking" in self.input_types
 
-    def _format_dashscope_data_block(
+    async def _format_dashscope_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -102,13 +102,22 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         main_type = block.source.media_type.split("/")[0]
 
         if main_type == "image":
-            return self._format_image_source(block.source, block.model_extra)
+            return await self._format_image_source(
+                block.source,
+                block.model_extra,
+            )
 
         if main_type == "video":
-            return self._format_video_source(block.source, block.model_extra)
+            return await self._format_video_source(
+                block.source,
+                block.model_extra,
+            )
 
         if main_type == "audio":
-            return self._format_audio_source(block.source, block.model_extra)
+            return await self._format_audio_source(
+                block.source,
+                block.model_extra,
+            )
 
         logger.warning(
             "Unsupported main media type %s for DashScope API. "
@@ -118,7 +127,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         return None
 
     @staticmethod
-    def _format_image_source(
+    async def _format_image_source(
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -144,9 +153,10 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url2pathname(url_str.removeprefix("file://"))
-                with open(local_path, "rb") as f:
-                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                encoded = await asyncio.to_thread(
+                    _read_local_file_as_base64,
+                    url2pathname(url_str.removeprefix("file://")),
+                )
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
                 url = url_str
@@ -162,7 +172,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         return result
 
     @staticmethod
-    def _format_video_source(
+    async def _format_video_source(
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -190,9 +200,10 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url2pathname(url_str.removeprefix("file://"))
-                with open(local_path, "rb") as f:
-                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                encoded = await asyncio.to_thread(
+                    _read_local_file_as_base64,
+                    url2pathname(url_str.removeprefix("file://")),
+                )
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
                 url = url_str
@@ -208,7 +219,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         return result
 
     @staticmethod
-    def _format_audio_source(
+    async def _format_audio_source(
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -240,9 +251,10 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                local_path = url2pathname(url_str.removeprefix("file://"))
-                with open(local_path, "rb") as f:
-                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                encoded = await asyncio.to_thread(
+                    _read_local_file_as_base64,
+                    url2pathname(url_str.removeprefix("file://")),
+                )
                 data = f"data:;base64,{encoded}"
             else:
                 data = url_str
@@ -309,7 +321,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_dashscope_data_block(
+                    formatted_block = await self._format_dashscope_data_block(
                         block,
                     )
                     if formatted_block:
@@ -350,7 +362,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                                 )
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = (
-                                    self._format_dashscope_data_block(
+                                    await self._format_dashscope_data_block(
                                         sub,
                                     )
                                 )
@@ -416,8 +428,10 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_dashscope_data_block(
-                                    item,
+                                fmt_item = (
+                                    await self._format_dashscope_data_block(
+                                        item,
+                                    )
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -587,7 +601,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                     accumulated_text.append(f"{msg.name}: {block.text}")
 
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_dashscope_data_block(
+                    formatted_block = await self._format_dashscope_data_block(
                         block,
                     )
                     if formatted_block is not None:

@@ -607,7 +607,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             },
         )
 
-    @patch("agentscope.formatter._openai_formatter.requests.get")
+    @patch("agentscope.formatter._formatter_base.requests.get")
     async def test_chat_formatter_extensionless_url_audio(
         self,
         mock_get: Mock,

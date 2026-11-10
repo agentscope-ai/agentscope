@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """The Moonshot AI formatter for agentscope."""
 
-import base64
+import asyncio
 from fnmatch import fnmatch
 from typing import Any
 from urllib.request import url2pathname
 
-import requests
 from pydantic import Field
 
+from ._formatter_base import _download_as_base64, _read_local_file_as_base64
 from ._openai_formatter import _OpenAIFormatterBase
 from .._logging import logger
 from ..message import (
@@ -24,7 +24,7 @@ from ..message import (
 )
 
 
-def _moonshot_format_media_source(
+async def _moonshot_format_media_source(
     source: URLSource | Base64Source,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -55,15 +55,13 @@ def _moonshot_format_media_source(
     elif isinstance(source, URLSource):
         url_str = str(source.url)
         if url_str.startswith("file://"):
-            local_path = url2pathname(url_str.removeprefix("file://"))
-            with open(local_path, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode("utf-8")
-            url = f"data:{source.media_type};base64,{encoded}"
+            encoded = await asyncio.to_thread(
+                _read_local_file_as_base64,
+                url2pathname(url_str.removeprefix("file://")),
+            )
         else:
-            response = requests.get(url_str, timeout=30)
-            response.raise_for_status()
-            encoded = base64.b64encode(response.content).decode("utf-8")
-            url = f"data:{source.media_type};base64,{encoded}"
+            encoded = await asyncio.to_thread(_download_as_base64, url_str)
+        url = f"data:{source.media_type};base64,{encoded}"
 
     else:
         raise ValueError(f"Unsupported media source type: {type(source)}")
@@ -100,14 +98,14 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
         ),
     )
 
-    def _format_image_source(
+    async def _format_image_source(
         self,
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return _moonshot_format_media_source(source, extra)
+        return await _moonshot_format_media_source(source, extra)
 
-    def _format_openai_data_block(
+    async def _format_openai_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -116,11 +114,11 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
             fnmatch(media_type, pattern)
             for pattern in self.supported_input_media_types
         ):
-            return _moonshot_format_media_source(
+            return await _moonshot_format_media_source(
                 block.source,
                 block.model_extra,
             )
-        return super()._format_openai_data_block(block)
+        return await super()._format_openai_data_block(block)
 
     # pylint: disable=too-many-branches
     async def format(
@@ -173,7 +171,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(block)
+                    formatted = await self._format_openai_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
 
@@ -214,8 +212,10 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": sub.text},
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_openai_data_block(
-                                    sub,
+                                formatted_sub = (
+                                    await self._format_openai_data_block(
+                                        sub,
+                                    )
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -278,8 +278,10 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_openai_data_block(
-                                    item,
+                                fmt_item = (
+                                    await self._format_openai_data_block(
+                                        item,
+                                    )
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -366,14 +368,14 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
         ),
     )
 
-    def _format_image_source(
+    async def _format_image_source(
         self,
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return _moonshot_format_media_source(source, extra)
+        return await _moonshot_format_media_source(source, extra)
 
-    def _format_openai_data_block(
+    async def _format_openai_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -382,11 +384,11 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
             fnmatch(media_type, pattern)
             for pattern in self.supported_input_media_types
         ):
-            return _moonshot_format_media_source(
+            return await _moonshot_format_media_source(
                 block.source,
                 block.model_extra,
             )
-        return super()._format_openai_data_block(block)
+        return await super()._format_openai_data_block(block)
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the Moonshot AI API format for
@@ -482,7 +484,7 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(block)
+                    formatted = await self._format_openai_data_block(block)
                     if formatted is not None:
                         media_blocks.append(formatted)
 

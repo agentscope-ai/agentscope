@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 """The Ollama formatter module."""
-import base64
+import asyncio
 import fnmatch
 from abc import ABC
 from typing import Any
 from urllib.request import url2pathname
 
-import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import (
+    FormatterBase,
+    _download_as_base64,
+    _read_local_file_as_base64,
+)
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -29,7 +32,7 @@ class _OllamaFormatterBase(FormatterBase, ABC):
     """Base class for Ollama formatters, providing shared data block
     formatting logic."""
 
-    def _format_ollama_data_block(
+    async def _format_ollama_data_block(
         self,
         block: DataBlock,
     ) -> str | None:
@@ -66,10 +69,10 @@ class _OllamaFormatterBase(FormatterBase, ABC):
             )
             return None
 
-        return self._format_image_source(source)
+        return await self._format_image_source(source)
 
     @staticmethod
-    def _format_image_source(source: URLSource | Base64Source) -> str:
+    async def _format_image_source(source: URLSource | Base64Source) -> str:
         """Format an image source into Ollama API format (base64 string).
 
         Args:
@@ -86,16 +89,12 @@ class _OllamaFormatterBase(FormatterBase, ABC):
             url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
-                file_path = url2pathname(url.removeprefix("file://"))
-                with open(file_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
-                return data
-            else:
-                # Remote URL - download and convert to base64
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
-                data = base64.b64encode(response.content).decode("utf-8")
-                return data
+                return await asyncio.to_thread(
+                    _read_local_file_as_base64,
+                    url2pathname(url.removeprefix("file://")),
+                )
+            # Remote URL - download and convert to base64
+            return await asyncio.to_thread(_download_as_base64, url)
         else:
             raise ValueError(f"Unsupported source type: {type(source)}")
 
@@ -172,8 +171,10 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                             if isinstance(sub, TextBlock):
                                 hint_text_parts.append(sub.text)
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_ollama_data_block(
-                                    sub,
+                                formatted_sub = (
+                                    await self._format_ollama_data_block(
+                                        sub,
+                                    )
                                 )
                                 if formatted_sub:
                                     hint_images.append(formatted_sub)
@@ -187,7 +188,9 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                             messages.append(hint_msg)
 
                 elif isinstance(block, DataBlock):
-                    formatted_image = self._format_ollama_data_block(block)
+                    formatted_image = await self._format_ollama_data_block(
+                        block,
+                    )
                     if formatted_image:
                         images.append(formatted_image)
 
@@ -259,7 +262,7 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         for data_block in multimodal_data:
                             if isinstance(data_block, DataBlock):
                                 formatted_image = (
-                                    self._format_ollama_data_block(
+                                    await self._format_ollama_data_block(
                                         data_block,
                                     )
                                 )
@@ -492,7 +495,9 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                 if isinstance(block, TextBlock):
                     msg_text_parts.append(block.text)
                 elif isinstance(block, DataBlock):
-                    formatted_image = self._format_ollama_data_block(block)
+                    formatted_image = await self._format_ollama_data_block(
+                        block,
+                    )
                     if formatted_image:
                         images.append(formatted_image)
                 elif isinstance(block, (HintBlock, ThinkingBlock)):

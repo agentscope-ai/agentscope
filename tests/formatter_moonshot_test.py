@@ -55,7 +55,7 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
         mock_response.content = self.image_bytes
         mock_response.raise_for_status = MagicMock()
         self._requests_get_patcher = patch(
-            "agentscope.formatter._moonshot_formatter.requests.get",
+            "agentscope.formatter._formatter_base.requests.get",
             return_value=mock_response,
         )
         self._requests_get_patcher.start()
