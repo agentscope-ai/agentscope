@@ -22,6 +22,18 @@ else:
     GenerateContentResponse = Any
 
 
+def _text_signature_metadata(part: Any) -> dict[str, Any]:
+    """Retain opaque Gemini text metadata in a JSON-compatible form."""
+    signature = getattr(part, "thought_signature", None)
+    if signature:
+        return {
+            "gemini_thought_signature": base64.b64encode(signature).decode(
+                "ascii",
+            ),
+        }
+    return {}
+
+
 def _is_null_schema(schema: Any) -> bool:
     """Return whether a schema represents only JSON null."""
     return isinstance(schema, dict) and schema.get("type") in (
@@ -362,8 +374,8 @@ class GeminiChatModel(ChatModelBase):
         """
 
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
-        thinking_id: str = _generate_id()
+        current_kind: str | None = None
+        current_block_id: str | None = None
 
         async for chunk in response:
             # Capture response_id from the first chunk that carries it
@@ -383,23 +395,42 @@ class GeminiChatModel(ChatModelBase):
                 and chunk.candidates[0].content.parts
             ):
                 for part in chunk.candidates[0].content.parts:
-                    if part.text:
-                        # Thinking
-                        if part.thought:
-                            delta_res.append_thinking(
-                                block_id=thinking_id,
-                                thinking=part.text,
-                            )
+                    metadata = _text_signature_metadata(part)
+                    if part.text or (
+                        metadata
+                        and current_block_id is not None
+                        and not part.function_call
+                    ):
+                        kind = "thinking" if part.thought else "text"
+                        if not part.text and part.thought is None:
+                            kind = current_kind or "text"
+                        if current_block_id is None or kind != current_kind:
+                            current_block_id = _generate_id()
+                        current_kind = kind
 
-                        # Text
-                        else:
-                            delta_res.append_text(
-                                block_id=text_id,
-                                text=part.text,
+                        if kind == "thinking":
+                            delta_res.append_thinking(
+                                block_id=current_block_id,
+                                thinking=part.text or "",
+                                **metadata,
                             )
+                        else:
+                            delta_res.content.append(
+                                TextBlock(
+                                    id=current_block_id,
+                                    text=part.text or "",
+                                    **metadata,
+                                ),
+                            )
+                        # A signature closes its logical part. Later text
+                        # must not be merged into that signed history part.
+                        if metadata:
+                            current_block_id = None
 
                     # Tool call
                     if part.function_call:
+                        current_kind = None
+                        current_block_id = None
                         if part.thought_signature:
                             # Mark signature IDs for the history formatter.
                             call_id = "gemini_ts:" + base64.b64encode(
@@ -449,12 +480,15 @@ class GeminiChatModel(ChatModelBase):
         ):
             for part in response.candidates[0].content.parts:
                 if part.text:
+                    metadata = _text_signature_metadata(part)
                     if part.thought:
                         content_blocks.append(
-                            ThinkingBlock(thinking=part.text),
+                            ThinkingBlock(thinking=part.text, **metadata),
                         )
                     else:
-                        content_blocks.append(TextBlock(text=part.text))
+                        content_blocks.append(
+                            TextBlock(text=part.text, **metadata),
+                        )
 
                 if part.function_call:
                     keyword_args = part.function_call.args or {}

@@ -25,6 +25,21 @@ from ..message import (
 )
 
 
+def _format_text_part(
+    text: str,
+    extra: dict[str, Any] | None,
+    thought: bool = False,
+) -> dict[str, Any]:
+    """Restore text-part metadata without exposing it as visible text."""
+    part: dict[str, Any] = {"text": text}
+    if thought:
+        part["thought"] = True
+    signature = (extra or {}).get("gemini_thought_signature")
+    if signature:
+        part["thought_signature"] = base64.b64decode(signature)
+    return part
+
+
 class _GeminiFormatterBase(FormatterBase, ABC):
     """Base class for Gemini formatters, providing shared data block
     formatting logic."""
@@ -195,7 +210,9 @@ class GeminiChatFormatter(_GeminiFormatterBase):
 
                 if isinstance(block, TextBlock):
                     if block.text:
-                        parts.append({"text": block.text})
+                        parts.append(
+                            _format_text_part(block.text, block.model_extra),
+                        )
 
                 elif isinstance(block, ThinkingBlock):
                     # Gemini API requires `thought: true` to mark a part as a
@@ -207,7 +224,11 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     # occurs when a reasoning model returns no summary.
                     if block.thinking:
                         parts.append(
-                            {"thought": True, "text": block.thinking},
+                            _format_text_part(
+                                block.thinking,
+                                block.model_extra,
+                                thought=True,
+                            ),
                         )
 
                 elif isinstance(block, HintBlock):
