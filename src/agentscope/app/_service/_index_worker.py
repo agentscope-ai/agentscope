@@ -216,18 +216,34 @@ class IndexWorker:
         knowledge_base_id: str,
         document_id: str,
     ) -> None:
+        """Index a document after local worker capacity becomes available.
+
+        The lease and its heartbeat are held only while the document is
+        actively processed, not while it waits behind another document.
+        """
+        async with self._sem:
+            await self._process_with_lease(
+                user_id,
+                knowledge_base_id,
+                document_id,
+            )
+
+    async def _process_with_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
         """Run the full indexing pipeline for one document.
 
         Steps:
 
         1. **Lease** — CAS-acquire the processing lease; bail if some
            other worker already holds it (duplicate dispatch / sweep).
-        2. **Throttle** — wait on the per-worker semaphore so the
-           number of in-flight parses stays bounded.
-        3. **Pipeline** — parse → chunk → embed + write vector store,
+        2. **Pipeline** — parse → chunk → embed + write vector store,
            updating status before each phase.  A background heartbeat
            keeps the lease alive while parsing runs.
-        4. **Finalise** — on success mark ``ready`` with the final
+        3. **Finalise** — on success mark ``ready`` with the final
            chunk count; on failure mark ``error`` with a sanitised
            message.  The lease is released regardless.
 
@@ -254,7 +270,7 @@ class IndexWorker:
             return
 
         pipeline_task = asyncio.create_task(
-            self._guarded_pipeline(
+            self._run_pipeline(
                 user_id,
                 knowledge_base_id,
                 document_id,
@@ -323,20 +339,6 @@ class IndexWorker:
                 knowledge_base_id=knowledge_base_id,
                 document_id=document_id,
                 processing_node=self._node_id,
-            )
-
-    async def _guarded_pipeline(
-        self,
-        user_id: str,
-        knowledge_base_id: str,
-        document_id: str,
-    ) -> None:
-        """Run the throttled pipeline inside the per-worker semaphore."""
-        async with self._sem:
-            await self._run_pipeline(
-                user_id,
-                knowledge_base_id,
-                document_id,
             )
 
     # ------------------------------------------------------------------
