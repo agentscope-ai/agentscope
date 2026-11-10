@@ -290,13 +290,7 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
         self.assertIsNone(listed["sessions"][0]["session"]["config"]["cwd"])
 
     def test_name_null_is_refused_rather_than_crashing(self) -> None:
-        """A field that cannot hold ``None`` costs a 422, not a 500.
-
-        ``exclude_unset`` cannot tell "clear this" from "this has no
-        meaning here": every other nullable-in-the-request column is
-        clearable, but a session always has a display name. The merged
-        config used to raise straight through the handler.
-        """
+        """Reject a null name with 422 and preserve the stored name."""
         name = self.client.get(
             "/sessions/",
             headers=HEADERS,

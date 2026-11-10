@@ -556,10 +556,6 @@ async def update_session(
             "auto": False,
         }
 
-    # ``exclude_unset`` means an explicit null reaches the merged shape, and
-    # not every column can hold one — ``name`` never can. Refuse with a 422
-    # instead of letting the ValidationError escape as a 500, the way
-    # ``update_agent`` already handles its own merged shape.
     try:
         updated_config = SessionConfig.model_validate(
             {**existing.config.model_dump(mode="json"), **config_updates},
