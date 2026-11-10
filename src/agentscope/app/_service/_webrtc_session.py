@@ -56,6 +56,9 @@ class WebRTCSession:
         self._close_task: asyncio.Task[None] | None = None
         self._close_lock = asyncio.Lock()
         self._closing = False
+        self._closed = False
+        self._startup_complete = False
+        self._finalizing = False
         self._lock_acquired = asyncio.Event()
         self._persisted_messages: dict[str, str] = {}
         self._open_user_replies: set[str] = set()
@@ -65,8 +68,12 @@ class WebRTCSession:
 
     def start(self) -> None:
         """Start the agent pump after WebRTC negotiation succeeds."""
-        if self._task is not None:
-            raise RuntimeError("The WebRTC session is already running.")
+        if (
+            self._task is not None
+            or self._closing
+            or self._close_task is not None
+        ):
+            raise RuntimeError("The WebRTC session is running or closed.")
         self._task = asyncio.create_task(
             self._run(),
             name=f"webrtc-session-{self.session_id}",
@@ -74,10 +81,10 @@ class WebRTCSession:
 
     def request_close(self) -> None:
         """Schedule one owned close task from a synchronous callback."""
-        if self._closing or self._close_task is not None:
+        if self._close_task is not None:
             return
         self._close_task = asyncio.create_task(
-            self.close(),
+            self._close(),
             name=f"webrtc-session-close-{self.session_id}",
         )
         self._close_task.add_done_callback(self._on_close_done)
@@ -96,18 +103,39 @@ class WebRTCSession:
 
     async def close(self) -> None:
         """End the transport and wait for persistence to finish."""
+        self.request_close()
+        assert self._close_task is not None
+        await asyncio.shield(self._close_task)
+
+    async def _close(self) -> None:
+        """Own shutdown independently of cancellation of close callers."""
+        task = self._task
         async with self._close_lock:
             if not self._closing:
                 self._closing = True
                 await self.transport.close()
+                if (
+                    task is not None
+                    and task is not asyncio.current_task()
+                    and not self._startup_complete
+                    and not self._finalizing
+                ):
+                    task.cancel()
 
-        task = self._task
         if task is not None and task is not asyncio.current_task():
-            if not self._lock_acquired.is_set():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        elif task is None:
+            await asyncio.gather(asyncio.shield(task), return_exceptions=True)
+        # A task cancelled before its first step never enters _run's finally.
+        await self._close_resources()
+
+    async def _close_resources(self) -> None:
+        """Close the peer and retire this session exactly once."""
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closing = True
+            await self.transport.close()
             await self.peer_connection.close()
+            self._closed = True
             self._on_closed(self)
 
     async def wait_until_lock_acquired(self, timeout: float) -> bool:
@@ -123,6 +151,8 @@ class WebRTCSession:
 
     async def _run(self) -> None:
         """Hold the session lock while forwarding events to the SSE log."""
+        if self._close_task is not None:
+            return
         try:
             async with self.message_bus.acquire_lock(
                 MessageBusKeys.session_lock(self.session_id),
@@ -137,6 +167,7 @@ class WebRTCSession:
                     }
                     async with self.transport:
                         async with self.agent:
+                            self._startup_complete = True
                             async for event in self.agent.reply_stream(
                                 self.transport,
                             ):
@@ -195,6 +226,7 @@ class WebRTCSession:
                                             exc,
                                         )
                 finally:
+                    self._finalizing = True
                     try:
                         async with self.message_bus.acquire_lock(
                             MessageBusKeys.session_event_checkpoint_lock(
@@ -233,9 +265,13 @@ class WebRTCSession:
             )
             async with self._close_lock:
                 self._closing = True
-            await self.transport.close()
-            await self.peer_connection.close()
-            self._on_closed(self)
+            try:
+                if self.agent is not None and not self._startup_complete:
+                    # __aexit__ is not called when provider setup is cancelled
+                    # during the agent's __aenter__.
+                    await self.agent.close()
+            finally:
+                await self._close_resources()
 
     async def _checkpoint_state(
         self,
