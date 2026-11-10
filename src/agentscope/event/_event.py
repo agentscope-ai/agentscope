@@ -550,6 +550,9 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"delegation_checkpoint"`` — a hidden Live tool result is
+              ready to persist without displaying a tool card. ``value``
+              contains ``delegation_id``, ``reply_id``, and ``tool_call_id``.
             - ``"external_execution_result_rejected"`` — a Live result
               submission needs retry. ``value`` contains ``request_id``
               (the submitted event ID), ``reply_id``, ``tool_call_ids``

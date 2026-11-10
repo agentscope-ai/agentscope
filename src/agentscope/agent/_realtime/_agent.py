@@ -1441,8 +1441,10 @@ class RealtimeAgent:
                     yield_final_msg=True,
                 ):
                     if pending_result_end is not None:
-                        self._sync_delegation_state(delegation)
-                        self._emit(pending_result_end)
+                        self._checkpoint_delegation_tool_result(
+                            delegation,
+                            pending_result_end,
+                        )
                         pending_result_end = None
                     if isinstance(item, Msg):
                         final = item
@@ -1461,6 +1463,25 @@ class RealtimeAgent:
                         ),
                     ):
                         delegation.buffered_events.append(item)
+                    if isinstance(item, ToolResultEndEvent):
+                        reply = delegation.agent.state.get_reply_message(
+                            self.name,
+                        )
+                        if reply is not None and any(
+                            call.id == item.tool_call_id
+                            and call.state == ToolCallState.FINISHED
+                            for call in reply.get_content_blocks("tool_call")
+                        ):
+                            # Local tools commit before END. Persist now,
+                            # before the next model request can block.
+                            self._checkpoint_delegation_tool_result(
+                                delegation,
+                                item,
+                            )
+                        else:
+                            # External results commit after yielding END.
+                            pending_result_end = item
+                        continue
                     if isinstance(
                         item,
                         (
@@ -1483,23 +1504,19 @@ class RealtimeAgent:
                             ToolResultStartEvent,
                             ToolResultTextDeltaEvent,
                             ToolResultDataDeltaEvent,
-                            ToolResultEndEvent,
                             ReplyEndEvent,
                         ),
                     ):
-                        if isinstance(item, ToolResultEndEvent):
-                            # External results enter backend state after
-                            # END is yielded. Advance once before taking
-                            # the checkpoint paired with that event.
-                            pending_result_end = item
-                            continue
                         if isinstance(item, ReplyEndEvent):
                             self._sync_delegation_state(delegation)
                         self._emit(item)
 
                 self._sync_delegation_state(delegation)
                 if pending_result_end is not None:
-                    self._emit(pending_result_end)
+                    self._checkpoint_delegation_tool_result(
+                        delegation,
+                        pending_result_end,
+                    )
                     pending_result_end = None
                 if waiting_for_external_input or (
                     delegation.agent.state.has_awaiting_tool_calls(self.name)
@@ -1536,7 +1553,10 @@ class RealtimeAgent:
                 # Completed tools must survive a later backend failure.
                 self._sync_delegation_state(delegation)
                 if pending_result_end is not None:
-                    self._emit(pending_result_end)
+                    self._checkpoint_delegation_tool_result(
+                        delegation,
+                        pending_result_end,
+                    )
                 if (
                     not self._closing
                     and not delegation.expiring
@@ -1594,6 +1614,28 @@ class RealtimeAgent:
                         "RealtimeAgent: failed to report delegation failure",
                     )
                 self._finish_client_delegation(delegation.delegation_id)
+
+    def _checkpoint_delegation_tool_result(
+        self,
+        delegation: _ClientDelegation,
+        event: ToolResultEndEvent,
+    ) -> None:
+        """Persist committed results independently of tool-card visibility."""
+        self._sync_delegation_state(delegation)
+        if delegation.visible:
+            self._emit(event)
+        else:
+            self._emit(
+                CustomEvent(
+                    name="delegation_checkpoint",
+                    value={
+                        "delegation_id": delegation.delegation_id,
+                        "reply_id": event.reply_id,
+                        "tool_call_id": event.tool_call_id,
+                    },
+                ),
+                checkpoint=True,
+            )
 
     def _build_delegation_prompt(self) -> str:
         """Build a bounded task prompt from the current Live transcript."""

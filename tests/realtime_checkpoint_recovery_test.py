@@ -3,12 +3,18 @@
 # pylint: disable=protected-access
 
 import asyncio
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from utils import MockModel
 
 from agentscope.agent import Agent, RealtimeAgent
+from agentscope.app._service._webrtc_audio_transport import (
+    WebRTCAudioTransport,
+)
+from agentscope.app._service._webrtc_session import WebRTCSession
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.credential import OpenAICredential
 from agentscope.event import (
     ConfirmResult,
@@ -34,6 +40,175 @@ from agentscope.tool import FunctionTool, Toolkit
 
 class RealtimeCheckpointRecoveryTest(IsolatedAsyncioTestCase):
     """Exercise serialized checkpoints rather than the in-memory backend."""
+
+    async def test_hidden_tool_checkpoint_before_next_model_response(
+        self,
+    ) -> None:
+        """Persist and restore completed work while reasoning is blocked."""
+        waiting = asyncio.Event()
+        persisted = asyncio.Event()
+        executed: list[str] = []
+        saved: list[str] = []
+
+        def read() -> str:
+            """Record one automatically allowed execution."""
+            executed.append("read")
+            return "contents"
+
+        toolkit = Toolkit(tools=[FunctionTool(read, is_read_only=True)])
+        model = MockModel(context_size=10000)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(id="read", name="read", input="{}"),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+        call_api = model._call_api
+
+        async def blocked_api(*args: Any, **kwargs: Any) -> Any:
+            """Hold the response after tool execution until cancellation."""
+            if model.cnt:
+                waiting.set()
+                await asyncio.Event().wait()
+            return await call_api(*args, **kwargs)
+
+        def factory(state: AgentState) -> Agent:
+            """Use a real backend with a deterministic model boundary."""
+            return Agent(
+                "Friday",
+                "Be brief.",
+                model,
+                state=state,
+                toolkit=toolkit,
+            )
+
+        async def save_state(**kwargs: Any) -> None:
+            """Serialize at the actual WebRTC persistence boundary."""
+            saved.append(kwargs["state"].model_dump_json())
+            persisted.set()
+
+        live_model = OpenAILiveModel(
+            "gpt-live-1",
+            OpenAICredential(api_key="test"),
+        )
+        live_model.send_delegation_result = AsyncMock()
+        live = RealtimeAgent(
+            "Friday",
+            "Be brief.",
+            live_model,
+            delegation_agent_factory=factory,
+        )
+        transport = WebRTCAudioTransport(
+            live_model.input_sample_rate,
+            live_model.output_sample_rate,
+        )
+        storage = AsyncMock()
+        storage.update_session_state.side_effect = save_state
+        bus = InMemoryMessageBus()
+        session = WebRTCSession(
+            peer_connection=AsyncMock(),
+            transport=transport,
+            agent_factory=AsyncMock(return_value=live),
+            storage=storage,
+            message_bus=bus,
+            user_id="user",
+            agent_id="agent",
+            session_id="session",
+            on_closed=lambda _: None,
+        )
+        with (
+            patch.object(model, "_call_api", side_effect=blocked_api),
+            patch.object(live, "connect", AsyncMock()),
+            patch.object(bus, "publish", wraps=bus.publish) as publish,
+        ):
+            session.start()
+            try:
+                self.assertTrue(await session.wait_until_lock_acquired(1))
+                live._start_client_delegation("task")
+                await asyncio.wait_for(waiting.wait(), timeout=1)
+                await asyncio.wait_for(persisted.wait(), timeout=1)
+                delegation = live._delegations["task"]
+                assert delegation.agent is not None
+                reply = delegation.agent.state.get_reply_message("Friday")
+                assert reply is not None
+                expected = reply.model_copy(deep=True)
+                expected.content = [
+                    block
+                    for block in expected.content
+                    if block.type in {"tool_call", "tool_result"}
+                ]
+                restored = AgentState.model_validate_json(saved[0])
+                self.assertEqual(
+                    {
+                        "visible": delegation.visible,
+                        "executed": executed,
+                        "context": restored.model_dump(mode="json")["context"],
+                        "unfinished": restored.get_unfinished_tool_calls(
+                            "Friday",
+                        ),
+                        "events": [
+                            (call.args[1]["name"], call.args[1]["value"])
+                            for call in publish.await_args_list
+                        ],
+                    },
+                    {
+                        "visible": False,
+                        "executed": ["read"],
+                        "context": [expected.model_dump(mode="json")],
+                        "unfinished": [],
+                        "events": [
+                            (
+                                "delegation_checkpoint",
+                                {
+                                    "delegation_id": "task",
+                                    "reply_id": reply.id,
+                                    "tool_call_id": "read",
+                                },
+                            ),
+                        ],
+                    },
+                )
+                self.assertEqual(
+                    live.state.model_dump(mode="json")["context"],
+                    restored.model_dump(mode="json")["context"],
+                )
+                self.assertEqual(
+                    await bus.registry_get(
+                        MessageBusKeys.session_event_checkpoint("session"),
+                        MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+                    ),
+                    publish.await_args.args[1]["_entry_id"],
+                )
+                self.assertFalse(session._task.done())
+                live_model.send_delegation_result.assert_not_awaited()
+                recovery_model = MockModel(context_size=10000)
+                recovery_model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[TextBlock(text="Done")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                recovered = Agent(
+                    "Friday",
+                    "Be brief.",
+                    recovery_model,
+                    state=restored,
+                    toolkit=toolkit,
+                )
+                await recovered.reply(UserMsg("user", "Continue."))
+                self.assertEqual(executed, ["read"])
+                self.assertEqual(
+                    restored.context[0].model_dump(mode="json"),
+                    expected.model_dump(mode="json"),
+                )
+            finally:
+                await session.close()
 
     async def _checkpoint(
         self,

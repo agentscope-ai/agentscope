@@ -16,6 +16,7 @@ from agentscope.credential import OpenAICredential
 from agentscope.event import (
     AgentEvent,
     ConfirmResult,
+    CustomEvent,
     ExternalExecutionResultEvent,
     ReplyStartEvent,
     RequireExternalExecutionEvent,
@@ -1026,17 +1027,41 @@ class RealtimeAgentLiveTest(unittest.IsolatedAsyncioTestCase):
                 agent._cancel_delegation_timeout(agent._delegations["task"])
                 published = []
                 snapshots = []
+                checkpoints = []
                 for event in agent.drain_events():
+                    if isinstance(event, CustomEvent):
+                        checkpoints.append((event.name, event.value))
+                        snapshot = agent.checkpoint_snapshot(event)
+                        assert snapshot is not None
+                        self.assertEqual(
+                            snapshot.context[0].model_dump(),
+                            backend.state.context[0].model_dump(),
+                        )
+                        continue
                     published.append(event.model_dump())
                     if isinstance(event, ToolResultEndEvent):
                         snapshot = agent.checkpoint_snapshot(event)
                         assert snapshot is not None
                         snapshots.append(snapshot.context[0].model_dump())
                 self.assertEqual(
-                    {"events": published, "snapshots": snapshots},
+                    {
+                        "events": published,
+                        "snapshots": snapshots,
+                        "checkpoints": checkpoints,
+                    },
                     {
                         "events": [event.model_dump() for event in events],
                         "snapshots": [backend.state.context[0].model_dump()],
+                        "checkpoints": [
+                            (
+                                "delegation_checkpoint",
+                                {
+                                    "delegation_id": "task",
+                                    "reply_id": "backend",
+                                    "tool_call_id": "read",
+                                },
+                            ),
+                        ],
                     },
                 )
 
