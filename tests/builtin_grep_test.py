@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.message import ToolResultState
 from agentscope.tool import Edit, Grep, LocalBackend
