@@ -14,7 +14,12 @@ from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ..._utils._common import _flatten_json_schema
 from ...credential import GeminiCredential
-from ...message import TextBlock, ToolCallBlock, ToolResultBlock
+from ...message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from ...model._gemini._model import _sanitize_schema_for_gemini
 
 _LIVE_URL = (
@@ -22,7 +27,6 @@ _LIVE_URL = (
     "google.ai.generativelanguage.v1beta.GenerativeService"
     ".BidiGenerateContent"
 )
-_THINKING_MODEL = "gemini-3.8-live-extended-thinking"
 
 
 class GeminiRealtimeModel(RealtimeModelBase):
@@ -100,7 +104,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """
         super().__init__(model, credential, parameters, model_card)
         self.parameters: GeminiRealtimeModel.Parameters
-        self._extended_thinking = model == _THINKING_MODEL
+        self._extended_thinking = self.card.supports_extended_thinking
         if self.parameters.thinking_level and not self._extended_thinking:
             raise ValueError(
                 "thinking_level requires Gemini Live Extended Thinking.",
@@ -226,6 +230,23 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     async def push_tool_result(self, block: ToolResultBlock) -> None:
         """Send one ``functionResponse``; the model resumes on its own."""
+        await self._push_tool_result(block, silent=False)
+
+    async def push_tool_result_silently(self, block: ToolResultBlock) -> None:
+        """Keep a stale Thinking result without triggering generation.
+
+        Scheduling is only supported for non-blocking tools. Ordinary Live
+        retains its existing blocking-tool result behavior.
+        """
+        await self._push_tool_result(block, silent=True)
+
+    async def _push_tool_result(
+        self,
+        block: ToolResultBlock,
+        *,
+        silent: bool,
+    ) -> None:
+        """Serialize a tool result with its generation and error semantics."""
         output = (
             block.output
             if isinstance(block.output, str)
@@ -234,18 +255,25 @@ class GeminiRealtimeModel(RealtimeModelBase):
             )
         )
         if self._extended_thinking and block.id in self._pending_tool_calls:
-            self._awaiting_tool_reply = True
+            if not silent:
+                self._awaiting_tool_reply = True
             self._pending_tool_calls.discard(block.id)
+        failed = block.state in (
+            ToolResultState.ERROR,
+            ToolResultState.DENIED,
+            ToolResultState.INTERRUPTED,
+        )
+        response = {
+            "id": block.id,
+            "name": block.name,
+            "response": {"error" if failed else "output": output},
+        }
+        if self._extended_thinking and silent:
+            response["scheduling"] = "SILENT"
         await self._send(
             {
                 "toolResponse": {
-                    "functionResponses": [
-                        {
-                            "id": block.id,
-                            "name": block.name,
-                            "response": {"output": output},
-                        },
-                    ],
+                    "functionResponses": [response],
                 },
             },
         )
@@ -437,10 +465,14 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     def _parse(self, data: dict) -> list[me.ModelEvent]:
         """Translate one server message into model events."""
+        if "setupComplete" in data:
+            self._ready.set()
         if usage := data.get("usageMetadata"):
             self._usage = usage
 
         content = data.get("serverContent") or {}
+        # The Thinking guide includes root status alongside toolCall.
+        # Source: https://ai.google.dev/gemini-api/docs/live-api/thinking
         status = content.get("interactionStatus") or data.get(
             "interactionStatus",
         )
@@ -454,13 +486,13 @@ class GeminiRealtimeModel(RealtimeModelBase):
             # A result may receive a silent completion after an earlier
             # IDLE already closed its original model response.
             events += self._open_response()
-        events += self._parse_content(content)
         if (
             self._extended_thinking
             and status == "IN_PROGRESS"
             and not content.get("interrupted")
         ):
             events += self._open_response()
+        events += self._parse_content(content)
 
         if tool_call := data.get("toolCall"):
             events += self._open_response()
@@ -507,9 +539,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 self.resumption_handle = update.get("newHandle", "")
             return []
 
-        if "setupComplete" in data:
-            self._ready.set()
-        else:
+        if "setupComplete" not in data:
             logger.debug("GeminiRealtimeModel: ignoring %s", list(data))
         return []
 
@@ -560,6 +590,8 @@ class GeminiRealtimeModel(RealtimeModelBase):
             events += self._open_response()
         for part in parts:
             if part.get("thought"):
+                # Provider thought summaries are not spoken transcript.
+                # They can still open a response that finishes at IDLE.
                 continue
             if data := (part.get("inlineData") or {}).get("data"):
                 events.append(

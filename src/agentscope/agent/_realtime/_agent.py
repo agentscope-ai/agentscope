@@ -654,15 +654,21 @@ class RealtimeAgent:
                     return
                 for result in inputs.confirm_results:
                     future = self._confirmations.get(result.tool_call.id)
-                    if (
-                        future
-                        and not future.done()
-                        and self._confirmation_replies.get(
+                    if future is None or future.done():
+                        continue
+                    expected_reply = self._confirmation_replies.get(
+                        result.tool_call.id,
+                    )
+                    if expected_reply != inputs.reply_id:
+                        logger.warning(
+                            "RealtimeAgent: ignored confirmation for tool %s "
+                            "from reply %s; expected reply %s",
                             result.tool_call.id,
+                            inputs.reply_id,
+                            expected_reply,
                         )
-                        == inputs.reply_id
-                    ):
-                        future.set_result(result)
+                        continue
+                    future.set_result(result)
 
             case ExternalExecutionResultEvent():
                 tool_call_ids = [
@@ -2353,11 +2359,12 @@ class RealtimeAgent:
                 for turn in self._pending_user_turns.values()
                 if turn.partial_transcription
             }
-            snapshot.context = [
-                msg
-                for msg in snapshot.context
-                if msg.role != "user" or msg.id not in partial_ids
-            ]
+            if partial_ids:
+                snapshot.context = [
+                    msg
+                    for msg in snapshot.context
+                    if msg.role != "user" or msg.id not in partial_ids
+                ]
         self._out.put_nowait(_QueuedEvent(event, snapshot))
 
     def checkpoint_snapshot(self, event: AgentEvent) -> AgentState | None:
@@ -2631,4 +2638,7 @@ class RealtimeAgent:
         # the send must not be overwritten after it returns.
         if work := self._background_tools.get(reply_id):
             work.model_done = False
-        await self.model.push_tool_result(block)
+        if self._reply_id == reply_id:
+            await self.model.push_tool_result(block)
+        else:
+            await self.model.push_tool_result_silently(block)

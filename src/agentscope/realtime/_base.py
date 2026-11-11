@@ -236,6 +236,15 @@ class RealtimeModelBase(ABC):
     async def push_tool_result(self, block: ToolResultBlock) -> None:
         """Feed the result of a tool the caller executed."""
 
+    async def push_tool_result_silently(self, block: ToolResultBlock) -> None:
+        """Feed a late result without requesting another response.
+
+        The default delegates to :meth:`push_tool_result`, for adapters that
+        require a separate :meth:`request_response`. Adapters with implicit
+        generation should override this when silent delivery is supported.
+        """
+        await self.push_tool_result(block)
+
     @abstractmethod
     async def commit_turn(self) -> None:
         """Declare the user turn finished. Only called when the caller owns

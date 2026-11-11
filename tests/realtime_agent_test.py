@@ -2950,8 +2950,13 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
 
     async def test_late_transcription_precedes_tool_followup(self) -> None:
         """Late input precedes the logical reply across model responses."""
-        for same_frame in (False, True):
-            with self.subTest(same_frame=same_frame):
+        for delivery in (
+            "separate",
+            "same_frame",
+            "content_status",
+            "root_status",
+        ):
+            with self.subTest(delivery=delivery):
                 model = GeminiRealtimeModel(
                     "gemini-3.8-live-extended-thinking",
                     GeminiCredential(api_key="test"),
@@ -3008,10 +3013,20 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                     transcription = {
                         "inputTranscription": {"text": "Weather?"},
                     }
-                    if same_frame:
+                    if delivery == "same_frame":
                         await feed(
                             {"serverContent": {**output, **transcription}},
                         )
+                    elif delivery in ("content_status", "root_status"):
+                        frame: dict = {"serverContent": transcription}
+                        status_target = (
+                            frame
+                            if delivery == "root_status"
+                            else frame["serverContent"]
+                        )
+                        status_target["interactionStatus"] = "IN_PROGRESS"
+                        await feed(frame)
+                        await feed({"serverContent": output})
                     else:
                         await feed({"serverContent": output})
                         await feed({"serverContent": transcription})
@@ -3378,6 +3393,139 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                 finally:
                     loop.set_task_factory(original_factory)
 
+    async def test_interrupted_gemini_tool_results_are_silent(self) -> None:
+        """Late results cannot restart a closed reply or disturb a new one."""
+        for confirmation, new_reply in product((False, True), repeat=2):
+            with self.subTest(confirm=confirmation, new_reply=new_reply):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = AskTool() if confirmation else BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                )
+                agent._connected = True
+
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver real adapter events without a network."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
+
+                await feed(
+                    {
+                        "serverContent": {
+                            "outputTranscription": {"text": "Checking."},
+                        },
+                        "toolCall": {
+                            "functionCalls": [
+                                {
+                                    "id": "c1",
+                                    "name": tool.name,
+                                    "args": {"q": "x"},
+                                },
+                            ],
+                        },
+                    },
+                )
+                tasks = list(agent._tasks)
+                try:
+                    if confirmation:
+
+                        async def wait_for_confirmation(
+                            current_agent: RealtimeAgent = agent,
+                        ) -> None:
+                            """Wait until the prompt can be cancelled."""
+                            while "c1" not in current_agent._confirmations:
+                                await asyncio.sleep(0)
+
+                        await asyncio.wait_for(
+                            wait_for_confirmation(),
+                            timeout=1,
+                        )
+                    else:
+                        await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    await agent.interrupt()
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    expected_context = [("assistant", "Checking.")]
+                    if new_reply:
+                        await feed(
+                            {
+                                "serverContent": {
+                                    "inputTranscription": {"text": "Next"},
+                                    "outputTranscription": {"text": "Ready."},
+                                },
+                            },
+                        )
+                        expected_context += [
+                            ("user", "Next"),
+                            ("assistant", "Ready."),
+                        ]
+                    current_reply = agent._reply_id
+                    list(agent.drain_events())
+                    if not confirmation:
+                        tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    result = (
+                        {"error": 'Tool "ask_tool" denied by user.'}
+                        if confirmation
+                        else {"output": "x-final"}
+                    )
+                    self.assertEqual(
+                        {
+                            "frames": [
+                                call.args[0]
+                                for call in model._send.await_args_list
+                            ],
+                            "reply": agent._reply_id,
+                            "new_reply_events": [
+                                event.type
+                                for event in agent.drain_events()
+                                if isinstance(event, ReplyStartEvent)
+                            ],
+                            "awaiting_followup": model._awaiting_tool_reply,
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                        },
+                        {
+                            "frames": [
+                                {
+                                    "toolResponse": {
+                                        "functionResponses": [
+                                            {
+                                                "id": "c1",
+                                                "name": tool.name,
+                                                "response": result,
+                                                "scheduling": "SILENT",
+                                            },
+                                        ],
+                                    },
+                                },
+                            ],
+                            "reply": current_reply,
+                            "new_reply_events": [],
+                            "awaiting_followup": False,
+                            "context": expected_context,
+                        },
+                    )
+                finally:
+                    if not confirmation:
+                        tool.release.set()
+                    await agent.close()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _check_interrupted_confirmation(self) -> None:
         """Validate cancellation and approval ownership under one scheduler."""
         model = ScriptedModel([])
@@ -3437,13 +3585,23 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
             )
             tasks = list(agent._tasks)
             await asyncio.wait_for(wait_for_confirmation(), timeout=1)
-            await agent.send(
-                UserConfirmResultEvent(
-                    reply_id="r1",
-                    confirm_results=[
-                        ConfirmResult(tool_call=old_call, confirmed=True),
-                    ],
-                ),
+            with patch(
+                "agentscope.agent._realtime._agent.logger.warning",
+            ) as warning:
+                await agent.send(
+                    UserConfirmResultEvent(
+                        reply_id="r1",
+                        confirm_results=[
+                            ConfirmResult(tool_call=old_call, confirmed=True),
+                        ],
+                    ),
+                )
+            warning.assert_called_once_with(
+                "RealtimeAgent: ignored confirmation for tool %s "
+                "from reply %s; expected reply %s",
+                "old",
+                "r1",
+                "r2",
             )
             self.assertFalse(agent._confirmations["old"].done())
             await agent.send(
@@ -3608,6 +3766,11 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                                             "id": call_id,
                                             "name": "stream_tool",
                                             "response": {"output": output},
+                                            **(
+                                                {"scheduling": "SILENT"}
+                                                if interrupted
+                                                else {}
+                                            ),
                                         },
                                     ],
                                 },
