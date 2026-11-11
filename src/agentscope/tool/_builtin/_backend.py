@@ -811,10 +811,19 @@ class LocalBackend(BackendBase):
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                # Inheriting a stdin pipe can hang CPython startup on Windows.
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 **kwargs,
             )
+        except NotImplementedError as exc:
+            # Windows SelectorEventLoop doesn't support subprocesses.
+            raise RuntimeError(
+                "The current event loop doesn't support subprocesses "
+                "(e.g. SelectorEventLoop on Windows), use a "
+                "ProactorEventLoop instead.",
+            ) from exc
         except (FileNotFoundError, NotADirectoryError, OSError) as exc:
             # The executable could not be found or spawned. A shell would
             # have returned 127 ("command not found"); mirror that so
@@ -1076,12 +1085,17 @@ class LocalBackend(BackendBase):
     async def delete_path(self, path: str) -> None:
         """Delete a local file or directory tree.
 
-        No-op if *path* does not exist.
+        Symbolic links are removed without following their targets,
+        including when the target no longer exists. No-op if *path*
+        does not exist.
 
         Args:
             path (`str`):
                 Path to delete.
         """
+        if os.path.islink(path):
+            os.remove(path)
+            return
         if not os.path.exists(path):
             return
         if os.path.isdir(path):

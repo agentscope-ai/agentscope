@@ -15,7 +15,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    TextBlock,
+    ToolCallBlock,
+    ThinkingBlock,
+    UserMsg,
+)
 from agentscope.model import VolcengineChatModel
 from agentscope.credential import CredentialFactory, VolcengineCredential
 from agentscope.tool import ToolChoice
@@ -183,6 +190,29 @@ class TestVolcengineNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "volcengine-1")
+
+    async def test_extra_body_is_not_mutated(self) -> None:
+        """Defaulting thinking.type leaves the caller's extra_body intact."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        self.mock_client.chat.completions.create = mock_create
+        self.model.parameters.thinking_enable = False
+        extra_body = {"custom": "value", "thinking": {"budget_tokens": 1024}}
+
+        await self.model([], extra_body=extra_body)
+
+        self.assertDictEqual(
+            extra_body,
+            {"custom": "value", "thinking": {"budget_tokens": 1024}},
+        )
+        self.assertDictEqual(
+            mock_create.await_args.kwargs["extra_body"],
+            {
+                "custom": "value",
+                "thinking": {"budget_tokens": 1024, "type": "disabled"},
+            },
+        )
 
     async def test_tool_call_response(
         self,
@@ -644,10 +674,13 @@ class TestVolcengineModelParameters(unittest.TestCase):
 
     def test_verified_model_card(self) -> None:
         """The versioned model ID is discoverable with Ark capabilities."""
-        cards = VolcengineChatModel.list_models()
+        cards = [
+            card
+            for card in VolcengineChatModel.list_models()
+            if card.name == "doubao-seed-2-1-pro-260628"
+        ]
 
         self.assertEqual(len(cards), 1)
-        self.assertEqual(cards[0].name, "doubao-seed-2-1-pro-260628")
         self.assertEqual(cards[0].context_size, 256000)
         self.assertEqual(cards[0].output_size, 256000)
         self.assertIn("image/*", cards[0].input_types)
@@ -665,6 +698,78 @@ class TestVolcengineModelParameters(unittest.TestCase):
 
 class TestVolcengineRequestParameters(IsolatedAsyncioTestCase):
     """Tests for Ark-specific request parameters."""
+
+    async def test_audio_request_matches_model_card(self) -> None:
+        """A card-configured formatter sends audio through the SDK."""
+        model_name = "doubao-seed-2-1-lite-260915"
+        card = next(
+            c
+            for c in VolcengineChatModel.list_models()
+            if c.name == model_name
+        )
+        self.assertEqual(
+            card.input_types,
+            [
+                "text/plain",
+                "application/x-thinking",
+                "image/*",
+                "video/*",
+                "audio/mpeg",
+                "audio/mp3",
+                "audio/wav",
+                "audio/aac",
+                "audio/mp4",
+            ],
+        )
+        model = VolcengineChatModel(
+            credential=VolcengineCredential(api_key="test"),
+            model=model_name,
+            stream=False,
+        )
+        model.formatter.input_types = card.input_types
+        mock_create = AsyncMock(return_value=_mock_completion(text="Audio."))
+        model.client = MagicMock()
+        model.client.chat.completions.create = mock_create
+
+        await model(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="Transcribe this."),
+                        DataBlock(
+                            source=Base64Source(
+                                data="YXVkaW8=",
+                                media_type="audio/wav",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertEqual(
+            mock_create.await_args.kwargs,
+            {
+                "model": model_name,
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Transcribe this."},
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": "YXVkaW8=",
+                                    "format": "wav",
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
 
     async def test_thinking_and_reasoning_effort_are_forwarded(self) -> None:
         """Thinking controls use the request shape accepted by Ark."""

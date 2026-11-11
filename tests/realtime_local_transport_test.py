@@ -3,6 +3,8 @@
 directly — no sound card is opened."""
 # pylint: disable=protected-access
 import asyncio
+import sys
+from unittest.mock import MagicMock, patch
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import numpy as np
@@ -131,6 +133,65 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             (len(queued), queued[0], queued[-1]),
             (transport._max_queued, 3, (transport._max_queued + 2) % 256),
+        )
+
+    async def test_restart_drops_previous_session_audio(self) -> None:
+        """A reused transport starts with fresh capture and playout state."""
+        transport = LocalAudioTransport()
+        transport._enqueue(AudioFrame(pcm=b"stale-input"))
+        await transport.send_audio(b"\x01\x00" * 10, "stale-output")
+        await transport.close()
+
+        with patch.dict(sys.modules, {"sounddevice": MagicMock()}):
+            await transport.start()
+        transport._enqueue(AudioFrame(pcm=b"fresh-input"))
+        incoming = transport.incoming()
+
+        self.assertEqual(
+            (
+                (await anext(incoming)).pcm,
+                transport.playout().model_dump(),
+                bytes(transport._pending),
+            ),
+            (
+                b"fresh-input",
+                {"item_id": "", "played_ms": 0, "first_played_at": None},
+                b"",
+            ),
+        )
+        await incoming.aclose()
+        await transport.close()
+
+    async def test_start_failure_releases_open_streams(self) -> None:
+        """Failed entry releases streams and preserves the original error."""
+        sd = MagicMock()
+        in_stream = MagicMock(name="in_stream")
+        out_stream = MagicMock(name="out_stream")
+        sd.InputStream.return_value = in_stream
+        sd.OutputStream.return_value = out_stream
+        error = RuntimeError("device busy")
+        out_stream.start.side_effect = error
+
+        transport = LocalAudioTransport()
+
+        with patch.dict(sys.modules, {"sounddevice": sd}):
+            with self.assertRaises(RuntimeError) as raised:
+                async with transport:
+                    self.fail("__aenter__ must not succeed")
+
+        self.assertIs(raised.exception, error)
+        in_stream.start.assert_called_once_with()
+        in_stream.stop.assert_called_once_with()
+        in_stream.close.assert_called_once_with()
+        out_stream.stop.assert_called_once_with()
+        out_stream.close.assert_called_once_with()
+        self.assertEqual(
+            (
+                transport._in_stream,
+                transport._out_stream,
+                transport._loop,
+            ),
+            (None, None, None),
         )
 
     async def test_playout_position_shape(self) -> None:

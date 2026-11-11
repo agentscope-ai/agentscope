@@ -36,10 +36,16 @@ async def _run_reply(
 
     async def consume() -> None:
         nonlocal pending
-        async for event in agent.reply_stream(inputs):
-            renderer.render(event)
-            if isinstance(event, RequireUserConfirmEvent):
-                pending = event
+        try:
+            async for event in agent.reply_stream(inputs):
+                renderer.render(event)
+                if isinstance(event, RequireUserConfirmEvent):
+                    pending = event
+        except BaseException:
+            # Failed streams may omit REPLY_END for several participants.
+            pending = None
+            renderer.reset()
+            raise
 
     task = asyncio.ensure_future(consume())
     loop = asyncio.get_running_loop()
@@ -53,8 +59,11 @@ async def _run_reply(
     try:
         await task
     except asyncio.CancelledError:
-        # Raised when the agent re-raises after the interruption
-        pass
+        # Only a caller cancelling this task bumps its ``cancelling()``
+        # counter, while a SIGINT cancels ``task`` alone and leaves it at 0.
+        caller = asyncio.current_task()
+        if caller is not None and caller.cancelling():
+            raise
     finally:
         if sigint_hooked:
             loop.remove_signal_handler(signal.SIGINT)

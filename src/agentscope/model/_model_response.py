@@ -2,12 +2,11 @@
 """The model response module."""
 import base64
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Self, List
 
 from ._model_usage import ChatUsage
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from .._utils._mixin import DictMixin
 from ..message import (
     TextBlock,
@@ -44,7 +43,7 @@ class ChatResponse(DictMixin):
     id: str = field(default_factory=_generate_id)
     """The unique identifier."""
 
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=_generate_timestamp)
     """When the response was created"""
 
     type: Literal["chat_response"] = field(
@@ -328,7 +327,7 @@ class StructuredResponse:
     id: str = field(default_factory=_generate_id)
     """The unique identifier."""
 
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=_generate_timestamp)
     """When the response was created"""
 
     type: Literal["structured_response"] = field(

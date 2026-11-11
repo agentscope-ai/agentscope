@@ -1,28 +1,36 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import {
+	Activity,
 	BookText,
+	BrainCircuit,
 	ChevronDown,
 	Database,
 	ListTodo,
 	PanelRight,
+	RefreshCw,
 	ShieldCheck,
 	UsersRound,
+	X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import type {
+	ASRModelConfig,
 	ChatModelConfig,
 	PermissionMode,
+	RealtimeModelConfig,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
 	UpdateSessionRequest,
 } from '@/api';
-import { sessionApi } from '@/api';
+import { asrApi, sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { BackgroundTasksPanel } from '@/components/panel/BackgroundTasksPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
@@ -34,12 +42,14 @@ import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBa
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { RealtimeModelSelect } from '@/components/select/RealtimeModelSelect';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
+	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -47,15 +57,26 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SidebarTrigger } from '@/components/ui/sidebar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useAvailableASRModels } from '@/hooks/useAvailableASRModels';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useAvailableRealtimeModels } from '@/hooks/useAvailableRealtimeModels';
+import { useBackgroundTasks } from '@/hooks/useBackgroundTasks';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
+import { useRealtimeVoice } from '@/hooks/useRealtimeVoice';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
+
+const REALTIME_EXCLUDED_ENUM_VALUES: Record<string, unknown[]> = {
+	turn_detection: ['none'],
+};
 
 interface ChatViewportProps {
 	/**
@@ -93,6 +114,7 @@ const KNOWN_PANELS: Record<PanelKey, true> = {
 	permission: true,
 	knowledge: true,
 	team: true,
+	background: true,
 };
 
 /**
@@ -172,17 +194,22 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
+	const { groups: realtimeGroups } = useAvailableRealtimeModels();
+	const { groups: asrGroups, loading: asrModelsLoading } = useAvailableASRModels();
 
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedASRModel, setSelectedASRModel] = useState<ASRModelConfig | null>(null);
+	const [selectedRealtimeModel, setSelectedRealtimeModel] = useState<RealtimeModelConfig | null>(
+		null,
+	);
 	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
 		useState<SessionKnowledgeConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
-	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [configPending, setConfigPending] = useState(false);
@@ -190,6 +217,37 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+	const viewportRef = useRef<HTMLElement>(null);
+	const [panelsInSheet, setPanelsInSheet] = useState(false);
+	// Dismissing the narrow-screen overlay must preserve the desktop layout.
+	const [sheetOpen, setSheetOpen] = useState(true);
+	const [selectedSheetPanel, setSelectedSheetPanel] = useState<PanelKey | null>(null);
+
+	useEffect(() => {
+		const viewport = viewportRef.current;
+		if (!viewport) return;
+		let frame = 0;
+		// Measure available chat space, including changes to the app sidebars.
+		const observer = new ResizeObserver(([entry]) => {
+			// Change layout in the next frame, outside the observer's delivery loop.
+			window.cancelAnimationFrame(frame);
+			frame = window.requestAnimationFrame(() => {
+				setPanelsInSheet(entry.contentRect.width < 768);
+			});
+		});
+		observer.observe(viewport);
+		return () => {
+			observer.disconnect();
+			window.cancelAnimationFrame(frame);
+		};
+	}, []);
+
+	const dockLayout = panelsInSheet ? [] : panelLayout;
+	const sheetPanelKeys = panelLayout.flat();
+	const activeSheetPanel =
+		selectedSheetPanel && sheetPanelKeys.includes(selectedSheetPanel)
+			? selectedSheetPanel
+			: sheetPanelKeys[0];
 
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
@@ -247,12 +305,24 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		[sessionId],
 	);
 
+	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
+	const voiceBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
 	const {
 		msgs,
 		loading: messagesLoading,
 		phase,
+		activeReplyId,
+		queuedCount,
+		queuedItems,
+		queueReorderDisabled,
 		send,
+		updateQueued,
+		deleteQueued,
+		steerQueued,
+		moveQueued,
+		reorderQueued,
 		onUserConfirm,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
@@ -260,6 +330,9 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		onTeamUpdated: handleTeamUpdated,
 		onStateUpdated: handleStateUpdated,
 		onSessionUpdated: handleSessionUpdated,
+		isRealtimeAudioActive: () => voiceBusy,
+		sendRealtimeUserConfirm: realtimeVoice.userConfirm,
+		sendRealtimeExternalExecutionResult: realtimeVoice.externalExecutionResult,
 	});
 	const {
 		mcps,
@@ -294,6 +367,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		(key: PanelKey) => panelLayout.some((column) => column.includes(key)),
 		[panelLayout],
 	);
+	const backgroundOpen = isPanelOpen('background');
+	const {
+		data: backgroundData,
+		isPending: backgroundLoading,
+		error: backgroundError,
+		isPaused: backgroundPaused,
+		isFetching: backgroundRefreshing,
+		dataUpdatedAt: backgroundUpdatedAt,
+		refetch: refetchBackground,
+		visible: backgroundVisible,
+	} = useBackgroundTasks(
+		sessionId,
+		panelsInSheet ? sheetOpen && activeSheetPanel === 'background' : backgroundOpen,
+	);
+	const backgroundUnavailable = !!backgroundError || backgroundPaused;
 
 	/**
 	 * Persist a knowledge-base attachment change. `null` detaches every
@@ -377,6 +465,52 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 	// dock itself stays free of any data dependency.
 	const panels = useMemo<Record<PanelKey, PanelDescriptor>>(
 		() => ({
+			background: {
+				title: (
+					<span className="flex items-center gap-2">
+						{t('panel.background.title')}
+						{backgroundData && !backgroundUnavailable && (
+							<Badge variant="outline" className="tabular-nums">
+								{t('panel.background.runningCount', {
+									count: backgroundData.tasks.filter(
+										(task) => task.status === 'running',
+									).length,
+								})}
+							</Badge>
+						)}
+					</span>
+				),
+				icon: <Activity className="size-4" />,
+				actions: (
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						aria-label={t('panel.background.refresh')}
+						tooltip={t('panel.background.refresh')}
+						disabled={!sessionId || backgroundRefreshing}
+						onClick={() => void refetchBackground()}
+					>
+						<RefreshCw
+							className={
+								backgroundRefreshing ? 'motion-safe:animate-spin' : undefined
+							}
+						/>
+					</Button>
+				),
+				content: (
+					<BackgroundTasksPanel
+						key={sessionId}
+						sessionId={sessionId}
+						tasks={backgroundData?.tasks}
+						loading={backgroundLoading && !backgroundUnavailable}
+						error={backgroundUnavailable}
+						refreshing={backgroundRefreshing}
+						visible={backgroundVisible}
+						updatedAt={backgroundUpdatedAt}
+						onRefresh={() => void refetchBackground()}
+					/>
+				),
+			},
 			plan: {
 				title: t('panel.plan.title'),
 				icon: <ListTodo className="size-4" />,
@@ -467,6 +601,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		}),
 		[
 			t,
+			backgroundData,
+			backgroundUnavailable,
+			backgroundLoading,
+			backgroundRefreshing,
+			backgroundUpdatedAt,
+			backgroundVisible,
+			refetchBackground,
 			tasksContext,
 			mcps,
 			mcpsLoading,
@@ -511,6 +652,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedASRModel(null);
+		setSelectedRealtimeModel(null);
 		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
 
@@ -519,11 +662,43 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		const items = groups[selectedModel.type];
 		if (!items) return null;
 		for (const { models } of items) {
-			const card = models.find((m) => m.name === selectedModel.model);
+			const card = models.find(
+				(m) =>
+					m.name === selectedModel.model &&
+					(!selectedModel.model_class || m.model_class === selectedModel.model_class),
+			);
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model]);
+	}, [groups, selectedModel]);
+
+	const selectedRealtimeModelCard = useMemo(() => {
+		if (!selectedRealtimeModel) return null;
+		for (const items of Object.values(realtimeGroups)) {
+			for (const { credential, models } of items) {
+				if (credential.id !== selectedRealtimeModel.credential_id) continue;
+				const card = models.find(
+					(model) =>
+						model.model_type === selectedRealtimeModel.type &&
+						model.name === selectedRealtimeModel.model,
+				);
+				if (card) return card;
+			}
+		}
+		return null;
+	}, [realtimeGroups, selectedRealtimeModel]);
+	const realtimeUsesSessionChat =
+		selectedRealtimeModelCard?.delegation_backend === 'session_chat';
+
+	const selectedASRModelCard = useMemo(() => {
+		if (!selectedASRModel) return null;
+		for (const item of asrGroups[selectedASRModel.type] ?? []) {
+			if (item.credential.id !== selectedASRModel.credential_id) continue;
+			const card = item.models.find((model) => model.name === selectedASRModel.model);
+			if (card) return card;
+		}
+		return null;
+	}, [asrGroups, selectedASRModel]);
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -539,14 +714,13 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		const items = groups[firstType];
 		if (!items || items.length === 0) return null;
 		const firstItem = items[0];
-		const firstModel = (firstItem.models as { name?: string; id?: string }[])[0];
+		const firstModel = firstItem.models[0];
 		if (!firstModel) return null;
-		const modelName = firstModel.name ?? firstModel.id ?? null;
-		if (!modelName) return null;
 		return {
 			type: firstType,
 			credential_id: firstItem.credential.id,
-			model: modelName,
+			model: firstModel.name,
+			model_class: firstModel.model_class,
 			parameters: {},
 		};
 	};
@@ -618,6 +792,8 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedASRModel(view.session.config.asr_model_config ?? null);
+		setSelectedRealtimeModel(view.session.config.realtime_model_config ?? null);
 		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
 
@@ -674,6 +850,42 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		await patchConfig({ tts_model_config: config }, () => setSelectedTTSModel(config));
 	};
 
+	/** Persist an ASR model change. `null` disables speech input. */
+	const handleASRChange = async (config: ASRModelConfig | null) => {
+		await patchConfig({ asr_model_config: config }, () => setSelectedASRModel(config));
+	};
+
+	/** Persist the model used by browser realtime voice mode. */
+	const handleRealtimeModelChange = async (config: RealtimeModelConfig | null) => {
+		await patchConfig({ realtime_model_config: config }, () =>
+			setSelectedRealtimeModel(config),
+		);
+	};
+
+	/** Persist parameters for the browser realtime voice model. */
+	const handleRealtimeParametersChange = async (parameters: Record<string, unknown>) => {
+		if (!selectedRealtimeModel) return;
+		const updated = { ...selectedRealtimeModel, parameters };
+		await patchConfig({ realtime_model_config: updated }, () =>
+			setSelectedRealtimeModel(updated),
+		);
+	};
+
+	/** Transcribe one browser recording with the configured batch ASR model. */
+	const handleTranscribe = useCallback(
+		async (file: File) => {
+			if (!selectedASRModel || selectedASRModelCard?.realtime) return '';
+			const response = await asrApi.transcribe({
+				file,
+				credentialId: selectedASRModel.credential_id,
+				model: selectedASRModel.model,
+				parameters: selectedASRModel.parameters,
+			});
+			return response.text;
+		},
+		[selectedASRModel, selectedASRModelCard],
+	);
+
 	/**
 	 * Persist a permission-mode change.
 	 *
@@ -710,15 +922,21 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 	return (
 		<>
-			<main className="flex size-full">
+			<main ref={viewportRef} className="flex size-full min-w-0">
 				<ResizablePanelGroup orientation="horizontal">
 					<ResizablePanel
 						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
-						minSize="24rem"
+						minSize={panelsInSheet ? '100%' : '24rem'}
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div className="flex min-w-0 flex-row items-center gap-x-1">
+								<div
+									className={
+										panelsInSheet
+											? 'flex min-w-0 max-w-24 items-center gap-x-1'
+											: 'flex min-w-0 flex-row items-center gap-x-1'
+									}
+								>
 									<SidebarTrigger className="md:hidden" />
 									{/* The open session, named opposite its own
 									    settings. The sidebar is the only other
@@ -742,18 +960,39 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										</span>
 									)}
 								</div>
-								{/* Never squeezed by a long session name: the
-								    name truncates instead. */}
-								<div className="flex shrink-0 flex-row gap-x-1">
+								{/* Keep the panel menu reachable when chat space is narrow. */}
+								<div
+									className={
+										panelsInSheet
+											? 'flex min-w-0 flex-1 flex-wrap justify-end gap-1'
+											: 'flex shrink-0 flex-row gap-x-1'
+									}
+								>
+									<RealtimeModelSelect
+										value={selectedRealtimeModel}
+										onChange={handleRealtimeModelChange}
+										onAddCredential={() => setCredentialOpen(true)}
+										disabled={configPending || voiceBusy}
+										className="text-muted-foreground hover:text-foreground"
+									/>
+									<ModelParametersPopover
+										selectedModel={selectedRealtimeModel}
+										modelCard={selectedRealtimeModelCard}
+										onChange={handleRealtimeParametersChange}
+										idPrefix="realtime"
+										triggerLabel={t('realtime.parameters')}
+										disabled={configPending || voiceBusy}
+										hideArrayParameters
+										excludedEnumValues={REALTIME_EXCLUDED_ENUM_VALUES}
+									/>
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
-										className="font-mono text-muted-foreground hover:text-foreground"
+										className="max-w-full font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
-										refetchTrigger={credentialRefetchTrigger}
-										disabled={configPending}
+										disabled={configPending || voiceBusy}
 									/>
 									<ModelParametersPopover
 										selectedModel={selectedModel}
@@ -763,7 +1002,9 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onFallbackChange={handleFallbackChange}
 										selectedTTSModel={selectedTTSModel}
 										onTTSChange={handleTTSChange}
-										disabled={configPending}
+										selectedASRModel={selectedASRModel}
+										onASRChange={handleASRChange}
+										disabled={configPending || voiceBusy}
 									/>
 									<PermissionModeSelect
 										id="tour-permission-mode"
@@ -785,58 +1026,64 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 											</Button>
 										</DropdownMenuTrigger>
 										<DropdownMenuContent align="end" className="w-auto">
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('plan')}
-												onCheckedChange={() => togglePanel('plan')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ListTodo />
-												{t('panel.plan.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('mcp')}
-												onCheckedChange={() => togglePanel('mcp')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<MCPSvg className="size-4" />
-												MCP
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('skill')}
-												onCheckedChange={() => togglePanel('skill')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<BookText />
-												{t('panel.skill.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('permission')}
-												onCheckedChange={() => togglePanel('permission')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ShieldCheck />
-												{t('panel.permission.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('knowledge')}
-												onCheckedChange={() => togglePanel('knowledge')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<Database />
-												{t('panel.knowledge.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('team')}
-												onCheckedChange={() => togglePanel('team')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<UsersRound />
-												{t('common.team')}
-											</DropdownMenuCheckboxItem>
+											{(
+												[
+													['background', t('panel.background.title')],
+													['plan', t('panel.plan.title')],
+													['mcp', 'MCP'],
+													['skill', t('panel.skill.title')],
+													['permission', t('panel.permission.title')],
+													['knowledge', t('panel.knowledge.title')],
+													['team', t('common.team')],
+												] satisfies [PanelKey, string][]
+											).map(([key, title]) =>
+												panelsInSheet ? (
+													<DropdownMenuItem
+														key={key}
+														onSelect={() => {
+															setPanelLayout((layout) =>
+																openPanelInLayout(layout, key),
+															);
+															setSelectedSheetPanel(key);
+															setSheetOpen(true);
+														}}
+													>
+														{panels[key].icon}
+														{title}
+													</DropdownMenuItem>
+												) : (
+													<DropdownMenuCheckboxItem
+														key={key}
+														checked={isPanelOpen(key)}
+														onCheckedChange={() => togglePanel(key)}
+														onSelect={(e) => e.preventDefault()}
+													>
+														{panels[key].icon}
+														{title}
+													</DropdownMenuCheckboxItem>
+												),
+											)}
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</div>
 							</div>
+							{realtimeUsesSessionChat && (
+								<div
+									className={
+										'flex min-h-7 items-center justify-end gap-1.5 px-2 ' +
+										'text-xs text-muted-foreground'
+									}
+								>
+									<BrainCircuit className="size-3.5 shrink-0" />
+									<span className="max-w-full truncate">
+										{selectedModel
+											? t('realtime.backendFollows', {
+													model: selectedModel.model,
+												})
+											: t('realtime.backendMissing')}
+									</span>
+								</div>
+							)}
 							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
@@ -849,17 +1096,59 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									git={workspaceStatus?.git ?? null}
 									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
-									disabled={selectedModel === null}
+									activeReplyId={activeReplyId}
+									queuedCount={queuedCount}
+									queuedItems={queuedItems}
+									queueReorderDisabled={queueReorderDisabled}
+									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onExternalExecutionResult={onExternalExecutionResult}
 									onInterrupt={interrupt}
-									// cwd={
-									// 	{cwd: view?.session.config.cwd, git: {
-									// 		branch: 'main',
-									// 		deletion: 0,
-									// 		addition: 0,
-									// 	}}
-									// }
+									onUpdateQueued={updateQueued}
+									onDeleteQueued={deleteQueued}
+									onSteerQueued={steerQueued}
+									onMoveQueued={moveQueued}
+									onReorderQueued={reorderQueued}
+									voiceState={realtimeVoice.state}
+									onVoiceToggle={() => {
+										if (
+											!voiceBusy &&
+											realtimeUsesSessionChat &&
+											getPendingHitlCalls(msgs).length > 0
+										) {
+											toast.error(t('realtime.pendingChatInteraction'));
+											return;
+										}
+										void realtimeVoice.toggle();
+									}}
+									voiceDisabled={
+										!selectedRealtimeModel ||
+										!agentId ||
+										!sessionId ||
+										(realtimeUsesSessionChat && !selectedModel)
+									}
+									asrInputTypes={selectedASRModelCard?.input_types ?? []}
+									onTranscribe={handleTranscribe}
+									asrRealtime={!!selectedASRModelCard?.realtime}
+									realtimeASRConfig={
+										selectedASRModel && selectedASRModelCard?.realtime
+											? {
+													credentialId: selectedASRModel.credential_id,
+													model: selectedASRModel.model,
+													parameters: selectedASRModel.parameters,
+												}
+											: null
+									}
+									asrDisabled={
+										asrModelsLoading ||
+										!selectedASRModel ||
+										!selectedASRModelCard ||
+										!agentId ||
+										!sessionId ||
+										voiceBusy
+									}
+									asrResetKey={`${agentId ?? ''}:${sessionId ?? ''}:${selectedASRModel?.credential_id ?? ''}:${selectedASRModel?.model ?? ''}`}
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<SubagentHitlCard
@@ -934,17 +1223,65 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 							</div>
 						</div>
 					</ResizablePanel>
-					{panelLayout.length > 0 && (
+					{dockLayout.length > 0 && (
 						<ResizableHandle withHandle className="bg-transparent w-1.5" />
 					)}
-					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
+					<PanelDock layout={dockLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
 			</main>
-			<CreateCredentialDialog
-				open={credentialOpen}
-				onOpenChange={setCredentialOpen}
-				onCreated={() => setCredentialRefetchTrigger((n) => n + 1)}
-			/>
+			{panelsInSheet && activeSheetPanel && (
+				<Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+					<SheetContent
+						className="gap-0 data-[side=right]:w-full sm:max-w-md"
+						aria-describedby={undefined}
+						showCloseButton={false}
+					>
+						<SheetHeader className="flex-row items-center justify-between gap-2">
+							<SheetTitle className="min-w-0 text-sm">
+								{panels[activeSheetPanel].title}
+							</SheetTitle>
+							<div className="flex shrink-0 items-center gap-1">
+								{panels[activeSheetPanel].actions}
+								<SheetClose asChild>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										aria-label={t('common.close')}
+									>
+										<X />
+									</Button>
+								</SheetClose>
+							</div>
+						</SheetHeader>
+						<Tabs
+							value={activeSheetPanel}
+							onValueChange={(key) => setSelectedSheetPanel(key as PanelKey)}
+							className="min-h-0 flex-1 gap-3 px-4 pb-4"
+						>
+							<div className="shrink-0 overflow-x-auto">
+								<TabsList>
+									{sheetPanelKeys.map((key) => (
+										<TabsTrigger key={key} value={key}>
+											{panels[key].icon}
+											{panels[key].title}
+										</TabsTrigger>
+									))}
+								</TabsList>
+							</div>
+							{sheetPanelKeys.map((key) => (
+								<TabsContent
+									key={key}
+									value={key}
+									className="min-h-0 overflow-y-auto"
+								>
+									{panels[key].content}
+								</TabsContent>
+							))}
+						</Tabs>
+					</SheetContent>
+				</Sheet>
+			)}
+			<CreateCredentialDialog open={credentialOpen} onOpenChange={setCredentialOpen} />
 		</>
 	);
 }

@@ -286,7 +286,7 @@ class Grep(ToolBase):
         a shell), so the same code path works for local, Docker, and E2B
         backends and needs no platform-specific argument quoting.
         """
-        command = ["rg", *args, search_path]
+        command = ["rg", *args, "--", search_path]
 
         result = await self._backend.exec_shell(
             command,
@@ -312,8 +312,11 @@ class Grep(ToolBase):
 
         raw = result.stdout.decode("utf-8", errors="ignore")
 
+        if not raw:
+            return []
+        # Only the terminal separator is framing; empty records are matches.
         lines = [
-            line.rstrip("\r") for line in raw.split("\n") if line.rstrip("\r")
+            line.rstrip("\r") for line in raw.removesuffix("\n").split("\n")
         ]
         return lines
 
@@ -383,7 +386,8 @@ class Grep(ToolBase):
                 is_last=True,
             )
 
-        args: list[str] = ["--hidden"]
+        # Sort by path: offset/head_limit paginate over a stable order
+        args: list[str] = ["--hidden", "--sort", "path"]
 
         # Exclude VCS directories
         for vcs_dir in VCS_DIRECTORIES_TO_EXCLUDE:

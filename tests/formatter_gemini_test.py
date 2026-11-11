@@ -3,6 +3,9 @@
 GeminiMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import (
@@ -19,6 +22,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -316,6 +320,48 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = GeminiChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "What's in this image?"},
+                        {
+                            "inline_data": {
+                                "data": expected_b64,
+                                "mime_type": "image/png",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_preserved(self) -> None:
         """ThinkingBlock becomes a part with thought=True in Gemini format."""
         fmt = GeminiChatFormatter()
@@ -371,6 +417,42 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(thought_parts, [])
         self.assertEqual(res[0]["parts"], [{"text": "reply"}])
+
+    async def test_empty_text_block_is_dropped(self) -> None:
+        """Gemini rejects content parts whose text is empty."""
+        fmt = GeminiChatFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[TextBlock(text="")],
+                ),
+            ],
+        )
+
+        self.assertListEqual(res, [])
+
+    async def test_empty_text_does_not_hide_valid_text(self) -> None:
+        """Only empty text parts are removed from a mixed message."""
+        fmt = GeminiChatFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text=""),
+                        TextBlock(text="reply"),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [{"role": "model", "parts": [{"text": "reply"}]}],
+        )
 
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
@@ -529,6 +611,60 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_multiagent_empty_group_keeps_first_history_marker(
+        self,
+    ) -> None:
+        """A skipped group must not consume the first-history marker."""
+        fmt = GeminiMultiAgentFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[ThinkingBlock(thinking="")],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_capital",
+                            input='{"country": "Japan"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_capital",
+                            output=[
+                                TextBlock(
+                                    text="The capital of Japan is Tokyo.",
+                                ),
+                            ],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+                UserMsg(name="user", content=[TextBlock(text="hello")]),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                self._gt_tool_call,
+                self._gt_tool_result,
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                fmt.conversation_history_prompt
+                                + "<history>\nuser: hello\n</history>"
+                            ),
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
@@ -624,11 +760,6 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "response": {"output": "result_1"},
                             },
                         },
-                    ],
-                },
-                {
-                    "role": "user",
-                    "parts": [
                         {
                             "function_response": {
                                 "id": "call_2",
@@ -699,6 +830,212 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_parallel_tool_results_share_one_user_turn(self) -> None:
+        """Parallel function responses go into a single user content, so
+        their count matches the function calls of the model turn."""
+        fmt = GeminiChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_weather",
+                            input='{"city": "Beijing"}',
+                        ),
+                        ToolCallBlock(
+                            id="call_2",
+                            name="get_weather",
+                            input='{"city": "Shanghai"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_weather",
+                            output=[TextBlock(text="Beijing: sunny")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                        ToolResultBlock(
+                            id="call_2",
+                            name="get_weather",
+                            output=[TextBlock(text="Shanghai: rainy")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "call_1",
+                                "name": "get_weather",
+                                "args": {"city": "Beijing"},
+                            },
+                        },
+                        {
+                            "function_call": {
+                                "id": "call_2",
+                                "name": "get_weather",
+                                "args": {"city": "Shanghai"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_1",
+                                "name": "get_weather",
+                                "response": {"output": "Beijing: sunny"},
+                            },
+                        },
+                        {
+                            "function_response": {
+                                "id": "call_2",
+                                "name": "get_weather",
+                                "response": {"output": "Shanghai: rainy"},
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the function
+        responses that answer one model turn's function calls."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        shot_output = (
+            "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "call_shot",
+                                "name": "screenshot",
+                                "args": {},
+                            },
+                        },
+                        {
+                            "function_call": {
+                                "id": "call_title",
+                                "name": "get_title",
+                                "args": {},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_shot",
+                                "name": "screenshot",
+                                "response": {"output": shot_output},
+                            },
+                        },
+                        {
+                            "function_response": {
+                                "id": "call_title",
+                                "name": "get_title",
+                                "response": {"output": "Example Domain"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                "<system-reminder>The multimodal data "
+                                "and their identifiers are listed as "
+                                "follows:"
+                            ),
+                        },
+                        {
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "image/png",
+                            },
+                        },
+                        {"text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "The page is Example Domain."},
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_hint_block(self) -> None:
         """HintBlock flushes preceding content and becomes a user message."""
         fmt = GeminiChatFormatter()
@@ -732,6 +1069,51 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     "parts": [
                         {"text": "Here is my answer."},
                     ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_drops_empty_hint_text(self) -> None:
+        """Empty hint text is ignored without splitting adjacent content."""
+        fmt = GeminiChatFormatter()
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        TextBlock(text="before"),
+                        HintBlock(hint=""),
+                        TextBlock(text="after"),
+                        HintBlock(hint=[TextBlock(text="")]),
+                        HintBlock(
+                            hint=[
+                                TextBlock(text=""),
+                                TextBlock(text="valid hint"),
+                            ],
+                        ),
+                        TextBlock(text="done"),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "before"},
+                        {"text": "after"},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [{"text": "valid hint"}],
+                },
+                {
+                    "role": "model",
+                    "parts": [{"text": "done"}],
                 },
             ],
             res,
@@ -778,6 +1160,44 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_media_extra_params(self) -> None:
+        """DataBlock extra params are forwarded beside inline_data."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Summarize this video."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="video/mp4",
+                        ),
+                        video_metadata={"fps": 2},
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Summarize this video."},
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "video/mp4",
+                            },
+                            "video_metadata": {"fps": 2},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_tool_call_with_incomplete_input_does_not_crash(
         self,
     ) -> None:
@@ -811,3 +1231,57 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             if "function_call" in part
         ][0]["function_call"]
         self.assertIsInstance(function_call["args"], dict)
+
+
+class GeminiMultiAgentSystemMessageTest(IsolatedAsyncioTestCase):
+    """A system message must never emit a ``text: None`` part."""
+
+    async def test_empty_system_message_emits_a_string(self) -> None:
+        """An empty system message emits an empty string and keeps history."""
+        res = await GeminiMultiAgentFormatter().format(
+            [SystemMsg("sys", []), UserMsg("u", "hi")],
+        )
+        self.assertEqual(
+            res,
+            [
+                {"role": "user", "parts": [{"text": ""}]},
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                "# Conversation History\n"
+                                "The content between <history></history> tags "
+                                "contains your conversation history\n"
+                                "<history>\nu: hi\n</history>"
+                            ),
+                        },
+                    ],
+                },
+            ],
+        )
+
+    async def test_non_empty_system_message_is_unchanged(self) -> None:
+        """A normal system prompt still comes through verbatim."""
+        res = await GeminiMultiAgentFormatter().format(
+            [SystemMsg("sys", "be brief"), UserMsg("u", "hi")],
+        )
+        self.assertEqual(
+            res,
+            [
+                {"role": "user", "parts": [{"text": "be brief"}]},
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                "# Conversation History\n"
+                                "The content between <history></history> tags "
+                                "contains your conversation history\n"
+                                "<history>\nu: hi\n</history>"
+                            ),
+                        },
+                    ],
+                },
+            ],
+        )

@@ -3,21 +3,25 @@
 """Toolkit test case."""
 import base64
 import json
-from typing import Any, AsyncGenerator, Generator, Literal
+from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 
 from pydantic import BaseModel, Field
-from utils import AnyString
+from utils import AnyString, MockModel
 
+from agentscope.agent import Agent
+from agentscope.event import ToolResultStartEvent
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
     ToolCallBlock,
     DataBlock,
     Base64Source,
+    URLSource,
 )
 from agentscope.tool import (
     Toolkit,
@@ -451,7 +455,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
     async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
         """Base64 chunks with padding should merge as bytes, not strings."""
-        response = ToolResponse()
+        response = ToolResponse(id="tool")
         first = base64.b64encode(b"hello").decode("ascii")
         second = base64.b64encode(b"world").decode("ascii")
 
@@ -482,17 +486,198 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(len(response.content), 1)
-        merged = response.content[0]
-        self.assertIsInstance(merged, DataBlock)
         self.assertEqual(
-            base64.b64decode(merged.source.data),
-            b"helloworld",
+            response.model_dump(),
+            {
+                "id": "tool",
+                "state": "success",
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "data",
+                        "id": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(b"helloworld").decode(),
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+            },
         )
+
+    async def test_tool_response_groups_streamed_blocks(self) -> None:
+        """The response and event replay preserve interleaved tool output."""
+
+        class CustomDataBlock(DataBlock):
+            """A tool-provided data block subclass."""
+
+        text = TextBlock(id="s", text="progress")
+        before = TextBlock(id="s", text="before")
+        after = TextBlock(id="s", text="after")
+        first = CustomDataBlock(
+            id="s",
+            source=Base64Source(data="YQ==", media_type="audio/wav"),
+        )
+        second = DataBlock(
+            id="s",
+            source=Base64Source(data="Yg==", media_type="audio/wav"),
+        )
+        urls = [
+            DataBlock(
+                id="s",
+                source=URLSource(url=url, media_type="image/png"),
+            )
+            for url in ("https://example.org/one", "https://example.org/two")
+        ]
+        blocks = [text, urls[0], first, before, urls[1], second, after]
+        expected: dict[str, Any] = {
+            "id": "tool",
+            "state": "success",
+            "metadata": {},
+            "content": [
+                text.model_dump(),
+                urls[0].model_dump(),
+                {
+                    **first.model_dump(),
+                    "source": {
+                        "type": "base64",
+                        "data": "YWI=",
+                        "media_type": "audio/wav",
+                    },
+                },
+                before.model_dump(),
+                urls[1].model_dump(),
+                after.model_dump(),
+            ],
+        }
+
+        agent = Agent(name="agent", system_prompt="", model=MockModel())
+        for chunks in ([blocks], [[block] for block in blocks]):
+            with self.subTest(chunk_count=len(chunks)):
+                response = ToolResponse(id="tool")
+                message = AssistantMsg(
+                    name=agent.name,
+                    id=agent.state.reply_id,
+                    content=[],
+                )
+                message.append_event(
+                    ToolResultStartEvent(
+                        reply_id=message.id,
+                        tool_call_id=response.id,
+                        tool_call_name="stream",
+                    ),
+                )
+                for content in chunks:
+                    response.append_chunk(ToolChunk(content=content))
+                    # pylint: disable-next=protected-access
+                    async for event in agent._convert_tool_chunk_to_event(
+                        response.id,
+                        content,
+                    ):
+                        message.append_event(event)
+                self.assertEqual(response.model_dump(), expected)
+                self.assertEqual(
+                    message.content[0].model_dump()["output"],
+                    [
+                        {
+                            **block,
+                            "created_at": AnyString(),
+                            "id": AnyString()
+                            if block["type"] == "text"
+                            else block["id"],
+                        }
+                        for block in expected["content"]
+                    ],
+                )
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
+
+    async def test_sync_function_returning_awaitable(self) -> None:
+        """Await the coroutine returned by a sync function."""
+
+        async def finish(value: str) -> ToolChunk:
+            """Create the deferred tool result."""
+            return ToolChunk(content=[TextBlock(text=value)])
+
+        def deferred(value: str) -> Awaitable[ToolChunk]:
+            """Return a coroutine without executing it."""
+            return finish(value)
+
+        toolkit = Toolkit(tools=[FunctionTool(deferred)])
+        results = [
+            item
+            async for item in toolkit.call_tool(
+                ToolCallBlock(
+                    id="awaitable",
+                    name="deferred",
+                    input='{"value": "completed"}',
+                ),
+                AgentState(),
+            )
+        ]
+        self.assertDictEqual(
+            results[-1].model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "completed",
+                    },
+                ],
+                "state": "success",
+                "metadata": {},
+                "id": "awaitable",
+            },
+        )
+
+    async def test_async_callable_tool(self) -> None:
+        """Await an async callable object."""
+
+        class Deferred:
+            """A callable tool that resolves asynchronously."""
+
+            async def __call__(self, value: str) -> ToolChunk:
+                """Create a tool result asynchronously.
+
+                Args:
+                    value (`str`):
+                        The text to include in the result.
+
+                Returns:
+                    `ToolChunk`:
+                        The completed tool result.
+                """
+                return ToolChunk(content=[TextBlock(text=value)])
+
+        tool = FunctionTool(Deferred(), name="deferred")
+        result = await tool.call(value="completed")
+        self.assertDictEqual(
+            result.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "completed",
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
 
     async def test_sync_non_streaming_function(self) -> None:
         """Test registering a synchronous non-streaming function."""
@@ -1134,6 +1319,65 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             response.content[0].text,
             f"started{expected_dict_text}",
+        )
+
+    async def test_state_injected_function(self) -> None:
+        """Infer business parameters and inject state at invocation."""
+
+        def echo(value: str, _agent_state: AgentState) -> str:
+            """Return a value with the current session.
+
+            Args:
+                value: The value to return.
+                _agent_state: The agent state injected by the toolkit.
+            """
+            return f"{value}:{_agent_state.session_id}"
+
+        tool = FunctionTool(echo, is_state_injected=True)
+        self.assertDictEqual(
+            tool.input_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "string",
+                        "description": "The value to return.",
+                    },
+                },
+                "required": ["value"],
+            },
+        )
+
+        state = AgentState(session_id="test-session")
+        toolkit = Toolkit(tools=[tool])
+        response = None
+        async for result in toolkit.call_tool(
+            ToolCallBlock(
+                id="test_state_injection",
+                name="echo",
+                input=json.dumps({"value": "hello"}),
+            ),
+            state,
+        ):
+            if isinstance(result, ToolResponse):
+                response = result
+
+        self.assertDictEqual(
+            response.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "hello:test-session",
+                    },
+                ],
+                "state": "success",
+                "metadata": {},
+                "id": "test_state_injection",
+            },
         )
 
     async def test_custom_input_schema(self) -> None:

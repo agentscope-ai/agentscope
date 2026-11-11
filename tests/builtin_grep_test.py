@@ -5,7 +5,7 @@ import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.message import ToolResultState
-from agentscope.tool import Grep
+from agentscope.tool import Edit, Grep, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -94,6 +94,117 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test.txt", content)
 
+    async def test_dash_prefixed_paths(self) -> None:
+        """Relative paths must not be interpreted as ripgrep options."""
+        backend = LocalBackend(workdir=self.temp_dir)
+        grep = Grep(backend=backend)
+
+        for name in ("-notes.txt", "--help", "-folder"):
+            target = os.path.join(self.temp_dir, name)
+            if name == "-folder":
+                os.makedirs(target)
+                target = os.path.join(target, "notes.txt")
+            with open(target, "w", encoding="utf-8") as stream:
+                stream.write("-needle\n")
+
+            for pattern in ("needle", "-needle"):
+                with self.subTest(path=name, pattern=pattern):
+                    chunk = await grep(
+                        pattern=pattern,
+                        path=name,
+                        output_mode="content",
+                        n=False,
+                    )
+                    expected_text = "-needle"
+                    if name == "-folder":
+                        expected_text = f"{target}:-needle"
+                    self.assertEqual(
+                        chunk.model_dump(
+                            exclude={
+                                "id": True,
+                                "content": {"__all__": {"id", "created_at"}},
+                            },
+                        ),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": expected_text,
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": ToolResultState.SUCCESS,
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    )
+
+    async def test_empty_matching_lines_and_pagination(self) -> None:
+        """Keep empty records distinct from no output, including CRLF."""
+        path = os.path.join(self.temp_dir, "empty-lines.txt")
+        for newline in (b"\n", b"\r\n"):
+            with self.subTest(newline=newline):
+                with open(path, "wb") as stream:
+                    stream.write(
+                        newline.join([b"FIRST", b"", b"LAST", b"", b""]),
+                    )
+                blank = await self.grep_tool.call(
+                    r"^\r?$",
+                    path,
+                    "content",
+                    n=False,
+                )
+                self.assertEqual(blank.state, ToolResultState.SUCCESS)
+                self.assertEqual(blank.content[0].text, "\n")
+                numbered = await self.grep_tool.call(
+                    r"^\r?$",
+                    path,
+                    "content",
+                    n=True,
+                )
+                self.assertEqual(numbered.content[0].text, "2:\n4:")
+                missing = await self.grep_tool.call(
+                    "NEVER_PRESENT",
+                    path,
+                    "content",
+                    n=False,
+                )
+                self.assertIn("No matches found", missing.content[0].text)
+                page = await self.grep_tool.call(
+                    ".*",
+                    path,
+                    "content",
+                    n=False,
+                    offset=1,
+                    head_limit=1,
+                )
+                self.assertEqual(
+                    page.content[0].text,
+                    "\n\n[Showing results with pagination = "
+                    "limit: 1, offset: 1]",
+                )
+
+    async def test_multiline_match_can_be_used_as_edit_input(self) -> None:
+        """A match containing an empty line must still occur in the file."""
+        path = os.path.join(self.temp_dir, "multiline.txt")
+        with open(path, "wb") as stream:
+            stream.write(b"BEGIN\n\nEND\n")
+        match = await self.grep_tool.call(
+            r"BEGIN\n\nEND",
+            path,
+            "content",
+            n=False,
+            multiline=True,
+        )
+        self.assertEqual(match.content[0].text, "BEGIN\n\nEND")
+        await Edit().call(
+            file_path=path,
+            old_string=match.content[0].text,
+            new_string="replaced",
+        )
+        with open(path, "rb") as stream:
+            self.assertEqual(stream.read(), b"replaced\n")
+
     async def test_content_mode(self) -> None:
         """Test grep with content output mode."""
         chunk = await self.grep_tool(
@@ -108,6 +219,31 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # Should show matching lines
         self.assertIn("def hello", content)
         self.assertIn("def goodbye", content)
+
+    async def test_pagination_is_stable(self) -> None:
+        """Pages taken with offset/head_limit follow the path order."""
+        pages = []
+        for offset in range(3):
+            chunk = await self.grep_tool(
+                pattern="def",
+                path=self.temp_dir,
+                output_mode="files_with_matches",
+                head_limit=1,
+                offset=offset,
+            )
+            pages.append(chunk.content[0].text)
+
+        self.assertListEqual(
+            pages,
+            [
+                os.path.join(self.temp_dir, "subdir", "nested.py")
+                + "\n\n[Showing results with pagination = limit: 1]",
+                os.path.join(self.temp_dir, "test1.py")
+                + "\n\n[Showing results with pagination = limit: 1, "
+                "offset: 1]",
+                os.path.join(self.temp_dir, "test2.py"),
+            ],
+        )
 
     async def test_case_insensitive(self) -> None:
         """Test case-insensitive search."""

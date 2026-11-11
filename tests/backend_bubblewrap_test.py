@@ -71,6 +71,11 @@ class TestBubblewrapBackendUnit(IsolatedAsyncioTestCase):
         self.assertIn("--die-with-parent", argv)
         self.assertIn("--clearenv", argv)
 
+    def test_smoke_probe_covers_clearenv(self) -> None:
+        """Verify the probe includes required environment setup options."""
+        self.assertIn("--clearenv", BWRAP_SMOKE_PROBE_ARGV)
+        self.assertIn("--setenv", BWRAP_SMOKE_PROBE_ARGV)
+
     async def test_bwrap_argv_does_not_mount_opt_by_default(self) -> None:
         """Host /opt is not exposed unless a future explicit mount adds it."""
         argv = self.backend._bwrap_argv(["true"], cwd=None)

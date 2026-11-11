@@ -26,7 +26,7 @@ from agentscope.workspace import WorkspaceBase
 
 default_mcps = [
     MCPClient(
-        name="browser-use",
+        name="playwright",
         mcp_config=StdioMCPConfig(
             command="npx",
             args=["@playwright/mcp@latest"],

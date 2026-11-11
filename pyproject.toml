@@ -21,13 +21,15 @@ requires-python = ">=3.11"
 dependencies = [
     "aioitertools",
     "anthropic",
-    "dashscope",
+    "certifi>=2026.10.19",
+    "dashscope>=1.20.0",
     "docstring_parser",
     "filetype",
     "json5",
     "json_repair[schema]>=0.63.4",
-    "mcp<2.0.0",
+    "mcp>=2.0.0",
     "httpx",
+    "httpx2>=2.5.0",
     "numpy",
     "openai",
     "python-datauri",
@@ -54,17 +56,20 @@ dependencies = [
 model-gemini = ["google-genai"]
 model-ollama = ["ollama>=0.5.4"]
 model-xai = ["xai-sdk"]
+classifier-jev = ["typesafe-sdk>=0.7"]
 models = [
     "agentscope[model-gemini]",
     "agentscope[model-ollama]",
     "agentscope[model-xai]",
 ]
+classifiers = ["agentscope[classifier-jev]"]
 # ------------ Service ------------
 service = [
     "fastapi",
     "uvicorn",
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
+    "aiortc>=1.14",
 ]
 # ------------ Storage backends ------------
 storage-redis = ["redis"]
@@ -108,9 +113,9 @@ tools = [
 ]
 # ------------ Realtime voice ------------
 realtime = [
-    "websockets>=13",
-    "sounddevice",
+    "websockets>=14",
 ]
+realtime-local = ["sounddevice"]
 # ------------ Terminal UI ------------
 tui = [
     "textual>=8.2,<9",
@@ -170,7 +175,9 @@ reme = ["agentscope[memory-reme]"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
+    "agentscope[classifiers]",
     "agentscope[service]",
+    "agentscope[realtime]",
     "agentscope[storage-redis]",
     "agentscope[storage-sql]",
     "agentscope[storage-s3]",
@@ -211,7 +218,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/agentscope-ai/agentscope"
-Documentation = "https://doc.agentscope.io/"
+Documentation = "https://docs.agentscope.io/"
 Repository = "https://github.com/agentscope-ai/agentscope"
 
 [tool.setuptools]

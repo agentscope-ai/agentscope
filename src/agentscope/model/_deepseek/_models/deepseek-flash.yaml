@@ -1,0 +1,22 @@
+name: deepseek-flash
+label: DeepSeek Flash
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 384000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 384000

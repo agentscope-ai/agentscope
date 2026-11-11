@@ -17,11 +17,12 @@ dependency.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import Callable, Self
 
 from ._base import MessageBus
@@ -34,10 +35,10 @@ class InMemoryMessageBus(
 
     Mapping of bus modes to in-memory structures:
 
-    - **Mode A (drain queue)** — each key maps to a
-      :class:`list[tuple[str, dict]]` of ``(entry_id, payload)`` pairs.
-      ``queue_push`` appends; ``queue_drain`` pops from the front (FIFO)
-      and deletes the returned entries.
+    - **Mode A (drain queue)** — each key maps to
+      ``(entry_id, payload)`` tuples. ``queue_push`` appends;
+      ``queue_drain`` pops from the front (FIFO) and deletes the returned
+      entries.
     - **Mode C (replay log)** — same underlying list structure, but
       ``log_read`` is non-destructive.  ``log_trim`` removes entries
       in-place.
@@ -60,12 +61,10 @@ class InMemoryMessageBus(
         # Global auto-increment counter for entry ids.
         self._seq: int = 0
 
-        # Mode A — drain queues: key -> [(entry_id, payload), ...]
-        # (entry_id, payload, expire_at | None) — expire_at is monotonic.
-        self._queues: dict[
-            str,
-            list[tuple[str, dict, float | None]],
-        ] = defaultdict(list)
+        # Mode A — drain queues. Expiry belongs to the whole key, as in
+        # Redis Streams, and is checked lazily on push, read, or drain.
+        self._queues: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+        self._queue_expires_at: dict[str, float] = {}
 
         # Mode C — replay logs: key -> [(entry_id, payload), ...]
         self._logs: dict[str, list[tuple[str, dict]]] = defaultdict(list)
@@ -79,7 +78,9 @@ class InMemoryMessageBus(
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        self._lock_holders: dict[str, str] = {}
+        # key -> monotonic expiry deadline; ``acquire_lock`` has no
+        # lease, so it stores infinity.
+        self._lock_holders: dict[str, float] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -125,6 +126,20 @@ class InMemoryMessageBus(
     # Mode A — drain queue
     # ------------------------------------------------------------------
 
+    def _drop_expired_queue(self, key: str, now: float) -> None:
+        """Remove ``key`` if its queue lifetime has elapsed.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            now (`float`):
+                Current monotonic time.
+        """
+        expires_at = self._queue_expires_at.get(key)
+        if expires_at is not None and expires_at <= now:
+            self._queues.pop(key, None)
+            self._queue_expires_at.pop(key, None)
+
     async def queue_push(
         self,
         key: str,
@@ -134,9 +149,8 @@ class InMemoryMessageBus(
     ) -> str:
         """Append ``payload`` to the in-memory drain queue at ``key``.
 
-        When ``ttl_secs`` is set the entry expires after that many
-        seconds; expired entries are dropped here and on drain, so a
-        never-drained key stays bounded.
+        When ``ttl_secs`` is set, refresh the whole queue's expiry.
+        Expired queues are removed on the next push, read, or drain.
 
         Args:
             key (`str`):
@@ -144,18 +158,22 @@ class InMemoryMessageBus(
             payload (`dict`):
                 JSON-serializable dict to enqueue.
             ttl_secs (`int | None`, optional):
-                Entry lifetime in seconds; ``None`` never expires.
+                Queue lifetime in seconds. ``None`` leaves the current
+                expiry unchanged, if one exists.
 
         Returns:
             `str`:
                 The synthetic entry id assigned to this entry.
         """
         entry_id = self._next_id()
-        queue = self._queues[key]
         now = time.monotonic()
-        queue[:] = [e for e in queue if e[2] is None or e[2] > now]
-        expire_at = now + ttl_secs if ttl_secs else None
-        queue.append((entry_id, payload, expire_at))
+        self._drop_expired_queue(key, now)
+        if ttl_secs is not None and ttl_secs <= 0:
+            await self.queue_delete(key)
+            return entry_id
+        self._queues[key].append((entry_id, deepcopy(payload)))
+        if ttl_secs is not None:
+            self._queue_expires_at[key] = now + ttl_secs
         return entry_id
 
     async def queue_drain(
@@ -177,14 +195,60 @@ class InMemoryMessageBus(
             `list[tuple[str, dict]]`:
                 ``(entry_id, payload)`` pairs in arrival order.
         """
+        self._drop_expired_queue(key, time.monotonic())
         q = self._queues.get(key)
         if not q:
             return []
-        now = time.monotonic()
-        alive = [e for e in q if e[2] is None or e[2] > now]
-        drained = alive[:max_count]
-        self._queues[key] = alive[max_count:]
-        return [(entry_id, payload) for entry_id, payload, _ in drained]
+        drained = q[:max_count]
+        self._queues[key] = q[max_count:]
+        return deepcopy(drained)
+
+    async def queue_read(
+        self,
+        key: str,
+        max_count: int = 100,
+    ) -> list[tuple[str, dict]]:
+        """Return queue entries without removing them.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            max_count (`int`, defaults to ``100``):
+                Maximum number of oldest-first entries to return.
+
+        Returns:
+            `list[tuple[str, dict]]`:
+                Deep-copied ``(entry_id, payload)`` pairs.
+        """
+        self._drop_expired_queue(key, time.monotonic())
+        return deepcopy(self._queues.get(key, [])[:max_count])
+
+    async def queue_replace(
+        self,
+        key: str,
+        payloads: list[dict],
+    ) -> list[str]:
+        """Replace a queue while preserving the supplied payload order.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            payloads (`list[dict]`):
+                Complete replacement contents in oldest-first order.
+
+        Returns:
+            `list[str]`:
+                Fresh transport-level ids assigned to the new entries.
+        """
+        entries = [
+            (self._next_id(), deepcopy(payload)) for payload in payloads
+        ]
+        if entries:
+            self._queues[key] = entries
+        else:
+            self._queues.pop(key, None)
+        self._queue_expires_at.pop(key, None)
+        return [entry_id for entry_id, _payload in entries]
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -194,6 +258,7 @@ class InMemoryMessageBus(
                 Queue identifier.
         """
         self._queues.pop(key, None)
+        self._queue_expires_at.pop(key, None)
 
     # ------------------------------------------------------------------
     # Mode C — replay log
@@ -379,9 +444,8 @@ class InMemoryMessageBus(
             `None`: while the lock is held.
         """
         lock = self._locks[key]
-        token = uuid.uuid4().hex
         async with lock:
-            self._lock_holders[key] = token
+            self._lock_holders[key] = math.inf
             try:
                 yield
             finally:
@@ -398,13 +462,15 @@ class InMemoryMessageBus(
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return key in self._lock_holders
+        return self._lock_holders.get(key, 0.0) > time.monotonic()
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if key in self._lock_holders:
+        if self._lock_holders.get(key, 0.0) > time.monotonic():
             return False
-        self._lock_holders[key] = "1"
+        # The lease keeps a crashed holder from blocking the key
+        # forever, the contract the Redis bus gets from SET NX EX.
+        self._lock_holders[key] = time.monotonic() + ttl_secs
         return True
 
     async def unlock(self, key: str) -> None:
@@ -445,7 +511,7 @@ class InMemoryMessageBus(
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
@@ -453,6 +519,20 @@ class InMemoryMessageBus(
         if self._registries.get(namespace, {}).get(field) != expected:
             return False
         self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete without yielding between the two operations."""
+        registry = self._registries.get(namespace, {})
+        if registry.get(field) != expected:
+            return False
+        del registry[field]
         return True
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
@@ -524,6 +604,15 @@ class InMemoryMessageBus(
                 The stored value, or ``None`` if missing.
         """
         return self._registries.get(namespace, {}).get(field)
+
+    async def registry_get_many(
+        self,
+        namespace: str,
+        fields: list[str],
+    ) -> list[str | None]:
+        """Read only the requested registry fields in their supplied order."""
+        registry = self._registries.get(namespace, {})
+        return [registry.get(field) for field in fields]
 
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire registry at ``namespace``.

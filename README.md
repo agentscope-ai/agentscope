@@ -69,20 +69,20 @@ We design for increasingly agentic LLMs.
 Our approach leverages the models' reasoning and tool use abilities
 rather than constraining them with strict prompts and opinionated orchestrations.
 
-<img src="assets/images/agentscope.png" alt="agentscope" width="100%"/>
+<img src="https://img.alicdn.com/imgextra/i3/O1CN01k5XbA5dLCIB4S3xd_!!6000000003894-2-tps-2193-1564.png" alt="agentscope" width="100%"/>
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-10] `FEAT` `Experimental`:** Agent service supports realtime voice conversations over WebRTC, with text and voice sharing the same session history.
+- **[2026-09] `FEAT` `Experimental`:** SOP supported — run multi-step tasks as standard operating procedures, in both the framework and agent service. [Docs](https://docs.agentscope.io/latest/en/building-blocks/sop) | [Service](https://docs.agentscope.io/latest/en/deploy/sop)
+- **[2026-09] `FEAT`:** `TeamPipeline` supported — a leader agent delegates tasks to member agents. [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/team)
+- **[2026-09] `INTE`:** MiniMax chat models supported via `MiniMaxChatModel` (MiniMax-M3 by default).
+- **[2026-09] `FEAT`:** Model routing supported — use `ModelRouterMiddleware` to select an appropriate chat model for each reply.
+- **[2026-09] `INTE`:** Jev classifier model supported through the TypeSafe SDK via `JevClassifierModel`.
 - **[2026-09] `FEAT`:** [agentscope-skill](https://github.com/agentscope-ai/skills/tree/main/skills/agentscope-skill) now supports AgentScope v2.
 - **[2026-09] `INTE`:** Support DashScope, OpenAI, Gemini and xAI realtime APIs in `RealtimeAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/realtime/speech-to-speech)
 - **[2026-09] `FEAT` `Experimental`:** Realtime voice agent supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/realtime/overview)
 - **[2026-09] `FEAT`:** A2A protocol supported — chat with any remote A2A agent via `A2AAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/a2a)
-- **[2026-08] `FEAT`:** Pipeline supported — run multiple agents by a fixed logic behind one event stream. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/pipeline) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/overview)
-- **[2026-08] `INTE`:** DingTalk channel supported. [Docs](https://docs.agentscope.io/latest/en/deploy/channel/dingtalk)
-- **[2026-08] `FEAT`:** Console supported — test and debug agents in the terminal. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/console) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/console)
-- **[2026-08] `INTE`:** Feishu (Lark) and Discord channels supported. [Feishu](https://docs.agentscope.io/latest/en/deploy/channel/feishu) | [Discord](https://docs.agentscope.io/latest/en/deploy/channel/discord)
-- **[2026-08] `FEAT`:** Channels supported — connect agents to IM platforms in agent service. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/channel/overview)
-- **[2026-08] `INTE`:** GitHub MCP Registry and ClawHub supported as built-in hubs. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/hub)
 <!-- END NEWS -->
 
 [More news →](./docs/NEWS.md)
