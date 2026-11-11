@@ -31,7 +31,9 @@ return entries
 # Compare-and-set on one hash field, so a caller can write back a value
 # it decided on earlier without holding a lock across the think time.
 _REGISTRY_SET_IF_LUA = """
-if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
+local expected = ARGV[3]
+if ARGV[5] == '1' then expected = false end
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= expected then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
 return 1
@@ -43,6 +45,11 @@ _REGISTRY_POP_LUA = """
 local value = redis.call('HGET', KEYS[1], ARGV[1])
 if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return value
+"""
+
+_REGISTRY_DEL_IF_LUA = """
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
 """
 
 _LOCK_RELEASE_LUA = """
@@ -263,8 +270,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 field of a Redis Stream entry.
             ttl_secs (`int | None`, optional):
                 If set, refresh the key's expiry on every push
-                (sliding TTL). ``None`` means no TTL — the queue
-                persists until drained or deleted explicitly.
+                (sliding TTL). ``None`` leaves an existing expiry
+                unchanged; a new key has no expiry.
 
         Returns:
             `str`:
@@ -517,7 +524,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one Hash field via Lua. See base."""
@@ -527,10 +534,28 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             namespace,
             field,
             value,
-            expected,
+            expected if expected is not None else "",
             ttl_secs or 0,
+            int(expected is None),
         )
         return bool(written)
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete one Hash field in a single Lua operation."""
+        deleted = await self._client.eval(
+            _REGISTRY_DEL_IF_LUA,
+            1,
+            namespace,
+            field,
+            expected,
+        )
+        return bool(deleted)
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """``HGET`` + ``HDEL`` as one Lua step. See base."""

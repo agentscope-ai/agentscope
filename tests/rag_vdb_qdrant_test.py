@@ -2,6 +2,7 @@
 """Unit tests for the QdrantStore class."""
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -92,6 +93,130 @@ def _make_record(
             total_chunks=total_chunks,
         ),
     )
+
+
+class QdrantMetricTest(IsolatedAsyncioTestCase):
+    """Real collection metadata determines search score semantics."""
+
+    async def asyncSetUp(self) -> None:
+        """Create an in-memory Qdrant store before each test."""
+        self._exit_stack = AsyncExitStack()
+        self.store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:"),
+        )
+
+    async def asyncTearDown(self) -> None:
+        """Close the store after each test."""
+        await self._exit_stack.aclose()
+
+    async def test_existing_collection_metric_controls_ranking(self) -> None:
+        """Reopened collections retain distance ranking and thresholds."""
+
+        class QueryEmbedding:
+            """Return the fixed query vector without a model service."""
+
+            dimensions = 3
+            supports_multimodal = False
+
+            async def __call__(self, queries: list) -> SimpleNamespace:
+                return SimpleNamespace(
+                    embeddings=[[1.0, 0.0, 0.0] for _ in queries],
+                )
+
+        for metric in ("Euclid", "Manhattan"):
+            with self.subTest(metric=metric), TemporaryDirectory() as path:
+                async with QdrantStore(path=path, distance=metric) as writer:
+                    await writer.create_collection("existing", dimensions=3)
+                    await writer.insert(
+                        "existing",
+                        [
+                            _make_record(name, [value, 0.0, 0.0], name)
+                            for name, value in (
+                                ("exact", 1.0),
+                                ("near", 2.0),
+                                ("far", 11.0),
+                            )
+                        ],
+                    )
+                # The default is a creation option, not the existing metric.
+                async with QdrantStore(path=path) as reader:
+                    kb = KnowledgeBase(
+                        name="existing",
+                        description="Existing distance collection",
+                        embedding_model=QueryEmbedding(),
+                        vector_store=reader,
+                        collection="existing",
+                    )
+                    hits = await kb.search(["query"], top_k=3)
+                    self.assertEqual(
+                        [(hit.document_id, hit.score) for hit in hits],
+                        [("exact", 0.0), ("near", -1.0), ("far", -10.0)],
+                    )
+                    filtered = await kb.search(
+                        ["query"],
+                        top_k=3,
+                        score_threshold=-1.0,
+                    )
+                    self.assertEqual(
+                        [hit.document_id for hit in filtered],
+                        ["exact", "near"],
+                    )
+
+    async def test_metric_tracks_external_collection_recreation(self) -> None:
+        """A live store does not retain a deleted collection's old metric."""
+        from qdrant_client import models
+
+        client = self.store.get_client()
+        for metric, expected in (("Euclid", -1.0), ("Dot", 2.0)):
+            with self.subTest(metric=metric):
+                await client.create_collection(
+                    "recreated",
+                    vectors_config=models.VectorParams(
+                        size=3,
+                        distance=metric,
+                    ),
+                )
+                try:
+                    await self.store.insert(
+                        "recreated",
+                        [_make_record("near", [2.0, 0.0, 0.0], "near")],
+                    )
+                    hits = await self.store.search(
+                        "recreated",
+                        [1.0, 0.0, 0.0],
+                    )
+                    self.assertEqual(hits[0].score, expected)
+                finally:
+                    await client.delete_collection("recreated")
+
+    async def test_default_dense_vector_in_named_config(self) -> None:
+        """The empty vector name is Qdrant's default query target."""
+        from qdrant_client import models
+
+        client = self.store.get_client()
+        await client.create_collection(
+            "default-named",
+            vectors_config={
+                "": models.VectorParams(size=3, distance="Euclid"),
+                "named": models.VectorParams(size=3, distance="Dot"),
+            },
+        )
+        record = _make_record("near", [2.0, 0.0, 0.0], "near")
+        await client.upsert(
+            "default-named",
+            points=[
+                models.PointStruct(
+                    id=1,
+                    vector={"": record.vector},
+                    payload={
+                        "document_id": record.document_id,
+                        "chunk": record.chunk.model_dump(mode="json"),
+                    },
+                ),
+            ],
+        )
+        hits = await self.store.search("default-named", [1.0, 0.0, 0.0])
+        self.assertEqual(hits[0].score, -1.0)
 
 
 class QdrantStoreTest(IsolatedAsyncioTestCase):
@@ -471,6 +596,69 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
             metadata_filter={"kb_scope": "kb-b"},
         )
         self.assertEqual([r.document_id for r in results], ["doc-2"])
+
+    async def test_null_metadata_filters(self) -> None:
+        """Null means an explicit null, and composes with other predicates."""
+        await self.store.create_collection("kb-null", dimensions=3)
+        records = []
+        for index, metadata in enumerate(
+            [
+                {"reviewer": None, "scope": "a"},
+                {"scope": "a"},
+                {"reviewer": "", "scope": "a"},
+                {"reviewer": False, "scope": "a"},
+                {"reviewer": 0, "scope": "a"},
+                {"reviewer": "None", "scope": "a"},
+                {"reviewer": None, "scope": "b"},
+            ],
+        ):
+            record = _make_record("text", [1.0, 0.0, 0.0], f"doc-{index}")
+            record.chunk.metadata = metadata
+            records.append(record)
+        await self.store.insert("kb-null", records)
+        metadata_filter = {"reviewer": None, "scope": "a"}
+        results = await self.store.search(
+            "kb-null",
+            [1.0, 0.0, 0.0],
+            top_k=10,
+            metadata_filter=metadata_filter,
+        )
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": 1.0,
+                    "document_id": "doc-0",
+                    "chunk": records[0].chunk.model_dump(),
+                },
+            ],
+        )
+        documents = await self.store.list_documents(
+            "kb-null",
+            metadata_filter=metadata_filter,
+        )
+        self.assertEqual(
+            [document.model_dump() for document in documents],
+            [
+                {
+                    "document_id": "doc-0",
+                    "source": "doc-0.txt",
+                    "chunk_count": 1,
+                    "metadata": metadata_filter,
+                },
+            ],
+        )
+        for index, record in enumerate(records):
+            with self.subTest(document_id=record.document_id):
+                chunks = await self.store.list_chunks(
+                    "kb-null",
+                    record.document_id,
+                    metadata_filter=metadata_filter,
+                )
+                self.assertEqual(
+                    [chunk.model_dump() for chunk in chunks],
+                    [record.chunk.model_dump()] if index == 0 else [],
+                )
 
     async def test_float_metadata_filters(self) -> None:
         """Every read operation matches finite floats without rounding."""

@@ -564,6 +564,70 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
         ]
         self.assertListEqual(tool_result_roles, ["user"])
 
+    async def test_tool_result_error_state(self) -> None:
+        """Only ERROR gains a flag, including when the output is empty."""
+        for formatter_type in (
+            AnthropicChatFormatter,
+            AnthropicMultiAgentFormatter,
+        ):
+            for state in ToolResultState:
+                for output in ("failed", ""):
+                    with self.subTest(
+                        formatter=formatter_type.__name__,
+                        state=state,
+                        output=output,
+                    ):
+                        msgs = [
+                            AssistantMsg(
+                                name="assistant",
+                                content=[
+                                    ToolCallBlock(
+                                        id="call_1",
+                                        name="validate",
+                                        input="{}",
+                                    ),
+                                    ToolResultBlock(
+                                        id="call_1",
+                                        name="validate",
+                                        output=output,
+                                        state=state,
+                                    ),
+                                ],
+                            ),
+                        ]
+                        expected_result = {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": output or "(empty tool output)",
+                                },
+                            ],
+                        }
+                        if state == ToolResultState.ERROR:
+                            expected_result["is_error"] = True
+                        self.assertEqual(
+                            await formatter_type().format(msgs),
+                            [
+                                {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "tool_use",
+                                            "id": "call_1",
+                                            "name": "validate",
+                                            "input": {},
+                                        },
+                                    ],
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [expected_result],
+                                },
+                            ],
+                        )
+
     async def test_chat_formatter_tool_result_with_image(self) -> None:
         """Tool result containing an image DataBlock inlines the image in the
         tool_result content without crashing on TextBlock system-reminders."""

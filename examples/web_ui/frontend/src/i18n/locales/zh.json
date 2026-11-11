@@ -175,6 +175,18 @@
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
+		"askUser": {
+			"title": "需要你的选择",
+			"other": "其他",
+			"otherPlaceholder": "输入你的回答",
+			"submit": "提交回答",
+			"invalid": "无法显示这个问题。"
+		},
+		"externalExecution": {
+			"title": "{{name}} 正在等待外部执行器",
+			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
+			"description": "该工具需要由宿主应用提供的集成完成。"
+		},
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
 		"maxItersExceeded": {
@@ -485,6 +497,9 @@
 		"noModels": "暂无可用的实时语音模型。",
 		"disable": "停用语音模型",
 		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
+		"backendFollows": "任务后端跟随 Chat 模型 · {{model}}",
+		"backendMissing": "请先选择 Chat 模型，再启动 GPT Live",
+		"pendingChatInteraction": "请先完成 Chat 中待处理的工具确认或外部执行，再启动 GPT Live。",
 		"start": "开始语音对话",
 		"stop": "结束语音对话"
 	},
@@ -663,6 +678,31 @@
 		"blockedBy": "依赖"
 	},
 	"panel": {
+		"background": {
+			"title": "后台工具",
+			"runningCount": "运行中：{{count}}",
+			"refresh": "刷新后台工具",
+			"duration": "后台运行时长：{{duration}}",
+			"totalDuration": "总执行时长：{{duration}}",
+			"backgroundDuration": "其中后台运行：{{duration}}",
+			"copyId": "复制任务 ID",
+			"copied": "已复制任务 ID",
+			"errorDetails": "失败详情",
+			"noSession": "选择会话以查看后台工具",
+			"emptyTitle": "暂无后台工具",
+			"emptyDescription": "转入后台继续执行的工具会显示在这里。",
+			"noRunning": "当前没有正在后台运行的工具。",
+			"recent": "最近结束（{{count}}）",
+			"retention": "最近结果仅临时保留，这里不包含完整历史记录。",
+			"loadError": "无法加载后台工具，请重试。",
+			"stale": "刷新失败，当前显示上次获取的状态，任务可能已发生变化。",
+			"status": {
+				"running": "运行中",
+				"completed": "已完成",
+				"failed": "失败",
+				"cancelled": "已取消"
+			}
+		},
 		"plan": {
 			"title": "计划",
 			"completed": "已完成：{{count}}",

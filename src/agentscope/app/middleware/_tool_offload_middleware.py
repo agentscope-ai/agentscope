@@ -6,7 +6,10 @@ When a tool times out, this middleware:
 - Lets the underlying asyncio task keep running via
   :class:`BackgroundTaskManager` (the task is **never cancelled**).
 - Yields a synthetic placeholder :class:`ToolResponse` so the agent
-  loop unblocks immediately.
+  loop unblocks immediately. The placeholder carries structured
+  metadata (``background_task_id`` / ``tool_name`` / ``tool_state`` /
+  ``offloaded_at``) so downstream consumers can distinguish it from a
+  real tool success without parsing the placeholder text.
 - On task completion, pushes the real result as a
   :class:`HintBlock` to the session's inbox via the message bus and
   enqueues a wakeup. From there the result follows the same path as a
@@ -21,8 +24,9 @@ bus/wakeup infrastructure, which works correctly across processes.
 """
 import asyncio
 import json
+import time
 from copy import deepcopy
-from typing import AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable
 
 from .._manager import BackgroundTaskManager
 from ...middleware import MiddlewareBase
@@ -41,6 +45,69 @@ from ..._logging import logger
 
 # Sentinel object used to signal end-of-stream in the drain queue.
 _QUEUE_SENTINEL = object()
+
+_SUMMARY_MAX_LEN = 128
+
+
+def _make_summary(tool_name: str, raw_input: str | None) -> str:
+    """Generate a short human-readable summary for frontend display.
+
+    The result is guaranteed to be at most :data:`_SUMMARY_MAX_LEN`
+    characters. For dict-shaped JSON inputs, multiple key=value pairs
+    are included up to the length budget.
+
+    This truncates inputs without redacting secrets. Argument values,
+    nested values, commands, and malformed-input snippets may contain
+    sensitive data. The summary is stored in shared task snapshots and
+    returned by the user-scoped background-task REST endpoints. Redis
+    stores this field as plaintext; persistence to disk and backups depends
+    on the deployment configuration.
+
+    Args:
+        tool_name (`str`):
+            The tool name (always included as prefix).
+        raw_input (`str | None`):
+            The raw JSON-encoded tool input string.
+
+    Returns:
+        `str`:
+            A concise summary such as ``Bash(command=ls -la, ...)``.
+    """
+    if not raw_input:
+        return tool_name[:_SUMMARY_MAX_LEN]
+
+    try:
+        parsed: Any = json.loads(raw_input)
+    except (json.JSONDecodeError, TypeError):
+        snippet = raw_input[:64]
+        suffix = "..." if len(raw_input) > 64 else ""
+        result = f"{tool_name}({snippet}{suffix})"
+        return result[:_SUMMARY_MAX_LEN]
+
+    if not isinstance(parsed, dict) or not parsed:
+        return tool_name[:_SUMMARY_MAX_LEN]
+
+    prefix = f"{tool_name}("
+    suffix = ")"
+    budget = _SUMMARY_MAX_LEN - len(prefix) - len(suffix)
+    if budget <= 0:
+        return tool_name[:_SUMMARY_MAX_LEN]
+
+    parts: list[str] = []
+    used = 0
+    for key, val in parsed.items():
+        val_str = str(val)
+        if len(val_str) > 40:
+            val_str = val_str[:37] + "..."
+        part = f"{key}={val_str}"
+        separator_len = 2 if parts else 0
+        if used + len(part) + separator_len > budget:
+            parts.append("...")
+            break
+        parts.append(part)
+        used += len(part) + separator_len
+
+    return (prefix + ", ".join(parts) + suffix)[:_SUMMARY_MAX_LEN]
 
 
 class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
@@ -164,18 +231,32 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # ----------------------------------------------------------------
         # Wrap next_handler in a Task, draining output into a Queue
         # ----------------------------------------------------------------
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue | None = asyncio.Queue()
 
-        async def _drain_to_queue() -> None:
-            """Drain next_handler output into *queue*."""
+        async def _drain_to_queue() -> ToolResponse | None:
+            """Drain output and return the terminal tool outcome."""
+            response = None
             try:
                 async for item in next_handler(**input_kwargs):
-                    await queue.put(item)
+                    if isinstance(item, ToolResponse):
+                        response = item
+                    if queue is not None:
+                        queue.put_nowait(item)
+                    del item
             except Exception as exc:  # pylint: disable=broad-except
-                await queue.put(exc)
+                if queue is not None:
+                    queue.put_nowait(exc)
+                response = ToolResponse(
+                    id=tool_call.id,
+                    state=ToolResultState.ERROR,
+                    content=[TextBlock(text=str(exc))],
+                )
             finally:
-                await queue.put(_QUEUE_SENTINEL)
+                if queue is not None:
+                    queue.put_nowait(_QUEUE_SENTINEL)
+            return response
 
+        execution_started_at = time.time()
         drain_task: asyncio.Task = asyncio.create_task(_drain_to_queue())
 
         # ----------------------------------------------------------------
@@ -220,12 +301,19 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             drain_task.cancel()
             return
 
+        # The deliverer awaits the final response directly. Drop the queue
+        # and foreground references before yielding: nobody consumes further
+        # stream events, and a bounded queue here would deadlock the producer.
+        # No await separates this transition from the producer's queue check.
+        queue = None
+        pre_collected.clear()
+        item = None
+
         # ----------------------------------------------------------------
         # Timeout path: spawn deliverer, register drain_task, yield synthetic
         # ----------------------------------------------------------------
         session_id = agent.state.session_id
         tool_name = tool_call.name
-        snapshot = list(pre_collected)
 
         logger.info(
             "Tool '%s' timed out after %.1fs, offloading to background: "
@@ -245,7 +333,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             completion notification in those edge cases.
             """
             try:
-                await drain_task
+                response: ToolResponse | None = await drain_task
             except asyncio.CancelledError:
                 logger.info(
                     "Background tool '%s' cancelled, skipping delivery: "
@@ -264,21 +352,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 )
                 return
 
-            remaining_items: list = []
-            while not queue.empty():
-                try:
-                    item = queue.get_nowait()
-                    if isinstance(item, ToolResponse):
-                        remaining_items.append(item)
-                        break
-                except asyncio.QueueEmpty:
-                    break
-
-            all_items = snapshot + remaining_items
-            response: ToolResponse | None = next(
-                (i for i in all_items if isinstance(i, ToolResponse)),
-                None,
-            )
+            outcome = "completed"
+            if response is not None:
+                if response.state == ToolResultState.ERROR:
+                    outcome = "failed"
+                elif response.state == ToolResultState.INTERRUPTED:
+                    outcome = "been cancelled"
 
             tool_call_id = tool_call.id
 
@@ -295,7 +374,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     hint=(
                         f"<system-notification>"
                         f"Tool '{tool_name}' running in background "
-                        f"(id={tool_call_id}) has completed with no output."
+                        f"(id={tool_call_id}) has {outcome} with no output."
                         f"</system-notification>"
                     ),
                     source=hint_source,
@@ -311,7 +390,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 prefix = (
                     f"<system-notification>"
                     f"Tool '{tool_name}' running in background "
-                    f"(id={tool_call_id}) has completed.\n\n"
+                    f"(id={tool_call_id}) has {outcome}.\n\n"
                     f"Result:\n\n"
                 )
 
@@ -340,9 +419,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             # reasoning step, and WakeupDispatcher kicks an idle session
             # on whichever process picks up the wakeup.
             logger.info(
-                "Background tool '%s' completed, pushing result to inbox "
+                "Background tool '%s' has %s, pushing result to inbox "
                 "and enqueueing wakeup: session_id=%s",
                 tool_name,
+                outcome,
                 session_id,
             )
             await deliver_to_inbox(
@@ -360,6 +440,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             agent_id=self._agent_id,
             user_id=self._user_id,
             tool_name=tool_name,
+            summary=_make_summary(tool_name, tool_call.input),
+            execution_started_at=execution_started_at,
         )
 
         logger.info(
@@ -382,13 +464,23 @@ any tool, which ends the current reasoning loop — just do nothing and end \
 this run.
 </system-reminder>"""
 
+        # Identify background placeholders without parsing their text.
+        offload_metadata = {
+            "background_task_id": task_id,
+            "tool_name": tool_name,
+            "tool_state": "running",
+            "offloaded_at": time.time(),
+        }
+
         yield ToolChunk(
             content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
+            metadata=dict(offload_metadata),
         )
 
         yield ToolResponse(
             content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
             id=tool_call.id,
+            metadata=dict(offload_metadata),
         )
