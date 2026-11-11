@@ -116,6 +116,8 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
 
         self.mock_client = MagicMock()
         self.mock_client.vertexai = False
+        self.mock_client.__enter__.return_value = self.mock_client
+        self.mock_client.aio.__aenter__.return_value = self.mock_client.aio
         self.mock_client.aio.models.generate_content = AsyncMock()
         self.patcher = patch(
             "google.genai.Client",
@@ -407,6 +409,21 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
         if genai is None:
             self.skipTest("google-genai is not installed")
 
+    async def test_unstarted_stream_does_not_create_client(self) -> None:
+        """Closing an unstarted stream must require no SDK cleanup."""
+        model = GeminiTTSModel(
+            credential=GeminiCredential(api_key="test"),
+            model="gemini-3.8-flash-tts",
+        )
+        with patch("google.genai.Client") as create_client:
+            stream = await model.synthesize("Hello")
+            try:
+                self.assertEqual(create_client.call_count, 0)
+            finally:
+                await stream.aclose()
+            await asyncio.sleep(0)
+            self.assertEqual(create_client.call_count, 0)
+
     async def test_aiohttp_connector_survives_stream_start(self) -> None:
         """Keep the SDK-owned aiohttp connector open across request awaits."""
         if aiohttp is None:
@@ -477,8 +494,16 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             transports.append(client._api_client._httpx_client)
             return client
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        async def handler(request: httpx.Request) -> httpx.Response:
             """Return PCM events or fail while consuming the SDK stream."""
+            await asyncio.sleep(0)
+            self.assertEqual(
+                (
+                    clients[0]() is not None,
+                    [transport.is_closed for transport in transports],
+                ),
+                (True, [False, False]),
+            )
             self.assertEqual(
                 request.url.path,
                 "/v1beta/models/gemini-3.8-flash-tts:streamGenerateContent",
@@ -514,13 +539,7 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             stream = await model.synthesize("Hello")
             try:
                 await asyncio.sleep(0)
-                self.assertEqual(
-                    (
-                        clients[0]() is not None,
-                        [transport.is_closed for transport in transports],
-                    ),
-                    (True, [False, False]),
-                )
+                self.assertEqual((clients, transports), ([], []))
                 if outcome == "error":
                     with self.assertRaisesRegex(RuntimeError, "failed"):
                         await anext(stream)

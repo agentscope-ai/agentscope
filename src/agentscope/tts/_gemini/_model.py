@@ -3,7 +3,7 @@
 import base64
 import io
 import wave
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
 from typing import (
     Any,
@@ -182,13 +182,6 @@ class GeminiTTSModel(TTSModelBase):
 
         from google import genai
 
-        client = genai.Client(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                **self.client_kwargs,
-            },
-        )
-
         contents: Any = text
         voice_config: dict[str, Any] = {
             "prebuilt_voice_config": {"voice_name": self.parameters.voice},
@@ -207,54 +200,65 @@ class GeminiTTSModel(TTSModelBase):
             },
             **kwargs,
         }
-        http_options = self.client_kwargs.get("http_options") or {}
-        api_version = (
-            http_options.get("api_version")
-            if isinstance(http_options, dict)
-            else http_options.api_version
-        )
-        if not client.vertexai and not api_version:
-            request_options = config.get("http_options") or {}
-            if isinstance(request_options, dict):
-                config["http_options"] = {
-                    **request_options,
-                    "api_version": request_options.get("api_version")
-                    or "v1beta",
-                }
-            else:
-                config["http_options"] = request_options.model_copy(
-                    update={
-                        "api_version": request_options.api_version or "v1beta",
-                    },
-                )
+
+        @asynccontextmanager
+        async def open_client() -> AsyncIterator[Any]:
+            """Create and configure the client only while it is in use."""
+            with genai.Client(
+                **{
+                    "api_key": self.credential.api_key.get_secret_value(),
+                    **self.client_kwargs,
+                },
+            ) as client:
+                async with client.aio as aio:
+                    http_options = self.client_kwargs.get("http_options") or {}
+                    api_version = (
+                        http_options.get("api_version")
+                        if isinstance(http_options, dict)
+                        else http_options.api_version
+                    )
+                    if not client.vertexai and not api_version:
+                        options = config.get("http_options") or {}
+                        if isinstance(options, dict):
+                            config["http_options"] = {
+                                **options,
+                                "api_version": options.get("api_version")
+                                or "v1beta",
+                            }
+                        else:
+                            config["http_options"] = options.model_copy(
+                                update={
+                                    "api_version": options.api_version
+                                    or "v1beta",
+                                },
+                            )
+                    yield aio
 
         if self.stream:
 
             async def generate() -> AsyncGenerator[TTSResponse, None]:
                 """Own the client until the stream is exhausted or closed."""
-                with client:
-                    async with client.aio as aio:
-                        stream = await aio.models.generate_content_stream(
-                            model=self.model,
-                            contents=contents,
-                            config=config,
-                        )
-                        async with aclosing(stream):
-                            async for chunk in (
-                                self._parse_stream_into_async_generator(stream)
-                            ):
-                                yield chunk
+                async with open_client() as aio:
+                    stream = await aio.models.generate_content_stream(
+                        model=self.model,
+                        contents=contents,
+                        config=config,
+                    )
+                    async with aclosing(stream):
+                        async for chunk in (
+                            self._parse_stream_into_async_generator(stream)
+                        ):
+                            yield chunk
 
             return generate()
 
         start_datetime = datetime.now()
-        with client:
-            async with client.aio:
-                response = await client.aio.models.generate_content(
-                    model=self.model,
-                    contents=contents,
-                    config=config,
-                )
+        async with open_client() as aio:
+            response = await aio.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
         elapsed = (datetime.now() - start_datetime).total_seconds()
 
         return self._parse_response(response, elapsed)
