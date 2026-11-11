@@ -1669,6 +1669,83 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 self.assertIsNotNone(result)
                 self.assertIn("chmod", result)
 
+    async def test_equivalent_chmod_modes(self) -> None:
+        """Detect chmod spellings that set the same mode as 777."""
+        test_cases = [
+            "chmod 0777 file.txt",
+            "chmod 000777 file.txt",
+            "chmod 07777 /var/www",
+            "chmod -R 0777 /var/www",
+            "chmod a+rwx file.txt",
+            "chmod ugo+rwx file.txt",
+            "chmod u+rwx,g+rwx,o+rwx file.txt",
+            "sudo -u root chmod 0777 file.txt",
+            "env MODE=1 chmod 0777 file.txt",
+            "command chmod 0777 file.txt",
+            "echo ready && chmod 0777 file.txt",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "chmod 777",
+                )
+
+    async def test_equivalent_chown_recursive(self) -> None:
+        """Detect the long and combined spellings of recursive chown."""
+        test_cases = [
+            "chown --recursive root /var/www",
+            "chown -Rv root /var/www",
+            "sudo chown --recursive root /var/www",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "chown -R",
+                )
+
+    async def test_equivalent_kill_signals(self) -> None:
+        """Detect every signal spelling that resolves to SIGKILL."""
+        test_cases = [
+            "kill -SIGKILL 123",
+            "kill -KILL 123",
+            "kill -s KILL 123",
+            "kill -s SIGKILL 123",
+            "kill -s 9 123",
+            "kill -n 9 123",
+            "kill --signal=KILL 123",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.check_dangerous_command(cmd),
+                    "kill -9",
+                )
+
+    async def test_equivalent_spellings_not_flagged(self) -> None:
+        """Spellings that do not perform the same operation stay safe."""
+        safe_commands = [
+            "chmod 0755 file.txt",
+            "chmod o+w file.txt",
+            "chmod +rwx file.txt",
+            "chmod u+rwx file.txt",
+            "chmod --reference=other.txt file.txt",
+            "chown root file.txt",
+            "chown --from=root root file.txt",
+            "kill -TERM 123",
+            "kill -l 9",
+            "kill 123",
+            "grep -r chmod 0777 .",
+            "command -v chmod 0777",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(
+                    self.parser.check_dangerous_command(cmd),
+                    f"Expected '{cmd}' to be safe",
+                )
+
     async def test_safe_commands(self) -> None:
         """Test that safe commands are not flagged."""
         safe_commands = [

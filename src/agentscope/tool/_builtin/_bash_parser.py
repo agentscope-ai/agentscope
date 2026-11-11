@@ -758,7 +758,237 @@ class BashCommandParser:
                 if pattern in normalized:
                     return pattern
 
+        return self._check_equivalent_dangerous_command(command)
+
+    def _check_equivalent_dangerous_command(
+        self,
+        command: str,
+    ) -> Optional[str]:
+        """Detect shell-equivalent spellings of the dangerous patterns.
+
+        ``DANGEROUS_COMMANDS`` lists one literal spelling per operation, but
+        the shell accepts equivalent spellings: ``chmod 0777`` sets the same
+        mode as ``chmod 777``, ``chown --recursive`` is ``chown -R``, and
+        ``kill -s 9`` is ``kill -9``. Without this check those spellings
+        return None, so a matching allow rule can auto-approve them although
+        it cannot approve the literal spelling.
+
+        Only spellings guaranteed to perform the same operation are treated
+        as dangerous. For example ``chmod o+w`` and the umask-dependent
+        ``chmod +rwx`` do not necessarily produce mode 777, so they stay out.
+        """
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+        if tree.root_node.has_error:
+            # Broken syntax: the literal matching above already ran, and the
+            # injection check asks for review instead of guessing here
+            return None
+        return self._check_equivalent_dangerous_nodes(tree.root_node)
+
+    def _check_equivalent_dangerous_nodes(
+        self,
+        node: Node,
+    ) -> Optional[str]:
+        """Walk the syntax tree and inspect every simple command."""
+        if node.type == "command":
+            matched = self._check_equivalent_dangerous_command_node(node)
+            if matched is not None:
+                return matched
+
+        for child in node.children:
+            matched = self._check_equivalent_dangerous_nodes(child)
+            if matched is not None:
+                return matched
+
         return None
+
+    def _check_equivalent_dangerous_command_node(
+        self,
+        node: Node,
+    ) -> Optional[str]:
+        """Inspect one simple command for equivalent dangerous spellings."""
+        try:
+            tokens = shlex.split(node.text.decode("utf8"))
+        except ValueError:
+            # Unbalanced quotes: the literal matching above already ran
+            return None
+
+        effective = self._effective_command(tokens)
+        if effective is None:
+            return None
+        name, args = effective
+
+        if name == "chmod":
+            mode = self._chmod_mode_operand(args)
+            if mode is not None and self._chmod_grants_world_rwx(mode):
+                return "chmod 777"
+        elif name == "chown":
+            if self._has_recursive_flag(args):
+                return "chown -R"
+        elif name == "kill":
+            if self._sends_sigkill(args):
+                return "kill -9"
+
+        return None
+
+    def _effective_command(
+        self,
+        tokens: List[str],
+    ) -> Optional[Tuple[str, List[str]]]:
+        """Return the command a shell would run, looking through wrappers.
+
+        Leading variable assignments and wrappers such as ``sudo`` or ``env``
+        are skipped together with their options, so ``sudo chmod 0777`` is
+        inspected as ``chmod 0777`` while ``grep -r chmod 0777`` is not.
+        """
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
+                index += 1
+                continue
+
+            if token not in _COMMAND_WRAPPERS:
+                return token, tokens[index + 1 :]
+
+            wrapper = token
+            index += 1
+            while (
+                index < len(tokens)
+                and tokens[index].startswith("-")
+                and tokens[index] != "-"
+            ):
+                option = tokens[index]
+                index += 1
+                if wrapper == "command" and option in ("-v", "-V"):
+                    # `command -v` only looks the command up
+                    return None
+                if option in _WRAPPER_OPTIONS_WITH_VALUE.get(
+                    wrapper,
+                    set(),
+                ):
+                    index += 1
+
+        return None
+
+    @staticmethod
+    def _chmod_mode_operand(args: List[str]) -> Optional[str]:
+        """Return the mode operand of a chmod invocation, if it has one.
+
+        Options are skipped; ``--reference`` derives the mode from a file and
+        ``--help``/``--version`` do not change any mode, so both return None.
+        """
+        for token in args:
+            if token.startswith("--reference") or token in (
+                "--help",
+                "--version",
+            ):
+                return None
+            if token.startswith("-") and token != "-":
+                continue
+            return token
+        return None
+
+    @staticmethod
+    def _chmod_grants_world_rwx(mode: str) -> bool:
+        """Whether a chmod mode grants read, write and execute to others.
+
+        Symbolic modes are evaluated per clause: only an explicit ``o`` or
+        ``a`` class can affect the world bits, and an omitted class is
+        umask-dependent (``+rwx`` may resolve to 755), so it is not treated
+        as equivalent to 777.
+        """
+        if re.fullmatch(r"[0-7]+", mode):
+            return int(mode, 8) & 0o777 == 0o777
+
+        for clause in mode.split(","):
+            match = re.fullmatch(
+                r"([ugoa]*)((?:[+\-=][rwxXst]*)+)",
+                clause,
+            )
+            if match is None:
+                continue
+            who = match.group(1)
+            if "o" not in who and "a" not in who:
+                continue
+
+            granted = set()
+            for operator, permissions in re.findall(
+                r"([+\-=])([rwxXst]*)",
+                match.group(2),
+            ):
+                if operator == "=":
+                    granted = set(permissions)
+                elif operator == "+":
+                    granted |= set(permissions)
+                else:
+                    granted -= set(permissions)
+            if {"r", "w", "x"} <= granted:
+                return True
+
+        return False
+
+    @staticmethod
+    def _has_recursive_flag(args: List[str]) -> bool:
+        """Whether a chown invocation passes -R or --recursive."""
+        for token in args:
+            if token == "--":
+                break
+            if token == "--recursive":
+                return True
+            if (
+                token.startswith("-")
+                and not token.startswith("--")
+                and "R" in token[1:]
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _sends_sigkill(args: List[str]) -> bool:
+        """Whether a kill invocation sends SIGKILL (number 9)."""
+        index = 0
+        while index < len(args):
+            token = args[index]
+            if token == "--":
+                # Everything after -- is a target, not a signal
+                return False
+            if token in ("-l", "-L", "--list", "--table"):
+                # Listing signal names, not sending one
+                return False
+            if token in ("-s", "-n", "--signal"):
+                if index + 1 >= len(args):
+                    return False
+                if BashCommandParser._is_sigkill(args[index + 1]):
+                    return True
+                index += 2
+                continue
+            if token.startswith("--signal="):
+                return BashCommandParser._is_sigkill(
+                    token.split("=", 1)[1],
+                )
+            if token.startswith("-s") and len(token) > 2:
+                return BashCommandParser._is_sigkill(token[2:])
+            if token.startswith("-") and len(token) > 1:
+                if BashCommandParser._is_sigkill(token):
+                    return True
+                index += 1
+                continue
+            # The first operand is a target; the signal defaults to TERM
+            return False
+        return False
+
+    @staticmethod
+    def _is_sigkill(signal: str) -> bool:
+        """Whether a kill signal spelling denotes number 9 (SIGKILL)."""
+        candidate = signal.lstrip("-").upper()
+        if candidate.startswith("SIG"):
+            candidate = candidate[3:]
+        if candidate.isdigit():
+            return int(candidate) == 9
+        return candidate == "KILL"
 
     # pylint: disable=too-many-return-statements, too-many-branches
     def check_sed_constraints(
