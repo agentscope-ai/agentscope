@@ -2033,12 +2033,15 @@ class RealtimeAgent:
             text = message.get_text_content()
             message.content = [TextBlock(text=f"{text}{event.delta}")]
             return
+        response_id = event.response_id
+        if self._reply is not None and self._reply.item_id == response_id:
+            response_id = self._reply.reply_id
         context = self.state.context
         position = next(
             (
                 i
                 for i, msg in enumerate(context)
-                if msg.id == event.response_id and msg.role == "assistant"
+                if msg.id == response_id and msg.role == "assistant"
             ),
             len(context),
         )
