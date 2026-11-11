@@ -1332,3 +1332,69 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertListEqual(self.researcher.state.context, [])
+
+    async def test_cancel_skips_queued_assignments(self) -> None:
+        """Cancelling while the researcher runs its first assignment does
+        not start the second one queued behind it, and the team takes the
+        next query."""
+        slow = SlowTool()
+        self.researcher = _agent("researcher", [slow])
+        self.pipeline = TeamPipeline(
+            leader=self.leader,
+            members=[
+                TeamMember(agent=self.researcher, description="Researches"),
+            ],
+        )
+        self.leader.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="call-1",
+                                name="TeamAssign",
+                                input='{"member": "researcher", '
+                                '"prompt": "Find A"}',
+                            ),
+                            ToolCallBlock(
+                                id="call-2",
+                                name="TeamAssign",
+                                input='{"member": "researcher", '
+                                '"prompt": "Find B"}',
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                _text("Hi again."),
+            ],
+        )
+        self.researcher.model.set_responses(
+            [
+                _tool_call("call-r1", "{}", name="slow_tool"),
+                _text("Found B"),
+            ],
+        )
+
+        events = await self._cancel(self.query, slow)
+
+        self.assertEqual(events.count("REPLY_START"), 2)
+        self.assertEqual(self.researcher.model.cnt, 1)
+        self.assertListEqual(
+            [
+                (_.id, _.state)
+                for _ in self.leader.state.context[-1].get_content_blocks(
+                    "tool_result",
+                )
+            ],
+            [("call-1", "interrupted"), ("call-2", "interrupted")],
+        )
+        self.assertListEqual(self.researcher.state.context, [])
+
+        await self._run(UserMsg(name="user", content="Hi"))
+
+        self.assertEqual(
+            self.leader.state.context[-1].get_text_content(),
+            "Hi again.",
+        )

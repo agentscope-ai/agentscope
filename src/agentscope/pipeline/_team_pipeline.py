@@ -310,8 +310,10 @@ class TeamPipeline:
         async def run_group(name: str, calls: list[ToolCallBlock]) -> None:
             """Run the assignments to one member one after another, turning
             each final reply into the tool result; once the member parks,
-            the rest stay queued until it resumes."""
+            the rest stay queued until it resumes. Once the round is
+            cancelled, no further assignment starts."""
             member = self.members[name]
+            current = asyncio.current_task()
             for tool_call in calls:
                 async for evt in member.agent.reply_stream(
                     resumed
@@ -338,7 +340,12 @@ class TeamPipeline:
                                 state=_RESULT_STATES[evt.finished_reason],
                             ),
                         )
-                if self._is_parked(member):
+                # The member swallows a cancellation by default and ends its
+                # reply as interrupted, so only ``cancelling()`` still tells
+                # that the round was cancelled and the queue must not go on.
+                if self._is_parked(member) or (
+                    current is not None and current.cancelling()
+                ):
                     break
 
         async def run_all() -> None:
