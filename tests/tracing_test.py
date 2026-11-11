@@ -1199,6 +1199,33 @@ class TracingTest(IsolatedAsyncioTestCase):
 
         await self._assert_close_leaves_span_not_error("chat", drive)
 
+    async def test_on_model_call_cancelled_marks_span_not_error(self) -> None:
+        """Cancelling the model call before it returns (e.g. the user stops
+        before the first chunk arrives) must not record the chat span as
+        ERROR with a synthetic exception event (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def drive() -> None:
+            event = asyncio.Event()
+
+            async def next_handler(**_kwargs: Any) -> Any:
+                await event.wait()  # suspend while the model call is awaited
+                return _make_text_response("done")
+
+            task = asyncio.ensure_future(
+                middleware.on_model_call(
+                    self.agent,
+                    {"current_model": self.model},
+                    next_handler,
+                ),
+            )
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        await self._assert_close_leaves_span_not_error("chat", drive)
+
     async def test_real_exception_still_marks_span_error(self) -> None:
         """A real failure must keep the ERROR status and the recorded
         exception (issue #3924 does not relax that)."""

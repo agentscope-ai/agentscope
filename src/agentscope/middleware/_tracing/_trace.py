@@ -326,7 +326,14 @@ class TracingMiddleware(MiddlewareBase):
                 return result
 
             except BaseException as e:
-                _set_span_error_status(span, e)
+                if isinstance(e, (GeneratorExit, asyncio.CancelledError)):
+                    # Cancellation of the model call (e.g. the user stops
+                    # before the first chunk arrives) is not a failed
+                    # operation: end the chat span without an ERROR status or
+                    # a synthetic exception event (issue #3924).
+                    span.end()
+                else:
+                    _set_span_error_status(span, e)
                 raise
 
     # ------------------------------------------------------------------
