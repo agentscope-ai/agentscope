@@ -2950,98 +2950,111 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
 
     async def test_late_transcription_precedes_tool_followup(self) -> None:
         """Late input precedes the logical reply across model responses."""
-        model = GeminiRealtimeModel(
-            "gemini-3.8-live-extended-thinking",
-            GeminiCredential(api_key="test"),
-        )
-        model._send = AsyncMock()
-        tool = BlockingTool()
-        agent = RealtimeAgent(
-            "Friday",
-            "",
-            model,
-            toolkit=Toolkit(tools=[tool]),
-        )
+        for same_frame in (False, True):
+            with self.subTest(same_frame=same_frame):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                )
 
-        async def feed(frame: dict) -> None:
-            """Deliver a provider frame through the real Gemini adapter."""
-            for event in model._parse(frame):
-                await agent._on_model_event(event)
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver a frame through the real Gemini adapter."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
 
-        tasks = []
-        try:
-            await feed(
-                {
-                    "serverContent": {
-                        "outputTranscription": {"text": "Checking."},
-                    },
-                },
-            )
-            reply_id = agent._reply_id
-            await feed(
-                {
-                    "toolCall": {
-                        "functionCalls": [
-                            {
-                                "id": "c1",
-                                "name": tool.name,
-                                "args": {"q": "weather"},
+                tasks = []
+                try:
+                    await feed(
+                        {
+                            "serverContent": {
+                                "outputTranscription": {"text": "Checking."},
                             },
-                        ],
-                    },
-                },
-            )
-            tasks = list(agent._tasks)
-            await asyncio.wait_for(tool.started.wait(), timeout=1)
-            await feed({"serverContent": {"interactionStatus": "IDLE"}})
-            tool.release.set()
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
-            await feed(
-                {"serverContent": {"outputTranscription": {"text": "Sunny."}}},
-            )
-            self.assertNotEqual(model._response_id, reply_id)
-            self.assertEqual(agent._reply_id, reply_id)
-            await feed(
-                {
-                    "serverContent": {
+                        },
+                    )
+                    reply_id = agent._reply_id
+                    await feed(
+                        {
+                            "toolCall": {
+                                "functionCalls": [
+                                    {
+                                        "id": "c1",
+                                        "name": tool.name,
+                                        "args": {"q": "weather"},
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    tasks = list(agent._tasks)
+                    await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    output = {"outputTranscription": {"text": "Sunny."}}
+                    transcription = {
                         "inputTranscription": {"text": "Weather?"},
-                    },
-                },
-            )
-            await feed({"serverContent": {"interactionStatus": "IDLE"}})
-            expected = [
-                ("user", "Weather?"),
-                ("assistant", "Checking.\nSunny."),
-            ]
-            snapshots = [
-                agent.checkpoint_snapshot(event)
-                for event in agent.drain_events()
-            ]
-            checkpoint = next(state for state in reversed(snapshots) if state)
-            self.assertEqual(
-                {
-                    "context": [
-                        (msg.role, msg.get_text_content())
-                        for msg in agent.state.context
-                    ],
-                    "checkpoint": [
-                        (msg.role, msg.get_text_content())
-                        for msg in checkpoint.context
-                    ],
-                },
-                {"context": expected, "checkpoint": expected},
-            )
-            model.connect = AsyncMock()
-            await agent.connect()
-            self.assertEqual(
-                model.connect.await_args.kwargs["instructions"],
-                "\n\n## Conversation so far\n"
-                "user: Weather?\nFriday: Checking.\nSunny.",
-            )
-        finally:
-            tool.release.set()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await agent.close()
+                    }
+                    if same_frame:
+                        await feed(
+                            {"serverContent": {**output, **transcription}},
+                        )
+                    else:
+                        await feed({"serverContent": output})
+                        await feed({"serverContent": transcription})
+                    self.assertNotEqual(model._response_id, reply_id)
+                    self.assertEqual(agent._reply_id, reply_id)
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    expected = [
+                        ("user", "Weather?"),
+                        ("assistant", "Checking.\nSunny."),
+                    ]
+                    snapshots = [
+                        agent.checkpoint_snapshot(event)
+                        for event in agent.drain_events()
+                    ]
+                    checkpoint = next(
+                        state for state in reversed(snapshots) if state
+                    )
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "checkpoint": [
+                                (msg.role, msg.get_text_content())
+                                for msg in checkpoint.context
+                            ],
+                        },
+                        {"context": expected, "checkpoint": expected},
+                    )
+                    model.connect = AsyncMock()
+                    await agent.connect()
+                    self.assertEqual(
+                        model.connect.await_args.kwargs["instructions"],
+                        "\n\n## Conversation so far\n"
+                        "user: Weather?\nFriday: Checking.\nSunny.",
+                    )
+                finally:
+                    tool.release.set()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await agent.close()
 
     async def test_interruption_keeps_transcription_identities(self) -> None:
         """A new utterance cannot inherit the interrupted input buffer."""

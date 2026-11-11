@@ -523,6 +523,16 @@ class GeminiRealtimeModel(RealtimeModelBase):
             events += self._settle_input()
             self._user_id, self._response_id, self._usage = "", "", {}
 
+        parts = (content.get("modelTurn") or {}).get("parts") or []
+        transcript = (content.get("outputTranscription") or {}).get("text", "")
+        if (
+            self._extended_thinking
+            and not content.get("interrupted")
+            and (parts or transcript)
+        ):
+            # Bind same-frame input to the response before emitting it.
+            events += self._open_response()
+
         if text := (content.get("inputTranscription") or {}).get("text"):
             self._user_id = self._user_id or uuid.uuid4().hex
             self._input_text += text
@@ -546,8 +556,6 @@ class GeminiRealtimeModel(RealtimeModelBase):
             self._response_id, self._usage = "", {}
             return events + [me.SpeechStartedEvent(item_id=self._user_id)]
 
-        parts = (content.get("modelTurn") or {}).get("parts") or []
-        transcript = (content.get("outputTranscription") or {}).get("text", "")
         if parts or transcript:
             events += self._open_response()
         for part in parts:

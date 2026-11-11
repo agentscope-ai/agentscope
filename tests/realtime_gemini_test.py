@@ -428,6 +428,84 @@ class GeminiThinkingTest(unittest.TestCase):
                     )
                     self.assertNotEqual(next_turn[0].item_id, reply_id)
 
+    def test_same_frame_transcription_and_output(self) -> None:
+        """Bind same-frame input to output unless the frame interrupts it."""
+        outputs: list[dict] = [
+            {"outputTranscription": {"text": "Sunny."}},
+            {"modelTurn": {"parts": [{"text": "Sunny."}]}},
+            {
+                "modelTurn": {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "data": base64.b64encode(b"\x01\x00").decode(),
+                            },
+                        },
+                    ],
+                },
+            },
+        ]
+        for output in outputs:
+            for interrupted in (False, True):
+                with self.subTest(output=output, interrupted=interrupted):
+                    model = GeminiRealtimeModel(THINKING_MODEL, CRED)
+                    events = model._parse(
+                        {
+                            "serverContent": {
+                                **output,
+                                "inputTranscription": {"text": "Weather?"},
+                                "interrupted": interrupted,
+                            },
+                        },
+                    )
+                    response_id = model._response_id
+                    expected = [
+                        (
+                            "InputTranscriptionDeltaEvent",
+                            {
+                                "item_id": model._user_id,
+                                "delta": "Weather?",
+                                "response_id": response_id,
+                            },
+                        ),
+                    ]
+                    if interrupted:
+                        expected.append(
+                            (
+                                "SpeechStartedEvent",
+                                {"item_id": model._user_id, "at_ms": 0},
+                            ),
+                        )
+                        self.assertEqual(response_id, "")
+                    else:
+                        self.assertTrue(response_id)
+                        expected.insert(
+                            0,
+                            ("ResponseCreatedEvent", {"item_id": response_id}),
+                        )
+                        if output == outputs[-1]:
+                            expected.append(
+                                (
+                                    "AudioDeltaEvent",
+                                    {
+                                        "item_id": response_id,
+                                        "pcm": b"\x01\x00",
+                                        "sample_rate": 24000,
+                                    },
+                                ),
+                            )
+                        else:
+                            expected.append(
+                                (
+                                    "TranscriptDeltaEvent",
+                                    {
+                                        "item_id": response_id,
+                                        "delta": "Sunny.",
+                                    },
+                                ),
+                            )
+                    self.assertEqual(_dump(events), expected)
+
     def test_late_transcription_and_silent_completion(self) -> None:
         """Thinking before transcription and silent replies retain input."""
         for starts_thinking in (False, True):
