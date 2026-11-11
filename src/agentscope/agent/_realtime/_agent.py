@@ -2386,7 +2386,10 @@ class RealtimeAgent:
         self._confirmations[call.id] = future
         try:
             result = await asyncio.wait_for(future, timeout=300)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except asyncio.TimeoutError:
+            # Only an unanswered question is a denial. A cancellation is a
+            # teardown (``close()`` cancels the tool task), and swallowing
+            # it would keep the task running to the next call's 300s wait.
             return False
         finally:
             self._confirmations.pop(call.id, None)
