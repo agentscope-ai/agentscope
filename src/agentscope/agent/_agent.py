@@ -459,6 +459,10 @@ class Agent:
             await self.compress_context(context_config=context_config)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
+            if isinstance(e, ContentBlockedError) and (
+                e.partial_output or e.requires_review
+            ):
+                raise
             return ToolChunk(
                 content=[TextBlock(text=f"Context compression failed: {e}")],
                 state=ToolResultState.ERROR,
@@ -634,6 +638,10 @@ class Agent:
             )
 
         except Exception as error:
+            if isinstance(error, ContentBlockedError) and (
+                error.partial_output or error.requires_review
+            ):
+                raise
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -672,6 +680,11 @@ class Agent:
                         structured_model=cfg.summary_schema,
                     )
                 except Exception as retry_error:
+                    if isinstance(retry_error, ContentBlockedError) and (
+                        retry_error.partial_output
+                        or retry_error.requires_review
+                    ):
+                        raise
                     error = retry_error
 
             if res is None:
