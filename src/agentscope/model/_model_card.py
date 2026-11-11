@@ -152,6 +152,8 @@ class ModelCard(BaseModel):
             "properties": properties,
             "required": base_schema.get("required", []),
         }
+        if "$defs" in base_schema:
+            final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
 
         # Create ModelCard instance
         return cls(
