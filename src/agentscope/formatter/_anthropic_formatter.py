@@ -30,6 +30,28 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
     """Mixin for formatting Anthropic formatters to avoid duplication between
     AnthropicChatFormatter and AnthropicMultiAgentFormatter."""
 
+    def _append_data_block(
+        self,
+        block: DataBlock,
+        role: str,
+        messages: list[dict],
+        content_blocks: list,
+    ) -> None:
+        """Format a data block; assistant-role media becomes a user message.
+
+        Anthropic assistant content may only be text, tool_use or thinking
+        blocks, so assistant-role media is promoted into its own preceding
+        user message (the same promotion the OpenAI-compatible formatters
+        apply).
+        """
+        formatted_block = self._format_anthropic_data_block(block)
+        if not formatted_block:
+            return
+        if role == "assistant":
+            messages.append({"role": "user", "content": [formatted_block]})
+        else:
+            content_blocks.append(formatted_block)
+
     # pylint: disable=too-many-branches
     async def _format_messages(
         self,
@@ -158,9 +180,12 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                         )
 
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_anthropic_data_block(block)
-                    if formatted_block:
-                        content_blocks.append(formatted_block)
+                    self._append_data_block(
+                        block,
+                        msg.role,
+                        messages,
+                        content_blocks,
+                    )
 
                 elif isinstance(block, ToolCallBlock):
                     content_blocks.append(

@@ -183,6 +183,27 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
       echoed back verbatim as required by reasoning models (e.g. ``o1``).
     """
 
+    def _append_data_block(
+        self,
+        block: DataBlock,
+        role: str,
+        items: list[dict[str, Any]],
+        content_parts: list[dict[str, Any]],
+    ) -> None:
+        """Format a data block; assistant-role media becomes a user item.
+
+        Assistant output items only carry ``output_text``, so media (an
+        input-side part) is promoted into its own preceding user item (the
+        same promotion the OpenAI chat formatter applies).
+        """
+        formatted = self._format_response_data_block(block)
+        if formatted is None:
+            return
+        if role == "assistant":
+            items.append({"role": "user", "content": [formatted]})
+        else:
+            content_parts.append(formatted)
+
     # pylint: disable=too-many-branches
     async def format(
         self,
@@ -220,9 +241,12 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     )
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(block)
-                    if formatted is not None:
-                        content_parts.append(formatted)
+                    self._append_data_block(
+                        block,
+                        msg.role,
+                        items,
+                        content_parts,
+                    )
 
                 elif isinstance(block, HintBlock):
                     if function_calls:

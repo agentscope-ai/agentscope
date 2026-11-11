@@ -11,6 +11,7 @@ from unittest import IsolatedAsyncioTestCase
 from agentscope.formatter import (
     AnthropicChatFormatter,
     AnthropicMultiAgentFormatter,
+    MiniMaxChatFormatter,
 )
 from agentscope.message import (
     UserMsg,
@@ -1563,3 +1564,75 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+
+class TestAssistantMediaPromotion(IsolatedAsyncioTestCase):
+    """Assistant-role media is promoted into its own user message."""
+
+    def setUp(self) -> None:
+        self.image_b64 = "ZmFrZQ=="
+        self.image = DataBlock(
+            source=Base64Source(
+                data=self.image_b64,
+                media_type="image/png",
+            ),
+        )
+
+    async def test_assistant_media_promoted_to_user_message(self) -> None:
+        """Anthropic assistant content may only be text/tool_use/thinking."""
+        fmt = AnthropicChatFormatter()
+        msg = AssistantMsg(
+            name="assistant",
+            content=[TextBlock(text="look"), self.image],
+        )
+        res = await fmt.format([msg])
+
+        self.assertListEqual(
+            res,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": self.image_b64,
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "look"}],
+                },
+            ],
+        )
+
+    async def test_minimax_inherits_promotion(self) -> None:
+        """MiniMaxChatFormatter shares the Anthropic message assembly."""
+        fmt = MiniMaxChatFormatter()
+        msg = AssistantMsg(
+            name="assistant",
+            content=[TextBlock(text="look"), self.image],
+        )
+        res = await fmt.format([msg])
+
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0]["role"], "user")
+        self.assertIn(self.image_b64, repr(res[0]["content"]))
+        self.assertNotIn(self.image_b64, repr(res[1]["content"]))
+
+    async def test_user_media_kept_in_place(self) -> None:
+        """User-role media stays inside the user message, unsplit."""
+        fmt = AnthropicChatFormatter()
+        msg = UserMsg(
+            name="user",
+            content=[TextBlock(text="look"), self.image],
+        )
+        res = await fmt.format([msg])
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["role"], "user")
+        self.assertIn(self.image_b64, repr(res[0]["content"]))
