@@ -3,6 +3,7 @@
 import base64
 import io
 import wave
+from contextlib import aclosing
 from datetime import datetime
 from typing import (
     Any,
@@ -137,7 +138,8 @@ class GeminiTTSModel(TTSModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
-                ``credentials``, ``http_options``).
+                ``credentials``, ``http_options``). Developer API requests
+                default to ``v1beta`` unless an API version is supplied.
         """
         super().__init__(
             credential=credential,
@@ -203,23 +205,44 @@ class GeminiTTSModel(TTSModelBase):
             "speech_config": {
                 "voice_config": voice_config,
             },
-            **kwargs,
         }
+        http_options = self.client_kwargs.get("http_options") or {}
+        api_version = (
+            http_options.get("api_version")
+            if isinstance(http_options, dict)
+            else http_options.api_version
+        )
+        if not client.vertexai and not api_version:
+            config["http_options"] = {"api_version": "v1beta"}
+        config.update(kwargs)
 
         if self.stream:
-            stream = await client.aio.models.generate_content_stream(
-                model=self.model,
-                contents=contents,
-                config=config,
-            )
-            return self._parse_stream_into_async_generator(stream)
+
+            async def generate() -> AsyncGenerator[TTSResponse, None]:
+                """Own the client until the stream is exhausted or closed."""
+                with client:
+                    async with client.aio as aio:
+                        stream = await aio.models.generate_content_stream(
+                            model=self.model,
+                            contents=contents,
+                            config=config,
+                        )
+                        async with aclosing(stream):
+                            async for chunk in (
+                                self._parse_stream_into_async_generator(stream)
+                            ):
+                                yield chunk
+
+            return generate()
 
         start_datetime = datetime.now()
-        response = await client.aio.models.generate_content(
-            model=self.model,
-            contents=contents,
-            config=config,
-        )
+        with client:
+            async with client.aio:
+                response = await client.aio.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                )
         elapsed = (datetime.now() - start_datetime).total_seconds()
 
         return self._parse_response(response, elapsed)

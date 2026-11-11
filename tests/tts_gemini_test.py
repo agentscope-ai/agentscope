@@ -7,15 +7,27 @@ Covers:
     responses with ``responseModalities: ["AUDIO"]``.
   * Handling of empty/missing text and empty audio responses.
 """
+import asyncio
 import base64
 import io
 import json
 import wave
+import weakref
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
+
+try:
+    from google import genai
+except ImportError:
+    genai = None
 
 from agentscope.credential import GeminiCredential
 from agentscope.tts import GeminiTTSModel, TTSResponse
@@ -103,6 +115,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
             self.skipTest("google-genai is not installed")
 
         self.mock_client = MagicMock()
+        self.mock_client.vertexai = False
         self.mock_client.aio.models.generate_content = AsyncMock()
         self.patcher = patch(
             "google.genai.Client",
@@ -278,18 +291,209 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
                     ],
                 )
 
+    async def test_api_version_overrides_and_vertex(self) -> None:
+        """Respect explicit versions and leave Vertex defaults unchanged."""
+        for vertexai, options, expected in (
+            (False, {}, {"api_version": "v1beta"}),
+            (False, {"api_version": "v1"}, None),
+            (False, genai.types.HttpOptions(api_version="v1"), None),
+            (True, {}, None),
+        ):
+            with self.subTest(vertexai=vertexai, options=options):
+                self.mock_client.vertexai = vertexai
+                self.mock_client.aio.models.generate_content.return_value = (
+                    _make_api_response([b"AAAA"])
+                )
+                model = GeminiTTSModel(
+                    credential=GeminiCredential(api_key="test"),
+                    stream=False,
+                    client_kwargs={"http_options": options},
+                )
+                await model.synthesize("Hello")
+                call = self.mock_client.aio.models.generate_content.call_args
+                self.assertEqual(
+                    call.kwargs["config"].get("http_options"),
+                    expected,
+                )
+
 
 class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
     """Verify request serialization and audio parsing through the real SDK."""
+
+    def setUp(self) -> None:
+        """Skip transport tests when the optional SDK is unavailable."""
+        if genai is None:
+            self.skipTest("google-genai is not installed")
+
+    async def test_aiohttp_connector_survives_stream_start(self) -> None:
+        """Keep the SDK-owned aiohttp connector open across request awaits."""
+        if aiohttp is None:
+            self.skipTest("aiohttp is not installed")
+        sessions = []
+
+        async def request(
+            session: Any,
+            method: str,
+            url: str,
+            **_kwargs: Any,
+        ) -> httpx.Response:
+            """Exercise session lifetime without contacting Google."""
+            sessions.append(session)
+            await asyncio.sleep(0)
+            self.assertEqual(
+                (session.closed, session.connector is not None),
+                (False, True),
+            )
+            self.assertEqual(
+                (method, url),
+                (
+                    "post",
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    "gemini-3.8-flash-tts:streamGenerateContent?alt=sse",
+                ),
+            )
+            return httpx.Response(
+                200,
+                text='data: {"usageMetadata":{"promptTokenCount":1}}\n\n',
+            )
+
+        model = GeminiTTSModel(
+            credential=GeminiCredential(api_key="test"),
+            model="gemini-3.8-flash-tts",
+        )
+        with patch.object(aiohttp.ClientSession, "_request", request):
+            stream = await model.synthesize("Hello")
+            responses = [chunk async for chunk in stream]
+        self.assertEqual(
+            (
+                [
+                    (r.content, r.is_last, r.usage.input_tokens)
+                    for r in responses
+                ],
+                [session.closed for session in sessions],
+            ),
+            ([(None, True, 1)], [True]),
+        )
+
+    async def test_stream_owns_client_until_closed(self) -> None:
+        """Keep SDK-owned clients alive, then close on every exit path."""
+        for outcome in ("complete", "error", "early_close", "cancel"):
+            with self.subTest(outcome=outcome):
+                await self._check_client_lifetime(outcome)
+
+    async def _check_client_lifetime(self, outcome: str) -> None:
+        """Use owned transports so premature SDK cleanup is observable."""
+        clients = []
+        transports = []
+        original_client = genai.Client
+
+        def create_client(**kwargs: Any) -> Any:
+            """Track the SDK client weakly without extending its lifetime."""
+            client = original_client(**kwargs)
+            clients.append(weakref.ref(client))
+            transports.append(client._api_client._async_httpx_client)
+            transports.append(client._api_client._httpx_client)
+            return client
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            """Return PCM events or fail while consuming the SDK stream."""
+            self.assertEqual(
+                request.url.path,
+                "/v1beta/models/gemini-3.8-flash-tts:streamGenerateContent",
+            )
+            if outcome == "error":
+                raise RuntimeError("transport failed")
+            if outcome == "cancel":
+                raise asyncio.CancelledError()
+            blob = {
+                "mimeType": "audio/L16;rate=24000",
+                "data": base64.b64encode(b"AAAA").decode("ascii"),
+            }
+            content = {"parts": [{"inlineData": blob}]}
+            event = {"candidates": [{"content": content}]}
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=f"data: {json.dumps(event)}\n\n" * 3,
+            )
+
+        model = GeminiTTSModel(
+            credential=GeminiCredential(api_key="test"),
+            model="gemini-3.8-flash-tts",
+            client_kwargs={
+                "http_options": {
+                    "async_client_args": {
+                        "transport": httpx.MockTransport(handler),
+                    },
+                },
+            },
+        )
+        with patch("google.genai.Client", side_effect=create_client):
+            stream = await model.synthesize("Hello")
+            try:
+                await asyncio.sleep(0)
+                self.assertEqual(
+                    (
+                        clients[0]() is not None,
+                        [transport.is_closed for transport in transports],
+                    ),
+                    (True, [False, False]),
+                )
+                if outcome == "error":
+                    with self.assertRaisesRegex(RuntimeError, "failed"):
+                        await anext(stream)
+                elif outcome == "cancel":
+                    with self.assertRaises(asyncio.CancelledError):
+                        await anext(stream)
+                elif outcome == "early_close":
+                    await anext(stream)
+                    self.assertEqual(
+                        [transport.is_closed for transport in transports],
+                        [False, False],
+                    )
+                else:
+                    responses = [chunk async for chunk in stream]
+                    audio = b"".join(
+                        base64.b64decode(chunk.content.source.data)
+                        for chunk in responses
+                    )
+                    self.assertEqual(
+                        (
+                            _parse_wav_payload(audio),
+                            [chunk.is_last for chunk in responses],
+                            [t.is_closed for t in transports],
+                        ),
+                        (b"AAAA" * 3, [False, False, True], [True, True]),
+                    )
+            finally:
+                await stream.aclose()
+        self.assertEqual(
+            [transport.is_closed for transport in transports],
+            [True, True],
+        )
 
     async def test_new_models_through_real_sdk(self) -> None:
         """Cover both models, unary WAV, and incremental PCM with usage."""
         for name in _NEW_MODELS:
             for streaming in (False, True):
-                with self.subTest(model=name, streaming=streaming):
-                    await self._check_sdk_roundtrip(name, streaming)
+                for api_version in (None, "v1"):
+                    with self.subTest(
+                        model=name,
+                        streaming=streaming,
+                        api_version=api_version,
+                    ):
+                        await self._check_sdk_roundtrip(
+                            name,
+                            streaming,
+                            api_version,
+                        )
 
-    async def _check_sdk_roundtrip(self, name: str, streaming: bool) -> None:
+    async def _check_sdk_roundtrip(
+        self,
+        name: str,
+        streaming: bool,
+        api_version: str | None,
+    ) -> None:
         """Keep each transport capture isolated from the parameter loop."""
         text, style = "你好 <sigh>", "warm and friendly"
         pcm = b"AAAA" + b"BBBB"
@@ -303,6 +507,7 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             },
         }
         operation = "streamGenerateContent" if streaming else "generateContent"
+        version = api_version or "v1beta"
         mime_type = "audio/L16;rate=24000" if streaming else "audio/wav"
 
         def audio_event(data: bytes) -> dict:
@@ -318,7 +523,7 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             """Check the entire request before returning unary or SSE audio."""
             self.assertEqual(
                 (request.url.path, json.loads(request.content)),
-                (f"/v1beta/models/{name}:{operation}", expected_body),
+                (f"/{version}/models/{name}:{operation}", expected_body),
             )
             usage = {
                 "usageMetadata": {
@@ -341,6 +546,9 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
         ) as http_client:
+            http_options = {"httpx_async_client": http_client}
+            if api_version is not None:
+                http_options["api_version"] = api_version
             model = GeminiTTSModel(
                 credential=GeminiCredential(api_key="test"),
                 model=name,
@@ -349,12 +557,7 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
                     style=style,
                 ),
                 stream=streaming,
-                client_kwargs={
-                    "http_options": {
-                        "api_version": "v1beta",
-                        "httpx_async_client": http_client,
-                    },
-                },
+                client_kwargs={"http_options": http_options},
             )
             result = await model.synthesize(text)
             responses = (
