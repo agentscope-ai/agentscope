@@ -60,6 +60,7 @@ from agentscope.message import (
     AssistantMsg,
     Msg,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
     ToolResultState,
 )
@@ -992,6 +993,66 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 expected,
                 msg=f"Mismatch after event[{idx}] ({event.type})",
             )
+
+    async def test_confirmed_edits_replace_the_tool_call(self) -> None:
+        """A confirmation may carry the call the user edited.
+
+        The agent runs that edited call, so a message rebuilt from the
+        event stream must hold the edited name and input as well —
+        otherwise what the reply shows is not what was executed.
+        """
+        self.msg.append_event(
+            ToolCallStartEvent(
+                reply_id=_REPLY_ID,
+                tool_call_id=_TC_ALLOW,
+                tool_call_name="search",
+            ),
+        )
+        self.msg.append_event(
+            ToolCallDeltaEvent(
+                reply_id=_REPLY_ID,
+                tool_call_id=_TC_ALLOW,
+                delta='{"q": "hi"}',
+            ),
+        )
+        self.msg.append_event(
+            RequireUserConfirmEvent(
+                reply_id=_REPLY_ID,
+                tool_calls=[
+                    ToolCallBlock(
+                        id=_TC_ALLOW,
+                        name="search",
+                        input='{"q": "hi"}',
+                    ),
+                ],
+            ),
+        )
+        self.msg.append_event(
+            UserConfirmResultEvent(
+                reply_id=_REPLY_ID,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=ToolCallBlock(
+                            id=_TC_ALLOW,
+                            name="web_search",
+                            input='{"q": "edited"}',
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        calls = [
+            block
+            for block in self.msg.content
+            if isinstance(block, ToolCallBlock) and block.id == _TC_ALLOW
+        ]
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertEqual(call.name, "web_search")
+        self.assertEqual(call.input, '{"q": "edited"}')
+        self.assertEqual(call.state, ToolCallState.ALLOWED)
 
     async def test_custom_events_are_skipped(self) -> None:
         """Custom notifications must not modify the accumulated message."""
