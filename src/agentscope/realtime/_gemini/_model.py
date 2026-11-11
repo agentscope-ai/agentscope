@@ -638,7 +638,12 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """End the open model turn with the usage last reported."""
         # A thinking status can arrive before input transcription. Proactive
         # audio may also finish processing without producing any speech.
-        events = self._settle_input() if self._extended_thinking else []
+        # A cancelled response's late IDLE does not end the next user turn.
+        events = (
+            self._settle_input()
+            if self._extended_thinking and not self._response_cancelled
+            else []
+        )
         if not self._pending_tool_calls and not self._awaiting_tool_reply:
             self._transcription_response_id = ""
         if not self._response_id:

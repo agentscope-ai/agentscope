@@ -3183,6 +3183,117 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(agent._pending_user_turns, {})
 
+    async def test_stale_idle_preserves_ongoing_local_input(self) -> None:
+        """Cancelled completions cannot split speech or filter a fragment."""
+        for backchannels in (frozenset(), frozenset({"New"})):
+            with self.subTest(backchannels=backchannels):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                    parameters=GeminiRealtimeModel.Parameters(
+                        turn_detection="none",
+                    ),
+                )
+                model._send = AsyncMock()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    aggregator=TurnAggregator(backchannels=backchannels),
+                )
+                agent._connected = True
+
+                async def feed(
+                    content: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver provider events without a network."""
+                    for event in current_model._parse(
+                        {"serverContent": content},
+                    ):
+                        await current_agent._on_model_event(event)
+
+                try:
+                    with patch(
+                        "agentscope.agent._realtime._aggregator.time",
+                    ) as clock:
+                        clock.monotonic.return_value = 10.0
+                        await feed(
+                            {"outputTranscription": {"text": "Old answer"}},
+                        )
+                        await agent._forward_audio(
+                            b"\x00\x00",
+                            SpeechTransition.STARTED,
+                        )
+                        user_turn = agent._user_turn
+                        await feed({"inputTranscription": {"text": "New "}})
+                        provider_id = model._user_id
+                        for _ in range(2):
+                            await feed({"interactionStatus": "IDLE"})
+                            self.assertIs(agent._user_turn, user_turn)
+                            self.assertEqual(
+                                (
+                                    user_turn.open,
+                                    user_turn.speech_ended,
+                                    model._user_id,
+                                    model._input_text,
+                                ),
+                                (True, False, provider_id, "New "),
+                            )
+                        clock.monotonic.return_value = 12.0
+                        await feed(
+                            {"inputTranscription": {"text": "question"}},
+                        )
+                        self.assertEqual(model._user_id, provider_id)
+                        await agent._forward_audio(
+                            b"\x00\x00",
+                            SpeechTransition.ENDED,
+                        )
+                        await feed(
+                            {
+                                "interactionStatus": "IN_PROGRESS",
+                                "outputTranscription": {"text": "Okay."},
+                            },
+                        )
+                        await feed({"interactionStatus": "IDLE"})
+                    events = list(agent.drain_events())
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "user_starts": [
+                                event.reply_id
+                                for event in events
+                                if isinstance(event, ReplyStartEvent)
+                                and event.role == "user"
+                            ],
+                            "user_ends": [
+                                event.reply_id
+                                for event in events
+                                if isinstance(event, ReplyEndEvent)
+                                and event.reply_id == user_turn.reply_id
+                            ],
+                            "pending": agent._pending_user_turns,
+                            "current": agent._user_turn,
+                        },
+                        {
+                            "context": [
+                                ("assistant", "Old answer"),
+                                ("user", "New question"),
+                                ("assistant", "Okay."),
+                            ],
+                            "user_starts": [user_turn.reply_id],
+                            "user_ends": [user_turn.reply_id],
+                            "pending": {},
+                            "current": None,
+                        },
+                    )
+                finally:
+                    await agent.close()
+
     async def test_repeated_local_input_before_cancelled_response_idle(
         self,
     ) -> None:
@@ -3228,6 +3339,13 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                 self.assertEqual(agent._reply_id, "")
         for event in model._parse({"interactionStatus": "IDLE"}):
             await agent._on_model_event(event)
+        self.assertIsNotNone(agent._user_turn)
+        for content in (
+            {"interactionStatus": "IN_PROGRESS"},
+            {"interactionStatus": "IDLE"},
+        ):
+            for event in model._parse({"serverContent": content}):
+                await agent._on_model_event(event)
         starts = []
         ends = []
         while not agent._out.empty():

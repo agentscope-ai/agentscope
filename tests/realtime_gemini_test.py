@@ -1196,17 +1196,34 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
         )
         await model.cancel_response()
         self.assertTrue(model._queue.empty())
+        stale = model._parse({"serverContent": {"interactionStatus": "IDLE"}})
+        self.assertEqual(
+            _dump(stale),
+            [
+                (
+                    "ResponseDoneEvent",
+                    {
+                        "item_id": first[0].item_id,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(
+            model._parse({"serverContent": {"interactionStatus": "IDLE"}}),
+            [],
+        )
+        self.assertEqual(
+            (model._user_id, model._input_text),
+            (second[0].item_id, "Change "),
+        )
         second += model._parse(
-            {
-                "serverContent": {
-                    "inputTranscription": {"text": "city"},
-                    "interactionStatus": "IDLE",
-                },
-            },
+            {"serverContent": {"inputTranscription": {"text": "city"}}},
         )
         self.assertNotEqual(second[0].item_id, user_id)
         self.assertEqual(
-            _dump(second[:3]),
+            _dump(second),
             [
                 (
                     "InputTranscriptionDeltaEvent",
@@ -1217,11 +1234,29 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
                     },
                 )
                 for text in ("Change ", "city")
-            ]
-            + [
+            ],
+        )
+        opened = model._parse(
+            {"serverContent": {"interactionStatus": "IN_PROGRESS"}},
+        )
+        self.assertEqual(
+            _dump(
+                model._parse(
+                    {"serverContent": {"interactionStatus": "IDLE"}},
+                ),
+            ),
+            [
                 (
                     "InputTranscriptionEvent",
                     {"item_id": second[0].item_id, "text": "Change city"},
+                ),
+                (
+                    "ResponseDoneEvent",
+                    {
+                        "item_id": opened[0].item_id,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
                 ),
             ],
         )
