@@ -205,6 +205,7 @@ class GeminiTTSModel(TTSModelBase):
             "speech_config": {
                 "voice_config": voice_config,
             },
+            **kwargs,
         }
         http_options = self.client_kwargs.get("http_options") or {}
         api_version = (
@@ -213,8 +214,19 @@ class GeminiTTSModel(TTSModelBase):
             else http_options.api_version
         )
         if not client.vertexai and not api_version:
-            config["http_options"] = {"api_version": "v1beta"}
-        config.update(kwargs)
+            request_options = config.get("http_options") or {}
+            if isinstance(request_options, dict):
+                config["http_options"] = {
+                    **request_options,
+                    "api_version": request_options.get("api_version")
+                    or "v1beta",
+                }
+            else:
+                config["http_options"] = request_options.model_copy(
+                    update={
+                        "api_version": request_options.api_version or "v1beta",
+                    },
+                )
 
         if self.stream:
 
@@ -284,6 +296,10 @@ class GeminiTTSModel(TTSModelBase):
                     part_encoding = _audio_encoding(inline_data.mime_type)
                     if encoding is not None and encoding != part_encoding:
                         raise ValueError("Gemini TTS returned mixed formats.")
+                    if encoding == part_encoding == "audio/wav":
+                        raise ValueError(
+                            "Gemini TTS returned multiple WAV audio parts.",
+                        )
                     encoding = part_encoding
                     data = inline_data.data
                     # `inline_data.data` may be a base64-encoded `str` or

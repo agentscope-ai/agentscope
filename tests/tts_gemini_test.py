@@ -175,6 +175,35 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
         wav_bytes = base64.b64decode(result.content.source.data)
         self.assertEqual(_parse_wav_payload(wav_bytes), b"AAAA")
 
+    def test_rejects_multiple_wav_parts(self) -> None:
+        """Reject separate WAV files instead of silently truncating audio."""
+        response = _make_api_response(
+            [_make_wav(b"AAAA"), None, _make_wav(b"BBBB")],
+            mime_type="audio/wav",
+        )
+        with self.assertRaises(ValueError) as error:
+            GeminiTTSModel._parse_response(response, 0)
+        self.assertEqual(
+            str(error.exception),
+            "Gemini TTS returned multiple WAV audio parts.",
+        )
+
+    def test_single_wav_with_empty_parts_is_unchanged(self) -> None:
+        """Preserve a single WAV even when other parts contain no audio."""
+        wav_bytes = _make_wav(b"AAAA")
+        response = _make_api_response(
+            [None, wav_bytes, b"", None],
+            mime_type="audio/wav",
+        )
+        result = GeminiTTSModel._parse_response(response, 0)
+        self.assertEqual(
+            (
+                base64.b64decode(result.content.source.data),
+                result.content.source.media_type,
+            ),
+            (wav_bytes, "audio/wav"),
+        )
+
     async def test_stream_uses_only_first_audio_candidate(self) -> None:
         """Streaming must not append an alternative candidate's audio."""
         first_chunk = _make_api_response([b"AAAA"])
@@ -315,6 +344,59 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
                     call.kwargs["config"].get("http_options"),
                     expected,
                 )
+
+    async def test_request_http_options_preserve_api_version(self) -> None:
+        """Merge request options without mutating caller-owned values."""
+        self.mock_client.aio.models.generate_content.return_value = (
+            _make_api_response([b"AAAA"])
+        )
+        for vertexai, client_version, request_version, expected_version in (
+            (False, None, None, "v1beta"),
+            (False, None, "v1", "v1"),
+            (False, "v1", None, None),
+            (False, "v1", "v1beta", "v1beta"),
+            (True, None, None, None),
+        ):
+            for typed in (False, True):
+                with self.subTest(
+                    vertexai=vertexai,
+                    client_version=client_version,
+                    request_version=request_version,
+                    typed=typed,
+                ):
+                    original = {
+                        "timeout": 1000,
+                        "headers": {"x-test": "retained"},
+                        "api_version": request_version,
+                    }
+                    options = (
+                        genai.types.HttpOptions(**original)
+                        if typed
+                        else dict(original)
+                    )
+                    self.mock_client.vertexai = vertexai
+                    model = GeminiTTSModel(
+                        credential=GeminiCredential(api_key="test"),
+                        stream=False,
+                        client_kwargs={
+                            "http_options": {"api_version": client_version},
+                        },
+                    )
+                    await model.synthesize("Hello", http_options=options)
+                    call = (
+                        self.mock_client.aio.models.generate_content.call_args
+                    )
+                    actual = call.kwargs["config"]["http_options"]
+                    if typed:
+                        actual = actual.model_dump(exclude_unset=True)
+                        options = options.model_dump(exclude_unset=True)
+                    self.assertEqual(
+                        (actual, options),
+                        (
+                            {**original, "api_version": expected_version},
+                            original,
+                        ),
+                    )
 
 
 class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
@@ -559,7 +641,10 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
                 stream=streaming,
                 client_kwargs={"http_options": http_options},
             )
-            result = await model.synthesize(text)
+            result = await model.synthesize(
+                text,
+                http_options={"timeout": 1000},
+            )
             responses = (
                 [chunk async for chunk in result] if streaming else [result]
             )
