@@ -276,7 +276,15 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
                 is_last=True,
             )
 
-        base_dir = path if path else await self._backend.getcwd()
+        base_dir = path or "."
+        if base_dir == ".":
+            base_dir = await self._backend.getcwd()
+        elif not self._backend.isabs(base_dir):
+            # Preserve '..' so the filesystem can resolve symlinks first.
+            base_dir = self._backend.join_path(
+                await self._backend.getcwd(),
+                base_dir,
+            )
 
         # The base must be an existing directory; a regular file would
         # otherwise be accepted here and fail later with a confusing
