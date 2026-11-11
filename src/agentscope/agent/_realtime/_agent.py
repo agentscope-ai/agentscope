@@ -2415,8 +2415,15 @@ class RealtimeAgent:
             async with lock:
                 for call in calls:
                     async with self._barge_lock:
-                        if self._reply_id != reply_id:
-                            return
+                        interrupted = self._reply_id != reply_id
+                    if interrupted:
+                        await self._report_tool(
+                            reply_id,
+                            call,
+                            "Reply interrupted before tool execution.",
+                            state=ToolResultState.INTERRUPTED,
+                        )
+                        continue
                     await self._run_tool(reply_id, call)
             # Unless the user cut the reply short while the tools ran.
             async with self._barge_lock:

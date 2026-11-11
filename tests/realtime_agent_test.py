@@ -3315,6 +3315,9 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
     ) -> None:
         """Serialize within a reply while allowing the next reply to run."""
         model = ScriptedModel([])
+        model.push_tool_result_silently = AsyncMock(
+            wraps=model.push_tool_result_silently,
+        )
         old_tool = BlockingTool()
         old_tool.name = "slow_tool"
         agent = RealtimeAgent(
@@ -3369,21 +3372,66 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                 [
                     "tool_result(new,'new-final')",
                     "tool_result(running,'old-final')",
+                    "tool_result(queued,"
+                    "'Reply interrupted before tool execution.')",
                 ],
+            )
+            self.assertEqual(
+                [
+                    (call.args[0].id, call.args[0].state)
+                    for call in model.push_tool_result_silently.await_args_list
+                ],
+                [("running", "success"), ("queued", "interrupted")],
             )
             self.assertEqual(
                 [
                     (
                         msg.id,
                         [
-                            block.id
+                            (block.type, block.id, block.state)
                             for block in msg.content
-                            if isinstance(block, ToolResultBlock)
+                            if isinstance(
+                                block,
+                                (ToolCallBlock, ToolResultBlock),
+                            )
                         ],
                     )
                     for msg in agent.state.context
                 ],
-                [("r1", ["running"]), ("r2", ["new"])],
+                [
+                    (
+                        "r1",
+                        [
+                            ("tool_call", "running", "finished"),
+                            ("tool_call", "queued", "finished"),
+                            ("tool_result", "running", "success"),
+                            ("tool_result", "queued", "interrupted"),
+                        ],
+                    ),
+                    (
+                        "r2",
+                        [
+                            ("tool_call", "new", "finished"),
+                            ("tool_result", "new", "success"),
+                        ],
+                    ),
+                ],
+            )
+            self.assertEqual(
+                [
+                    (event.type, event.tool_call_id)
+                    for event in agent.drain_events()
+                    if isinstance(
+                        event,
+                        (ToolCallStartEvent, ToolResultEndEvent),
+                    )
+                ],
+                [
+                    ("TOOL_CALL_START", "new"),
+                    ("TOOL_RESULT_END", "new"),
+                    ("TOOL_RESULT_END", "running"),
+                    ("TOOL_RESULT_END", "queued"),
+                ],
             )
         finally:
             old_tool.release.set()
@@ -3439,10 +3487,11 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                         "toolCall": {
                             "functionCalls": [
                                 {
-                                    "id": "c1",
+                                    "id": call_id,
                                     "name": tool.name,
                                     "args": {"q": "x"},
-                                },
+                                }
+                                for call_id in ("c1", "c2")
                             ],
                         },
                     },
@@ -3519,6 +3568,24 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                                                 "id": "c1",
                                                 "name": tool.name,
                                                 "response": result,
+                                                "scheduling": "SILENT",
+                                            },
+                                        ],
+                                    },
+                                },
+                                {
+                                    "toolResponse": {
+                                        "functionResponses": [
+                                            {
+                                                "id": "c2",
+                                                "name": tool.name,
+                                                "response": {
+                                                    "error": (
+                                                        "Reply interrupted "
+                                                        "before tool "
+                                                        "execution."
+                                                    ),
+                                                },
                                                 "scheduling": "SILENT",
                                             },
                                         ],
@@ -3768,7 +3835,15 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                         },
                     )
                     self.assertEqual(
-                        [call.args[0] for call in model._send.await_args_list],
+                        sorted(
+                            [
+                                call.args[0]
+                                for call in model._send.await_args_list
+                            ],
+                            key=lambda frame: frame["toolResponse"][
+                                "functionResponses"
+                            ][0]["id"],
+                        ),
                         [
                             {
                                 "toolResponse": {
@@ -3776,7 +3851,7 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                                         {
                                             "id": call_id,
                                             "name": "stream_tool",
-                                            "response": {"output": output},
+                                            "response": result,
                                             **(
                                                 {"scheduling": "SILENT"}
                                                 if interrupted
@@ -3786,11 +3861,18 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                                     ],
                                 },
                             }
-                            for call_id, output in (
-                                [("c1", "x-final")]
-                                if interrupted
-                                else [("c1", "x-final"), ("c2", "y-final")]
-                            )
+                            for call_id, result in [
+                                ("c1", {"output": "x-final"}),
+                                (
+                                    "c2",
+                                    {
+                                        "error": "Reply interrupted before "
+                                        "tool execution.",
+                                    }
+                                    if interrupted
+                                    else {"output": "y-final"},
+                                ),
+                            ]
                         ],
                     )
                     events = []
@@ -3841,27 +3923,26 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                         ],
                     )
                     self.assertEqual(
+                        sorted(
+                            [
+                                (event.type, event.tool_call_id)
+                                for event in events
+                                if isinstance(
+                                    event,
+                                    (
+                                        ToolCallStartEvent,
+                                        ToolResultEndEvent,
+                                    ),
+                                )
+                            ],
+                            key=lambda event: (event[1], event[0]),
+                        ),
                         [
-                            (event.type, event.tool_call_id)
-                            for event in events
-                            if isinstance(
-                                event,
-                                (
-                                    ToolCallStartEvent,
-                                    ToolResultEndEvent,
-                                ),
-                            )
-                        ],
-                        [
-                            (kind, call_id)
-                            for call_id in (
-                                ["c1"] if interrupted else ["c1", "c2"]
-                            )
-                            for kind in (
-                                "TOOL_CALL_START",
-                                "TOOL_RESULT_END",
-                            )
-                        ],
+                            ("TOOL_CALL_START", "c1"),
+                            ("TOOL_RESULT_END", "c1"),
+                        ]
+                        + ([] if interrupted else [("TOOL_CALL_START", "c2")])
+                        + [("TOOL_RESULT_END", "c2")],
                     )
                     self.assertEqual(agent._reply_id, "")
                 finally:
