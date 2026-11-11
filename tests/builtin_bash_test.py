@@ -2,13 +2,16 @@
 """Bash tool test case."""
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agentscope.message import TextBlock
 from agentscope.permission import (
+    AdditionalWorkingDirectory,
     PermissionBehavior,
     PermissionContext,
     PermissionMode,
@@ -176,6 +179,110 @@ class BashToolTest(IsolatedAsyncioTestCase):
             context,
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_symlinked_target_outside_workspace_not_auto_allowed(
+        self,
+    ) -> None:
+        """A relative target that leaves the workspace through a symlink
+        must not be auto-allowed, even when the launcher cwd is elsewhere."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        outside = os.path.join(root, "outside")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, outside, launcher):
+            os.makedirs(directory)
+        try:
+            os.symlink(outside, os.path.join(workdir, "link"))
+        except OSError as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        for mode in (PermissionMode.ACCEPT_EDITS, PermissionMode.DONT_ASK):
+            decision = await bash.check_permissions(
+                {"command": "touch link/boom.txt"},
+                PermissionContext(
+                    mode=mode,
+                    working_directories={
+                        workdir: AdditionalWorkingDirectory(
+                            path=workdir,
+                            source="session",
+                        ),
+                    },
+                ),
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.PASSTHROUGH,
+            )
+
+    async def test_relative_target_inside_workspace_auto_allowed(
+        self,
+    ) -> None:
+        """A relative target that stays inside the workspace is still
+        auto-allowed when the launcher cwd differs from the workspace."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, launcher):
+            os.makedirs(directory)
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        decision = await bash.check_permissions(
+            {"command": "touch inside.txt"},
+            PermissionContext(
+                mode=PermissionMode.ACCEPT_EDITS,
+                working_directories={
+                    workdir: AdditionalWorkingDirectory(
+                        path=workdir,
+                        source="session",
+                    ),
+                },
+            ),
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_dangerous_path_resolved_from_workspace_cwd(
+        self,
+    ) -> None:
+        """A relative target that resolves into a sensitive directory through
+        a workspace symlink must be reported as dangerous."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        outside = os.path.join(root, "outside")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, outside, launcher):
+            os.makedirs(directory)
+        os.makedirs(os.path.join(outside, ".ssh"))
+        try:
+            os.symlink(
+                os.path.join(outside, ".ssh"),
+                os.path.join(workdir, "alias"),
+            )
+        except OSError as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        decision = await bash.check_permissions(
+            {"command": "touch alias/config"},
+            PermissionContext(mode=PermissionMode.DEFAULT),
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertTrue(decision.bypass_immune)
 
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""

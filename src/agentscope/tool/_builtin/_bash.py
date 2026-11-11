@@ -302,8 +302,14 @@ easier to review tool calls and give permission.
             )
 
         # 4. Check for dangerous paths in sensitive config files/dirs
-        # (safety check, bypass-immune)
-        dangerous_paths = self._extract_dangerous_paths_from_bash(command)
+        # (safety check, bypass-immune). Relative targets are resolved
+        # against the backend directory the command will run in, not the
+        # launcher's process cwd.
+        backend_cwd = await self._backend.getcwd()
+        dangerous_paths = self._extract_dangerous_paths_from_bash(
+            command,
+            base_dir=backend_cwd,
+        )
         if dangerous_paths:
             paths_str = ", ".join(dangerous_paths)
             return PermissionDecision(
@@ -382,7 +388,11 @@ easier to review tool calls and give permission.
                 # we fall through to PASSTHROUGH rather than blindly
                 # allowing.
                 if target_paths and all(
-                    self._path_in_allowed_working_path(path, context)
+                    self._path_in_allowed_working_path(
+                        path,
+                        context,
+                        base_dir=backend_cwd,
+                    )
                     for path in target_paths
                 ):
                     return PermissionDecision(
@@ -566,6 +576,7 @@ easier to review tool calls and give permission.
     def _extract_dangerous_paths_from_bash(
         self,
         command: str,
+        base_dir: str | None = None,
     ) -> list[str]:
         """Extract dangerous paths from a bash command using tree-sitter.
 
@@ -576,6 +587,9 @@ easier to review tool calls and give permission.
         Args:
             command (`str`):
                 The bash command string
+            base_dir (`str | None`, optional):
+                Directory a relative target is resolved against when
+                checking whether it names a sensitive file or directory.
 
         Returns:
             `list[str]`:
@@ -587,7 +601,7 @@ easier to review tool calls and give permission.
         file_paths = self._bash_parser.extract_file_paths(command)
 
         for _cmd_name, path in file_paths:
-            if self._is_dangerous_path(path):
+            if self._is_dangerous_path(path, base_dir=base_dir):
                 dangerous_paths.append(path)
 
         return dangerous_paths
