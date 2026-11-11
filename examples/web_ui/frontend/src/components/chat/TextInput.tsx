@@ -198,6 +198,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
+		const [measureWidth, setMeasureWidth] = useState(0);
 		/** ``true`` — textarea takes the full width, buttons drop to their own row. */
 		const [isStacked, setIsStacked] = useState(false);
 		const asrContextRef = useRef({ key: asrResetKey, mounted: true });
@@ -313,6 +314,17 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			focus: () => textareaRef.current?.focus(),
 		}));
 
+		useLayoutEffect(() => {
+			const ghost = measureRef.current;
+			if (!ghost) return;
+
+			const observer = new ResizeObserver(([entry]) => {
+				setMeasureWidth(entry.contentRect.width);
+			});
+			observer.observe(ghost);
+			return () => observer.disconnect();
+		}, []);
+
 		// Grow the textarea with its content. The ``auto`` reset is what lets it
 		// shrink again — ``scrollHeight`` never reports less than the current height.
 		useLayoutEffect(() => {
@@ -321,7 +333,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			textarea.style.height = 'auto';
 			textarea.style.height = `${textarea.scrollHeight}px`;
 			// Stacking widens the textarea, so the line count has to be redone.
-		}, [value, isStacked]);
+		}, [value, isStacked, measureWidth]);
 
 		// Measured on the ghost, not the textarea: stacking widens the textarea, so
 		// measuring it would flip-flop (wraps → stack → fits → unstack → wraps).
@@ -329,7 +341,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			const ghost = measureRef.current;
 			if (!ghost) return;
 			setIsStacked(ghost.scrollHeight > LINE_HEIGHT_PX);
-		}, [value]);
+		}, [value, measureWidth]);
 
 		// Calculate autocomplete suggestion using useMemo
 		const suggestion = useMemo(() => {
