@@ -1063,7 +1063,7 @@ class GatewayResultRouteTest(unittest.TestCase):
                     content=[TextContent(type="text", text="existing")],
                     structured_content=structured,
                 ),
-                [{"type": "text", "text": "existing"}],
+                [{"type": "text", "text": "existing"}, text],
             ),
             (
                 CallToolResult(
