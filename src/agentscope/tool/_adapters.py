@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import json
-import re
 import warnings
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Callable, Any, AsyncGenerator, Generator
@@ -25,6 +24,7 @@ from ._utils import (
     _get_callable_docstring,
     _get_callable_name,
     _remove_title_field,
+    _sanitize_mcp_tool_name,
 )
 from .._logging import logger
 from ..message import (
@@ -252,7 +252,7 @@ class MCPTool(ToolBase):
         # colons, etc. — replace illegal chars with "x" (not "_")
         # to avoid collisions with the "__" separator.
         # self._tool.name retains the original for server-side calls.
-        sanitized_tool = re.sub(r"[^a-zA-Z0-9_-]", "x", tool.name)
+        sanitized_tool = _sanitize_mcp_tool_name(tool.name)
         self.name = f"mcp__{mcp_name}__{sanitized_tool}"
         if sanitized_tool != tool.name:
             logger.debug(
