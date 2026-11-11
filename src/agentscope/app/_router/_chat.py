@@ -456,8 +456,9 @@ async def chat(
 
     Raises:
         `HTTPException`:
-            HTTP 404 if an ordinary-message session is not owned by the
-            caller; HTTP 409 for a conflicting direct ``None`` continuation;
+            HTTP 404 if the target session is not owned by the caller,
+            for any of the three input shapes; HTTP 409 for a conflicting
+            direct ``None`` continuation;
             HTTP 429 when a queue quota is full; or HTTP 503 when queue
             mutation is temporarily busy.
     """
@@ -479,6 +480,14 @@ async def chat(
     ):
         run_session_id = request.session_id
         run_agent_id = request.agent_id
+        # A resume reaches the same session lock and event log as an
+        # ordinary turn, so it needs the same ownership check.
+        await _ensure_session(
+            storage,
+            user_id,
+            request.agent_id,
+            request.session_id,
+        )
         target = await SubagentHitlProjector.resolve(
             SessionProjection(message_bus),
             request.session_id,
@@ -535,6 +544,14 @@ async def chat(
     # ------------------------------------------------------------------
     # ``None`` continuation — retain the direct legacy path.
     # ------------------------------------------------------------------
+    # The continuation runs under the same session lock and writes to the
+    # same event log, so it must not skip the ownership check either.
+    await _ensure_session(
+        storage,
+        user_id,
+        request.agent_id,
+        request.session_id,
+    )
     try:
         task = chat_run_registry.spawn(
             chat_service.run(
