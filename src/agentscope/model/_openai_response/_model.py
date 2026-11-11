@@ -134,6 +134,7 @@ def _openai_response_block_error(
 
     return None
 
+
 _LENGTH_FINISH_REASONS = frozenset({"max_output_tokens"})
 
 
