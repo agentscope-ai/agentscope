@@ -433,7 +433,9 @@ class ToolBase(ABC):
                 True if ``file_path`` is within any allowed working
                 directory.
         """
-        current_dir = os.getcwd()
+        # A tool that runs in its own directory (e.g. Bash on a backend)
+        # works there, so that directory replaces the process cwd.
+        current_dir = base_dir if base_dir is not None else os.getcwd()
         additional_dirs = list(context.working_directories.keys())
         all_working_dirs = [current_dir] + additional_dirs
 

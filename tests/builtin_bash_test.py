@@ -251,6 +251,44 @@ class BashToolTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_launcher_cwd_not_auto_allowed_for_workspace_bash(
+        self,
+    ) -> None:
+        """The launcher cwd is not a working directory of a workspace Bash:
+        a target there is not auto-allowed, while one in the backend cwd is,
+        even without an explicit working directory."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        workdir = os.path.join(root, "ws")
+        launcher = os.path.join(root, "launcher")
+        for directory in (workdir, launcher):
+            os.makedirs(directory)
+
+        previous = os.getcwd()
+        os.chdir(launcher)
+        self.addCleanup(os.chdir, previous)
+
+        bash = Bash(cwd=workdir, backend=LocalBackend(workdir=workdir))
+        context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
+        for command in (
+            "touch ../launcher/escape.txt",
+            f"touch {os.path.join(launcher, 'escape.txt')}",
+        ):
+            decision = await bash.check_permissions(
+                {"command": command},
+                context,
+            )
+            self.assertNotEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+            )
+
+        decision = await bash.check_permissions(
+            {"command": "touch inside.txt"},
+            context,
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
     async def test_dangerous_path_resolved_from_workspace_cwd(
         self,
     ) -> None:
