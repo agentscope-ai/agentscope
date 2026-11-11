@@ -643,7 +643,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 (put.await_count, stored.status, stored.processing_node),
-                (0, "indexing", "replacement"),
+                (0, "parsing", "replacement"),
             )
 
     async def test_old_cleanup_preserves_new_lease_on_same_worker(
@@ -776,6 +776,151 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
             finally:
                 allow_cleanup.set()
                 allow_parsing.set()
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_lost_worker_cannot_fail_replacement_waiting_for_lock(
+        self,
+    ) -> None:
+        """A stale heartbeat cannot make its replacement skip indexing."""
+        await self._store_document("doc-takeover", "pending")
+        document = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-takeover",
+        )
+        document.data.error = None
+        document.data.chunk_count = 0
+        document.data.blob_uri = await self._service._blob_store.write_stream(
+            key="takeover.txt",
+            stream=BytesIO(b"hello world"),
+        )
+        await self._storage.upsert_knowledge_document("user-1", document)
+        workers = [
+            IndexWorker(
+                storage=self._storage,
+                blob_store=self._service._blob_store,
+                knowledge_base_manager=self._manager,
+                message_bus=self._bus,
+                parsers=[TextParser()],
+                node_id=node,
+            )
+            for node in ("old", "replacement")
+        ]
+        old, replacement = workers
+        old._renew_interval = timedelta(milliseconds=1)
+        parsing, detect_loss, waiting = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        heartbeat = old._heartbeat
+        acquire = self._bus.acquire_lock
+        tasks: list[asyncio.Task[None]] = []
+
+        async def paused_parse(*args: Any, **kwargs: Any) -> Any:
+            """Keep the old pipeline alive until its heartbeat cancels it."""
+            del args, kwargs
+            parsing.set()
+            await asyncio.Event().wait()
+
+        async def gated_heartbeat(*args: Any, **kwargs: Any) -> None:
+            """Detect lease loss only after the replacement is waiting."""
+            await detect_loss.wait()
+            await heartbeat(*args, **kwargs)
+
+        @asynccontextmanager
+        async def observed_lock(
+            *args: Any,
+            **kwargs: Any,
+        ) -> AsyncIterator[None]:
+            """Signal that the replacement reached the final write lock."""
+            waiting.set()
+            async with acquire(*args, **kwargs):
+                yield
+
+        with patch.object(
+            old,
+            "_parse",
+            side_effect=paused_parse,
+        ), patch.object(
+            old,
+            "_heartbeat",
+            side_effect=gated_heartbeat,
+        ):
+            try:
+                first = asyncio.create_task(
+                    old.process(
+                        "user-1",
+                        self._knowledge_base_id,
+                        document.id,
+                    ),
+                )
+                tasks.append(first)
+                await asyncio.wait_for(parsing.wait(), timeout=5)
+                active = await self._storage.get_knowledge_document(
+                    "user-1",
+                    self._knowledge_base_id,
+                    document.id,
+                )
+                active.lease_expires_at = datetime.now() - timedelta(seconds=1)
+                await self._storage.upsert_knowledge_document("user-1", active)
+                async with acquire(
+                    MessageBusKeys.knowledge_base_mutation_lock(
+                        "user-1",
+                        self._knowledge_base_id,
+                    ),
+                ):
+                    with patch.object(
+                        self._bus,
+                        "acquire_lock",
+                        side_effect=observed_lock,
+                    ):
+                        second = asyncio.create_task(
+                            replacement.process(
+                                "user-1",
+                                self._knowledge_base_id,
+                                document.id,
+                            ),
+                        )
+                        tasks.append(second)
+                        await asyncio.wait_for(waiting.wait(), timeout=5)
+                        before = await self._storage.get_knowledge_document(
+                            "user-1",
+                            self._knowledge_base_id,
+                            document.id,
+                        )
+                        detect_loss.set()
+                        await asyncio.wait_for(first, timeout=5)
+                        after = await self._storage.get_knowledge_document(
+                            "user-1",
+                            self._knowledge_base_id,
+                            document.id,
+                        )
+                        self.assertEqual(after, before)
+                await asyncio.wait_for(second, timeout=5)
+                final = await self._storage.get_knowledge_document(
+                    "user-1",
+                    self._knowledge_base_id,
+                    document.id,
+                )
+                chunks = await self._manager._vector_store.list_chunks(
+                    "kb_collection",
+                    document.id,
+                )
+                self.assertEqual(
+                    (
+                        final.status,
+                        final.data.error,
+                        final.data.chunk_count,
+                        final.processing_node,
+                        len(chunks),
+                    ),
+                    ("ready", None, 1, None, 1),
+                )
+            finally:
                 for task in tasks:
                     if not task.done():
                         task.cancel()

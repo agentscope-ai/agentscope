@@ -2072,14 +2072,10 @@ class AsyncSQLAlchemyStorage(StorageBase):
         status: KnowledgeDocumentStatus,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
     ) -> None:
-        """Fast-path column UPDATE + optional payload rewrite.
-
-        ``status`` is a column so it can always be updated with a
-        single ``UPDATE``; ``error`` / ``chunk_count`` live inside
-        :attr:`~KnowledgeDocumentRecord.data` (payload) and therefore
-        require the classic read-modify-write when they change.
-        """
+        """Update status and payload with an optional atomic token guard."""
         async with self._session() as sess:
             row = await sess.get(KnowledgeDocumentRow, document_id)
             if (
@@ -2096,9 +2092,23 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 record.data.chunk_count = chunk_count
             record.updated_at = _utcnow()
             new_row = _from_record(KnowledgeDocumentRow, record)
-            row.status = new_row.status
-            row.payload = new_row.payload
-            row.updated_at = new_row.updated_at
+            statement = sa.update(KnowledgeDocumentRow).where(
+                KnowledgeDocumentRow.id == document_id,
+                KnowledgeDocumentRow.user_id == user_id,
+                KnowledgeDocumentRow.knowledge_base_id == knowledge_base_id,
+            )
+            if expected_lease_token is not None:
+                statement = statement.where(
+                    KnowledgeDocumentRow.processing_node
+                    == expected_lease_token,
+                )
+            await sess.execute(
+                statement.values(
+                    status=new_row.status,
+                    payload=new_row.payload,
+                    updated_at=new_row.updated_at,
+                ).execution_options(synchronize_session=False),
+            )
             await sess.commit()
 
     async def acquire_knowledge_document_lease(

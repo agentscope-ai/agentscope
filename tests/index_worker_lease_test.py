@@ -10,6 +10,7 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.app._service._index_worker import IndexWorker
 
@@ -28,13 +29,15 @@ class _LeaseStorage:
         self.released: list[dict] = []
         self.status_updates: list[dict] = []
         self.renew_calls = 0
+        self.holder: str | None = None
 
     async def acquire_knowledge_document_lease(
         self,
         **kwargs: Any,
     ) -> bool:
         """Return the staged ``acquire_returns`` flag."""
-        del kwargs
+        if self.acquire_returns:
+            self.holder = kwargs["processing_node"]
         return self.acquire_returns
 
     async def renew_knowledge_document_lease(
@@ -46,7 +49,10 @@ class _LeaseStorage:
         self.renew_calls += 1
         if not self.renew_results:
             return True
-        return self.renew_results.pop(0)
+        renewed = self.renew_results.pop(0)
+        if not renewed:
+            self.holder = "replacement"
+        return renewed
 
     async def release_knowledge_document_lease(
         self,
@@ -63,9 +69,16 @@ class _LeaseStorage:
         status: str,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
     ) -> None:
         """Record the status transition for later assertion."""
         del user_id, knowledge_base_id, document_id
+        if (
+            expected_lease_token is not None
+            and expected_lease_token != self.holder
+        ):
+            return
         self.status_updates.append(
             {
                 "status": status,
@@ -140,7 +153,9 @@ class _SlowPipelineWorker(IndexWorker):
 class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
     """Pipeline-vs-heartbeat race coverage."""
 
-    async def test_lost_lease_cancels_pipeline_and_marks_error(self) -> None:
+    async def test_lost_lease_cancels_pipeline_without_marking_error(
+        self,
+    ) -> None:
         """Renew returning False mid-pipeline must abort the pipeline.
 
         Otherwise the original worker keeps running while the new
@@ -173,13 +188,33 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
             "Pipeline ran to completion despite the lost lease.",
         )
 
-        # _mark_error must have recorded the lost-lease reason.
+        # The lost worker must not overwrite the replacement's state.
         errors = [u for u in storage.status_updates if u["status"] == "error"]
-        self.assertEqual(len(errors), 1)
-        self.assertIn("Lost lease", errors[0]["error"])
+        self.assertEqual(errors, [])
 
         # Release is still called (and is a safe no-op server-side).
         self.assertEqual(len(storage.released), 1)
+
+    async def test_current_holder_can_mark_pipeline_error(self) -> None:
+        """A real failure is still persisted by the current lease holder."""
+        storage = _LeaseStorage()
+        worker = _SlowPipelineWorker(storage, pipeline_seconds=0)
+        with patch.object(
+            worker,
+            "_run_pipeline",
+            side_effect=ValueError("parse failed"),
+        ):
+            await worker.process("u", "kb", "doc-error")
+        self.assertEqual(
+            storage.status_updates,
+            [
+                {
+                    "status": "error",
+                    "error": "ValueError: parse failed",
+                    "chunk_count": None,
+                },
+            ],
+        )
 
     async def test_happy_path_cancels_heartbeat_and_releases(self) -> None:
         """Normal completion still tears the heartbeat down cleanly."""

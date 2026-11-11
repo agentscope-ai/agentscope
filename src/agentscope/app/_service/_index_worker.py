@@ -334,6 +334,7 @@ class IndexWorker:
                 knowledge_base_id,
                 document_id,
                 exc,
+                lease_token,
             )
         finally:
             # The holder identifies this attempt, not just this worker.
@@ -420,6 +421,7 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "parsing",
+            expected_lease_token=lease_token,
         )
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
@@ -430,6 +432,7 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "chunking",
+            expected_lease_token=lease_token,
         )
         chunks = await chunker.chunk(sections)
 
@@ -439,6 +442,7 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "indexing",
+            expected_lease_token=lease_token,
         )
         async with self._bus.acquire_lock(
             MessageBusKeys.knowledge_base_mutation_lock(
@@ -500,6 +504,7 @@ class IndexWorker:
                 document_id,
                 "ready",
                 chunk_count=len(chunks),
+                expected_lease_token=lease_token,
             )
 
     async def _parse(
@@ -631,8 +636,9 @@ class IndexWorker:
         knowledge_base_id: str,
         document_id: str,
         exc: BaseException,
+        lease_token: str,
     ) -> None:
-        """Persist a sanitised error and mark the document failed."""
+        """Mark failed only while this attempt still owns the lease."""
         logger.exception(
             "Indexing failed for %s/%s",
             knowledge_base_id,
@@ -647,6 +653,7 @@ class IndexWorker:
                 document_id,
                 "error",
                 error=message,
+                expected_lease_token=lease_token,
             )
         except Exception:  # noqa: BLE001 — last-resort log
             logger.exception(

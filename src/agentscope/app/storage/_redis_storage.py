@@ -2385,26 +2385,41 @@ class RedisStorage(StorageBase):
         status: KnowledgeDocumentStatus,
         error: str | None = None,
         chunk_count: int | None = None,
+        *,
+        expected_lease_token: str | None = None,
     ) -> None:
-        """Update only the status-related fields of a document record.
-
-        Reads the record, mutates the status fields in memory, and
-        writes it back.  Not atomic across multiple writers — relies
-        on the indexing worker holding the lease, which serialises
-        status transitions for a single document.
-        """
+        """Atomically update status, optionally requiring lease ownership."""
         key = self._document_key(user_id, knowledge_base_id, document_id)
-        raw = await self._client.get(key)
-        if not raw:
-            return
-        record = KnowledgeDocumentRecord.model_validate_json(raw)
-        record.status = status
-        if error is not None:
-            record.data.error = error
-        if chunk_count is not None:
-            record.data.chunk_count = chunk_count
-        record.updated_at = datetime.now()
-        await self._set_with_ttl(key, record.model_dump_json())
+        async with self._client.pipeline(transaction=True) as pipe:
+            for attempt in range(3):
+                try:
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    if not raw:
+                        await pipe.unwatch()
+                        return
+                    record = KnowledgeDocumentRecord.model_validate_json(raw)
+                    if (
+                        expected_lease_token is not None
+                        and record.processing_node != expected_lease_token
+                    ):
+                        await pipe.unwatch()
+                        return
+                    record.status = status
+                    if error is not None:
+                        record.data.error = error
+                    if chunk_count is not None:
+                        record.data.chunk_count = chunk_count
+                    record.updated_at = datetime.now()
+                    pipe.multi()
+                    pipe.set(key, record.model_dump_json())
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                    await pipe.execute()
+                    return
+                except _watch_error():
+                    if attempt == 2:
+                        raise
 
     async def acquire_knowledge_document_lease(
         self,
