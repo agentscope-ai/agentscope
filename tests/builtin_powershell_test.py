@@ -318,43 +318,46 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             600.0,
         )
 
-    async def test_timeout_zero_rejected(self) -> None:
-        """timeout=0 must not reach the backend (#3307)."""
-        backend = AsyncMock()
-        tool = PowerShell(backend=backend)
+    async def test_invalid_timeout_rejected(self) -> None:
+        """Reject nonpositive timeouts without calling the backend."""
+        for timeout in (0, -5):
+            with self.subTest(timeout=timeout):
+                backend = AsyncMock()
+                tool = PowerShell(backend=backend)
+                chunks = [
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    )
+                    async for chunk in tool.call(
+                        command="Get-Location",
+                        timeout=timeout,
+                    )
+                ]
 
-        chunks = [
-            chunk
-            async for chunk in tool.call(
-                command="Get-Location",
-                timeout=0,
-            )
-        ]
-
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
-        self.assertIn("timeout must be at least 1ms", chunks[0].content[0].text)
-        self.assertIn("got: 0", chunks[0].content[0].text)
-        backend.exec_shell.assert_not_awaited()
-
-    async def test_timeout_negative_rejected(self) -> None:
-        """timeout<0 must be rejected with a clear error (#3307)."""
-        backend = AsyncMock()
-        tool = PowerShell(backend=backend)
-
-        chunks = [
-            chunk
-            async for chunk in tool.call(
-                command="Get-Location",
-                timeout=-5,
-            )
-        ]
-
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
-        self.assertIn("timeout must be at least 1ms", chunks[0].content[0].text)
-        self.assertIn("got: -5", chunks[0].content[0].text)
-        backend.exec_shell.assert_not_awaited()
+                self.assertEqual(
+                    chunks,
+                    [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Error: timeout must be at least "
+                                        f"1ms, got: {timeout}."
+                                    ),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    ],
+                )
+                backend.exec_shell.assert_not_awaited()
 
     async def test_timeout_schema_minimum_is_one(self) -> None:
         """JSON schema minimum for timeout is 1ms (#3307)."""
