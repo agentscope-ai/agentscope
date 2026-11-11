@@ -79,25 +79,39 @@ class TestParseChatResponse(unittest.TestCase):
         resp = self._resp([TextBlock(type="text", text="answer")])
         self.assertEqual(_parse_chat_response(resp, has_tool=False), "answer")
 
-    def test_thinking_prefixed_to_text(self) -> None:
-        """Thinking blocks should be preserved before visible text."""
-        resp = self._resp(
-            [
-                ThinkingBlock(type="thinking", thinking="hmm"),
-                TextBlock(type="text", text="final"),
-            ],
+    def test_reasoning_drafts_are_not_final_memory_content(self) -> None:
+        """Only final text reaches mem0, even when thinking contains JSON."""
+        final = '{"memory": [{"text": "The user prefers tea."}]}'
+        draft = '{"memory": [{"text": "The user prefers coffee."}]}'
+        for thinking in ("hmm", draft, f"```json\n{draft}\n```"):
+            for has_tool in (False, True):
+                with self.subTest(thinking=thinking, has_tool=has_tool):
+                    resp = self._resp(
+                        [
+                            ThinkingBlock(thinking=thinking),
+                            TextBlock(text=final),
+                        ],
+                    )
+                    result = _parse_chat_response(resp, has_tool=has_tool)
+                    content = result["content"] if has_tool else result
+                    self.assertEqual(content, final)
+                    self.assertEqual(json.loads(content), json.loads(final))
+
+    def test_thinking_only_is_not_an_extracted_memory(self) -> None:
+        """An unfinished reasoning response has no final content."""
+        resp = self._resp([ThinkingBlock(thinking="draft fact")])
+        self.assertEqual(_parse_chat_response(resp, has_tool=False), "")
+        self.assertEqual(
+            _parse_chat_response(resp, has_tool=True),
+            {"content": "", "tool_calls": []},
         )
-        out = _parse_chat_response(resp, has_tool=False)
-        self.assertIn("hmm", out)
-        self.assertIn("final", out)
-        # thinking comes first to mirror v1 order
-        self.assertLess(out.index("hmm"), out.index("final"))
 
     def test_tool_call_with_json_string_input(self) -> None:
         """v2 stores ToolCallBlock.input as a JSON string — adapter
         must parse it back to a dict for mem0."""
         resp = self._resp(
             [
+                ThinkingBlock(thinking="discarded tool draft"),
                 TextBlock(type="text", text="calling tool"),
                 ToolCallBlock(
                     type="tool_call",
@@ -264,7 +278,12 @@ class TestAgentScopeLLM(_CurrentEventLoopTestCase):
                         is_last=False,
                     ),
                     ChatResponse(
-                        content=[TextBlock(type="text", text="final")],
+                        content=[
+                            ThinkingBlock(
+                                thinking='```json\n{"draft": true}\n```',
+                            ),
+                            TextBlock(type="text", text="final"),
+                        ],
                         is_last=True,
                     ),
                 ],
