@@ -64,6 +64,11 @@ class RealtimeModelCard(BaseModel):
         default=False,
         description="Whether this model accepts tool schemas.",
     )
+    supports_extended_thinking: bool = Field(
+        default=False,
+        description="Whether the model uses background thinking with "
+        "non-blocking tools and interaction-status completion.",
+    )
     interaction_mode: Literal["turn_based", "full_duplex"] = Field(
         default="turn_based",
         description="Whether speech is turn-based or full duplex.",
