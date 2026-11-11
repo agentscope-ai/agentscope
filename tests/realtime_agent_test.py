@@ -3082,6 +3082,116 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                     await asyncio.gather(*tasks, return_exceptions=True)
                     await agent.close()
 
+    async def test_tool_idle_preserves_input_fragments(self) -> None:
+        """Tool handoffs must not strip or filter individual fragments."""
+        for min_chars, idle_count in product((1, 4), (1, 2)):
+            with self.subTest(min_chars=min_chars, idle_count=idle_count):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                    aggregator=TurnAggregator(min_chars=min_chars),
+                )
+
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver real adapter events without a network."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
+
+                tasks = []
+                try:
+                    await feed(
+                        {
+                            "serverContent": {
+                                "inputTranscription": {"text": "Go "},
+                                "outputTranscription": {"text": "Checking."},
+                            },
+                            "toolCall": {
+                                "functionCalls": [
+                                    {
+                                        "id": "c1",
+                                        "name": tool.name,
+                                        "args": {"q": "x"},
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    user_id = model._user_id
+                    tasks = list(agent._tasks)
+                    await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    for _ in range(idle_count):
+                        await feed(
+                            {"serverContent": {"interactionStatus": "IDLE"}},
+                        )
+                        self.assertEqual(
+                            (model._user_id, model._input_text),
+                            (user_id, "Go "),
+                        )
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    await feed(
+                        {
+                            "serverContent": {
+                                "inputTranscription": {"text": "there"},
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        (model._user_id, model._input_text),
+                        (user_id, "Go there"),
+                    )
+                    await feed(
+                        {
+                            "serverContent": {
+                                "outputTranscription": {"text": "Done."},
+                                "interactionStatus": "IDLE",
+                            },
+                        },
+                    )
+                    events = list(agent.drain_events())
+                    user_reply_id = agent.state.context[0].id
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "user_text": [
+                                event.delta
+                                for event in events
+                                if isinstance(event, TextBlockDeltaEvent)
+                                and event.reply_id == user_reply_id
+                            ],
+                            "pending": agent._pending_user_turns,
+                            "input": (model._user_id, model._input_text),
+                        },
+                        {
+                            "context": [
+                                ("user", "Go there"),
+                                ("assistant", "Checking.\nDone."),
+                            ],
+                            "user_text": ["Go there"],
+                            "pending": {},
+                            "input": ("", ""),
+                        },
+                    )
+                finally:
+                    tool.release.set()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await agent.close()
+
     async def test_interruption_keeps_transcription_identities(self) -> None:
         """A new utterance cannot inherit the interrupted input buffer."""
         model = GeminiRealtimeModel(

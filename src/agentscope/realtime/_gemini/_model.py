@@ -639,12 +639,18 @@ class GeminiRealtimeModel(RealtimeModelBase):
         # A thinking status can arrive before input transcription. Proactive
         # audio may also finish processing without producing any speech.
         # A cancelled response's late IDLE does not end the next user turn.
+        # Tool handoffs keep fragments buffered until the interaction ends.
+        interaction_done = not (
+            self._pending_tool_calls or self._awaiting_tool_reply
+        )
         events = (
             self._settle_input()
-            if self._extended_thinking and not self._response_cancelled
+            if self._extended_thinking
+            and interaction_done
+            and not self._response_cancelled
             else []
         )
-        if not self._pending_tool_calls and not self._awaiting_tool_reply:
+        if interaction_done:
             self._transcription_response_id = ""
         if not self._response_id:
             return events

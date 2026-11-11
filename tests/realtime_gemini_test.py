@@ -1004,6 +1004,10 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
         model = GeminiRealtimeModel(THINKING_MODEL, CRED)
         model._send = AsyncMock()
         first_response = ""
+        model._parse(
+            {"serverContent": {"inputTranscription": {"text": "Go "}}},
+        )
+        user_id = model._user_id
         for call_id in ("c1", "c2"):
             model._parse(
                 {
@@ -1025,12 +1029,22 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
                 first_response = model._response_id
             else:
                 self.assertNotEqual(model._response_id, first_response)
-            model._parse({"serverContent": {"interactionStatus": "IDLE"}})
+            closed = model._parse(
+                {"serverContent": {"interactionStatus": "IDLE"}},
+            )
+            self.assertEqual(
+                (
+                    [type(event).__name__ for event in closed],
+                    model._user_id,
+                    model._input_text,
+                ),
+                (["ResponseDoneEvent"], user_id, "Go "),
+            )
             await model.push_tool_result(
                 ToolResultBlock(id=call_id, name="weather", output="done"),
             )
         events = model._parse(
-            {"serverContent": {"inputTranscription": {"text": "Weather?"}}},
+            {"serverContent": {"inputTranscription": {"text": "there"}}},
         )
         self.assertEqual(
             _dump(events),
@@ -1038,9 +1052,33 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
                 (
                     "InputTranscriptionDeltaEvent",
                     {
-                        "item_id": model._user_id,
-                        "delta": "Weather?",
+                        "item_id": user_id,
+                        "delta": "there",
                         "response_id": first_response,
+                    },
+                ),
+            ],
+        )
+        completed = model._parse(
+            {"serverContent": {"interactionStatus": "IDLE"}},
+        )
+        self.assertEqual(
+            _dump(completed),
+            [
+                (
+                    "ResponseCreatedEvent",
+                    {"item_id": completed[0].item_id},
+                ),
+                (
+                    "InputTranscriptionEvent",
+                    {"item_id": user_id, "text": "Go there"},
+                ),
+                (
+                    "ResponseDoneEvent",
+                    {
+                        "item_id": completed[0].item_id,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
                     },
                 ),
             ],
@@ -1083,8 +1121,6 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
                         },
                     },
                 )
-                model._parse({"serverContent": {"interactionStatus": "IDLE"}})
-                self.assertTrue(model._transcription_response_id)
                 if boundary != "close":
                     model._parse(
                         {
@@ -1096,6 +1132,8 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
                         },
                     )
                 old_user_id = model._user_id
+                model._parse({"serverContent": {"interactionStatus": "IDLE"}})
+                self.assertTrue(model._transcription_response_id)
                 settled = (
                     "InputTranscriptionEvent",
                     {"item_id": old_user_id, "text": "Old request"},
