@@ -20,6 +20,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     URLSource,
     Base64Source,
 )
@@ -244,13 +245,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             {"type": "text", "text": "(empty tool output)"},
                         )
 
-                    content_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": tool_result_content,
-                        },
-                    )
+                    tool_result: dict[str, Any] = {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": tool_result_content,
+                    }
+                    if block.state == ToolResultState.ERROR:
+                        tool_result["is_error"] = True
+                    content_blocks.append(tool_result)
                     # Anthropic requires tool_result to be in a "user" message.
                     has_tool_result = True
 

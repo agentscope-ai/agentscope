@@ -175,6 +175,18 @@
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
+		"askUser": {
+			"title": "Your input is needed",
+			"other": "Other",
+			"otherPlaceholder": "Enter your answer",
+			"submit": "Submit answers",
+			"invalid": "This question could not be displayed."
+		},
+		"externalExecution": {
+			"title": "{{name}} is waiting for an external executor",
+			"rejected": "The result was not accepted. Please check your answer and submit again.",
+			"description": "This tool must be completed by an integration provided by the host application."
+		},
 		"newSession": "New Session",
 		"greeting": "Where should we start?",
 		"maxItersExceeded": {
@@ -485,6 +497,9 @@
 		"noModels": "No realtime voice models are available.",
 		"disable": "Disable voice model",
 		"selectFirst": "Realtime voice is off. Select a model from Voice model (the waveform icon) at the top.",
+		"backendFollows": "Task backend follows Chat model · {{model}}",
+		"backendMissing": "Select a Chat model before starting GPT Live",
+		"pendingChatInteraction": "Complete the pending Chat confirmation or external execution before starting GPT Live.",
 		"start": "Start voice conversation",
 		"stop": "End voice conversation"
 	},
@@ -663,6 +678,31 @@
 		"blockedBy": "blocked by"
 	},
 	"panel": {
+		"background": {
+			"title": "Background tools",
+			"runningCount": "Running: {{count}}",
+			"refresh": "Refresh background tools",
+			"duration": "Background duration: {{duration}}",
+			"totalDuration": "Total duration: {{duration}}",
+			"backgroundDuration": "Of which in background: {{duration}}",
+			"copyId": "Copy task ID",
+			"copied": "Task ID copied",
+			"errorDetails": "Failure details",
+			"noSession": "Select a conversation to view background tools",
+			"emptyTitle": "No background tools",
+			"emptyDescription": "Tools that continue running in the background will appear here.",
+			"noRunning": "No tools are running in the background.",
+			"recent": "Recently finished ({{count}})",
+			"retention": "Recent results are kept temporarily. This is not a complete history.",
+			"loadError": "Could not load background tools. Try again.",
+			"stale": "Could not refresh. Showing the last known status; tasks may have changed.",
+			"status": {
+				"running": "Running",
+				"completed": "Completed",
+				"failed": "Failed",
+				"cancelled": "Cancelled"
+			}
+		},
 		"plan": {
 			"title": "Plan",
 			"completed": "Completed: {{count}}",
