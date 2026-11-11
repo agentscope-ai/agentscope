@@ -134,18 +134,21 @@ class _MockAsyncStream:
 
 
 # ---------------------------------------------------------------------------
-# Argon configuration tests
+# Gemini 4 configuration tests
 # ---------------------------------------------------------------------------
 
 
-class TestGeminiArgon(IsolatedAsyncioTestCase):
-    """Verify Argon requests and configuration without network access."""
+class TestGemini4Argon(IsolatedAsyncioTestCase):
+    """Verify Gemini 4 requests and configuration without network access."""
+
+    model_name = "gemini-4-argon"
+    model_label = "Gemini 4 Argon"
 
     def setUp(self) -> None:
         with patch("google.genai.Client"):
             self.model = GeminiChatModel(
                 credential=GeminiCredential(api_key="test"),
-                model="gemini-4-argon",
+                model=self.model_name,
                 stream=False,
             )
 
@@ -199,7 +202,7 @@ class TestGeminiArgon(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     api.call_args.kwargs,
                     {
-                        "model": "gemini-4-argon",
+                        "model": self.model_name,
                         "contents": [],
                         "config": expected,
                     },
@@ -236,7 +239,7 @@ class TestGeminiArgon(IsolatedAsyncioTestCase):
                 self.assertEqual(self.model.client.mock_calls, [])
 
     def test_timeout_does_not_mutate_shared_client_options(self) -> None:
-        """Keep Argon defaults local for dict and SDK HTTP options."""
+        """Keep model defaults local for dict and SDK HTTP options."""
         cases: list[tuple[dict[str, Any] | HttpOptions, int]] = [
             ({"timeout": None}, 900_000),
             (HttpOptions(), 900_000),
@@ -248,9 +251,9 @@ class TestGeminiArgon(IsolatedAsyncioTestCase):
                 shared = {"http_options": options}
                 before = copy.deepcopy(shared)
                 with patch("google.genai.Client") as client:
-                    argon = GeminiChatModel(
+                    model = GeminiChatModel(
                         credential=GeminiCredential(api_key="test"),
-                        model="models/gemini-4-argon",
+                        model=f"models/{self.model_name}",
                         client_kwargs=shared,
                     )
                     self.assertEqual(
@@ -263,7 +266,7 @@ class TestGeminiArgon(IsolatedAsyncioTestCase):
                         },
                     )
                     self.assertEqual(shared, before)
-                    self.assertIsNot(argon.client_kwargs, shared)
+                    self.assertIsNot(model.client_kwargs, shared)
                     GeminiChatModel(
                         credential=GeminiCredential(api_key="test"),
                         model="gemini-2.5-flash",
@@ -274,6 +277,57 @@ class TestGeminiArgon(IsolatedAsyncioTestCase):
                         {"api_key": "test", **before},
                     )
                     self.assertEqual(shared, before)
+
+    def test_model_card_parameters(self) -> None:
+        """Expose supported controls and hide legacy reasoning settings."""
+        cards = {card.name: card for card in GeminiChatModel.list_models()}
+        card = cards[self.model_name]
+        properties = card.parameter_schema["properties"]
+        self.assertEqual(
+            {
+                "name": card.name,
+                "label": card.label,
+                "context_size": card.context_size,
+                "output_size": card.output_size,
+                "parameters": sorted(properties),
+                "max_tokens": properties["max_tokens"]["maximum"],
+                "thinking_level": properties["thinking_level"]["default"],
+                "summary_title": properties["thinking_enable"]["title"],
+            },
+            {
+                "name": self.model_name,
+                "label": self.model_label,
+                "context_size": 1_048_576,
+                "output_size": 65_536,
+                "parameters": [
+                    "max_tokens",
+                    "thinking_enable",
+                    "thinking_level",
+                ],
+                "max_tokens": 65_536,
+                "thinking_level": "medium",
+                "summary_title": "Thought Summaries",
+            },
+        )
+        self.assertEqual(
+            {
+                name: "thinking_level" in item.parameter_schema["properties"]
+                for name, item in cards.items()
+                if name not in ("gemini-4-argon", "gemini-4-carbon")
+            },
+            {
+                name: False
+                for name in cards
+                if name not in ("gemini-4-argon", "gemini-4-carbon")
+            },
+        )
+
+
+class TestGemini4Carbon(TestGemini4Argon):
+    """Run the shared Gemini 4 contract against Carbon as well."""
+
+    model_name = "gemini-4-carbon"
+    model_label = "Gemini 4 Carbon"
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +344,16 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         # instance so generate_content() hits it instead of the network.
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_thinking_level_rejected_for_legacy_models(self) -> None:
+        """Keep the Gemini 4 reasoning control scoped to supported IDs."""
+        self.model.parameters.thinking_level = "low"
+        for name in ("gemini-2.5-flash", "gemini-4-carbon-unknown"):
+            with self.subTest(model=name):
+                self.model.model = name
+                with self.assertRaisesRegex(ValueError, "thinking_level"):
+                    await self.model([])
+                self.assertEqual(self.mock_client.mock_calls, [])
 
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
