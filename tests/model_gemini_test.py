@@ -1672,3 +1672,56 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+class _TrackingAsyncStream(_MockAsyncStream):
+    """Async stream that records whether the SDK cleanup ran."""
+
+    def __init__(self, chunks: list) -> None:
+        super().__init__(chunks)
+        self.aclose_count = 0
+
+    async def aclose(self) -> None:
+        """Record SDK stream cleanup."""
+        self.aclose_count += 1
+
+
+class TestGeminiStreamClosesSDKStream(IsolatedAsyncioTestCase):
+    """The parser must close its delegated SDK stream itself."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+
+    def _install_stream(self) -> _TrackingAsyncStream:
+        """Install a tracking stream over two text chunks."""
+        chunks = [
+            _make_stream_chunk([_make_part(text="Hello")]),
+            _make_stream_chunk([_make_part(text=" world")]),
+        ]
+        stream = _TrackingAsyncStream(chunks)
+        self.mock_client.aio.models.generate_content_stream = AsyncMock(
+            return_value=stream,
+        )
+        return stream
+
+    async def test_completing_the_stream_closes_sdk_stream(self) -> None:
+        """Full consumption still closes the SDK stream."""
+        stream = self._install_stream()
+
+        gen = await self.model([])
+        _ = [r async for r in gen]
+
+        self.assertEqual(stream.aclose_count, 1)
+
+    async def test_abandoning_the_stream_closes_sdk_stream(self) -> None:
+        """A consumer that stops early must not leak the SDK stream."""
+        stream = self._install_stream()
+
+        gen = await self.model([])
+        iterator = aiter(gen)
+        await anext(iterator)
+        await gen.aclose()
+
+        self.assertEqual(stream.aclose_count, 1)
