@@ -465,6 +465,21 @@ class GeminiChatModel(ChatModelBase):
                     "thinking_budget": 0,
                 }
 
+        # Normalize aliases before merging so per-call values take precedence.
+        if is_gemini_4:
+            for alias, name in {
+                "thinkingConfig": "thinking_config",
+                "maxOutputTokens": "max_output_tokens",
+                "topP": "top_p",
+                "topK": "top_k",
+            }.items():
+                if alias in config_kwargs:
+                    if name in config_kwargs:
+                        raise ValueError(
+                            f"Cannot supply both {alias} and {name}.",
+                        )
+                    config_kwargs[name] = config_kwargs.pop(alias)
+
         # Per-call config takes precedence over model-level defaults.
         config.update(config_kwargs)
         if is_gemini_4:

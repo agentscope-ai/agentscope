@@ -191,6 +191,28 @@ class TestGemini4Argon(IsolatedAsyncioTestCase):
                 },
             ),
         )
+        cases.extend(
+            [
+                (
+                    {"thinking_budget": 1024, "max_tokens": 100_000},
+                    {"thinkingConfig": None, "maxOutputTokens": None},
+                    {"thinking_config": None, "max_output_tokens": None},
+                ),
+                (
+                    {"thinking_level": "high", "max_tokens": 100_000},
+                    {
+                        "thinkingConfig": {"thinkingLevel": "LOW"},
+                        "maxOutputTokens": 65_536,
+                        "topP": 0.3,
+                        "topK": 20,
+                    },
+                    {
+                        "thinking_config": {"thinking_level": "LOW"},
+                        "max_output_tokens": 65_536,
+                    },
+                ),
+            ],
+        )
         api = AsyncMock(return_value=_mock_completion([]))
         self.model.client.aio.models.generate_content = api
         for parameters, overrides, expected in cases:
@@ -220,6 +242,7 @@ class TestGemini4Argon(IsolatedAsyncioTestCase):
             ({"thinking_budget": 1024}, {}, "thinking_budget"),
             ({}, {"thinking_config": {"thinking_budget": 0}}, "budget"),
             ({}, {"thinking_config": {"thinkingBudget": 100}}, "budget"),
+            ({}, {"thinkingConfig": {"thinkingBudget": 100}}, "budget"),
             (
                 {},
                 {"thinking_config": {"thinking_level": "MINIMAL"}},
@@ -227,7 +250,20 @@ class TestGemini4Argon(IsolatedAsyncioTestCase):
             ),
             ({"max_tokens": 65_537}, {}, "65536"),
             ({}, {"max_output_tokens": 65_537}, "65536"),
+            ({}, {"maxOutputTokens": 65_537}, "65536"),
+            (
+                {},
+                {"thinkingConfig": {"thinkingLevel": "MINIMAL"}},
+                "thinking_level",
+            ),
         ]
+        for alias, name in (
+            ("thinkingConfig", "thinking_config"),
+            ("maxOutputTokens", "max_output_tokens"),
+            ("topP", "top_p"),
+            ("topK", "top_k"),
+        ):
+            cases.append(({}, {alias: None, name: None}, name))
         for parameters, kwargs, message in cases:
             with self.subTest(parameters=parameters, **kwargs):
                 self.model.parameters = GeminiChatModel.Parameters(
