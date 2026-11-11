@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The Google Gemini chat model implementation."""
 import base64
+import inspect
 import json
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -365,63 +366,79 @@ class GeminiChatModel(ChatModelBase):
         text_id: str = _generate_id()
         thinking_id: str = _generate_id()
 
-        async for chunk in response:
-            # Capture response_id from the first chunk that carries it
-            delta_res = ChatResponse(
-                content=[],
-                is_last=False,
-                id=response_id,
-            )
+        try:
+            async for chunk in response:
+                # Capture response_id from the first chunk that carries it
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
 
-            # Update the response ID if exists
-            response_id = getattr(chunk, "response_id", None) or response_id
-            delta_res.id = response_id
+                # Update the response ID if exists
+                response_id = (
+                    getattr(chunk, "response_id", None) or response_id
+                )
+                delta_res.id = response_id
 
-            if (
-                chunk.candidates
-                and chunk.candidates[0].content
-                and chunk.candidates[0].content.parts
-            ):
-                for part in chunk.candidates[0].content.parts:
-                    if part.text:
-                        # Thinking
-                        if part.thought:
-                            delta_res.append_thinking(
-                                block_id=thinking_id,
-                                thinking=part.text,
+                if (
+                    chunk.candidates
+                    and chunk.candidates[0].content
+                    and chunk.candidates[0].content.parts
+                ):
+                    for part in chunk.candidates[0].content.parts:
+                        if part.text:
+                            # Thinking
+                            if part.thought:
+                                delta_res.append_thinking(
+                                    block_id=thinking_id,
+                                    thinking=part.text,
+                                )
+
+                            # Text
+                            else:
+                                delta_res.append_text(
+                                    block_id=text_id,
+                                    text=part.text,
+                                )
+
+                        # Tool call
+                        if part.function_call:
+                            if part.thought_signature:
+                                # Mark signature IDs for the history formatter.
+                                call_id = "gemini_ts:" + base64.b64encode(
+                                    part.thought_signature,
+                                ).decode("utf-8")
+                            else:
+                                call_id = (
+                                    part.function_call.id or _generate_id()
+                                )
+
+                            delta_res.append_tool_call(
+                                block_id=call_id,
+                                name=part.function_call.name,
+                                input=json.dumps(
+                                    part.function_call.args or {},
+                                    ensure_ascii=False,
+                                ),
                             )
 
-                        # Text
-                        else:
-                            delta_res.append_text(
-                                block_id=text_id,
-                                text=part.text,
-                            )
+                usage = self._extract_usage(
+                    chunk.usage_metadata,
+                    start_datetime,
+                )
 
-                    # Tool call
-                    if part.function_call:
-                        if part.thought_signature:
-                            # Mark signature IDs for the history formatter.
-                            call_id = "gemini_ts:" + base64.b64encode(
-                                part.thought_signature,
-                            ).decode("utf-8")
-                        else:
-                            call_id = part.function_call.id or _generate_id()
-
-                        delta_res.append_tool_call(
-                            block_id=call_id,
-                            name=part.function_call.name,
-                            input=json.dumps(
-                                part.function_call.args or {},
-                                ensure_ascii=False,
-                            ),
-                        )
-
-            usage = self._extract_usage(chunk.usage_metadata, start_datetime)
-
-            if delta_res.content or usage:
-                delta_res.usage = usage
-                yield delta_res
+                if delta_res.content or usage:
+                    delta_res.usage = usage
+                    yield delta_res
+        finally:
+            # Closing the parser does not implicitly close its delegated
+            # SDK stream. Await its response cleanup before returning.
+            aclose = getattr(response, "aclose", None)
+            if aclose is not None:
+                result = aclose()
+                if inspect.isawaitable(result):
+                    await result
 
     def _parse_completion_response(
         self,
