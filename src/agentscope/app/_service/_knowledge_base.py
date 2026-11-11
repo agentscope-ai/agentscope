@@ -957,7 +957,7 @@ class KnowledgeBaseService:
         knowledge_base_id: str,
         document_id: str,
     ) -> None:
-        """Delete a document while excluding reindex resets."""
+        """Delete a document while excluding reindex resets and writes."""
         record = await self._storage.get_knowledge_document(
             owner_id,
             knowledge_base_id,
@@ -968,10 +968,16 @@ class KnowledgeBaseService:
             # document is already gone.
             return
 
-        knowledge = await self._manager.get_knowledge(
-            owner_id,
-            knowledge_base_id,
-        )
+        try:
+            knowledge = await self._manager.get_knowledge(
+                owner_id,
+                knowledge_base_id,
+            )
+        except KnowledgeBaseNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
         await knowledge.delete_document(document_id)
         await self._storage.delete_knowledge_document(
             owner_id,

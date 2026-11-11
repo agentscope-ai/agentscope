@@ -595,6 +595,64 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             self.assertEqual(rebuilt["status"], "ready", rebuilt)
             self.assertEqual(rebuilt["chunk_count"], 16)
 
+    async def test_document_delete_missing_credential_returns_404(
+        self,
+    ) -> None:
+        """Missing credentials map to 404 without removing source data."""
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+            blob_uri = client.portal.call(
+                self._app.state.blob_store.write_stream,
+                "missing-credential.txt",
+                io.BytesIO(b"original content"),
+            )
+            record = KnowledgeDocumentRecord(
+                id="missing-credential",
+                user_id="user-1",
+                knowledge_base_id=self._kb_id,
+                status="ready",
+                data=KnowledgeDocumentData(
+                    filename="original.txt",
+                    size=16,
+                    content_type="text/plain",
+                    blob_uri=blob_uri,
+                ),
+            )
+            record = client.portal.call(
+                self._app.state.storage.upsert_knowledge_document,
+                "user-1",
+                record,
+            )
+            with patch.object(
+                self._app.state.knowledge_base_manager,
+                "get_knowledge",
+                side_effect=KnowledgeBaseNotFoundError("Missing credential"),
+            ):
+                response = client.delete(
+                    f"/knowledge_bases/{self._kb_id}/documents/{record.id}",
+                    headers={"X-User-ID": "user-1"},
+                )
+            self.assertEqual(
+                (response.status_code, response.json()),
+                (404, {"detail": "Missing credential"}),
+            )
+            self.assertEqual(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    record.id,
+                ),
+                record,
+            )
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/{record.id}",
+                headers={"X-User-ID": "user-1"},
+            )
+            self.assertEqual(
+                (response.status_code, response.content),
+                (200, b"original content"),
+            )
+
     async def test_failed_kb_delete_preserves_source_file_for_retry(
         self,
     ) -> None:

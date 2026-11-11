@@ -3,9 +3,10 @@
 """Unit tests for knowledge-base chunker configuration updates."""
 import asyncio
 import tempfile
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Any
+from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -44,6 +45,8 @@ class _AlternateApproxTokenChunker(ApproxTokenChunker):
 
 class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
     """Verify configuration persistence and reindex dispatch semantics."""
+
+    # pylint: disable=too-many-public-methods
 
     async def asyncSetUp(self) -> None:
         """Build the service with in-memory storage and message bus fakes."""
@@ -408,6 +411,7 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
         )
         await self._storage.upsert_knowledge_document("user-1", document)
         worker = IndexWorker(
+            message_bus=self._bus,
             storage=self._storage,
             blob_store=self._service._blob_store,
             knowledge_base_manager=self._manager,
@@ -455,6 +459,327 @@ class KnowledgeBaseChunkerUpdateTest(IsolatedAsyncioTestCase):
                         ),
                         (batch, created_at, "ready", 64 // chunk_size),
                     )
+
+    @asynccontextmanager
+    async def _paused_reindex(
+        self,
+        phase: str,
+        chunk_size: int = 64,
+    ) -> AsyncIterator[KnowledgeDocumentRecord]:
+        """Pause a real reindex at parsing or vector insertion."""
+        await self._store_document("doc-race", "ready")
+        document = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-race",
+        )
+        document.data.blob_uri = await self._service._blob_store.write_stream(
+            key="race.txt",
+            stream=BytesIO(b"hello world"),
+        )
+        await self._storage.upsert_knowledge_document("user-1", document)
+        await self._service.update_knowledge_base(
+            "user-1",
+            self._knowledge_base_id,
+            chunker_config=ChunkerConfig(
+                type="approx_token",
+                parameters={"chunk_size": chunk_size, "overlap": 0},
+            ),
+        )
+        worker = IndexWorker(
+            storage=self._storage,
+            blob_store=self._service._blob_store,
+            knowledge_base_manager=self._manager,
+            message_bus=self._bus,
+            parsers=[TextParser()],
+            node_id="worker",
+        )
+        target = worker if phase == "_parse" else self._manager._vector_store
+        original = getattr(target, phase)
+        reached, proceed = asyncio.Event(), asyncio.Event()
+
+        async def paused(*args: Any, **kwargs: Any) -> Any:
+            """Signal the barrier before running the original operation."""
+            reached.set()
+            await proceed.wait()
+            return await original(*args, **kwargs)
+
+        with patch.object(target, phase, side_effect=paused):
+            task = asyncio.create_task(
+                worker.process(
+                    "user-1",
+                    self._knowledge_base_id,
+                    document.id,
+                ),
+            )
+            try:
+                await asyncio.wait_for(reached.wait(), timeout=5)
+                yield document
+            finally:
+                proceed.set()
+                await asyncio.wait_for(task, timeout=5)
+
+    async def _assert_race_document_deleted(
+        self,
+        document: KnowledgeDocumentRecord,
+    ) -> None:
+        """Require deletion of the record, every vector, and the blob."""
+        record = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            document.id,
+        )
+        chunks = await self._manager._vector_store.list_chunks(
+            "kb_collection",
+            document.id,
+        )
+        exists = await self._service._blob_store.exists(
+            document.data.blob_uri,
+        )
+        self.assertEqual((record, chunks, exists), (None, [], False))
+
+    async def test_deletion_before_final_write_skips_vectors(self) -> None:
+        """A removed document or KB cannot be resurrected after parsing."""
+        vectors = self._manager._vector_store
+        for delete_kb in (False, True):
+            with self.subTest(delete_kb=delete_kb):
+                with patch.object(
+                    vectors,
+                    "insert",
+                    wraps=vectors.insert,
+                ) as put:
+                    async with self._paused_reindex(
+                        "_parse",
+                        32 if delete_kb else 64,
+                    ) as document:
+                        if delete_kb:
+                            await self._service.delete_knowledge_base(
+                                "user-1",
+                                self._knowledge_base_id,
+                            )
+                        else:
+                            await self._service.delete_document(
+                                "user-1",
+                                self._knowledge_base_id,
+                                document.id,
+                            )
+                    self.assertEqual(put.await_count, 0)
+                await self._assert_race_document_deleted(document)
+
+    async def test_deletion_waits_for_final_write(self) -> None:
+        """Deletion waits for an active insert, then removes its result."""
+        attempted = asyncio.Event()
+        acquire_lock = self._bus.acquire_lock
+
+        @asynccontextmanager
+        async def observed_lock(
+            key: str,
+            **kwargs: Any,
+        ) -> AsyncIterator[None]:
+            """Observe deletion trying to acquire the shared lock."""
+            attempted.set()
+            async with acquire_lock(key, **kwargs):
+                yield
+
+        for delete_kb in (False, True):
+            with self.subTest(delete_kb=delete_kb):
+                attempted.clear()
+                async with self._paused_reindex(
+                    "insert",
+                    32 if delete_kb else 64,
+                ) as document:
+                    with patch.object(
+                        self._bus,
+                        "acquire_lock",
+                        side_effect=observed_lock,
+                    ):
+                        deletion = asyncio.create_task(
+                            self._service.delete_knowledge_base(
+                                "user-1",
+                                self._knowledge_base_id,
+                            )
+                            if delete_kb
+                            else self._service.delete_document(
+                                "user-1",
+                                self._knowledge_base_id,
+                                document.id,
+                            ),
+                        )
+                        await asyncio.wait_for(attempted.wait(), timeout=5)
+                        self.assertEqual(deletion.done(), False)
+                await asyncio.wait_for(deletion, timeout=5)
+                await self._assert_race_document_deleted(document)
+
+    async def test_lost_lease_before_final_write_skips_vectors(self) -> None:
+        """Do not wait for the periodic heartbeat to reject a stale worker."""
+        vectors = self._manager._vector_store
+        with patch.object(vectors, "insert", wraps=vectors.insert) as put:
+            async with self._paused_reindex("_parse") as document:
+                active = await self._storage.get_knowledge_document(
+                    "user-1",
+                    self._knowledge_base_id,
+                    document.id,
+                )
+                await self._storage.release_knowledge_document_lease(
+                    "user-1",
+                    self._knowledge_base_id,
+                    document.id,
+                    active.processing_node,
+                )
+                self.assertEqual(
+                    await self._storage.acquire_knowledge_document_lease(
+                        "user-1",
+                        self._knowledge_base_id,
+                        document.id,
+                        "replacement",
+                        timedelta(minutes=5),
+                    ),
+                    True,
+                )
+            stored = await self._storage.get_knowledge_document(
+                "user-1",
+                self._knowledge_base_id,
+                document.id,
+            )
+            self.assertEqual(
+                (put.await_count, stored.status, stored.processing_node),
+                (0, "indexing", "replacement"),
+            )
+
+    async def test_old_cleanup_preserves_new_lease_on_same_worker(
+        self,
+    ) -> None:
+        """A ready task's delayed cleanup cannot release a new reindex."""
+        await self._store_document("doc-lease", "pending")
+        document = await self._storage.get_knowledge_document(
+            "user-1",
+            self._knowledge_base_id,
+            "doc-lease",
+        )
+        document.data.blob_uri = await self._service._blob_store.write_stream(
+            key="lease.txt",
+            stream=BytesIO(b"hello world"),
+        )
+        await self._storage.upsert_knowledge_document("user-1", document)
+        worker = IndexWorker(
+            storage=self._storage,
+            blob_store=self._service._blob_store,
+            knowledge_base_manager=self._manager,
+            message_bus=self._bus,
+            parsers=[TextParser()],
+            node_id="same-worker",
+        )
+        worker._renew_interval = timedelta(milliseconds=10)
+        cleanup_entered, allow_cleanup = asyncio.Event(), asyncio.Event()
+        parsing_entered, allow_parsing = asyncio.Event(), asyncio.Event()
+        cleanup_finished, renewed = asyncio.Event(), asyncio.Event()
+        release = self._storage.release_knowledge_document_lease
+        renew = self._storage.renew_knowledge_document_lease
+        parse = worker._parse
+        releases: list[str] = []
+        renewals: list[bool] = []
+        tasks: list[asyncio.Task[None]] = []
+
+        async def delayed_release(**kwargs: Any) -> None:
+            """Keep the first task alive after it has marked ready."""
+            releases.append(kwargs["processing_node"])
+            if len(releases) == 1:
+                cleanup_entered.set()
+                await allow_cleanup.wait()
+            await release(**kwargs)
+
+        async def paused_parse(*args: Any, **kwargs: Any) -> Any:
+            """Keep the next task running while its heartbeat renews."""
+            parsing_entered.set()
+            await allow_parsing.wait()
+            return await parse(*args, **kwargs)
+
+        async def observed_renew(**kwargs: Any) -> bool:
+            """Observe a real heartbeat after the old cleanup completes."""
+            result = await renew(**kwargs)
+            if cleanup_finished.is_set():
+                renewals.append(result)
+                renewed.set()
+            return result
+
+        with patch.object(
+            self._storage,
+            "release_knowledge_document_lease",
+            side_effect=delayed_release,
+        ), patch.object(
+            self._storage,
+            "renew_knowledge_document_lease",
+            side_effect=observed_renew,
+        ):
+            try:
+                first = asyncio.create_task(
+                    worker.process(
+                        "user-1",
+                        self._knowledge_base_id,
+                        document.id,
+                    ),
+                )
+                tasks.append(first)
+                await asyncio.wait_for(cleanup_entered.wait(), timeout=5)
+                await self._service.update_knowledge_base(
+                    "user-1",
+                    self._knowledge_base_id,
+                    chunker_config=ChunkerConfig(
+                        type="approx_token",
+                        parameters={"chunk_size": 64, "overlap": 0},
+                    ),
+                )
+                with patch.object(worker, "_parse", side_effect=paused_parse):
+                    second = asyncio.create_task(
+                        worker.process(
+                            "user-1",
+                            self._knowledge_base_id,
+                            document.id,
+                        ),
+                    )
+                    tasks.append(second)
+                    await asyncio.wait_for(parsing_entered.wait(), timeout=5)
+                    active = await self._storage.get_knowledge_document(
+                        "user-1",
+                        self._knowledge_base_id,
+                        document.id,
+                    )
+                    allow_cleanup.set()
+                    await asyncio.wait_for(first, timeout=5)
+                    cleanup_finished.set()
+                    await asyncio.wait_for(renewed.wait(), timeout=5)
+                    current = await self._storage.get_knowledge_document(
+                        "user-1",
+                        self._knowledge_base_id,
+                        document.id,
+                    )
+                    self.assertEqual(
+                        (current.processing_node, all(renewals)),
+                        (active.processing_node, True),
+                    )
+                    self.assertNotEqual(releases[0], active.processing_node)
+                    allow_parsing.set()
+                    await asyncio.wait_for(second, timeout=5)
+                final = await self._storage.get_knowledge_document(
+                    "user-1",
+                    self._knowledge_base_id,
+                    document.id,
+                )
+                self.assertEqual(
+                    (final.status, final.processing_node, final.data.error),
+                    ("ready", None, None),
+                )
+                self.assertEqual(
+                    releases,
+                    [releases[0], active.processing_node],
+                )
+            finally:
+                allow_cleanup.set()
+                allow_parsing.set()
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     async def test_legacy_chunker_matches_worker_default(self) -> None:
         """Legacy defaults do not change with the registration order."""

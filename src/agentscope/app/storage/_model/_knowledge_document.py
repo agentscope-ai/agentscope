@@ -125,14 +125,14 @@ class KnowledgeDocumentRecord(_RecordBase):
     processing_node: str | None = Field(
         default=None,
         description=(
-            "Identifier of the worker process that currently holds the "
+            "Unique token of the processing attempt that holds the "
             "lease on this document.  ``None`` if no worker is "
             "processing it."
         ),
     )
-    """The current lease holder.  Promoted to the top level so the
-    storage backend can look up "documents owned by node X" or
-    "documents with no owner" without deserialising every payload."""
+    """The current lease token, unique per processing attempt. Kept at
+    the top level for atomic ownership checks. Legacy records may
+    contain a stable worker id until their next processing attempt."""
 
     status: KnowledgeDocumentStatus = Field(
         default="pending",

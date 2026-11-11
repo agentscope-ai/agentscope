@@ -1331,9 +1331,9 @@ class StorageBase(ABC):
             document_id (`str`):
                 The document whose lease is being acquired.
             processing_node (`str`):
-                Stable identifier of the calling worker (e.g.
-                ``hostname:pid:uuid``).  Persisted as
-                ``processing_node`` on success.
+                Unique token for this processing attempt. Persisted as
+                ``processing_node`` on success; never reuse it for a
+                later attempt, even on the same worker.
             lease_ttl (`timedelta`):
                 How long the lease should live from ``now``.
             now (`datetime | None`, optional):
@@ -1373,7 +1373,7 @@ class StorageBase(ABC):
             document_id (`str`):
                 The document being renewed.
             processing_node (`str`):
-                The caller's processing node id; must match the
+                This attempt's lease token; must match the
                 record's current ``processing_node`` for renewal to
                 succeed.
             lease_ttl (`timedelta`):
@@ -1410,7 +1410,7 @@ class StorageBase(ABC):
             document_id (`str`):
                 The document whose lease is being released.
             processing_node (`str`):
-                The caller's processing node id; must match the
+                This attempt's lease token; must match the
                 record's current holder.
         """
 

@@ -247,6 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if enable_index_worker:
                 node_id = f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
                 worker = IndexWorker(
+                    message_bus=message_bus,
                     storage=storage,
                     blob_store=blob_store,
                     knowledge_base_manager=knowledge_base_manager,

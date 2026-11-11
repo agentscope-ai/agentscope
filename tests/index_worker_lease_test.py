@@ -105,9 +105,10 @@ class _SlowPipelineWorker(IndexWorker):
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
+        lease_token: str,
     ) -> None:
         """Sleep ``pipeline_seconds`` so the test can race the heartbeat."""
-        del user_id, knowledge_base_id, document_id
+        del user_id, knowledge_base_id, document_id, lease_token
         self.pipeline_started.set()
         try:
             await asyncio.sleep(self._pipeline_seconds)
@@ -121,6 +122,7 @@ class _SlowPipelineWorker(IndexWorker):
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
+        lease_token: str,
     ) -> None:
         """Record heartbeat lifecycle while preserving worker behavior."""
         self.heartbeat_started.set()
@@ -129,6 +131,7 @@ class _SlowPipelineWorker(IndexWorker):
                 user_id,
                 knowledge_base_id,
                 document_id,
+                lease_token,
             )
         finally:
             self.heartbeat_stopped = True

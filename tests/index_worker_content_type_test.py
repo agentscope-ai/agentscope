@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._service._index_worker import IndexWorker
+from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.rag import Section
 from agentscope.message import TextBlock
 
@@ -32,7 +33,9 @@ class _Storage:
 
     def __init__(self, content_type: str) -> None:
         self.record = SimpleNamespace(
+            status="pending",
             data=SimpleNamespace(
+                reindex_id=None,
                 content_type=content_type,
                 filename="README.md",
                 blob_uri="blob://README.md",
@@ -40,6 +43,11 @@ class _Storage:
             ),
         )
         self.statuses: list[str] = []
+
+    async def renew_knowledge_document_lease(self, **kwargs: object) -> bool:
+        """Keep this isolated pipeline's lease valid."""
+        del kwargs
+        return True
 
     async def get_knowledge_document(self, *args: str) -> object:
         """Return the document carrying the parameterised content type."""
@@ -106,7 +114,7 @@ class _TestIndexWorker(IndexWorker):
 
     async def run_pipeline(self) -> None:
         """Expose the pipeline entry point for the regression test."""
-        await self._run_pipeline("user-1", "kb-1", "doc-1")
+        await self._run_pipeline("user-1", "kb-1", "doc-1", "test-lease")
 
     async def _read_blob(self, blob_uri: str) -> bytes:
         """Return the fixed Markdown payload used by the test."""
@@ -130,6 +138,7 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
                 manager = _Manager()
                 parser = _Parser()
                 worker = _TestIndexWorker(
+                    message_bus=InMemoryMessageBus(),
                     storage=storage,  # type: ignore[arg-type]
                     blob_store=object(),  # type: ignore[arg-type]
                     knowledge_base_manager=manager,  # type: ignore[arg-type]
