@@ -2,12 +2,10 @@
 """Grep tool test case."""
 import os
 import tempfile
-from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.message import ToolResultState
-from agentscope.tool import Edit, ExecResult, Grep, LocalBackend
+from agentscope.tool import Edit, Grep, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -98,15 +96,8 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_dash_prefixed_paths(self) -> None:
         """Relative paths must not be interpreted as ripgrep options."""
-        backend = LocalBackend()
+        backend = LocalBackend(workdir=self.temp_dir)
         grep = Grep(backend=backend)
-        exec_shell = backend.exec_shell
-
-        async def exec_in_temp(
-            command: list[str],
-            **kwargs: Any,
-        ) -> ExecResult:
-            return await exec_shell(command, cwd=self.temp_dir, **kwargs)
 
         for name in ("-notes.txt", "--help", "-folder"):
             target = os.path.join(self.temp_dir, name)
@@ -118,22 +109,15 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
             for pattern in ("needle", "-needle"):
                 with self.subTest(path=name, pattern=pattern):
-                    with patch.object(
-                        backend,
-                        "exec_shell",
-                        side_effect=exec_in_temp,
-                    ):
-                        chunk = await grep(
-                            pattern=pattern,
-                            path=name,
-                            output_mode="content",
-                            n=False,
-                        )
+                    chunk = await grep(
+                        pattern=pattern,
+                        path=name,
+                        output_mode="content",
+                        n=False,
+                    )
                     expected_text = "-needle"
                     if name == "-folder":
-                        expected_text = (
-                            os.path.join("-folder", "notes.txt") + ":-needle"
-                        )
+                        expected_text = f"{target}:-needle"
                     self.assertEqual(
                         chunk.model_dump(
                             exclude={
