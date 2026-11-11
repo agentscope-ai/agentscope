@@ -9,9 +9,14 @@ from pydantic import BaseModel, Field
 
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _enum_name,
+    _normalize_openai_compatible_content_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, OpenAIResponseFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -27,6 +32,106 @@ else:
 
 # kwargs accepted by Chat Completions but NOT by the Responses API.
 _RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
+_RESPONSE_REVIEW_ERROR_CODES = frozenset(
+    {
+        "BIO_POLICY",
+        "MISALIGNMENT_POLICY_VIOLATION",
+    },
+)
+_RESPONSE_BLOCK_ERROR_CODES = _RESPONSE_REVIEW_ERROR_CODES | {
+    "IMAGE_CONTENT_POLICY_VIOLATION",
+}
+
+
+def _openai_response_error(
+    error: Any,
+    *,
+    request_id: str | None,
+    partial_output: bool = False,
+) -> ContentBlockedError | None:
+    """Build an error from a recognized Responses API safety code.
+
+    Return ``None`` for a missing or unrecognized ``error.code``; do not
+    classify error text. The returned error has UNKNOWN phase because the
+    code alone does not establish whether input or output was blocked.
+    Copy the caller's ``request_id`` and ``partial_output`` flag unchanged;
+    the latter indicates output emitted before this signal. Mark policy
+    review stops explicitly; the shared exception does not classify codes.
+    """
+    code = _enum_name(getattr(error, "code", None))
+    if code not in _RESPONSE_BLOCK_ERROR_CODES:
+        return None
+    message = getattr(error, "message", None)
+    return ContentBlockedError(
+        message or f"OpenAI blocked the response: {code}.",
+        phase=ContentBlockedPhase.UNKNOWN,
+        provider="openai",
+        original_code=code.casefold(),
+        request_id=request_id,
+        partial_output=partial_output,
+        requires_review=code in _RESPONSE_REVIEW_ERROR_CODES,
+    )
+
+
+def _openai_response_block_error(
+    response: Any,
+    *,
+    partial_output: bool = False,
+    include_refusal: bool = False,
+    include_content_filter: bool = True,
+) -> ContentBlockedError | None:
+    """Build an error from explicit signals on a full Responses object.
+
+    Inspect the content-filter incomplete reason, then the safety error
+    object, then refusal content parts when ``include_refusal=True``.
+    Content filters and safety codes require ``include_content_filter``.
+    They do not depend on the refusal option. Ordinary
+    response text is never scanned for refusal phrases.
+
+    Return ``None`` if no supported signal is present. Otherwise use the
+    response ID and copy ``partial_output``, which the caller sets if output
+    was emitted before this signal. This helper does not consume a stream
+    or raise the returned error.
+    """
+    request_id = getattr(response, "id", None)
+    details = getattr(response, "incomplete_details", None)
+    reason = _enum_name(getattr(details, "reason", None))
+    if include_content_filter and reason == "CONTENT_FILTER":
+        return ContentBlockedError(
+            "OpenAI filtered the generated response.",
+            phase=ContentBlockedPhase.OUTPUT,
+            provider="openai",
+            original_code="content_filter",
+            request_id=request_id,
+            partial_output=partial_output,
+        )
+
+    error = _openai_response_error(
+        getattr(response, "error", None),
+        request_id=request_id,
+        partial_output=partial_output,
+    )
+    if include_content_filter and error is not None:
+        return error
+
+    if include_refusal:
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", None) != "message":
+                continue
+            for part in getattr(item, "content", []) or []:
+                if getattr(part, "type", None) != "refusal":
+                    continue
+                refusal = getattr(part, "refusal", None)
+                return ContentBlockedError(
+                    refusal or "OpenAI refused to generate the response.",
+                    phase=ContentBlockedPhase.OUTPUT,
+                    provider="openai",
+                    original_code="refusal",
+                    request_id=request_id,
+                    partial_output=partial_output,
+                )
+
+    return None
 
 
 def _dump_reasoning_item(item: Any) -> dict[str, Any]:
@@ -119,6 +224,8 @@ class OpenAIResponseModel(ChatModelBase):
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the OpenAI Responses API chat model.
 
@@ -146,6 +253,13 @@ class OpenAIResponseModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit OpenAI refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -155,6 +269,8 @@ class OpenAIResponseModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or OpenAIResponseFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -180,6 +296,26 @@ class OpenAIResponseModel(ChatModelBase):
         cls,
     ) -> tuple[Type[Exception], ...]:
         return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize structured OpenAI Responses content-filter errors."""
+        if not self.raise_on_content_filter:
+            return error
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="openai",
+            blocked_codes={
+                code.casefold() for code in _RESPONSE_BLOCK_ERROR_CODES
+            },
+            phase=ContentBlockedPhase.UNKNOWN,
+        )
+        if normalized is not None:
+            normalized.requires_review = (
+                _enum_name(normalized.original_code)
+                in _RESPONSE_REVIEW_ERROR_CODES
+            )
+            return normalized
+        return error
 
     async def _call_api(
         self,
@@ -293,10 +429,25 @@ class OpenAIResponseModel(ChatModelBase):
         tool_call_mapping: dict = OrderedDict()
         # The item ids of the function calls that received argument text
         tool_calls_with_input: set[str] = set()
+        has_output = False
 
         async with response as stream:
             async for event in stream:
                 event_type = event.type
+                if event_type in {
+                    "response.failed",
+                    "response.incomplete",
+                    "response.completed",
+                }:
+                    blocked_error = _openai_response_block_error(
+                        event.response,
+                        include_content_filter=self.raise_on_content_filter,
+                        partial_output=has_output,
+                        include_refusal=self.raise_on_refusal,
+                    )
+                    if blocked_error is not None:
+                        raise blocked_error
+
                 # The SDK doesn't raise on these events, so surface them here
                 if event_type in ("response.failed", "error"):
                     error = (
@@ -304,10 +455,31 @@ class OpenAIResponseModel(ChatModelBase):
                         if event_type == "response.failed"
                         else event
                     )
+                    if event_type == "error" and self.raise_on_content_filter:
+                        blocked_error = _openai_response_error(
+                            error,
+                            request_id=response_id,
+                            partial_output=has_output,
+                        )
+                        if blocked_error is not None:
+                            raise blocked_error
                     raise openai.APIError(
                         message=error.message if error else "Response failed",
                         request=stream.response.request,
                         body=error.model_dump() if error else None,
+                    )
+
+                if (
+                    event_type == "response.refusal.delta"
+                    and self.raise_on_refusal
+                ):
+                    raise ContentBlockedError(
+                        "OpenAI refused to generate the response.",
+                        phase=ContentBlockedPhase.OUTPUT,
+                        provider="openai",
+                        original_code="refusal",
+                        request_id=response_id,
+                        partial_output=has_output,
                     )
 
                 delta_res = ChatResponse(
@@ -449,6 +621,7 @@ class OpenAIResponseModel(ChatModelBase):
                                     )
 
                 if delta_res.content or usage:
+                    has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
 
@@ -469,6 +642,14 @@ class OpenAIResponseModel(ChatModelBase):
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
         """
+        blocked_error = _openai_response_block_error(
+            response,
+            include_content_filter=self.raise_on_content_filter,
+            include_refusal=self.raise_on_refusal,
+        )
+        if blocked_error is not None:
+            raise blocked_error
+
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         for item in response.output:

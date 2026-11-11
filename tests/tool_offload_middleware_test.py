@@ -2,10 +2,12 @@
 # pylint: disable=protected-access
 """Unit tests for ToolOffloadMiddleware."""
 import asyncio
+import gc
 import json
-from typing import Any
+import weakref
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import BaseModel
 
@@ -13,10 +15,17 @@ from pydantic import BaseModel
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent
-from agentscope.app.message_bus import MessageBus, MessageBusKeys
+from agentscope.app.message_bus import (
+    InMemoryMessageBus,
+    MessageBus,
+    MessageBusKeys,
+)
 from agentscope.app.middleware import ToolOffloadMiddleware
-from agentscope.app._manager import BackgroundTaskManager
-from agentscope.message import TextBlock, ToolCallBlock
+from agentscope.app._manager import BackgroundTaskManager, TaskStatus
+from agentscope.app._manager._background_task_manager import (
+    BackgroundTaskRecord,
+)
+from agentscope.message import TextBlock, ToolCallBlock, ToolResultState
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
@@ -152,8 +161,8 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
         self.mock_model = MockModel()
-        self.bg_manager = BackgroundTaskManager(
-            message_bus=MagicMock(spec=MessageBus),
+        self.bg_manager = await self.enterAsyncContext(
+            BackgroundTaskManager(message_bus=InMemoryMessageBus()),
         )
 
     # ------------------------------------------------------------------
@@ -228,6 +237,101 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # No background tasks registered
         self.assertEqual(len(self.bg_manager.tasks), 0)
 
+    async def test_offloaded_stream_releases_intermediate_chunks(self) -> None:
+        """Detaching the foreground releases old and future stream events."""
+        for outcome in ("success", "error", "cancel"):
+            with self.subTest(outcome=outcome):
+                await self._check_stream_retention(outcome)
+
+    async def _check_stream_retention(self, outcome: str) -> None:
+        """Run one isolated producer/consumer handoff."""
+        agent, middleware = self._make_agent(
+            Toolkit(tools=[SlowTool()]),
+            timeout_secs=0.01,
+        )
+        start = asyncio.Event()
+        streamed = asyncio.Event()
+        finish = asyncio.Event()
+        delivered = asyncio.Event()
+        refs: list[weakref.ReferenceType] = []
+
+        async def handler(**_kwargs: Any) -> AsyncGenerator:
+            """Emit a foreground chunk and a background burst."""
+            item = ToolChunk(content=[TextBlock(text="foreground")])
+            refs.append(weakref.ref(item))
+            yield item
+            del item
+            await start.wait()
+            for index in range(32):
+                item = ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"{index}:" + "x" * 65536,
+                        ),
+                    ],
+                )
+                refs.append(weakref.ref(item))
+                yield item
+                del item
+            streamed.set()
+            await finish.wait()
+            if outcome == "error":
+                raise ValueError("stream failed")
+            yield ToolResponse(
+                id="stream-retention",
+                content=[TextBlock(text="done")],
+            )
+
+        async def push(key: str, *_args: Any, **_kwargs: Any) -> None:
+            """Observe real notification delivery without sleeps."""
+            if key == MessageBusKeys.inbox(agent.state.session_id):
+                delivered.set()
+
+        middleware._message_bus.queue_push.side_effect = push
+        stream = middleware.on_acting(
+            agent,
+            {
+                "tool_call": ToolCallBlock(
+                    id="stream-retention",
+                    name="slow_tool",
+                    input="{}",
+                ),
+            },
+            handler,
+        )
+        await asyncio.wait_for(anext(stream), 2)
+        task = next(iter(self.bg_manager.tasks.values())).asyncio_task
+        try:
+            # Keep on_acting suspended at its synthetic response too.
+            start.set()
+            await asyncio.wait_for(streamed.wait(), 2)
+            gc.collect()
+            self.assertEqual(sum(ref() is not None for ref in refs), 0)
+            if outcome == "cancel":
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                self.assertFalse(delivered.is_set())
+            else:
+                finish.set()
+                await asyncio.wait_for(delivered.wait(), 2)
+                push_calls = middleware._message_bus.queue_push.call_args_list
+                calls = [
+                    call
+                    for call in push_calls
+                    if call.args[0]
+                    == MessageBusKeys.inbox(agent.state.session_id)
+                ]
+                self.assertEqual(len(calls), 1)
+                self.assertIn(
+                    "stream failed" if outcome == "error" else "done",
+                    str(calls[0]),
+                )
+        finally:
+            start.set()
+            finish.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await stream.aclose()
+
     async def test_slow_tool_offloaded_to_background(self) -> None:
         """A tool that exceeds timeout returns a synthetic result."""
 
@@ -241,37 +345,91 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             input=json.dumps({"delay": 0.5}),
         )
 
-        results: list = []
-        # pylint: disable=protected-access
-        async for item in agent._acting(tool_call):
-            results.append(item)
+        offloaded_at = 1794240000.0
+        with patch(
+            "agentscope.app.middleware._tool_offload_middleware.time",
+        ) as mock_time:
+            mock_time.time.return_value = offloaded_at
+            results = [item async for item in agent._acting(tool_call)]
 
-        # Should yield a synthetic ToolResponse immediately
-        responses = [r for r in results if isinstance(r, ToolResponse)]
-        self.assertEqual(len(responses), 1)
-        self.assertDictEqual(
-            responses[0].model_dump(),
-            {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": AnyString(),
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-                "state": "success",
-                "metadata": {},
-                "id": "call_slow",
+        self.assertEqual(len(self.bg_manager.tasks), 1)
+        task_id = next(iter(self.bg_manager.tasks))
+        expected_response = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": AnyString(),
+                    "id": AnyString(),
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+            "state": "success",
+            "metadata": {
+                "background_task_id": task_id,
+                "tool_name": "slow_tool",
+                "tool_state": "running",
+                "offloaded_at": offloaded_at,
             },
+            "id": "call_slow",
+        }
+        self.assertEqual(
+            [item.model_dump() for item in results],
+            [
+                {
+                    **expected_response,
+                    "id": AnyString(),
+                    "is_last": True,
+                },
+                expected_response,
+            ],
         )
-        text = responses[0].content[0].text  # type: ignore[union-attr]
+        text = results[1].content[0].text  # type: ignore[union-attr]
         self.assertIn("background", text)
         self.assertIn("id=", text)
 
-        # Background task should be registered
-        self.assertEqual(len(self.bg_manager.tasks), 1)
+    async def test_execution_start_is_captured_before_offload(self) -> None:
+        """Capture execution start before the handler changes the clock."""
+        agent, middleware = self._make_agent(
+            Toolkit(tools=[SlowTool()]),
+            timeout_secs=0.01,
+        )
+        gate = asyncio.Event()
+        tool_call = ToolCallBlock(
+            id="call_start",
+            name="slow_tool",
+            input='{"delay": 30}',
+        )
+        with patch(f"{ToolOffloadMiddleware.__module__}.time") as clock:
+            clock.time.return_value = 100.0
+
+            async def handler(**_kwargs: Any) -> AsyncGenerator:
+                """Advance wall time after execution has already begun."""
+                clock.time.return_value = 110.0
+                await gate.wait()
+                yield ToolResponse(content=[TextBlock(text="done")])
+
+            async for _ in middleware.on_acting(
+                agent,
+                {"tool_call": tool_call},
+                handler,
+            ):
+                pass
+            (bg_task,) = self.bg_manager.tasks.values()
+            self.assertEqual(
+                {
+                    "execution_started_at": bg_task.execution_started_at,
+                    "tool_name": bg_task.tool_name,
+                    "clock_at_offload": clock.time(),
+                },
+                {
+                    "execution_started_at": 100.0,
+                    "tool_name": "slow_tool",
+                    "clock_at_offload": 110.0,
+                },
+            )
+            gate.set()
+            await asyncio.wait_for(bg_task.asyncio_task, timeout=1)
 
     async def test_background_task_result_injected_into_context(
         self,
@@ -374,6 +532,158 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(payload["session_id"], agent.state.session_id)
         self.assertEqual(payload["agent_id"], "a")
 
+    async def test_background_failures_retain_error_status(self) -> None:
+        """Error responses and raised exceptions both retain failed state."""
+        for raises in (False, True):
+            with self.subTest(raises=raises):
+                agent, middleware = self._make_agent(
+                    Toolkit(tools=[SlowTool()]),
+                    timeout_secs=0.01,
+                )
+                gate = asyncio.Event()
+
+                async def handler(
+                    *,
+                    event: asyncio.Event = gate,
+                    should_raise: bool = raises,
+                    **_kwargs: Any,
+                ) -> AsyncGenerator:
+                    """Fail only after the tool has been offloaded."""
+                    await event.wait()
+                    if should_raise:
+                        raise ValueError("tool execution failed")
+                    yield ToolResponse(
+                        id="call_failure",
+                        state=ToolResultState.ERROR,
+                        content=[TextBlock(text="tool execution failed")],
+                    )
+
+                call = ToolCallBlock(
+                    id="call_failure",
+                    name="slow_tool",
+                    input="{}",
+                )
+                async for _ in middleware.on_acting(
+                    agent,
+                    {"tool_call": call},
+                    handler,
+                ):
+                    pass
+                bg = next(iter(self.bg_manager.tasks.values()))
+                expected = BackgroundTaskRecord.model_validate(bg).model_dump()
+                gate.set()
+                await bg.asyncio_task
+                await asyncio.gather(*self.bg_manager._completion_tasks)
+                record = await self.bg_manager.get_task(bg.id, user_id="u")
+                self.assertIsNotNone(record.completed_at)
+                expected.update(
+                    status=TaskStatus.FAILED,
+                    error_summary="tool execution failed",
+                    completed_at=record.completed_at,
+                )
+                self.assertEqual(record.model_dump(), expected)
+                self.assertEqual(self.bg_manager.tasks, {})
+
+    async def test_interrupted_response_matches_record_and_inbox(self) -> None:
+        """Interrupted results keep their output and report cancellation."""
+        for output in ("", "partial output"):
+            with self.subTest(output=output):
+                agent, middleware = self._make_agent(
+                    Toolkit(tools=[SlowTool()]),
+                    timeout_secs=0.01,
+                )
+                gate = asyncio.Event()
+                delivered = asyncio.Event()
+                mock_bus = middleware._message_bus
+                mock_bus.publish.side_effect = (
+                    lambda *_args, event=delivered, **_kwargs: event.set()
+                )
+                response = ToolResponse(
+                    id="call_interrupted",
+                    state=ToolResultState.INTERRUPTED,
+                    content=[TextBlock(text=output)] if output else [],
+                )
+                original = response.model_dump(mode="json")
+
+                async def handler(
+                    *,
+                    event: asyncio.Event = gate,
+                    result: ToolResponse = response,
+                    **_kwargs: Any,
+                ) -> AsyncGenerator:
+                    await event.wait()
+                    yield result
+
+                call = ToolCallBlock(
+                    id="call_interrupted",
+                    name="slow_tool",
+                    input="{}",
+                )
+                async for _ in middleware.on_acting(
+                    agent,
+                    {"tool_call": call},
+                    handler,
+                ):
+                    pass
+                bg = next(iter(self.bg_manager.tasks.values()))
+                expected = BackgroundTaskRecord.model_validate(bg).model_dump()
+                gate.set()
+                await bg.asyncio_task
+                await asyncio.gather(*self.bg_manager._completion_tasks)
+                await asyncio.wait_for(delivered.wait(), timeout=1)
+                record = await self.bg_manager.get_task(bg.id, user_id="u")
+                expected.update(
+                    status=TaskStatus.CANCELLED,
+                    completed_at=record.completed_at,
+                )
+                self.assertEqual(record.model_dump(), expected)
+
+                prefix = (
+                    "<system-notification>Tool 'slow_tool' running in "
+                    "background (id=call_interrupted) has been cancelled"
+                )
+                expected_hint: str | list[dict]
+                if output:
+                    expected_hint = [
+                        dict(
+                            original["content"][0],
+                            text=f"{prefix}.\n\nResult:\n\n{output}"
+                            "</system-notification>",
+                        ),
+                    ]
+                else:
+                    expected_hint = (
+                        f"{prefix} with no output.</system-notification>"
+                    )
+                inbox = [
+                    call.args[1]
+                    for call in mock_bus.queue_push.call_args_list
+                    if call.args[0]
+                    == MessageBusKeys.inbox(
+                        agent.state.session_id,
+                    )
+                ]
+                self.assertEqual(
+                    inbox,
+                    [
+                        {
+                            "type": "hint",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                            "source": json.dumps(
+                                {
+                                    "label": "tool_output",
+                                    "sublabel": "slow_tool · call_interrupted",
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "hint": expected_hint,
+                        },
+                    ],
+                )
+                self.assertEqual(response.model_dump(mode="json"), original)
+
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""
 
@@ -408,5 +718,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         # The asyncio task should be cancelling
         self.assertTrue(asyncio_task.cancelled() or asyncio_task.cancelling())
-        # Removed from manager
+        await asyncio.gather(asyncio_task, return_exceptions=True)
+        await asyncio.gather(*self.bg_manager._completion_tasks)
+        # The handle is released, but cancelled metadata remains queryable.
         self.assertEqual(len(self.bg_manager.tasks), 0)
+        record = await self.bg_manager.get_task(task_id, user_id="u")
+        self.assertEqual(record.status, TaskStatus.CANCELLED)

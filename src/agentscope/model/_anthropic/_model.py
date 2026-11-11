@@ -12,6 +12,7 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 else:
     Message = Any
     AsyncStream = Any
+
+
+_DEFAULT_MAX_TOKENS = 8192
 
 
 def _total_input_tokens(usage: Any) -> int:
@@ -40,6 +44,8 @@ def _total_input_tokens(usage: Any) -> int:
 
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
+
+    _content_block_provider = "anthropic"
 
     type: Literal["anthropic_chat"] = "anthropic_chat"
     """The type of the chat model."""
@@ -125,6 +131,7 @@ class AnthropicChatModel(ChatModelBase):
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -153,6 +160,9 @@ class AnthropicChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to
                 ``anthropic.AsyncAnthropic`` (e.g. ``timeout``,
                 ``default_headers``, ``http_client``, ``auth_token``).
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit provider refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         super().__init__(
             credential=credential,
@@ -162,6 +172,7 @@ class AnthropicChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or AnthropicChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -209,17 +220,34 @@ class AnthropicChatModel(ChatModelBase):
         self,
         max_tokens: int,
     ) -> tuple[dict[str, Any] | None, int]:
-        """Build the provider-specific thinking configuration."""
+        """Build thinking defaults and return a suggested output limit.
+
+        Only manual (``enabled``) thinking needs a budget. If the caller
+        omits it, use half the effective output limit, rounded down, with
+        a minimum of 1024 tokens. Raise ``ValueError`` if the resulting
+        budget would reach or exceed the limit.
+
+        Forward an explicit budget and any explicit output limit as given
+        for the provider to validate. If the caller omitted the limit and
+        the budget reaches or exceeds the 8192-token default, set the limit
+        to the budget plus 1024 to leave room for the answer.
+        """
         mode = self._thinking_mode()
         if mode is None:
             return None, max_tokens
 
         thinking: dict[str, Any] = {"type": mode}
         if mode == "enabled":
-            # Anthropic requires max_tokens > budget_tokens strictly.
-            budget = self.parameters.thinking_budget or (max_tokens // 2)
-            if budget >= max_tokens:
-                # Auto-expand max_tokens to satisfy the inequality.
+            budget = self.parameters.thinking_budget
+            if budget is None:
+                budget = max(1024, max_tokens // 2)
+                if budget >= max_tokens:
+                    raise ValueError(
+                        "Cannot fit an automatic thinking budget under "
+                        f"max_tokens={max_tokens}. Raise max_tokens above "
+                        "1024 or disable thinking for this call.",
+                    )
+            elif budget >= max_tokens:
                 max_tokens = budget + 1024
             thinking["budget_tokens"] = budget
 
@@ -266,25 +294,20 @@ class AnthropicChatModel(ChatModelBase):
                 enabled.
         """
 
-        # Anthropic requires max_tokens; fall back to a safe default when
-        # the user hasn't configured one explicitly.
-        max_tokens = self.parameters.max_tokens or 8192
-
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "max_tokens": max_tokens,
             "stream": self.stream,
             **generate_kwargs,
         }
-
-        if "thinking" not in kwargs:
-            thinking, expanded_max_tokens = self._build_thinking_config(
-                max_tokens,
-            )
-            if thinking is not None:
-                kwargs["thinking"] = thinking
-            if expanded_max_tokens != max_tokens:
-                kwargs["max_tokens"] = expanded_max_tokens
+        # Resolve max_tokens in SDK precedence order: extra_body, per-call
+        # argument, then model parameters. Leave it unset if none applies so
+        # the thinking policy can distinguish the default from an explicit cap.
+        if self.parameters.max_tokens is not None:
+            kwargs.setdefault("max_tokens", self.parameters.max_tokens)
+        extra_body = kwargs.get("extra_body") or {}
+        if "max_tokens" in extra_body:
+            # The SDK merges extra_body after validating its named arguments.
+            kwargs["max_tokens"] = extra_body["max_tokens"]
 
         # Effort travels inside ``output_config``, not as a top-level field.
         if "output_config" not in kwargs:
@@ -297,6 +320,15 @@ class AnthropicChatModel(ChatModelBase):
             kwargs["tools"] = fmt_tools
         if fmt_tool_choice is not None:
             kwargs["tool_choice"] = fmt_tool_choice
+
+        default_limit = _DEFAULT_MAX_TOKENS
+        if "thinking" not in kwargs and "thinking" not in extra_body:
+            thinking, default_limit = self._build_thinking_config(
+                kwargs.get("max_tokens", default_limit),
+            )
+            if thinking is not None:
+                kwargs["thinking"] = thinking
+        kwargs.setdefault("max_tokens", default_limit)
 
         formatted_messages = await self.formatter.format(messages)
 
@@ -344,6 +376,21 @@ class AnthropicChatModel(ChatModelBase):
                 A single ``ChatResponse`` with ``is_last=True`` containing
                 the extracted content blocks and usage.
         """
+        if (
+            self.raise_on_refusal
+            and getattr(response, "stop_reason", None) == "refusal"
+        ):
+            stop_details = getattr(response, "stop_details", None)
+            explanation = getattr(stop_details, "explanation", None)
+            raise ContentBlockedError(
+                explanation
+                or f"{self._content_block_provider} refused the response.",
+                phase=ContentBlockedPhase.OUTPUT,
+                provider=self._content_block_provider,
+                original_code="refusal",
+                request_id=getattr(response, "id", None),
+            )
+
         content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
 
         if hasattr(response, "content") and response.content:
@@ -463,6 +510,7 @@ class AnthropicChatModel(ChatModelBase):
         tool_call_mapping: dict = OrderedDict()
         # The indexes of the tool calls that received argument text
         tool_call_with_input: set[int] = set()
+        has_output = False
 
         async with response as stream:
             async for event in stream:
@@ -587,6 +635,31 @@ class AnthropicChatModel(ChatModelBase):
                     )
 
                 elif event.type == "message_delta":
+                    if (
+                        self.raise_on_refusal
+                        and getattr(event.delta, "stop_reason", None)
+                        == "refusal"
+                    ):
+                        stop_details = getattr(
+                            event.delta,
+                            "stop_details",
+                            None,
+                        )
+                        explanation = getattr(
+                            stop_details,
+                            "explanation",
+                            None,
+                        )
+                        raise ContentBlockedError(
+                            explanation
+                            or f"{self._content_block_provider} refused "
+                            f"the response.",
+                            phase=ContentBlockedPhase.OUTPUT,
+                            provider=self._content_block_provider,
+                            original_code="refusal",
+                            request_id=response_id,
+                            partial_output=has_output,
+                        )
                     if event.usage and usage:
                         usage.output_tokens = event.usage.output_tokens or 0
                         # Update cumulative counts before adding cache tokens.
@@ -624,6 +697,7 @@ class AnthropicChatModel(ChatModelBase):
                         ).total_seconds()
 
                 if delta_res.content:
+                    has_output = True
                     delta_res.usage = usage
                     yield delta_res
 

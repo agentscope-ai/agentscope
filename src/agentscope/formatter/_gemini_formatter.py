@@ -20,6 +20,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     URLSource,
     Base64Source,
 )
@@ -279,13 +280,20 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         multimodal_data,
                     ) = self.convert_tool_result_to_string(block.output)
 
+                    # Gemini reads a failed call from the "error" key of the
+                    # response, and a successful one from "output".
+                    response_key = (
+                        "error"
+                        if block.state == ToolResultState.ERROR
+                        else "output"
+                    )
                     tool_result_parts.append(
                         {
                             "function_response": {
                                 "id": block.id,
                                 "name": block.name,
                                 "response": {
-                                    "output": textual_output,
+                                    response_key: textual_output,
                                 },
                             },
                         },
@@ -393,12 +401,16 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
                         await self._format_tool_sequence(group),
                     )
                 case "agent_message":
-                    formatted_group = await self._format_agent_message(
+                    (
+                        formatted_group,
+                        has_history,
+                    ) = await self._format_agent_message_with_hints(
                         group,
                         is_first_agent_message,
+                        self._format_agent_message,
                     )
                     formatted_msgs.extend(formatted_group)
-                    if formatted_group:
+                    if has_history:
                         is_first_agent_message = False
 
         return formatted_msgs
@@ -412,6 +424,22 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
         return await GeminiChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the Gemini chat formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Gemini user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,

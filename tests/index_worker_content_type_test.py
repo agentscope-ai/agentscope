@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for Content-Type normalisation in ``IndexWorker``."""
+"""Regression tests for Content-Type dispatch in ``IndexWorker``."""
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.app._service._index_worker import IndexWorker
-from agentscope.rag import Section
+from agentscope.rag import Chunk, Section, TextParser
 from agentscope.message import TextBlock
 
 
@@ -30,13 +32,20 @@ class _Parser:
 class _Storage:
     """Minimal storage stub for the indexing pipeline."""
 
-    def __init__(self, content_type: str) -> None:
+    def __init__(
+        self,
+        content_type: str,
+        *,
+        filename: str = "README.md",
+        size: int = 7,
+    ) -> None:
         self.record = SimpleNamespace(
+            status="pending",
             data=SimpleNamespace(
                 content_type=content_type,
-                filename="README.md",
-                blob_uri="blob://README.md",
-                size=7,
+                filename=filename,
+                blob_uri=f"blob://{filename}",
+                size=size,
             ),
         )
         self.statuses: list[str] = []
@@ -63,6 +72,7 @@ class _Knowledge:
     """Minimal vector-store facade used by the worker."""
 
     def __init__(self) -> None:
+        self.inserted_chunks: list[Chunk] = []
         self.inserted_metadata: dict[str, object] = {}
 
     async def delete_document(self, document_id: str) -> None:
@@ -72,12 +82,13 @@ class _Knowledge:
     async def insert_document(
         self,
         *,
-        chunks: list[object],
+        chunks: list[Chunk],
         document_id: str,
         document_metadata: dict[str, object],
     ) -> None:
-        """Record the metadata produced for the indexed document."""
-        del chunks, document_id
+        """Record the chunks and metadata produced for the document."""
+        del document_id
+        self.inserted_chunks = chunks
         self.inserted_metadata = document_metadata
 
 
@@ -104,18 +115,20 @@ class _Manager:
 class _TestIndexWorker(IndexWorker):
     """Index worker with an in-memory blob source."""
 
+    blob_content = b"# AgentScope"
+
     async def run_pipeline(self) -> None:
         """Expose the pipeline entry point for the regression test."""
         await self._run_pipeline("user-1", "kb-1", "doc-1")
 
     async def _read_blob(self, blob_uri: str) -> bytes:
-        """Return the fixed Markdown payload used by the test."""
+        """Return the in-memory payload used by the test."""
         del blob_uri
-        return b"# AgentScope"
+        return self.blob_content
 
 
 class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
-    """Content-Type parameters must not prevent parser dispatch."""
+    """Supported Content-Type values must reach the correct parser."""
 
     async def test_parameterised_and_mixed_case_content_type_is_normalised(
         self,
@@ -153,5 +166,69 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
                         "filename": "README.md",
                         "media_type": "text/markdown",
                         "size_bytes": 7,
+                    },
+                )
+
+    async def test_yaml_content_types_are_indexed_as_text(self) -> None:
+        """Index YAML using its registered type and the legacy alias."""
+        payload = b"name: AgentScope\nenabled: true\n"
+        for content_type, filename in (
+            ("application/yaml", "config.yaml"),
+            ("application/yaml", "config.yml"),
+            ("application/x-yaml", "config.yaml"),
+            ("application/x-yaml", "config.yml"),
+        ):
+            with self.subTest(
+                content_type=content_type,
+                filename=filename,
+            ):
+                storage = _Storage(
+                    content_type,
+                    filename=filename,
+                    size=len(payload),
+                )
+                manager = _Manager()
+                worker = _TestIndexWorker(
+                    storage=storage,  # type: ignore[arg-type]
+                    blob_store=object(),  # type: ignore[arg-type]
+                    knowledge_base_manager=manager,  # type: ignore[arg-type]
+                    parsers=[TextParser()],
+                    node_id="test-node",
+                )
+                worker.blob_content = payload
+
+                await worker.run_pipeline()
+
+                self.assertListEqual(
+                    storage.statuses,
+                    ["parsing", "chunking", "indexing", "ready"],
+                )
+                self.assertEqual(
+                    [
+                        chunk.model_dump()
+                        for chunk in manager.knowledge.inserted_chunks
+                    ],
+                    [
+                        {
+                            "content": {
+                                "type": "text",
+                                "text": payload.decode(),
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                            "source": filename,
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "metadata": {},
+                        },
+                    ],
+                )
+                self.assertDictEqual(
+                    manager.knowledge.inserted_metadata,
+                    {
+                        "filename": filename,
+                        "media_type": content_type,
+                        "size_bytes": len(payload),
                     },
                 )

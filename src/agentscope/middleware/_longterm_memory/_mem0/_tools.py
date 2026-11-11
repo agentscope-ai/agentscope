@@ -67,35 +67,54 @@ class _SearchMemoryTool(_Mem0MemoryToolBase):
         "Each keyword is issued as an independent query; results are merged "
         "and deduplicated."
     )
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "keywords": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "Short, targeted search phrases such as a person's name, "
-                    "a specific date, a location, or a phrase describing what "
-                    "to retrieve from memory."
-                ),
-            },
-            "limit": {
-                "type": "integer",
-                "description": (
-                    "Maximum number of memories to retrieve per keyword."
-                ),
-                "default": 5,
-            },
-        },
-        "required": ["keywords"],
-    }
     is_concurrency_safe: bool = True
     is_read_only: bool = True
+
+    def __init__(
+        self,
+        mw: "Mem0Middleware",
+    ) -> None:
+        """Bind the tool to ``mw`` and build its per-instance schema.
+
+        The advertised ``limit`` default is read from the middleware's
+        ``top_k`` here (rather than a hardcoded constant), so configuring
+        ``top_k`` on the middleware also governs the tool's default.
+
+        Args:
+            mw (`Mem0Middleware`):
+                The middleware whose mem0 client and ``top_k`` this
+                search tool uses.
+        """
+        super().__init__(mw)
+        # Per-instance schema so the default ``limit`` reflects this
+        # middleware's ``top_k`` rather than a hardcoded constant.
+        self.input_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Short, targeted search phrases such as a person's "
+                        "name, a specific date, a location, or a phrase "
+                        "describing what to retrieve from memory."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum number of memories to retrieve per keyword."
+                    ),
+                    "default": mw._top_k,
+                },
+            },
+            "required": ["keywords"],
+        }
 
     async def __call__(
         self,
         keywords: list[str],
-        limit: int = 5,
+        limit: int | None = None,
     ) -> ToolChunk:
         """Retrieve the memory based on the given keywords.
 
@@ -107,10 +126,13 @@ class _SearchMemoryTool(_Mem0MemoryToolBase):
                 memory). Each keyword is issued as an independent query
                 against the memory store; results are merged and
                 deduplicated.
-            limit (int):
+            limit (int | None):
                 The maximum number of memories to retrieve per keyword.
-                Defaults to 5.
+                When omitted, falls back to the middleware's ``top_k``.
         """
+        if limit is None:
+            limit = self._mw._top_k
+
         if not keywords:
             return _text_chunk("(no keywords supplied — nothing to search)")
 
