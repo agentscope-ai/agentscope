@@ -153,6 +153,45 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
                 str(external_dir),
             )
 
+    async def test_search_preserves_symlink_parent_paths(self) -> None:
+        """Preserve native filesystem semantics for symlink parent paths."""
+        with tempfile.TemporaryDirectory() as root:
+            workdir = Path(root) / "project"
+            workdir.mkdir()
+            external = Path(root) / "external"
+            target = external / "nested"
+            target.mkdir(parents=True)
+            link = workdir / "link"
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as exc:
+                if getattr(exc, "winerror", None) == 1314:
+                    self.skipTest("Creating symlinks requires privileges.")
+                raise
+            (workdir / "wrong.txt").write_text("needle\n", encoding="utf-8")
+            (external / "match.txt").write_text("needle\n", encoding="utf-8")
+            workspace = LocalWorkspace(workdir=str(workdir))
+            tools = await workspace.list_tools()
+            expected = [
+                str(entry)
+                for entry in (link / "..").iterdir()
+                if entry.suffix == ".txt"
+            ]
+            for path in (os.path.join("link", ".."), str(link / "..")):
+                for tool in tools:
+                    if isinstance(tool, (Glob, Grep)):
+                        with self.subTest(path=path, tool=tool.name):
+                            pattern = (
+                                "**/*.txt"
+                                if isinstance(tool, Glob)
+                                else "needle"
+                            )
+                            result = await tool(pattern=pattern, path=path)
+                            self.assertEqual(
+                                [block.text for block in result.content],
+                                expected,
+                            )
+
     async def test_list_tools_builtin_posix_uses_bash(self) -> None:
         """A POSIX local workspace returns Bash and filesystem tools."""
         with tempfile.TemporaryDirectory() as workdir:
