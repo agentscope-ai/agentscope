@@ -128,6 +128,19 @@ class FakeMCPHub(MCPHubBase):
                 },
             ),
         }
+        # A card whose id is opaque and contains a slash, the shape
+        # registries such as ``io.github.owner/name`` use. Its ``name``
+        # stays a valid client name, so it can be installed.
+        self.owner_scoped_card = MCPCard(
+            hub_id="fake",
+            id="io.github.upstash/context7",
+            name="context7",
+            auth="none",
+            config_template={
+                "type": "http_mcp",
+                "url": "https://context7.invalid/sse",
+            },
+        )
 
     async def list_mcps(
         self,
@@ -144,6 +157,8 @@ class FakeMCPHub(MCPHubBase):
 
     async def get_mcp(self, user_id: str, card_id: str) -> MCPCard:
         """Return one fixture card."""
+        if card_id == self.owner_scoped_card.id:
+            return self.owner_scoped_card
         return self.cards[card_id]
 
 
@@ -337,6 +352,21 @@ class HubRouterTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["id"], "runware/music")
+
+    def test_gets_owner_scoped_mcp_card(self) -> None:
+        """A slash in an opaque MCP card id stays inside the parameter."""
+        card_id = quote("io.github.upstash/context7", safe="")
+
+        fetched = self._client.get(
+            f"/hub/mcp/fake/cards/{card_id}",
+            headers=HEADERS,
+        )
+        installed = self._install_mcp(card_id)
+
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["id"], "io.github.upstash/context7")
+        self.assertEqual(installed.status_code, 201)
+        self.assertEqual(installed.json()["name"], "context7")
 
     # ── install: MCP ──────────────────────────────────────────────
 
