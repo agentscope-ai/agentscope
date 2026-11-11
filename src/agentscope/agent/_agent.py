@@ -72,7 +72,11 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import (
+    AgentOrientedException,
+    ContentBlockedError,
+    ContentBlockedPhase,
+)
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -455,6 +459,10 @@ class Agent:
             await self.compress_context(context_config=context_config)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
+            if isinstance(e, ContentBlockedError) and (
+                e.partial_output or e.requires_review
+            ):
+                raise
             return ToolChunk(
                 content=[TextBlock(text=f"Context compression failed: {e}")],
                 state=ToolResultState.ERROR,
@@ -630,6 +638,10 @@ class Agent:
             )
 
         except Exception as error:
+            if isinstance(error, ContentBlockedError) and (
+                error.partial_output or error.requires_review
+            ):
+                raise
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -668,6 +680,11 @@ class Agent:
                         structured_model=cfg.summary_schema,
                     )
                 except Exception as retry_error:
+                    if isinstance(retry_error, ContentBlockedError) and (
+                        retry_error.partial_output
+                        or retry_error.requires_review
+                    ):
+                        raise
                     error = retry_error
 
             if res is None:
@@ -3397,7 +3414,7 @@ class Agent:
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
+                        result = await model(
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
@@ -3445,9 +3462,27 @@ class Agent:
                                     next_handler=next_handler,
                                 )
 
-                        return await execute_chain()
+                        result = await execute_chain()
+
+                    if inspect.isasyncgen(result):
+                        return self._observe_model_stream(result, model)
+                    return result
                 except Exception as e:
                     last_exception = e
+                    if isinstance(e, ContentBlockedError):
+                        # Custom models or middleware may consume a stream
+                        # before returning. Honor any reported output rather
+                        # than replaying a partially delivered response.
+                        if e.partial_output or e.requires_review:
+                            raise
+                        if e.phase != ContentBlockedPhase.OUTPUT:
+                            message = (
+                                f"Model {model.model} blocked content for "
+                                f"agent {self.name}; skipping retries with "
+                                f"the same payload."
+                            )
+                            logger.warning(message)
+                            break
                     # Only log a "Retrying" message when there's actually a
                     # next attempt left for this model. When ``max_retries=0``
                     # or the last retry has been used, the outer loop either
@@ -3471,11 +3506,41 @@ class Agent:
                         )
 
         if last_exception:
+            if isinstance(last_exception, ContentBlockedError):
+                raise last_exception
             raise last_exception from None
 
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    async def _observe_model_stream(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+        model: ChatModelBase,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Observe a returned model stream without replaying model calls.
+
+        Yield chunks unchanged. Log and re-raise content-block errors that
+        occur during consumption. At this point
+        the agent's model-selection loop has returned, so this wrapper does
+        not retry or switch fallback models, even before the first chunk.
+        Always close the delegated stream when iteration exits, including
+        on error or explicit closure of this wrapper.
+        """
+        try:
+            async for chunk in stream:
+                yield chunk
+        except ContentBlockedError:
+            message = (
+                f"Model {model.model} blocked content for agent {self.name} "
+                f"during stream consumption; Agent-level retries and "
+                f"fallback model switching are not attempted."
+            )
+            logger.warning(message)
+            raise
+        finally:
+            await stream.aclose()
 
     def _update_tool_call_state(
         self,
