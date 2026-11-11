@@ -5,7 +5,9 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+	ExternalExecutionResultEvent,
 	ReplyStartEvent,
+	ToolResultEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
@@ -24,6 +26,7 @@ import {
 	useChatQueue,
 } from '@/hooks/useChatQueue';
 import { useTranslation } from '@/i18n/useI18n';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -41,23 +44,6 @@ export type SubagentHitlEntry = {
 	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
 	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
 	created_at: string;
-};
-
-/**
- * Return true if ``msg`` is an assistant reply currently parked on a
- * pending tool_call (awaiting user confirmation or an external
- * execution result). Used both to detect the "in-flight reply on page
- * load" case and as the SDK-gap workaround that hides the confirm
- * card once the paired tool_result lands.
- */
-const hasPendingToolCall = (msg: Msg | undefined): boolean => {
-	if (!msg || msg.role !== 'assistant') return false;
-	for (const block of msg.content) {
-		if (block.type !== 'tool_call') continue;
-		const state = (block as ToolCallBlock).state;
-		if (state === 'asking' || state === 'submitted') return true;
-	}
-	return false;
 };
 
 const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
@@ -144,16 +130,36 @@ export function useMessages(
 		isRealtimeAudioActive?: () => boolean;
 		/** Send a tool confirmation over the active realtime transport. */
 		sendRealtimeUserConfirm?: (event: UserConfirmResultEvent) => Promise<void>;
+		/** Return an external tool result over the realtime transport. */
+		sendRealtimeExternalExecutionResult?: (
+			event: ExternalExecutionResultEvent,
+		) => Promise<void>;
 	},
 ) {
 	const { t } = useTranslation();
 	// A new identity for each visit also rejects late responses after A -> B -> A.
 	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
+	const externalSubmissionsRef = useRef(
+		new Map<
+			string,
+			{
+				replyId: string;
+				toolCallIds: Set<string>;
+				resolve: () => void;
+				reject: (error: Error) => void;
+			}
+		>(),
+	);
 	const activeSessionRef = useRef<typeof session | null>(null);
 	useLayoutEffect(() => {
 		activeSessionRef.current = session;
+		const externalSubmissions = externalSubmissionsRef.current;
 		return () => {
 			activeSessionRef.current = null;
+			for (const pending of externalSubmissions.values()) {
+				pending.reject(new Error('The session closed before the result was acknowledged.'));
+			}
+			externalSubmissions.clear();
 		};
 	}, [session]);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -225,7 +231,23 @@ export function useMessages(
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
-				if (custom.name === 'tts_error') {
+				if (custom.name === 'external_execution_result_rejected') {
+					const failure = custom.value as {
+						request_id: string;
+						reply_id: string;
+						tool_call_ids: string[];
+					};
+					const pending = externalSubmissionsRef.current.get(failure.request_id);
+					if (
+						pending?.replyId === failure.reply_id &&
+						failure.tool_call_ids.some((id) => pending.toolCallIds.has(id))
+					) {
+						externalSubmissionsRef.current.delete(failure.request_id);
+						const error = new Error(t('chat.externalExecution.rejected'));
+						pending.reject(error);
+						toast.error(error.message);
+					}
+				} else if (custom.name === 'tts_error') {
 					const failure = custom.value as { stage?: string; reply_id?: string };
 					const sessionKey = JSON.stringify([agentId, sessionId]);
 					if (failure.stage === 'configuration') {
@@ -297,6 +319,23 @@ export function useMessages(
 					toast.error(value.message ?? t('chatQueue.steerFailed'));
 				}
 				return;
+			}
+			if (event.type === EventType.TOOL_RESULT_END) {
+				const result = event as ToolResultEndEvent;
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (pending.replyId !== result.reply_id) continue;
+					pending.toolCallIds.delete(result.tool_call_id);
+					if (pending.toolCallIds.size === 0) {
+						externalSubmissionsRef.current.delete(requestId);
+						pending.resolve();
+					}
+				}
+			} else if (event.type === EventType.REPLY_END) {
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (pending.replyId !== event.reply_id) continue;
+					externalSubmissionsRef.current.delete(requestId);
+					pending.reject(new Error(t('chat.externalExecution.rejected')));
+				}
 			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
@@ -441,25 +480,27 @@ export function useMessages(
 					if (cancelled) return;
 					eventCursor = event_cursor;
 					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR the
-					// tail msg is parked on a pending tool_call (awaiting
+					// If a reply is in flight (running on a worker) OR any
+					// persisted msg is parked on a pending tool_call (awaiting
 					// user confirmation / external execution), initialise the
 					// phase to ``streaming`` so the interrupt button is
 					// available immediately — otherwise a fresh page load
 					// while parked leaves the UI stuck on ``idle`` with no
 					// way to abort.
 					const tail = messages[messages.length - 1];
-					const pendingToolCall = hasPendingToolCall(tail);
-					if (is_running || pendingToolCall) {
+					const pendingHitl = getPendingHitlCalls(messages)[0];
+					if (is_running || pendingHitl) {
 						setPhase('streaming');
-						if (is_running && !pendingToolCall && tail?.role === 'assistant') {
+						if (is_running && !pendingHitl && tail?.role === 'assistant') {
 							setActiveReplyId(tail.id);
 						}
-						if (pendingToolCall) {
+						if (pendingHitl) {
 							// Prime the ref so continuation events (which
 							// arrive without a fresh REPLY_START) apply to
 							// the right msg.
-							currentReplyRef.current = tail ?? null;
+							currentReplyRef.current =
+								messages.find((message) => message.id === pendingHitl.replyId) ??
+								null;
 						}
 					}
 					// Published synchronously, not through `scheduleUpdate`:
@@ -615,6 +656,47 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
+	const onExternalExecutionResult = useCallback(
+		async (event: ExternalExecutionResultEvent) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+			try {
+				if (
+					optionsRef.current?.isRealtimeAudioActive?.() &&
+					optionsRef.current.sendRealtimeExternalExecutionResult
+				) {
+					// Sending a DataChannel frame does not acknowledge its result.
+					// Register first so even an immediate SSE response is matched.
+					const receipt = new Promise<void>((resolve, reject) => {
+						externalSubmissionsRef.current.set(event.id, {
+							replyId: event.reply_id,
+							toolCallIds: new Set(
+								event.execution_results.map((result) => result.id),
+							),
+							resolve,
+							reject,
+						});
+					});
+					await Promise.all([
+						receipt,
+						optionsRef.current.sendRealtimeExternalExecutionResult(event),
+					]);
+				} else {
+					await chatApi.trigger({
+						agent_id: agentId,
+						session_id: sessionId,
+						input: event,
+					});
+				}
+			} catch (e) {
+				if (activeSessionRef.current === session) setError(e as Error);
+				throw e;
+			} finally {
+				externalSubmissionsRef.current.delete(event.id);
+			}
+		},
+		[agentId, sessionId, session],
+	);
+
 	/** Abort the current SSE connection. */
 	const abort = useCallback(() => {
 		abortRef.current?.abort();
@@ -744,6 +826,7 @@ export function useMessages(
 		steerQueued,
 		send,
 		onUserConfirm,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,

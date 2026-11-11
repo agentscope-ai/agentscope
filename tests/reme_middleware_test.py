@@ -2,10 +2,11 @@
 # pylint: disable=protected-access,unused-argument
 """Unit tests for ReMeMiddleware.
 
-The embedded ReMe app is mocked — we only exercise the AgentScope hook
+Most tests mock the embedded ReMe app and exercise the AgentScope hook
 wiring (retrieve-before / write-after, system-prompt injection,
 list_tools exposure) and the small adapters that translate between
-AgentScope and ReMe. No real ReMe application is built.
+AgentScope and ReMe. An optional smoke test starts the real ReMe app
+without network access when reme-ai is installed.
 
 ``protected-access`` is disabled because tests legitimately reach into
 middleware internals (``mw._app``, ``mw._search``, ``mw._session_id_of``)
@@ -14,6 +15,9 @@ to inspect what the public API just did.
 import sys
 import types
 import asyncio
+import importlib.util
+import socket
+from tempfile import TemporaryDirectory
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Any
@@ -516,10 +520,24 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         self.assertNotIn("resource_watch_loop", captured["jobs"])
         self.assertNotIn("digest_watch_loop", captured["jobs"])
         self.assertNotIn("daily_paper", captured["jobs"])
-        self.assertEqual(
-            captured["jobs"]["dream_cron"]["steps"],
-            captured["jobs"]["auto_dream"]["steps"],
-        )
+        for name in ("dream_cron", "auto_dream"):
+            self.assertEqual(
+                captured["jobs"][name]["steps"],
+                [
+                    {
+                        "backend": "dream_extract_step",
+                        "file_catalog": "dream",
+                        "topic_session_id": "interests",
+                        "scan_days": 2,
+                        "max_units": 5,
+                    },
+                    {"backend": "dream_integrate_step"},
+                    {
+                        "backend": "dream_finish_step",
+                        "file_catalog": "dream",
+                    },
+                ],
+            )
         self.assertEqual(
             captured["jobs"]["index_update_loop"]["watch_dirs"],
             ["daily_dir", "digest_dir"],
@@ -617,6 +635,65 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             1024,
         )
         self.assertIn("embedding_store", components)
+
+
+class TestAppLifecycle(IsolatedAsyncioTestCase):
+    """Tests for the lazily built embedded app's one-time start."""
+
+    async def test_real_app_starts_without_network(self) -> None:
+        """Resolve real backends and close the app without model calls."""
+        if importlib.util.find_spec("reme") is None:
+            self.skipTest("reme-ai is not installed")
+        from reme import ReMe
+
+        with (
+            TemporaryDirectory() as workspace,
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "LLM_API_KEY": "test",
+                    "LLM_BASE_URL": "https://example.invalid/v1",
+                },
+                clear=True,
+            ),
+            mock.patch.object(
+                socket.socket,
+                "connect",
+                side_effect=AssertionError("Unexpected network access"),
+            ) as connect,
+        ):
+            app = ReMe(
+                log_to_file=False,
+                **_build_reme_app_config(workspace_dir=workspace),
+            )
+            try:
+                await asyncio.wait_for(app.start(), timeout=10)
+                self.assertTrue(app.is_started)
+            finally:
+                await asyncio.wait_for(app.close(), timeout=10)
+            self.assertFalse(app.is_started)
+            connect.assert_not_called()
+
+    async def test_concurrent_callers_start_the_app_once(self) -> None:
+        """Hooks that run before the app is started must start it once."""
+
+        class _SlowStartApp(_FakeReMeApp):
+            """A fake app whose start yields, so callers interleave."""
+
+            async def start(self) -> None:
+                await asyncio.sleep(0)
+                await super().start()
+
+        mw = ReMeMiddleware()
+        app = _SlowStartApp()
+        with mock.patch.object(mw, "_build_app", return_value=app):
+            await asyncio.gather(
+                *(mw._ensure_started() for _ in range(5)),
+            )
+
+        self.assertEqual(app.start_count, 1)
+        self.assertTrue(mw._started)
+        self.assertIs(mw._app, app)
 
 
 # ----------------------------------------------------------------------

@@ -413,6 +413,31 @@ export interface SessionView {
 	team: TeamDetailResponse | null;
 }
 
+// ─── Background tools ─────────────────────────────────────────────────────────
+
+export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface BackgroundTaskInfo {
+	task_id: string;
+	session_id: string;
+	agent_id: string;
+	tool_name: string;
+	summary: string;
+	status: BackgroundTaskStatus;
+	/** UTC date-time when the tool was registered for background execution. */
+	started_at: string;
+	/** Actual execution start, absent or null in records created by older servers. */
+	execution_started_at?: string | null;
+	completed_at: string | null;
+	error_summary: string | null;
+}
+
+export interface ListBackgroundTasksResponse {
+	tasks: BackgroundTaskInfo[];
+	/** Includes retained terminal tasks; this is not the running count. */
+	total: number;
+}
+
 // ─── JSON Schema ──────────────────────────────────────────────────────────────
 
 /**
@@ -863,6 +888,8 @@ export interface RealtimeModelCard {
 	input_sample_rate: number;
 	output_sample_rate: number;
 	supports_tools: boolean;
+	interaction_mode: 'turn_based' | 'full_duplex';
+	delegation_backend: 'none' | 'session_chat';
 	max_context_tokens: number | null;
 	max_audio_turns: number | null;
 	max_audio_duration_s: number | null;

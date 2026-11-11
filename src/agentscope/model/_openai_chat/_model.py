@@ -2,6 +2,7 @@
 """The OpenAI Chat Completions model implementation."""
 import base64
 from collections import OrderedDict
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
@@ -284,9 +285,14 @@ class OpenAIChatModel(ChatModelBase):
         response = await self.client.chat.completions.create(**kwargs)
 
         audio_cfg = kwargs.get("audio")
+        extra_body = kwargs.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            # The SDK merges extra_body over the request at the top level.
+            # Decode the format actually sent, including per-call overrides.
+            audio_cfg = extra_body.get("audio", audio_cfg)
         audio_fmt = (
             audio_cfg.get("format", "wav")
-            if isinstance(audio_cfg, dict)
+            if isinstance(audio_cfg, Mapping)
             else "wav"
         )
 

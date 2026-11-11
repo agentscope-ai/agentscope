@@ -290,6 +290,43 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_chat_formatter_assistant_media(self) -> None:
+        """Assistant images follow their text and precede the next user."""
+        picture = DataBlock(
+            source=Base64Source(
+                data="SU1HX0RBVEE=",
+                media_type="image/png",
+            ),
+            detail="high",
+        )
+        for text in ("Here is the chart.", ""):
+            with self.subTest(text=text):
+                content = (
+                    [TextBlock(text=text), picture] if text else [picture]
+                )
+                res = await XAIChatFormatter().format(
+                    [
+                        UserMsg(name="user", content="Draw a chart."),
+                        AssistantMsg(name="assistant", content=content),
+                        UserMsg(name="user", content="Explain the chart."),
+                    ],
+                )
+                expected = [user("Draw a chart.")]
+                if text:
+                    expected.append(assistant(text))
+                expected.extend(
+                    [
+                        user(
+                            image(
+                                "data:image/png;base64,SU1HX0RBVEE=",
+                                detail="high",
+                            ),
+                        ),
+                        user("Explain the chart."),
+                    ],
+                )
+                self.assertListEqual(expected, res)
+
     async def test_chat_formatter_system_message(self) -> None:
         """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
@@ -519,7 +556,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
         self,
     ) -> None:
-        """Promoted media does not split parallel tool-result messages."""
+        """Assistant media precedes tools; result media follows all results."""
         fmt = XAIChatFormatter()
         picture = DataBlock(
             id="image_1",
@@ -533,6 +570,13 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 AssistantMsg(
                     name="assistant",
                     content=[
+                        TextBlock(text="Original chart."),
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
                         ToolCallBlock(
                             id="call_shot",
                             name="screenshot",
@@ -558,6 +602,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             output=[TextBlock(text="Example Domain")],
                             state=ToolResultState.SUCCESS,
                         ),
+                        TextBlock(text="New chart analysis."),
                     ],
                 ),
             ],
@@ -565,8 +610,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
 
         normalized_res = [
             (
-                res[0].role,
-                [part.text for part in res[0].content],
+                msg.role,
+                [part.text for part in msg.content],
                 [
                     (
                         tool_call.id,
@@ -574,14 +619,18 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                         tool_call.function.name,
                         tool_call.function.arguments,
                     )
-                    for tool_call in res[0].tool_calls
+                    for tool_call in msg.tool_calls
                 ],
-            ),
-            *res[1:],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
         ]
         self.assertListEqual(
             normalized_res,
             [
+                assistant("Original chart."),
+                user(image("https://example.com/original.png")),
                 (
                     2,
                     [],
@@ -618,6 +667,65 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     image("https://example.com/shot.png"),
                     "</system-reminder>",
                 ),
+                assistant("New chart analysis."),
+            ],
+        )
+
+    async def test_chat_formatter_media_before_separate_tool_result(
+        self,
+    ) -> None:
+        """Media must not separate a tool call from a later result message."""
+        res = await XAIChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
+                        ToolCallBlock(id="call_1", name="edit", input="{}"),
+                    ],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="edit",
+                            output="Done.",
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        normalized_res = [
+            (
+                msg.role,
+                [part.text for part in msg.content],
+                [
+                    (
+                        call.id,
+                        call.type,
+                        call.function.name,
+                        call.function.arguments,
+                    )
+                    for call in msg.tool_calls
+                ],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
+        ]
+        self.assertListEqual(
+            normalized_res,
+            [
+                user(image("https://example.com/original.png")),
+                (2, [], [("call_1", 1, "edit", "{}")]),
+                tool_result("Done.", tool_call_id="call_1"),
             ],
         )
 
@@ -699,6 +807,59 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     "assistant: The capital of Germany is Berlin.\n"
                     "user: What is the capital of Japan?\n"
                     "</history>",
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_hint_only_message_precedes_history(self) -> None:
+        """A hint-only message is emitted before following history."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            AssistantMsg(
+                name="memory",
+                content=[HintBlock(hint="Remember the user's preference.")],
+            ),
+            UserMsg(name="alice", content="What should I remember?"),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                user("Remember the user's preference."),
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nalice: What should I remember?\n</history>",
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_hint_splits_mixed_history_in_order(self) -> None:
+        """A hint embedded in a message separates ordered history segments."""
+        fmt = XAIMultiAgentFormatter()
+        msg = AssistantMsg(
+            name="memory",
+            content=[
+                TextBlock(text="Context before the hint."),
+                HintBlock(hint="Keep this instruction."),
+                TextBlock(text="Context after the hint."),
+            ],
+        )
+
+        res = await fmt.format([msg])
+
+        self.assertListEqual(
+            [
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nmemory: Context before the hint.\n"
+                    + "</history>",
+                ),
+                user("Keep this instruction."),
+                user(
+                    "<history>\nmemory: Context after the hint.\n</history>",
                 ),
             ],
             res,
@@ -976,6 +1137,52 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+    async def test_chat_formatter_assistant_media_around_hint(self) -> None:
+        """Assistant images stay with their segment on either side of hints."""
+        before = DataBlock(
+            source=URLSource(
+                url="https://example.com/before.png",
+                media_type="image/png",
+            ),
+        )
+        after = DataBlock(
+            source=URLSource(
+                url="https://example.com/after.png",
+                media_type="image/png",
+            ),
+        )
+        for hint in (
+            "Revise the chart.",
+            [TextBlock(text="Revise the chart.")],
+        ):
+            for text in ("Original chart.", ""):
+                with self.subTest(hint=hint, text=text):
+                    content = [TextBlock(text=text)] if text else []
+                    res = await XAIChatFormatter().format(
+                        [
+                            AssistantMsg(
+                                name="assistant",
+                                content=[
+                                    *content,
+                                    before,
+                                    HintBlock(hint=hint),
+                                    TextBlock(text="Revised chart."),
+                                    after,
+                                ],
+                            ),
+                        ],
+                    )
+                    expected = [assistant(text)] if text else []
+                    expected.extend(
+                        [
+                            user(image("https://example.com/before.png")),
+                            user("Revise the chart."),
+                            assistant("Revised chart."),
+                            user(image("https://example.com/after.png")),
+                        ],
+                    )
+                    self.assertListEqual(expected, res)
 
     async def test_chat_formatter_hint_block_multimodal(self) -> None:
         """Multimodal HintBlock becomes one user() stub carrying text +

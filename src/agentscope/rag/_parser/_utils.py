@@ -42,7 +42,7 @@ def _guess_image_media_type(data: bytes) -> str:
         if data.startswith(signature):
             return media_type
     # WebP: ``RIFF`` at offset 0 + ``WEBP`` at offset 8.
-    if len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return "image/jpeg"
 
