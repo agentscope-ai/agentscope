@@ -62,6 +62,44 @@ SAFE_ENV_VARS = {
     "CLICOLOR_FORCE",
 }
 
+# Commands that run the command in their own arguments, so the dangerous
+# command to inspect is the first operand after their options.
+_COMMAND_WRAPPERS = {
+    "sudo",
+    "env",
+    "command",
+    "nohup",
+    "exec",
+}
+
+# Wrapper options that consume the following token as their value.
+_WRAPPER_OPTIONS_WITH_VALUE = {
+    "sudo": {
+        "-u",
+        "--user",
+        "-g",
+        "--group",
+        "-U",
+        "--other-user",
+        "-C",
+        "--close-from",
+        "-h",
+        "--host",
+        "-p",
+        "--prompt",
+        "-r",
+        "--role",
+        "-t",
+        "--type",
+        "-T",
+        "--command-timeout",
+        "-D",
+        "--chdir",
+    },
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "exec": {"-a"},
+}
+
 # Read-only git commands
 GIT_READ_ONLY_COMMANDS = {
     "git status",
