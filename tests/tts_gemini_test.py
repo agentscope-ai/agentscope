@@ -351,6 +351,7 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
                 stream=streaming,
                 client_kwargs={
                     "http_options": {
+                        "api_version": "v1beta",
                         "httpx_async_client": http_client,
                     },
                 },
