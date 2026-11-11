@@ -30,7 +30,9 @@ def setup_logger(
             f"Invalid logging level: {level}. Must be one of "
             f"'INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL'.",
         )
-    logger.handlers.clear()
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
     logger.setLevel(level)
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(_DEFAULT_FORMAT))
