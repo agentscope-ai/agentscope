@@ -4,6 +4,8 @@ MoonshotMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch, MagicMock
 
@@ -331,6 +333,45 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are nested inside image_url payload."""
+        fmt = MoonshotChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": self.image_data_uri,
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_to_reasoning_content(
         self,
     ) -> None:
@@ -426,6 +467,48 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{expected_b64}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = MoonshotChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_base64_video(self) -> None:
         """Base64-encoded video is emitted as a video URL block."""
         fmt = MoonshotChatFormatter(
@@ -469,6 +552,34 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             ],
             await fmt.format(msgs),
         )
+
+    async def test_video_extra_params(self) -> None:
+        """Both Moonshot formatters preserve video-specific parameters."""
+        block = DataBlock(
+            source=Base64Source(
+                data="ZmFrZSB2aWRlbw==",
+                media_type="video/mp4",
+            ),
+            fps=2,
+        )
+        for formatter_type in (
+            MoonshotChatFormatter,
+            MoonshotMultiAgentFormatter,
+        ):
+            with self.subTest(formatter=formatter_type.__name__):
+                result = await formatter_type().format(
+                    [UserMsg(name="user", content=[block])],
+                )
+                self.assertEqual(
+                    result[0]["content"][-1],
+                    {
+                        "type": "video_url",
+                        "video_url": {
+                            "url": "data:video/mp4;base64,ZmFrZSB2aWRlbw==",
+                            "fps": 2,
+                        },
+                    },
+                )
 
     async def test_chat_formatter_url_image_in_tool_result(
         self,

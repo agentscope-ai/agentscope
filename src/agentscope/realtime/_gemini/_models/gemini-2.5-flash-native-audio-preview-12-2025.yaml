@@ -2,6 +2,8 @@ type: realtime_model
 name: gemini-2.5-flash-native-audio-preview-12-2025
 label: Gemini 2.5 Flash Native Audio
 status: active
+# Release date: https://ai.google.dev/gemini-api/docs/changelog
+release_date: 2025-12-12
 
 input_types:
   - audio/pcm

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The realtime model card."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, Self, Type
 
@@ -35,6 +35,10 @@ class RealtimeModelCard(BaseModel):
         default=None,
         description="When the model was deprecated, if applicable.",
     )
+    release_date: date | None = Field(
+        default=None,
+        description="The model release date, if known.",
+    )
 
     input_types: list[str] = Field(
         default_factory=lambda: ["audio/pcm"],
@@ -59,6 +63,17 @@ class RealtimeModelCard(BaseModel):
     supports_tools: bool = Field(
         default=False,
         description="Whether this model accepts tool schemas.",
+    )
+    interaction_mode: Literal["turn_based", "full_duplex"] = Field(
+        default="turn_based",
+        description="Whether speech is turn-based or full duplex.",
+    )
+    delegation_backend: Literal["none", "session_chat"] = Field(
+        default="none",
+        description=(
+            "Whether delegated tasks use the session's configured chat "
+            "agent."
+        ),
     )
 
     # Context limits. Providers use different units and several can apply

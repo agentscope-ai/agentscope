@@ -55,6 +55,13 @@ class TTSModelCard(BaseModel):
     )
     """Whether the model supports streaming input."""
 
+    voice_cloning: bool = Field(
+        default=False,
+        description="Whether the model supports voice cloning.",
+        title="Voice Cloning",
+    )
+    """Whether the model supports voice cloning."""
+
     parameter_schema: dict
     """The parameters schema."""
 
@@ -120,6 +127,8 @@ class TTSModelCard(BaseModel):
             "properties": properties,
             "required": required,
         }
+        if "$defs" in base_schema:
+            final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
 
         return cls(
             name=config["name"],
@@ -129,6 +138,7 @@ class TTSModelCard(BaseModel):
             input_types=config.get("input_types", ["text/plain"]),
             output_types=config.get("output_types", ["audio/wav"]),
             realtime=config.get("realtime", False),
+            voice_cloning=config.get("voice_cloning", False),
             parameter_schema=final_schema,
             parameters_overrides=config.get("parameter_overrides", {}),
         )

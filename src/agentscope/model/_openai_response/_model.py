@@ -174,13 +174,15 @@ class OpenAIResponseModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for reasoning models "
-                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
-                "control the depth of reasoning."
+                "None and True forward reasoning_effort as reasoning.effort "
+                "when it is set, including 'none'. If reasoning_effort is "
+                "unset, neither adds reasoning parameters; the provider "
+                "default applies. False overrides reasoning.effort with "
+                "'none' to request that reasoning be disabled."
             ),
         )
 
@@ -195,6 +197,9 @@ class OpenAIResponseModel(ChatModelBase):
                 "model-dependent and may include: none, minimal, low, "
                 "medium, high, xhigh."
             ),
+            json_schema_extra={
+                "x-reset-hidden-on-change": {"thinking_enable": None},
+            },
         )
 
         temperature: float | None = Field(
@@ -354,10 +359,9 @@ class OpenAIResponseModel(ChatModelBase):
         if self.parameters.temperature is not None:
             api_kwargs["temperature"] = self.parameters.temperature
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.thinking_enable is False:
+            api_kwargs["reasoning"] = {"effort": "none"}
+        elif self.parameters.reasoning_effort is not None:
             api_kwargs["reasoning"] = {
                 "effort": self.parameters.reasoning_effort,
             }
@@ -570,8 +574,8 @@ class OpenAIResponseModel(ChatModelBase):
                         u = resp.usage
                         details = getattr(u, "input_tokens_details", None)
                         usage = ChatUsage(
-                            input_tokens=u.input_tokens,
-                            output_tokens=u.output_tokens,
+                            input_tokens=u.input_tokens or 0,
+                            output_tokens=u.output_tokens or 0,
                             time=(
                                 datetime.now() - start_datetime
                             ).total_seconds(),
@@ -580,6 +584,7 @@ class OpenAIResponseModel(ChatModelBase):
                                 "cached_tokens",
                                 0,
                             )
+                            or 0
                             if details
                             else 0,
                         )
@@ -707,14 +712,15 @@ class OpenAIResponseModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.input_tokens or 0,
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )

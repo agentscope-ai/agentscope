@@ -162,6 +162,38 @@ class LocalAudioTransportTest(IsolatedAsyncioTestCase):
         await incoming.aclose()
         await transport.close()
 
+    async def test_start_failure_releases_open_streams(self) -> None:
+        """Failed entry releases streams and preserves the original error."""
+        sd = MagicMock()
+        in_stream = MagicMock(name="in_stream")
+        out_stream = MagicMock(name="out_stream")
+        sd.InputStream.return_value = in_stream
+        sd.OutputStream.return_value = out_stream
+        error = RuntimeError("device busy")
+        out_stream.start.side_effect = error
+
+        transport = LocalAudioTransport()
+
+        with patch.dict(sys.modules, {"sounddevice": sd}):
+            with self.assertRaises(RuntimeError) as raised:
+                async with transport:
+                    self.fail("__aenter__ must not succeed")
+
+        self.assertIs(raised.exception, error)
+        in_stream.start.assert_called_once_with()
+        in_stream.stop.assert_called_once_with()
+        in_stream.close.assert_called_once_with()
+        out_stream.stop.assert_called_once_with()
+        out_stream.close.assert_called_once_with()
+        self.assertEqual(
+            (
+                transport._in_stream,
+                transport._out_stream,
+                transport._loop,
+            ),
+            (None, None, None),
+        )
+
     async def test_playout_position_shape(self) -> None:
         """The position is a plain value object."""
         self.assertEqual(

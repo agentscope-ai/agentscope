@@ -210,6 +210,7 @@ class ChatModelBase:
         yaml_files = list(yaml_dir.glob("*.yaml"))
 
         # Load each YAML file and create ModelCard
+        model_class_type = getattr(cls, "type", "")
         model_cards = []
         for yaml_file in yaml_files:
             try:
@@ -217,6 +218,7 @@ class ChatModelBase:
                     yaml_path=str(yaml_file),
                     parameter_class=cls.Parameters,
                 )
+                card.model_class = model_class_type
                 model_cards.append(card)
             except Exception as e:
                 # Log error but continue with other files

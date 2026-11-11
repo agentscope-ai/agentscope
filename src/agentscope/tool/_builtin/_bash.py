@@ -223,8 +223,9 @@ easier to review tool calls and give permission.
         5. Dangerous removal path check for system dirs (bypass-immune
            safety ASK)
         6. ACCEPT_EDITS auto-allow for ``mkdir``/``touch``/``rm``/
-           ``rmdir``/``mv``/``cp``/``sed`` — only when **every**
-           target path resolves inside a working directory
+           ``rmdir``/``mv``/``cp``/``sed`` — only when **every** subcommand
+           of a compound command is one of those filesystem commands AND
+           every target path resolves inside a working directory
         7. PASSTHROUGH (engine continues with rule matching)
 
         "Bypass-immune" decisions set
@@ -352,11 +353,20 @@ easier to review tool calls and give permission.
                 "cp",
                 "sed",
             }
-            base_command = (
-                command.strip().split()[0] if command.strip() else ""
+            # Every segment of a compound command must itself be a
+            # filesystem command: checking only the first word of the raw
+            # string would let ``touch ./a && curl ... | sh`` ride on
+            # ``touch`` and auto-allow arbitrary code execution.
+            tree = self._bash_parser.parser.parse(bytes(command, "utf8"))
+            subcommands = self._bash_parser.split_compound_command(
+                tree.root_node,
+                command,
             )
+            base_commands = {
+                sub.strip().split()[0] for sub in subcommands if sub.strip()
+            }
 
-            if base_command in filesystem_commands:
+            if base_commands and base_commands <= filesystem_commands:
                 # Collect every target path: file arguments AND output
                 # redirections. ``extract_file_paths`` includes both.
                 target_paths = [
@@ -377,11 +387,13 @@ easier to review tool calls and give permission.
                 ):
                     return PermissionDecision(
                         behavior=PermissionBehavior.ALLOW,
-                        message=f"Permission granted for '{base_command}' "
+                        message=f"Permission granted for "
+                        f"{' '.join(sorted(base_commands))} "
                         f"command (filesystem command, all targets in "
                         f"working directory)",
                         decision_reason=(
-                            f"Filesystem command '{base_command}' is "
+                            f"Filesystem command(s) "
+                            f"{' '.join(sorted(base_commands))} "
                             f"auto-allowed because all target paths are "
                             f"within a working directory"
                         ),
@@ -393,12 +405,23 @@ easier to review tool calls and give permission.
             message=f"Execute bash command: {command}",
         )
 
+    def get_permission_inputs(
+        self,
+        tool_input: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return complete subcommands for permission rule evaluation."""
+        command = tool_input.get("command", "")
+        return [
+            {**tool_input, "command": subcommand}
+            for subcommand in self._bash_parser.split_into_subcommands(command)
+        ]
+
     async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
-        r"""Match Bash command using regex-based wildcard matching.
+        r"""Match one Bash operation using regex-based wildcard matching.
 
         Implements wildcard matching with escape sequences:
         - Supports \* for literal asterisk and \\ for literal backslash
@@ -409,12 +432,16 @@ easier to review tool calls and give permission.
         - If rule_content is None, matches all invocations
          (tool-name-level rule)
 
+        Matches the supplied operation without parsing or splitting it.
+        The permission engine uses :meth:`get_permission_inputs` to split
+        compound invocations and aggregate matches by rule behavior.
+
         Args:
             rule_content: The command pattern to match, or None to match all
-            tool_input: Must contain a "command" key with the command string
+            tool_input: Must contain a "command" key with the operation string
 
         Returns:
-            True if pattern matches the command
+            True if the pattern matches the supplied operation
         """
         # None = tool-name-level rule, matches everything
         if rule_content is None:

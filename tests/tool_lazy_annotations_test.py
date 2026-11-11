@@ -9,13 +9,16 @@ resolved back to real types before being handed to pydantic.
 from __future__ import annotations
 
 from functools import partial
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 from unittest import TestCase
 
 from pydantic import BaseModel, Field
 
 from agentscope.tool import FunctionTool
 from agentscope.tool._utils import _extract_input_schema
+
+if TYPE_CHECKING:
+    from agentscope.state import AgentState
 
 
 class Location(BaseModel):
@@ -79,6 +82,14 @@ primitive_parameter_with_unresolvable_return.__annotations__ = {
     "value": int,
     "return": "NotDefined",
 }
+
+
+def state_injected_tool(
+    query: Annotated[str, Field(description="The search query")],
+    _agent_state: AgentState | None = None,
+) -> str:
+    """Search with the injected agent state."""
+    return query
 
 
 class LazyAnnotationsTest(TestCase):
@@ -401,5 +412,24 @@ class LazyAnnotationsTest(TestCase):
                 "type": "object",
                 "properties": {"value": {"type": "integer"}},
                 "required": ["value"],
+            },
+        )
+
+    def test_type_checking_only_annotation_keeps_other_hints(self) -> None:
+        """A ``TYPE_CHECKING``-only annotation on the injected state does
+        not discard the hints of the other parameters."""
+        tool = FunctionTool(state_injected_tool, is_state_injected=True)
+
+        self.assertDictEqual(
+            tool.input_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    },
+                },
+                "required": ["query"],
             },
         )
