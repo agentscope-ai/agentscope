@@ -120,6 +120,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
             credential=GeminiCredential(api_key="test"),
             model="gemini-2.5-flash-preview-tts",
             parameters=GeminiTTSModel.Parameters(voice="Kore"),
+            stream=False,
         )
 
     async def test_synthesizes_audio(self) -> None:
@@ -229,6 +230,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
             credential=GeminiCredential(api_key="test"),
             model="gemini-2.5-pro-preview-tts",
             parameters=GeminiTTSModel.Parameters(voice="Puck"),
+            stream=False,
         )
 
         await model.synthesize("Hello world")
@@ -244,7 +246,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs["model"], "gemini-2.5-pro-preview-tts")
 
     def test_model_defaults_and_cards(self) -> None:
-        """Default to unary output and expose style only on new cards."""
+        """Default to streaming output and expose style only on new cards."""
         cards = {card.name: card for card in GeminiTTSModel.list_models()}
         names = (
             *_NEW_MODELS,
@@ -262,7 +264,7 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
                 self.assertEqual(
                     (model.stream, model.realtime, set(properties)),
                     (
-                        False,
+                        True,
                         False,
                         {"voice", "style"}
                         if name in _NEW_MODELS
