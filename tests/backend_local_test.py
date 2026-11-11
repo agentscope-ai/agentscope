@@ -265,6 +265,18 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
         basenames = sorted(os.path.basename(e) for e in entries)
         self.assertEqual(basenames, ["nested.txt", "top.txt"])
 
+    async def test_list_dir_missing_path_returns_empty(self) -> None:
+        """A missing or non-directory path lists nothing, like ``scandir``."""
+        missing = os.path.join(self.temp_dir.name, "missing")
+        self.assertEqual(await self.backend.list_dir(missing), [])
+        self.assertEqual(
+            await self.backend.list_dir(missing, recursive=True),
+            [],
+        )
+        file_path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(file_path, b"x")
+        self.assertEqual(await self.backend.list_dir(file_path), [])
+
     async def test_stat_mtime(self) -> None:
         """``stat_mtime`` returns a float for an existing path, None else."""
         path = os.path.join(self.temp_dir.name, "f.txt")

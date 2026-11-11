@@ -985,7 +985,14 @@ class LocalBackend(BackendBase):
                 for f in files:
                     results.append(os.path.join(root, f))
             return results
-        return os.listdir(path)
+        try:
+            return os.listdir(path)
+        except OSError:
+            # The base contract promises an empty list for a path that
+            # does not exist or cannot be listed, and the recursive
+            # branch inherits that from ``os.walk``. The shallow branch
+            # must not be the only one that raises.
+            return []
 
     async def scandir(self, path: str) -> list[DirEntry]:
         """List a local directory with each entry's metadata.
