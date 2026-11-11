@@ -7,6 +7,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._logging import logger
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._content_block import _enum_name
@@ -330,6 +331,7 @@ class GeminiChatModel(ChatModelBase):
             http_options = genai.types.HttpOptions.model_validate(
                 self.client_kwargs.get("http_options") or {},
             )
+            # Preserve zero: the SDK uses it to disable client timeouts.
             if http_options.timeout is None:
                 http_options = http_options.model_copy(
                     update={"timeout": 900_000},
@@ -367,6 +369,7 @@ class GeminiChatModel(ChatModelBase):
 
         thinking = config.get("thinking_config")
         if thinking is not None:
+            # The SDK normalizes nested aliases and rejects duplicate names.
             thinking = ThinkingConfig.model_validate(thinking).model_dump(
                 exclude_none=True,
             )
@@ -394,7 +397,12 @@ class GeminiChatModel(ChatModelBase):
                 "adapter yet.",
             )
         for key in ("temperature", "top_p", "top_k"):
-            config.pop(key, None)
+            if config.pop(key, None) is not None:
+                logger.warning(
+                    "Gemini 4 Argon and Carbon ignore %s; "
+                    "the parameter will not be sent.",
+                    key,
+                )
 
     async def _call_api(
         self,
@@ -424,8 +432,6 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        formatted_messages = await self.formatter.format(messages)
-
         config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
@@ -492,6 +498,9 @@ class GeminiChatModel(ChatModelBase):
 
         if fmt_tool_choice is not None:
             config["tool_config"] = fmt_tool_choice
+
+        # Validate config before formatting can read or download media.
+        formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
             "model": model_name,

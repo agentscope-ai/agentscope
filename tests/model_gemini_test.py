@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import Any, Annotated, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from google.genai.types import HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
@@ -213,28 +213,84 @@ class TestGemini4Argon(IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        api = AsyncMock(return_value=_mock_completion([]))
-        self.model.client.aio.models.generate_content = api
-        for parameters, overrides, expected in cases:
-            with self.subTest(parameters=parameters):
+        for stream in (False, True):
+            for parameters, overrides, expected in cases:
+                with self.subTest(stream=stream, parameters=parameters):
+                    self.model.stream = stream
+                    self.model.parameters = GeminiChatModel.Parameters(
+                        **parameters,
+                    )
+                    api = AsyncMock(return_value=_mock_completion([]))
+                    stream_api = AsyncMock(return_value=_MockAsyncStream([]))
+                    self.model.client.aio.models.generate_content = api
+                    self.model.client.aio.models.generate_content_stream = (
+                        stream_api
+                    )
+                    response = await self.model([], **overrides)
+                    if stream:
+                        async for _ in response:
+                            pass
+                    expected_calls = [
+                        call(
+                            model=self.model_name,
+                            contents=[],
+                            config=expected,
+                        ),
+                    ]
+                    self.assertEqual(
+                        api.await_args_list,
+                        [] if stream else expected_calls,
+                    )
+                    self.assertEqual(
+                        stream_api.await_args_list,
+                        expected_calls if stream else [],
+                    )
+
+    async def test_ignored_sampling_parameters_warn(self) -> None:
+        """Warn for non-null sampling values from either config source."""
+        cases = [
+            (
+                {"temperature": 0.2, "top_p": 0.3},
+                {},
+                ["temperature", "top_p"],
+            ),
+            (
+                {},
+                {"temperature": 0, "topP": 0.3, "topK": 20},
+                ["temperature", "top_p", "top_k"],
+            ),
+            (
+                {"temperature": 0.2, "top_p": 0.3},
+                {"temperature": None, "topP": None, "topK": None},
+                [],
+            ),
+        ]
+        for parameters, overrides, ignored in cases:
+            with self.subTest(parameters=parameters, overrides=overrides):
                 self.model.parameters = GeminiChatModel.Parameters(
                     **parameters,
                 )
-                await self.model([], **overrides)
+                api = AsyncMock(return_value=_mock_completion([]))
+                self.model.client.aio.models.generate_content = api
+                with patch(
+                    "agentscope.model._gemini._model.logger.warning",
+                ) as warning:
+                    await self.model([], **overrides)
                 self.assertEqual(
-                    api.call_args.kwargs,
-                    {
-                        "model": self.model_name,
-                        "contents": [],
-                        "config": expected,
-                    },
+                    warning.call_args_list,
+                    [
+                        call(
+                            "Gemini 4 Argon and Carbon ignore %s; "
+                            "the parameter will not be sent.",
+                            key,
+                        )
+                        for key in ignored
+                    ],
                 )
-        self.model.stream = True
-        stream_api = AsyncMock(return_value=_MockAsyncStream([]))
-        self.model.client.aio.models.generate_content_stream = stream_api
-        async for _ in await self.model([], **cases[-1][1]):
-            pass
-        stream_api.assert_awaited_once_with(**api.call_args.kwargs)
+                self.assertEqual(
+                    api.await_args_list,
+                    [call(model=self.model_name, contents=[], config={})],
+                )
 
     async def test_invalid_config_never_reaches_api(self) -> None:
         """Reject unsupported budgets, reasoning levels, and long decode."""
@@ -264,15 +320,32 @@ class TestGemini4Argon(IsolatedAsyncioTestCase):
             ("topK", "top_k"),
         ):
             cases.append(({}, {alias: None, name: None}, name))
-        for parameters, kwargs, message in cases:
-            with self.subTest(parameters=parameters, **kwargs):
-                self.model.parameters = GeminiChatModel.Parameters(
-                    **parameters,
-                )
-                self.model.client.reset_mock()
-                with self.assertRaisesRegex(ValueError, message):
-                    await self.model([], **kwargs)
-                self.assertEqual(self.model.client.mock_calls, [])
+        for alias, name, value in (
+            ("thinkingBudget", "thinking_budget", 1024),
+            ("thinkingLevel", "thinking_level", "LOW"),
+            ("includeThoughts", "include_thoughts", True),
+        ):
+            cases.append(
+                ({}, {"thinking_config": {alias: value, name: value}}, name),
+            )
+        self.model.formatter = MagicMock()
+        self.model.formatter.format = AsyncMock(return_value=[])
+        for stream in (False, True):
+            self.model.stream = stream
+            for parameters, kwargs, message in cases:
+                with self.subTest(
+                    stream=stream,
+                    parameters=parameters,
+                    **kwargs,
+                ):
+                    self.model.parameters = GeminiChatModel.Parameters(
+                        **parameters,
+                    )
+                    self.model.client.reset_mock()
+                    with self.assertRaisesRegex(ValueError, message):
+                        await self.model([], **kwargs)
+                    self.assertEqual(self.model.client.mock_calls, [])
+                    self.assertEqual(self.model.formatter.mock_calls, [])
 
     def test_timeout_does_not_mutate_shared_client_options(self) -> None:
         """Keep model defaults local for dict and SDK HTTP options."""
@@ -280,6 +353,7 @@ class TestGemini4Argon(IsolatedAsyncioTestCase):
             ({"timeout": None}, 900_000),
             (HttpOptions(), 900_000),
             ({"timeout": 1234}, 1234),
+            ({"timeout": 0}, 0),
             (HttpOptions(timeout=0), 0),
         ]
         for options, expected_timeout in cases:
