@@ -2,12 +2,10 @@
 """Grep tool test case."""
 import os
 import tempfile
-from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
 
 from agentscope.message import ToolResultState
-from agentscope.tool import ExecResult, Grep, LocalBackend
+from agentscope.tool import Edit, Grep, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -98,15 +96,8 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_dash_prefixed_paths(self) -> None:
         """Relative paths must not be interpreted as ripgrep options."""
-        backend = LocalBackend()
+        backend = LocalBackend(workdir=self.temp_dir)
         grep = Grep(backend=backend)
-        exec_shell = backend.exec_shell
-
-        async def exec_in_temp(
-            command: list[str],
-            **kwargs: Any,
-        ) -> ExecResult:
-            return await exec_shell(command, cwd=self.temp_dir, **kwargs)
 
         for name in ("-notes.txt", "--help", "-folder"):
             target = os.path.join(self.temp_dir, name)
@@ -118,22 +109,15 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
             for pattern in ("needle", "-needle"):
                 with self.subTest(path=name, pattern=pattern):
-                    with patch.object(
-                        backend,
-                        "exec_shell",
-                        side_effect=exec_in_temp,
-                    ):
-                        chunk = await grep(
-                            pattern=pattern,
-                            path=name,
-                            output_mode="content",
-                            n=False,
-                        )
+                    chunk = await grep(
+                        pattern=pattern,
+                        path=name,
+                        output_mode="content",
+                        n=False,
+                    )
                     expected_text = "-needle"
                     if name == "-folder":
-                        expected_text = (
-                            os.path.join("-folder", "notes.txt") + ":-needle"
-                        )
+                        expected_text = f"{target}:-needle"
                     self.assertEqual(
                         chunk.model_dump(
                             exclude={
@@ -154,6 +138,72 @@ class GrepToolTest(IsolatedAsyncioTestCase):
                             "metadata": {},
                         },
                     )
+
+    async def test_empty_matching_lines_and_pagination(self) -> None:
+        """Keep empty records distinct from no output, including CRLF."""
+        path = os.path.join(self.temp_dir, "empty-lines.txt")
+        for newline in (b"\n", b"\r\n"):
+            with self.subTest(newline=newline):
+                with open(path, "wb") as stream:
+                    stream.write(
+                        newline.join([b"FIRST", b"", b"LAST", b"", b""]),
+                    )
+                blank = await self.grep_tool.call(
+                    r"^\r?$",
+                    path,
+                    "content",
+                    n=False,
+                )
+                self.assertEqual(blank.state, ToolResultState.SUCCESS)
+                self.assertEqual(blank.content[0].text, "\n")
+                numbered = await self.grep_tool.call(
+                    r"^\r?$",
+                    path,
+                    "content",
+                    n=True,
+                )
+                self.assertEqual(numbered.content[0].text, "2:\n4:")
+                missing = await self.grep_tool.call(
+                    "NEVER_PRESENT",
+                    path,
+                    "content",
+                    n=False,
+                )
+                self.assertIn("No matches found", missing.content[0].text)
+                page = await self.grep_tool.call(
+                    ".*",
+                    path,
+                    "content",
+                    n=False,
+                    offset=1,
+                    head_limit=1,
+                )
+                self.assertEqual(
+                    page.content[0].text,
+                    "\n\n[Showing results with pagination = "
+                    "limit: 1, offset: 1]",
+                )
+
+    async def test_multiline_match_can_be_used_as_edit_input(self) -> None:
+        """A match containing an empty line must still occur in the file."""
+        path = os.path.join(self.temp_dir, "multiline.txt")
+        with open(path, "wb") as stream:
+            stream.write(b"BEGIN\n\nEND\n")
+        match = await self.grep_tool.call(
+            r"BEGIN\n\nEND",
+            path,
+            "content",
+            n=False,
+            multiline=True,
+        )
+        self.assertEqual(match.content[0].text, "BEGIN\n\nEND")
+        await Edit().call(
+            file_path=path,
+            old_string=match.content[0].text,
+            new_string="replaced",
+        )
+        with open(path, "rb") as stream:
+            self.assertEqual(stream.read(), b"replaced\n")
 
     async def test_content_mode(self) -> None:
         """Test grep with content output mode."""

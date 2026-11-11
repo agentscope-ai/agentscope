@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Schema models for the agent service."""
 
+from ._background_task import (
+    BackgroundTaskInfo,
+    ListBackgroundTasksResponse,
+)
 from ._channel import (
     StartCredentialBindingRequest,
     ChannelActionResponse,
@@ -170,6 +174,9 @@ __all__ = [
     "CreateAgentResponse",
     "UpdateAgentRequest",
     "ListSchedulesResponse",
+    # Background Task
+    "BackgroundTaskInfo",
+    "ListBackgroundTasksResponse",
     # Channel
     "ChannelActionResponse",
     "ChannelChatId",

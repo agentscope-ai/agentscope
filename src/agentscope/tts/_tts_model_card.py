@@ -127,6 +127,8 @@ class TTSModelCard(BaseModel):
             "properties": properties,
             "required": required,
         }
+        if "$defs" in base_schema:
+            final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
 
         return cls(
             name=config["name"],

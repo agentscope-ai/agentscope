@@ -65,9 +65,12 @@ def _humanize_version(version: str | None) -> str | None:
         return version
 
     try:
-        stamp = datetime.strptime(match.group(1), "%Y%m%d")
+        stamp = datetime.strptime(
+            match.group(1) + match.group(2),
+            "%Y%m%d%H%M%S",
+        )
     except ValueError:
-        # Eight digits that are not a real date — leave it alone.
+        # A date or time component that is not real — leave it alone.
         return version
     return stamp.strftime("%Y-%m-%d")
 
