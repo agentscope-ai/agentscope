@@ -7,6 +7,7 @@ from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
+from opentelemetry.trace import StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -268,6 +269,7 @@ def _make_text_response(text: str) -> ChatResponse:
     )
 
 
+# pylint: disable-next=too-many-public-methods
 class TracingTest(IsolatedAsyncioTestCase):
     """Tests that OTel spans are emitted with correct attributes.
 
@@ -1067,3 +1069,211 @@ class TracingTest(IsolatedAsyncioTestCase):
         )
         with self.assertNoLogs("opentelemetry.context", level="ERROR"):
             await self._drive_then_close_from_other_task(gen)
+
+    # -----------------------------------------------------------------------
+    # Tests: early close / cancellation is not an error (issue #3924)
+    # -----------------------------------------------------------------------
+
+    def _assert_span_ended_without_error(self, fragment: str) -> None:
+        """Assert the only span matching ``fragment`` ended without ERROR or
+        a recorded exception event."""
+        spans = self._spans_by_name(fragment)
+        self.assertEqual(len(spans), 1, f"expected one span: {fragment}")
+        span = spans[0]
+        self.assertNotEqual(span.status.status_code, StatusCode.ERROR)
+        self.assertEqual(
+            [e for e in span.events if e.name == "exception"],
+            [],
+        )
+
+    def _assert_span_ended_with_error(self, fragment: str) -> None:
+        """Assert the only span matching ``fragment`` ended with ERROR and a
+        recorded exception event."""
+        spans = self._spans_by_name(fragment)
+        self.assertEqual(len(spans), 1, f"expected one span: {fragment}")
+        span = spans[0]
+        self.assertEqual(span.status.status_code, StatusCode.ERROR)
+        self.assertEqual(
+            [e.name for e in span.events if e.name == "exception"],
+            ["exception"],
+        )
+
+    async def test_on_reply_early_close_is_not_an_error(self) -> None:
+        """Closing the reply stream early (GeneratorExit) must end the span
+        without ERROR or an exception event (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield "chunk-1"
+            await asyncio.Event().wait()
+
+        gen = middleware.on_reply(
+            self.agent,
+            {"inputs": UserMsg(name="user", content="hi")},
+            next_handler,
+        )
+        await anext(gen)
+        await gen.aclose()
+
+        self._assert_span_ended_without_error("invoke_agent")
+
+    async def test_on_acting_early_close_is_not_an_error(self) -> None:
+        """Closing the acting stream early must not mark the tool span as
+        ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield ToolResultBlock(
+                id="t1",
+                name="get_weather",
+                output="ok",
+                state=ToolResultState.SUCCESS,
+            )
+            await asyncio.Event().wait()
+
+        tool_call = ToolCallBlock(
+            id="t1",
+            name="get_weather",
+            input=json.dumps({"city": "Hangzhou"}),
+        )
+        gen = middleware.on_acting(
+            self.agent,
+            {"tool_call": tool_call},
+            next_handler,
+        )
+        await anext(gen)
+        await gen.aclose()
+
+        self._assert_span_ended_without_error("execute_tool")
+
+    async def test_on_model_call_stream_close_is_not_an_error(self) -> None:
+        """Closing the model stream after one chunk must not mark the chat
+        span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            async def _stream() -> Any:
+                yield _make_text_response("partial")
+                await asyncio.Event().wait()
+
+            return _stream()
+
+        result = await middleware.on_model_call(
+            self.agent,
+            {
+                "current_model": self.model,
+                "messages": [],
+                "tools": [],
+                "tool_choice": None,
+            },
+            next_handler,
+        )
+        await anext(result)
+        await result.aclose()
+
+        self._assert_span_ended_without_error("chat")
+
+    async def test_on_reply_cancellation_is_not_an_error(self) -> None:
+        """Cancelling the task consuming the reply stream must not mark the
+        span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+        started = asyncio.Event()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield "chunk-1"
+            started.set()
+            await asyncio.Event().wait()
+
+        gen = middleware.on_reply(
+            self.agent,
+            {"inputs": UserMsg(name="user", content="hi")},
+            next_handler,
+        )
+
+        async def _consume() -> None:
+            async for _ in gen:
+                pass
+
+        task = asyncio.create_task(_consume())
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self._assert_span_ended_without_error("invoke_agent")
+
+    async def test_on_model_call_cancelled_await_is_not_an_error(self) -> None:
+        """Cancelling the task while the model call is awaited must not mark
+        the chat span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+        started = asyncio.Event()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            started.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(
+            middleware.on_model_call(
+                self.agent,
+                {
+                    "current_model": self.model,
+                    "messages": [],
+                    "tools": [],
+                    "tool_choice": None,
+                },
+                next_handler,
+            ),
+        )
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self._assert_span_ended_without_error("chat")
+
+    async def test_on_reply_real_exception_is_still_an_error(self) -> None:
+        """Real exceptions raised by the reply stream must keep the existing
+        ERROR status and exception event (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            raise RuntimeError("boom")
+            yield  # pragma: no cover  # pylint: disable=unreachable
+
+        gen = middleware.on_reply(
+            self.agent,
+            {"inputs": UserMsg(name="user", content="hi")},
+            next_handler,
+        )
+        with self.assertRaises(RuntimeError):
+            await anext(gen)
+
+        self._assert_span_ended_with_error("invoke_agent")
+
+    async def test_on_model_call_stream_error_is_still_an_error(self) -> None:
+        """Real errors raised mid-stream must still mark the chat span as
+        ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            async def _stream() -> Any:
+                yield _make_text_response("partial")
+                raise RuntimeError("boom")
+
+            return _stream()
+
+        result = await middleware.on_model_call(
+            self.agent,
+            {
+                "current_model": self.model,
+                "messages": [],
+                "tools": [],
+                "tool_choice": None,
+            },
+            next_handler,
+        )
+        with self.assertRaises(RuntimeError):
+            async for _ in result:
+                pass
+
+        self._assert_span_ended_with_error("chat")

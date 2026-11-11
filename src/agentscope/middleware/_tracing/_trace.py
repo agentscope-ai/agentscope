@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """TracingMiddleware and supporting utilities for OpenTelemetry tracing."""
+import asyncio
 import json
 from typing import (
     Any,
@@ -83,6 +84,26 @@ def _set_span_error_status(span: "Span", e: BaseException) -> None:
     span.end()
 
 
+def _is_cancellation(e: BaseException) -> bool:
+    """Return whether ``e`` is a normal early termination, not a failure.
+
+    Closing an async generator (``GeneratorExit``) and cancelling the
+    consuming task (``asyncio.CancelledError``) are both expected ways for
+    a streamed operation to stop. They end the span but must not be reported
+    as errors.
+    """
+    return isinstance(e, (GeneratorExit, asyncio.CancelledError))
+
+
+def _end_span_cancelled(span: "Span") -> None:
+    """End a span whose operation was cancelled or closed early.
+
+    The status is left as ``UNSET``: the operation neither failed nor ran to
+    completion. No exception event is recorded because there is no error.
+    """
+    span.end()
+
+
 async def _trace_async_generator_wrapper(
     res: AsyncGenerator[T, None],
     span: "Span",
@@ -90,6 +111,7 @@ async def _trace_async_generator_wrapper(
     """Wrap an async generator so that response attributes are captured from
     the last yielded chunk before the span is closed."""
     has_error = False
+    error_exc: BaseException | None = None
 
     try:
         last_chunk = None
@@ -99,11 +121,16 @@ async def _trace_async_generator_wrapper(
 
     except BaseException as e:
         has_error = True
-        _set_span_error_status(span, e)
+        error_exc = e
         raise
 
     finally:
-        if not has_error:
+        if has_error and error_exc is not None:
+            if _is_cancellation(error_exc):
+                _end_span_cancelled(span)
+            else:
+                _set_span_error_status(span, error_exc)
+        else:
             response_attributes = _get_llm_response_attributes(last_chunk)
             span.set_attributes(response_attributes)
             _set_span_success_status(span)
@@ -245,7 +272,10 @@ class TracingMiddleware(MiddlewareBase):
                     json.dumps(external_pending, ensure_ascii=False),
                 )
             if has_error and error_exc is not None:
-                _set_span_error_status(span, error_exc)
+                if _is_cancellation(error_exc):
+                    _end_span_cancelled(span)
+                else:
+                    _set_span_error_status(span, error_exc)
             else:
                 if last_msg is not None:
                     span.set_attributes(
@@ -303,7 +333,10 @@ class TracingMiddleware(MiddlewareBase):
                 return result
 
             except BaseException as e:
-                _set_span_error_status(span, e)
+                if _is_cancellation(e):
+                    _end_span_cancelled(span)
+                else:
+                    _set_span_error_status(span, e)
                 raise
 
     # ------------------------------------------------------------------
@@ -348,6 +381,7 @@ class TracingMiddleware(MiddlewareBase):
         span_context = otel_trace.set_span_in_context(span)
 
         has_error = False
+        error_exc: BaseException | None = None
         last_item = None
         gen = next_handler(**input_kwargs)
         try:
@@ -363,10 +397,15 @@ class TracingMiddleware(MiddlewareBase):
                 yield item
         except BaseException as e:
             has_error = True
-            _set_span_error_status(span, e)
+            error_exc = e
             raise
         finally:
-            if not has_error:
+            if has_error and error_exc is not None:
+                if _is_cancellation(error_exc):
+                    _end_span_cancelled(span)
+                else:
+                    _set_span_error_status(span, error_exc)
+            else:
                 if last_item is not None:
                     span.set_attributes(
                         _get_tool_response_attributes(last_item),
