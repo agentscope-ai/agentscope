@@ -2955,6 +2955,8 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
             "same_frame",
             "content_status",
             "root_status",
+            "before_tool_result",
+            "after_tool_result",
         ):
             with self.subTest(delivery=delivery):
                 model = GeminiRealtimeModel(
@@ -3007,12 +3009,14 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                     await feed(
                         {"serverContent": {"interactionStatus": "IDLE"}},
                     )
-                    tool.release.set()
-                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
-                    output = {"outputTranscription": {"text": "Sunny."}}
                     transcription = {
                         "inputTranscription": {"text": "Weather?"},
                     }
+                    if delivery == "before_tool_result":
+                        await feed({"serverContent": transcription})
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    output = {"outputTranscription": {"text": "Sunny."}}
                     if delivery == "same_frame":
                         await feed(
                             {"serverContent": {**output, **transcription}},
@@ -3026,6 +3030,13 @@ class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
                         )
                         status_target["interactionStatus"] = "IN_PROGRESS"
                         await feed(frame)
+                        await feed({"serverContent": output})
+                    elif delivery in (
+                        "before_tool_result",
+                        "after_tool_result",
+                    ):
+                        if delivery == "after_tool_result":
+                            await feed({"serverContent": transcription})
                         await feed({"serverContent": output})
                     else:
                         await feed({"serverContent": output})

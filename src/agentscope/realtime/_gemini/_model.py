@@ -116,6 +116,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
         self._response_id = ""
+        self._transcription_response_id = ""
         self._response_cancelled = False
         self._user_id = ""
         self._input_text = ""
@@ -186,6 +187,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             self._reader.cancel()
             await asyncio.gather(self._reader, return_exceptions=True)
             self._reader = None
+        self._transcription_response_id = ""
 
     async def events(self) -> AsyncIterator[me.ModelEvent]:
         """Yield events until the session ends."""
@@ -219,6 +221,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     async def push_text(self, text: str) -> None:
         """Send a complete text turn, which the model answers at once."""
+        if self._extended_thinking:
+            for event in self._settle_input():
+                self._queue.put_nowait(event)
+            self._user_id = ""
+        self._transcription_response_id = ""
         await self._send(
             {
                 "clientContent": {
@@ -284,6 +291,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             self._extended_thinking
             and self.parameters.turn_detection == "none"
         ):
+            self._transcription_response_id = ""
             for event in self._settle_input():
                 self._queue.put_nowait(event)
             self._user_id = ""
@@ -306,13 +314,14 @@ class GeminiRealtimeModel(RealtimeModelBase):
         if (
             self._extended_thinking
             and self.parameters.turn_detection == "none"
-            and self._response_id
+            and (self._response_id or self._transcription_response_id)
             and not self._response_cancelled
         ):
             self._response_cancelled = True
             for event in self._settle_input():
                 self._queue.put_nowait(event)
             self._user_id = ""
+        self._transcription_response_id = ""
         self._awaiting_tool_reply = False
         self._pending_tool_calls.clear()
 
@@ -433,6 +442,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             logger.error("GeminiRealtimeModel: connection lost: %s", exc)
         finally:
             self._ws = None
+            self._transcription_response_id = ""
             self._ready.set()  # release a connect() still waiting
             self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
             self._queue.put_nowait(None)
@@ -444,6 +454,9 @@ class GeminiRealtimeModel(RealtimeModelBase):
             return []
         events = [] if self._extended_thinking else self._settle_input()
         self._response_id = uuid.uuid4().hex
+        if self._extended_thinking and not self._transcription_response_id:
+            # All background continuations belong to the first response.
+            self._transcription_response_id = self._response_id
         self._response_cancelled = False
         events.append(me.ResponseCreatedEvent(item_id=self._response_id))
         return events
@@ -550,6 +563,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         if self._extended_thinking and content.get("interrupted"):
             self._awaiting_tool_reply = False
             self._pending_tool_calls.clear()
+            self._transcription_response_id = ""
             events += self._settle_input()
             self._user_id, self._response_id, self._usage = "", "", {}
 
@@ -574,7 +588,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
                         response_id=(
                             ""
                             if self._response_cancelled
-                            else self._response_id
+                            else self._transcription_response_id
                         ),
                     ),
                 )
@@ -625,6 +639,8 @@ class GeminiRealtimeModel(RealtimeModelBase):
         # A thinking status can arrive before input transcription. Proactive
         # audio may also finish processing without producing any speech.
         events = self._settle_input() if self._extended_thinking else []
+        if not self._pending_tool_calls and not self._awaiting_tool_reply:
+            self._transcription_response_id = ""
         if not self._response_id:
             return events
         event = me.ResponseDoneEvent(

@@ -997,6 +997,164 @@ class GeminiSendTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_transcription_tracks_first_background_response(
+        self,
+    ) -> None:
+        """A gap after multiple responses still refers to the first one."""
+        model = GeminiRealtimeModel(THINKING_MODEL, CRED)
+        model._send = AsyncMock()
+        first_response = ""
+        for call_id in ("c1", "c2"):
+            model._parse(
+                {
+                    "serverContent": {
+                        "outputTranscription": {"text": "Checking."},
+                    },
+                    "toolCall": {
+                        "functionCalls": [
+                            {
+                                "id": call_id,
+                                "name": "weather",
+                                "args": {},
+                            },
+                        ],
+                    },
+                },
+            )
+            if not first_response:
+                first_response = model._response_id
+            else:
+                self.assertNotEqual(model._response_id, first_response)
+            model._parse({"serverContent": {"interactionStatus": "IDLE"}})
+            await model.push_tool_result(
+                ToolResultBlock(id=call_id, name="weather", output="done"),
+            )
+        events = model._parse(
+            {"serverContent": {"inputTranscription": {"text": "Weather?"}}},
+        )
+        self.assertEqual(
+            _dump(events),
+            [
+                (
+                    "InputTranscriptionDeltaEvent",
+                    {
+                        "item_id": model._user_id,
+                        "delta": "Weather?",
+                        "response_id": first_response,
+                    },
+                ),
+            ],
+        )
+
+    async def test_transcription_association_cleared_at_boundaries(
+        self,
+    ) -> None:
+        """New input cannot inherit a completed or interrupted interaction."""
+        for boundary in (
+            "completed",
+            "cancel",
+            "provider_interrupt",
+            "new_turn",
+            "text",
+            "close",
+        ):
+            with self.subTest(boundary=boundary):
+                model = GeminiRealtimeModel(
+                    THINKING_MODEL,
+                    CRED,
+                    parameters=GeminiRealtimeModel.Parameters(
+                        turn_detection="none",
+                    ),
+                )
+                model._send = AsyncMock()
+                model._parse(
+                    {
+                        "serverContent": {
+                            "outputTranscription": {"text": "Checking."},
+                        },
+                        "toolCall": {
+                            "functionCalls": [
+                                {
+                                    "id": "c1",
+                                    "name": "weather",
+                                    "args": {},
+                                },
+                            ],
+                        },
+                    },
+                )
+                model._parse({"serverContent": {"interactionStatus": "IDLE"}})
+                self.assertTrue(model._transcription_response_id)
+                if boundary != "close":
+                    model._parse(
+                        {
+                            "serverContent": {
+                                "inputTranscription": {
+                                    "text": "Old request",
+                                },
+                            },
+                        },
+                    )
+                old_user_id = model._user_id
+                settled = (
+                    "InputTranscriptionEvent",
+                    {"item_id": old_user_id, "text": "Old request"},
+                )
+                content: dict = {"inputTranscription": {"text": "Next"}}
+                if boundary == "completed":
+                    await model.push_tool_result(
+                        ToolResultBlock(id="c1", name="weather", output="ok"),
+                    )
+                    model._parse(
+                        {
+                            "serverContent": {"interactionStatus": "IDLE"},
+                        },
+                    )
+                elif boundary == "cancel":
+                    await model.cancel_response()
+                elif boundary == "provider_interrupt":
+                    content["interrupted"] = True
+                elif boundary == "new_turn":
+                    await model.start_turn()
+                elif boundary == "text":
+                    await model.push_text("New request")
+                else:
+                    await model.close()
+                events = model._parse({"serverContent": content})
+                self.assertNotEqual(model._user_id, old_user_id)
+                expected = [
+                    (
+                        "InputTranscriptionDeltaEvent",
+                        {
+                            "item_id": model._user_id,
+                            "delta": "Next",
+                            "response_id": "",
+                        },
+                    ),
+                ]
+                if boundary == "provider_interrupt":
+                    expected.insert(0, settled)
+                    expected.append(
+                        (
+                            "SpeechStartedEvent",
+                            {
+                                "item_id": model._user_id,
+                                "at_ms": 0,
+                            },
+                        ),
+                    )
+                self.assertEqual(_dump(events), expected)
+                self.assertEqual(model._transcription_response_id, "")
+                queued = []
+                while not model._queue.empty():
+                    queued.append(model._queue.get_nowait())
+                self.assertEqual(
+                    _dump(queued),
+                    [settled]
+                    if boundary in ("cancel", "new_turn", "text")
+                    else [],
+                )
+
     async def test_local_cancel_settles_thinking_input(self) -> None:
         """Local VAD interruption must separate successive input turns."""
         model = GeminiRealtimeModel(
@@ -1186,6 +1344,7 @@ class GeminiDisconnectTest(IsolatedAsyncioTestCase):
                     return_value=socket,
                 ) as connect, patch.object(model, "_read", acknowledge):
                     model._response_id = "old-response"
+                    model._transcription_response_id = "old-interaction"
                     model._usage = {"responseTokenCount": 99}
                     model._awaiting_tool_reply = True
                     model._pending_tool_calls.add("old-call")
@@ -1193,11 +1352,12 @@ class GeminiDisconnectTest(IsolatedAsyncioTestCase):
                     self.assertEqual(
                         (
                             model._response_id,
+                            model._transcription_response_id,
                             model._usage,
                             model._awaiting_tool_reply,
                             model._pending_tool_calls,
                         ),
-                        ("", {}, False, set()),
+                        ("", "", {}, False, set()),
                     )
                     connect.assert_awaited_once_with(
                         "wss://generativelanguage.googleapis.com/ws/"
