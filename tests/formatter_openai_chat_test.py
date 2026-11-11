@@ -1296,3 +1296,33 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+
+class TestAssistantMediaPromotion(IsolatedAsyncioTestCase):
+    """Assistant-role media is promoted into its own user message."""
+
+    def setUp(self) -> None:
+        self.image_b64 = "ZmFrZQ=="
+        self.image = DataBlock(
+            source=Base64Source(
+                data=self.image_b64,
+                media_type="image/png",
+            ),
+        )
+
+    async def test_assistant_media_promoted_to_user_message(self) -> None:
+        """The API only accepts media parts in user messages."""
+        fmt = OpenAIChatFormatter()
+        msg = AssistantMsg(
+            name="assistant",
+            content=[TextBlock(text="look"), self.image],
+        )
+        res = await fmt.format([msg])
+
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0]["role"], "user")
+        self.assertEqual(res[1]["role"], "assistant")
+        self.assertIn(self.image_b64, repr(res[0]["content"]))
+        assistant_blob = repr(res[1]["content"]).lower()
+        self.assertNotIn("image", assistant_blob)
+        self.assertNotIn(self.image_b64, assistant_blob)
