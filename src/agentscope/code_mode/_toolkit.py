@@ -114,7 +114,7 @@ class CodeModeToolkit(Toolkit):
         self.config: CodeModeConfig = config or CodeModeConfig()
         # Explicit SDK opt-in; app callers always use the permission engine.
         self.auto_approve = auto_approve
-        self.execution_guard = execution_guard
+        self.execution_guard: CodeModeExecutionGuard | None = execution_guard
         self.allowed_tools: frozenset[str] | None = None
         self.required_tool: str | None = None
         self._state: AgentState | None = None
