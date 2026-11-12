@@ -13,11 +13,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 from openai import APIError, AsyncOpenAI
-from openai.types.responses import ResponseOutputMessage
+from openai.types.responses import Response, ResponseOutputMessage
 from pydantic import BaseModel
 
 from utils import AnyString, AnyValue
 
+from agentscope.agent import Agent, ModelConfig
 from agentscope.message import (
     AssistantMsg,
     Base64Source,
@@ -1644,6 +1645,120 @@ class TestOpenAIResponseFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
         self.assertIsNone(fmt_choice)
+
+
+class TestNonStreamingFailure(IsolatedAsyncioTestCase):
+    """Test failed generations through the real SDK without network access."""
+
+    async def asyncSetUp(self) -> None:
+        """Create an offline model returning a failed Responses object."""
+        self.payload: dict[str, Any] = {
+            "id": "resp_failed_offline",
+            "object": "response",
+            "created_at": 0,
+            "model": "o4-mini",
+            "status": "failed",
+            "error": {
+                "code": "server_error",
+                "message": "Generation failed.",
+            },
+            "output": [],
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [],
+            "usage": None,
+        }
+
+        def _handler(_request: httpx.Request) -> httpx.Response:
+            Response.model_validate(self.payload)
+            return httpx.Response(200, json=self.payload)
+
+        self.model = OpenAIResponseModel(
+            credential=OpenAICredential(api_key="offline-test"),
+            model="o4-mini",
+            stream=False,
+            max_retries=0,
+            client_kwargs={
+                "http_client": httpx.AsyncClient(
+                    transport=httpx.MockTransport(_handler),
+                ),
+                "max_retries": 0,
+            },
+        )
+
+    async def asyncTearDown(self) -> None:
+        """Close the SDK and HTTP client."""
+        await self.model.client.close()
+
+    async def test_failed_generation_raises_with_error_details(self) -> None:
+        """An HTTP 200 failed generation must not become a completed reply."""
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "resp_failed_offline.*server_error.*Generation",
+        ):
+            await self.model([])
+
+    async def test_completed_generation_returns_output(self) -> None:
+        """Successful SDK responses still return their generated text."""
+        self.payload["status"] = "completed"
+        self.payload["error"] = None
+        self.payload["output"] = [
+            _mock_message(
+                "msg_complete",
+                [("output_text", "Answer")],
+            ).model_dump(),
+        ]
+        result = await self.model([])
+        self.assertEqual(result.content[0].text, "Answer")
+
+    async def test_failed_generation_without_error_details(self) -> None:
+        """A failed status is sufficient even when the error field is null."""
+        self.payload["error"] = None
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "resp_failed_offline.*failed",
+        ):
+            await self.model([])
+
+    async def test_failed_generation_does_not_return_partial_output(
+        self,
+    ) -> None:
+        """Partial output must not hide a failed generation."""
+        self.payload["output"] = [
+            {
+                "id": "msg_partial",
+                "type": "message",
+                "role": "assistant",
+                "status": "incomplete",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "Partial",
+                        "annotations": [],
+                    },
+                ],
+            },
+        ]
+        with self.assertRaisesRegex(RuntimeError, "server_error"):
+            await self.model([])
+
+    async def test_failed_generation_uses_agent_fallback(self) -> None:
+        """The configured fallback runs when the primary generation fails."""
+        fallback = _make_model(stream=False)
+        fallback.client.responses.create = AsyncMock(
+            return_value=_mock_completion(text="Fallback answer"),
+        )
+        try:
+            agent = Agent(
+                name="test",
+                system_prompt="",
+                model=self.model,
+                model_config=ModelConfig(fallback_model=fallback),
+            )
+            result = await agent._call_model(messages=[], tools=[])
+            self.assertEqual(result.content[0].text, "Fallback answer")
+        finally:
+            await fallback.client.close()
 
 
 class _TrackedBody(httpx.AsyncByteStream):
