@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Client-provided external tool definitions and runtime adapters."""
 import json
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
@@ -12,6 +13,9 @@ from pydantic import (
     TypeAdapter,
     field_validator,
 )
+from referencing import Registry
+from referencing.exceptions import Unresolvable
+from referencing.jsonschema import DRAFT202012
 
 from .._logging import logger
 from ..permission import (
@@ -30,12 +34,84 @@ _SUPPORTED_SCHEMA_URIS = {
     "https://json-schema.org/draft/2020-12/schema",
     "https://json-schema.org/draft/2020-12/schema#",
 }
+_SINGLE_SCHEMA_KEYWORDS = {
+    "additionalProperties",
+    "unevaluatedProperties",
+    "propertyNames",
+    "items",
+    "contains",
+    "unevaluatedItems",
+    "not",
+    "if",
+    "then",
+    "else",
+    "contentSchema",
+}
+_SCHEMA_MAP_KEYWORDS = {
+    "$defs",
+    "definitions",
+    "properties",
+    "patternProperties",
+    "dependentSchemas",
+    "dependencies",
+}
+_SCHEMA_ARRAY_KEYWORDS = {"allOf", "anyOf", "oneOf", "prefixItems"}
 
 
-def _validate_schema_metadata(value: object) -> None:
+def _iter_schema_nodes(value: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Walk subschemas and local pointer targets, excluding literal data."""
+    resource = DRAFT202012.create_resource(value)
+    # The default registry cannot retrieve resources from the network.
+    pending = [(value, Registry().resolver_with_root(resource))]
+    seen: set[tuple[int, int]] = set()
+    while pending:
+        node, resolver = pending.pop()
+        if not isinstance(node, dict):
+            continue
+        try:
+            scope = resolver.lookup("#").contents
+        except (Unresolvable, ValueError):
+            scope = None
+        identity = (id(node), id(scope))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        yield node
+        for keyword, child in node.items():
+            children = []
+            if keyword in _SINGLE_SCHEMA_KEYWORDS:
+                children = [child]
+            elif keyword in _SCHEMA_MAP_KEYWORDS and isinstance(child, dict):
+                children = list(child.values())
+            elif keyword in _SCHEMA_ARRAY_KEYWORDS and isinstance(child, list):
+                children = child
+            elif (
+                keyword in _REFERENCE_KEYWORDS
+                and isinstance(child, str)
+                and child.startswith("#")
+            ):
+                try:
+                    resolved = resolver.lookup(child)
+                except (Unresolvable, ValueError, TypeError):
+                    # Broken references remain tool errors at execution.
+                    continue
+                pending.append((resolved.contents, resolved.resolver))
+            for item in children:
+                if isinstance(item, dict):
+                    pending.append(
+                        (
+                            item,
+                            resolver.in_subresource(
+                                DRAFT202012.create_resource(item),
+                            ),
+                        ),
+                    )
+
+
+def _validate_schema_metadata(value: dict[str, Any]) -> None:
     """Reject unsupported dialects and references to remote schemas."""
-    if isinstance(value, dict):
-        for key, child in value.items():
+    for node in _iter_schema_nodes(value):
+        for key, child in node.items():
             if (
                 key == "$schema"
                 and isinstance(child, str)
@@ -53,10 +129,6 @@ def _validate_schema_metadata(value: object) -> None:
                 raise ValueError(
                     f"Client tool schemas only support local {key} values.",
                 )
-            _validate_schema_metadata(child)
-    elif isinstance(value, list):
-        for child in value:
-            _validate_schema_metadata(child)
 
 
 class ClientExternalToolDefinition(BaseModel):

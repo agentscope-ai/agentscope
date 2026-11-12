@@ -46,6 +46,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "referencing",
     "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",

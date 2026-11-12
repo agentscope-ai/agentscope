@@ -4,6 +4,7 @@ import json
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from utils import MockModel
 
@@ -319,6 +320,186 @@ class ClientExternalToolDefinitionTest(TestCase):
                             },
                         },
                     )
+
+    def test_schema_metadata_inside_literal_data_is_allowed(self) -> None:
+        """Literal objects do not declare references or schema dialects."""
+        literal = {
+            "$ref": "https://example.com/document",
+            "$dynamicRef": "https://example.com/dynamic",
+            "$recursiveRef": "https://example.com/recursive",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "properties": {"nested": {"$ref": "https://example.com/nested"}},
+        }
+        for keyword, data in (
+            ("const", literal),
+            ("enum", [literal]),
+            ("default", literal),
+            ("examples", [literal]),
+            ("x-annotation", literal),
+        ):
+            with self.subTest(keyword=keyword):
+                schema = {
+                    "type": "object",
+                    "properties": {"document": {keyword: data}},
+                }
+                definition = ClientExternalToolDefinition(
+                    name="client__document",
+                    description="Accept literal documents.",
+                    input_schema=schema,
+                )
+                self.assertEqual(definition.input_schema, schema)
+                Draft202012Validator(schema).validate({"document": literal})
+
+    def test_remote_references_in_subschema_positions_are_rejected(
+        self,
+    ) -> None:
+        """All schema-bearing keywords still enforce local references."""
+        remote = {"$ref": "https://example.com/schema"}
+        positions = {
+            **{
+                key: remote
+                for key in (
+                    "additionalProperties",
+                    "unevaluatedProperties",
+                    "propertyNames",
+                    "items",
+                    "contains",
+                    "unevaluatedItems",
+                    "not",
+                    "if",
+                    "then",
+                    "else",
+                    "contentSchema",
+                )
+            },
+            **{
+                key: {"const": remote}
+                for key in (
+                    "properties",
+                    "patternProperties",
+                    "$defs",
+                    "definitions",
+                    "dependentSchemas",
+                    "dependencies",
+                )
+            },
+            **{
+                key: [remote]
+                for key in ("allOf", "anyOf", "oneOf", "prefixItems")
+            },
+        }
+        for keyword, child in positions.items():
+            with self.subTest(keyword=keyword):
+                with self.assertRaises(ValidationError) as caught:
+                    ClientExternalToolDefinition(
+                        name="client__remote",
+                        description="Reject nested remote references.",
+                        input_schema={
+                            "type": "object",
+                            "properties": {},
+                            keyword: child,
+                        },
+                    )
+                self.assertEqual(
+                    caught.exception.errors(include_url=False)[0]["msg"],
+                    "Value error, Client tool schemas only support local "
+                    "$ref values.",
+                )
+
+    def test_local_reference_targets_are_checked_as_schemas(self) -> None:
+        """References can turn otherwise literal data into active schemas."""
+        targets = (
+            ({"$ref": "https://example.com/schema"}, "local $ref values"),
+            (
+                {"$schema": "http://json-schema.org/draft-07/schema#"},
+                "Draft 2020-12",
+            ),
+        )
+        for target, error in targets:
+            for keyword in ("$ref", "$dynamicRef", "$recursiveRef"):
+                for embedded in (False, True):
+                    with self.subTest(
+                        target=target,
+                        keyword=keyword,
+                        embedded=embedded,
+                    ):
+                        node = {
+                            "default": {"a/b~c": [target]},
+                            keyword: "#/default/a~1b~0c/%30",
+                        }
+                        if embedded:
+                            node["$id"] = "https://example.com/embedded"
+                        schema = (
+                            {
+                                "type": "object",
+                                "properties": {"document": node},
+                            }
+                            if embedded
+                            else {
+                                "type": "object",
+                                "properties": {},
+                                **node,
+                            }
+                        )
+                        with self.assertRaises(ValidationError) as caught:
+                            ClientExternalToolDefinition(
+                                name="client__indirect",
+                                description="Reject indirect metadata.",
+                                input_schema=schema,
+                            )
+                        self.assertIn(error, str(caught.exception))
+
+    def test_recursive_local_references_preserve_literal_data(self) -> None:
+        """Following reference cycles terminates and preserves literals."""
+        schema = {
+            "type": "object",
+            "properties": {"child": {"$ref": "#/$defs/node"}},
+            "$defs": {
+                "node": {
+                    "$anchor": "node",
+                    "type": "object",
+                    "properties": {
+                        "next": {"$ref": "#/$defs/node"},
+                        "sibling": {"$ref": "#node"},
+                    },
+                    "default": {"$ref": "https://example.com/literal"},
+                },
+            },
+            "examples": [{"$ref": "#/$defs/node"}],
+        }
+        definition = ClientExternalToolDefinition(
+            name="client__recursive",
+            description="Allow recursive local schemas.",
+            input_schema=schema,
+        )
+        self.assertEqual(definition.input_schema, schema)
+        Draft202012Validator(schema).validate({"child": {"next": {}}})
+
+    def test_referenced_data_id_cannot_hide_a_remote_reference(self) -> None:
+        """Pointer targets retain the validator's reference resolution
+        scope."""
+        schema = {
+            "type": "object",
+            "properties": {},
+            "$ref": "#/default",
+            "default": {
+                "$id": "https://example.com/data",
+                "$ref": "#/x-target",
+            },
+            "x-target": {"$ref": "https://example.com/remote"},
+        }
+        with patch("urllib.request.urlopen") as retrieve:
+            with self.assertRaises(ValidationError) as caught:
+                ClientExternalToolDefinition(
+                    name="client__indirect",
+                    description="Reject references through literal IDs.",
+                    input_schema=schema,
+                )
+        retrieve.assert_not_called()
+        self.assertEqual(
+            caught.exception.errors(include_url=False)[0]["msg"],
+            "Value error, Client tool schemas only support local $ref values.",
+        )
 
     def test_local_schema_reference_is_allowed(self) -> None:
         """Local definitions remain available for structured schemas."""

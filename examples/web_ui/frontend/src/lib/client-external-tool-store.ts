@@ -17,6 +17,28 @@ const SUPPORTED_SCHEMA_URIS = new Set([
 	'https://json-schema.org/draft/2020-12/schema',
 	'https://json-schema.org/draft/2020-12/schema#',
 ]);
+const SINGLE_SCHEMA_KEYWORDS = new Set([
+	'additionalProperties',
+	'unevaluatedProperties',
+	'propertyNames',
+	'items',
+	'contains',
+	'unevaluatedItems',
+	'not',
+	'if',
+	'then',
+	'else',
+	'contentSchema',
+]);
+const SCHEMA_MAP_KEYWORDS = new Set([
+	'$defs',
+	'definitions',
+	'properties',
+	'patternProperties',
+	'dependentSchemas',
+	'dependencies',
+]);
+const SCHEMA_ARRAY_KEYWORDS = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems']);
 
 export interface CustomClientExternalTool {
 	display_name: string;
@@ -154,29 +176,50 @@ function attachStorageListener(): void {
 	});
 }
 
-function containsRemoteReference(value: unknown): boolean {
-	if (Array.isArray(value)) return value.some(containsRemoteReference);
-	if (!isRecord(value)) return false;
+function* schemaNodes(value: Record<string, unknown>): Generator<Record<string, unknown>> {
+	// Check explicit schema positions here; the server also resolves references.
+	const pending: unknown[] = [value];
+	while (pending.length) {
+		const node = pending.pop();
+		if (!isRecord(node)) continue;
+		yield node;
+		for (const [keyword, child] of Object.entries(node)) {
+			if (SINGLE_SCHEMA_KEYWORDS.has(keyword)) {
+				pending.push(child);
+			} else if (SCHEMA_MAP_KEYWORDS.has(keyword) && isRecord(child)) {
+				for (const item of Object.values(child)) pending.push(item);
+			} else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(child)) {
+				for (const item of child) pending.push(item);
+			}
+		}
+	}
+}
 
-	return Object.entries(value).some(
-		([key, child]) =>
-			(REFERENCE_KEYWORDS.has(key) && typeof child === 'string' && !child.startsWith('#')) ||
-			containsRemoteReference(child),
-	);
+function containsRemoteReference(value: Record<string, unknown>): boolean {
+	for (const node of schemaNodes(value)) {
+		if (
+			Object.entries(node).some(
+				([key, child]) =>
+					REFERENCE_KEYWORDS.has(key) &&
+					typeof child === 'string' &&
+					!child.startsWith('#'),
+			)
+		)
+			return true;
+	}
+	return false;
 }
 
 function schemaByteLength(schema: Record<string, unknown>): number {
 	return new TextEncoder().encode(JSON.stringify(schema)).byteLength;
 }
 
-function containsUnsupportedSchemaDialect(value: unknown): boolean {
-	if (Array.isArray(value)) return value.some(containsUnsupportedSchemaDialect);
-	if (!isRecord(value)) return false;
-	return Object.entries(value).some(
-		([key, child]) =>
-			(key === '$schema' && typeof child === 'string' && !SUPPORTED_SCHEMA_URIS.has(child)) ||
-			containsUnsupportedSchemaDialect(child),
-	);
+function containsUnsupportedSchemaDialect(value: Record<string, unknown>): boolean {
+	for (const node of schemaNodes(value)) {
+		if (typeof node.$schema === 'string' && !SUPPORTED_SCHEMA_URIS.has(node.$schema))
+			return true;
+	}
+	return false;
 }
 
 function isValidDraft202012Schema(schema: Record<string, unknown>): boolean {
