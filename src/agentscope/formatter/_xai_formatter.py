@@ -161,22 +161,9 @@ class XAIChatFormatter(FormatterBase):
         async def flush_assistant(
             text_blocks: list[TextBlock],
             tool_calls: list[ToolCallBlock],
-            media: list[DataBlock],
         ) -> None:
             """Emit one assistant segment before its tool results or hint."""
             text = "\n".join(block.text for block in text_blocks)
-            media_args = await _xai_user_args_from_blocks(
-                media,
-                image,
-                self.supported_input_media_types,
-            )
-            if media_args:
-                if text:
-                    xai_messages.append(assistant(text))
-                    text = ""
-                # Keep promoted media ahead of the tool call/result sequence.
-                xai_messages.append(user(*media_args))
-
             if tool_calls:
                 msg_proto = chat_pb2.Message()
                 msg_proto.role = chat_pb2.MessageRole.Value("ROLE_ASSISTANT")
@@ -196,7 +183,6 @@ class XAIChatFormatter(FormatterBase):
 
             text_blocks.clear()
             tool_calls.clear()
-            media.clear()
 
         for msg in msgs:
             blocks = msg.get_content_blocks()
@@ -250,7 +236,6 @@ class XAIChatFormatter(FormatterBase):
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
                 pending_media: list[Any] = []
-                assistant_media: list[DataBlock] = []
 
                 for block in blocks:
                     if pending_media and not isinstance(
@@ -264,7 +249,6 @@ class XAIChatFormatter(FormatterBase):
                         await flush_assistant(
                             pending_text,
                             pending_tool_calls,
-                            assistant_media,
                         )
 
                         (
@@ -299,15 +283,10 @@ class XAIChatFormatter(FormatterBase):
                     elif isinstance(block, ThinkingBlock):
                         pass
 
-                    elif isinstance(block, DataBlock):
-                        # xAI requires media in user messages.
-                        assistant_media.append(block)
-
                     elif isinstance(block, HintBlock):
                         await flush_assistant(
                             pending_text,
                             pending_tool_calls,
-                            assistant_media,
                         )
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
@@ -324,7 +303,6 @@ class XAIChatFormatter(FormatterBase):
                 await flush_assistant(
                     pending_text,
                     pending_tool_calls,
-                    assistant_media,
                 )
 
             else:
