@@ -6,7 +6,10 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
+from importlib.util import find_spec
 from typing import Any, Literal
+
+from fastapi import HTTPException
 
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
@@ -23,7 +26,10 @@ from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
 from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
+from ...code_mode import CodeModeToolkit
+from ...permission import PermissionMode
 from ...tool import (
+    BackendBase,
     TaskCreate,
     TaskGet,
     TaskList,
@@ -35,6 +41,45 @@ from ...tool import (
 from ...workspace import WorkspaceBase
 from ..access import ResourceKind
 from ._access import ResourceAccessService
+from ._code_mode_guard import CodeModeRegistryGuard
+
+
+def validate_code_mode_configuration(
+    permission_mode: PermissionMode,
+    *,
+    in_team: bool,
+) -> None:
+    """Reject combinations whose tool execution cannot be supported."""
+    if permission_mode == PermissionMode.EXPLORE:
+        raise HTTPException(
+            status_code=422,
+            detail="Code Mode is unavailable in Explore mode.",
+        )
+    if in_team:
+        raise HTTPException(
+            status_code=422,
+            detail="Code Mode is unavailable in team sessions.",
+        )
+
+
+def validate_code_mode_workspace(workspace: WorkspaceBase) -> None:
+    """Reject unsupported execution backends before enabling Code Mode."""
+    backend = workspace.get_backend()
+    if type(backend).start_process is BackendBase.start_process:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Code Mode is not supported by {type(backend).__name__}. "
+                "Use a Local or Bubblewrap workspace."
+            ),
+        )
+    if find_spec("psutil") is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Code Mode requires the server's agentscope[code-mode] extra."
+            ),
+        )
 
 
 async def get_toolkit(
@@ -55,6 +100,7 @@ async def get_toolkit(
     team_role: Literal["leader", "worker"] | None = None,
     channel_tools: list[ToolBase] | None = None,
     sop_dispatch: str | None = None,
+    code_mode: bool = False,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -80,6 +126,9 @@ async def get_toolkit(
     ``skills_or_loaders`` and ``mcps`` parameters.
 
     Args:
+        code_mode (`bool`, optional):
+            Wrap tools for text-chat code execution. Defaults to false;
+            realtime callers keep the native toolkit.
         storage (`StorageBase`):
             Application storage backend; needed by team tools to read
             fresh team / session state at call time, and by schedule
@@ -133,6 +182,13 @@ optional):
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
     """
+
+    if code_mode:
+        validate_code_mode_configuration(
+            session_record.state.permission_context.mode,
+            in_team=team_role is not None or bool(session_record.team_id),
+        )
+        validate_code_mode_workspace(workspace)
 
     tool_groups = []
 
@@ -267,7 +323,7 @@ time or interval"
     if channel_tools:
         tools += channel_tools
 
-    return Toolkit(
+    toolkit = Toolkit(
         tools=tools,
         skills_or_loaders=await workspace.list_skills(
             agent_id=agent_record.id,
@@ -278,3 +334,11 @@ time or interval"
         ),
         tool_groups=tool_groups,
     )
+    if code_mode:
+        return CodeModeToolkit(
+            toolkit,
+            backend=workspace.get_backend(),
+            cwd=workspace.workdir,
+            execution_guard=CodeModeRegistryGuard(message_bus),
+        )
+    return toolkit

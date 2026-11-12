@@ -23,6 +23,11 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     business key, so the public-method count is expected to be high.
     """
 
+    @staticmethod
+    def code_mode_execution(session_id: str) -> str:
+        """Return the non-expiring ownership registry for Code Mode."""
+        return f"agentscope:code_mode:execution:{session_id}"
+
     # ------------------------------------------------------------------
     # Run-trigger queue — the discriminator carried by each entry on the
     # shared trigger queue, telling the dispatcher how to spawn the run.

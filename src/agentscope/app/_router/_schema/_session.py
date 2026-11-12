@@ -59,6 +59,11 @@ class CreateSessionRequest(BaseModel):
     """Request body for creating a new session."""
 
     agent_id: str = Field(description="Agent this session belongs to.")
+    code_mode: bool = Field(
+        default=False,
+        strict=True,
+        description="Enable Code Mode for text chat. Defaults to false.",
+    )
     workspace_id: str | None = Field(
         default=None,
         description=(
@@ -123,6 +128,11 @@ class UpdateSessionRequest(BaseModel):
     name: str | None = Field(
         default=None,
         description="New display name.",
+    )
+    code_mode: bool = Field(
+        default=False,
+        strict=True,
+        description="Enable or disable text-chat Code Mode; omit to keep.",
     )
     chat_model_config: ChatModelConfig | None = Field(
         default=None,

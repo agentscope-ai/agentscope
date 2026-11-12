@@ -135,7 +135,7 @@ def _normalize_newlines(text: str) -> str:
 # ── base class ─────────────────────────────────────────────────────────
 
 
-class BackendBase(ABC):
+class BackendBase(ABC):  # pylint: disable=too-many-public-methods
     """Filesystem + subprocess interface consumed by builtin tools.
 
     Subclasses must implement three abstract primitives — ``exec_shell``,
@@ -144,6 +144,15 @@ class BackendBase(ABC):
     filesystem helpers are implemented here on top of ``exec_shell`` and
     work for any backend whose shell is POSIX-like; a backend with a
     cheaper native path may override them (see :class:`LocalBackend`).
+    """
+
+    isolates_process_tree: bool = False
+    """Whether processes from ``start_process`` have OS-owned descendants.
+
+    Opt in only when terminating the owned process boundary also terminates
+    detached descendants after their immediate parent exits. A POSIX process
+    group or periodic child discovery alone does not provide this guarantee.
+    Code Mode disables direct Python process-launch APIs without this flag.
     """
 
     #: Path-manipulation module whose semantics match the backend's
@@ -286,6 +295,26 @@ class BackendBase(ABC):
             return self._path_module.normpath(path)
         return self._path_module.normpath(
             self._path_module.join(cwd, path),
+        )
+
+    async def start_process(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        stdin: Any = asyncio.subprocess.DEVNULL,
+        stdout: Any = asyncio.subprocess.DEVNULL,
+        stderr: Any = asyncio.subprocess.DEVNULL,
+        limit: int = 65536,
+    ) -> asyncio.subprocess.Process:
+        """Start a managed duplex process, if supported by this backend.
+
+        The caller owns termination and pipe draining. Implementations must
+        create a new process group on POSIX. Unsupported remote backends
+        raise instead of executing code on the host.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support duplex processes.",
         )
 
     # ── abstract primitives ────────────────────────────────────────
@@ -760,6 +789,30 @@ class LocalBackend(BackendBase):
     # The local backend runs commands on the host, so its environment
     # OS is the host OS.
     os_name = os.name
+
+    async def start_process(
+        self,
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        stdin: Any = asyncio.subprocess.DEVNULL,
+        stdout: Any = asyncio.subprocess.DEVNULL,
+        stderr: Any = asyncio.subprocess.DEVNULL,
+        limit: int = 65536,
+    ) -> asyncio.subprocess.Process:
+        """Start an argv process with caller-owned pipes and lifetime."""
+        kwargs = _subprocess_creation_kwargs()
+        if os.name != "nt":
+            kwargs["start_new_session"] = True
+        return await asyncio.create_subprocess_exec(
+            *command,
+            cwd=cwd or await self.getcwd(),
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            limit=limit,
+            **kwargs,
+        )
 
     def __init__(self, workdir: str | None = None) -> None:
         """Initialize the local backend.

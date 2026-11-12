@@ -108,6 +108,9 @@ importers:
       i18next-browser-languagedetector:
         specifier: ^8.2.1
         version: 8.2.1
+      jsonrepair:
+        specifier: 3.14.0
+        version: 3.14.0
       lucide:
         specifier: ^1.3.0
         version: 1.3.0

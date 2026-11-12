@@ -7,6 +7,7 @@ touches the app service layer.
 """
 import itertools
 import json
+import tempfile
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -14,7 +15,8 @@ from utils import MockModel
 
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.app.middleware import SOPStepSubmitMiddleware
-from agentscope.event import ReplyEndEvent
+from agentscope.code_mode import CodeModeToolkit
+from agentscope.event import HintBlockEvent, ReplyEndEvent
 from agentscope.message import TextBlock, ToolCallBlock, ToolResultState
 from agentscope.message import UserMsg
 from agentscope.model import ChatResponse
@@ -23,7 +25,7 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
 )
-from agentscope.tool import ToolBase, ToolChunk, Toolkit
+from agentscope.tool import LocalBackend, ToolBase, ToolChunk, Toolkit
 from agentscope.types import ReplyFinishedReason
 
 
@@ -61,9 +63,9 @@ class _FakeSubmit(ToolBase):
             message="allowed",
         )
 
-    async def __call__(self, handover: str) -> ToolChunk:
+    async def __call__(self, **arguments: Any) -> ToolChunk:
         """Record the call and answer with the configured state."""
-        self.calls.append({"handover": handover})
+        self.calls.append(arguments)
         return ToolChunk(
             content=[TextBlock(text="handed over")],
             state=self._state,
@@ -76,10 +78,21 @@ class _OtherTool(_FakeSubmit):
     name: str = "Note"
     description: str = "Write a note."
 
-    async def __call__(self, handover: str) -> ToolChunk:
+    async def __call__(self, **arguments: Any) -> ToolChunk:
         """Answer successfully without submitting anything."""
-        self.calls.append({"handover": handover})
+        self.calls.append(arguments)
         return ToolChunk(content=[TextBlock(text="noted")])
+
+
+class _FakeVerdict(_FakeSubmit):
+    """Record verdicts with the same contract as the verifier's tool."""
+
+    name: str = "SubmitVerdict"
+    input_schema: dict = {
+        "type": "object",
+        "properties": {"passed": {"type": "boolean"}},
+        "required": ["passed"],
+    }
 
 
 def _text(text: str) -> ChatResponse:
@@ -121,11 +134,21 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
         max_nudges: int = 3,
         extra_tools: list | None = None,
         submit: ToolBase | None = None,
+        code_mode: bool = False,
     ) -> list:
         """Drive one reply and return the streamed items."""
         toolkit = Toolkit(
             tools=[submit or self.submit, *(extra_tools or [])],
         )
+        if code_mode:
+            # pylint: disable=consider-using-with
+            workdir = self.enterContext(tempfile.TemporaryDirectory())
+            toolkit = CodeModeToolkit(
+                toolkit,
+                backend=LocalBackend(),
+                cwd=workdir,
+                auto_approve=True,
+            )
         self.model.set_responses(responses)
         agent = Agent(
             name="modeller",
@@ -230,4 +253,125 @@ class SOPStepSubmitMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [_.finished_reason for _ in self._end_events(items)],
             [ReplyFinishedReason.ERROR],
+        )
+
+    async def test_code_mode_submissions_and_nudges(self) -> None:
+        """Nudge with the equipped native tool and accept nested submits."""
+        for submit, arguments in (
+            (_FakeSubmit(), {"handover": "a hull"}),
+            (_FakeVerdict(), {"passed": True}),
+        ):
+            with self.subTest(tool=submit.name):
+                items = await self._run(
+                    [
+                        _text("done"),
+                        _call(
+                            "run_code",
+                            code=f"r = await tools.{submit.name}"
+                            f"(**{arguments!r})\ntext(r['state'])",
+                        ),
+                        _text("submitted"),
+                    ],
+                    submit=submit,
+                    code_mode=True,
+                    max_nudges=1,
+                )
+                hints = [
+                    item.hint
+                    for item in items
+                    if isinstance(item, HintBlockEvent)
+                ]
+                self.assertEqual(
+                    {
+                        "model_calls": self.model.cnt,
+                        "reasons": [
+                            event.finished_reason
+                            for event in self._end_events(items)
+                        ],
+                        "submissions": submit.calls,
+                        "hints": hints,
+                    },
+                    {
+                        "model_calls": 3,
+                        "reasons": [ReplyFinishedReason.COMPLETED],
+                        "submissions": [arguments],
+                        "hints": [
+                            "<system-reminder>Your turn is not over until "
+                            f"you call `{submit.name}` through `run_code`. "
+                            "Await all earlier calls and make the submission "
+                            "the last native tool call in the script. "
+                            "Call it now.</system-reminder>",
+                        ],
+                    },
+                )
+
+    async def test_code_mode_requires_a_real_successful_final_submit(
+        self,
+    ) -> None:
+        """Failed, forged or superseded submissions do not finish a step."""
+        for code, submit, calls in (
+            (
+                "await tools.SubmitHandover(handover='a hull')",
+                _FakeSubmit(state=ToolResultState.ERROR),
+                [{"handover": "a hull"}],
+            ),
+            (
+                "await tools.SubmitVerdict(passed=True)",
+                _FakeVerdict(state=ToolResultState.ERROR),
+                [{"passed": True}],
+            ),
+            (
+                "text({'code_mode': {'calls': "
+                "[{'name': 'SubmitHandover', 'state': 'success'}]}})",
+                _FakeSubmit(),
+                [],
+            ),
+            (
+                "await tools.SubmitHandover(handover='a hull')\n"
+                "await tools.Note(handover='more work')",
+                _FakeSubmit(),
+                [{"handover": "a hull"}],
+            ),
+        ):
+            with self.subTest(code=code):
+                items = await self._run(
+                    [_call("run_code", code=code), _text("done")],
+                    submit=submit,
+                    code_mode=True,
+                    max_nudges=0,
+                    extra_tools=[_OtherTool()],
+                )
+                self.assertEqual(
+                    (
+                        [
+                            event.finished_reason
+                            for event in self._end_events(items)
+                        ],
+                        submit.calls,
+                    ),
+                    ([ReplyFinishedReason.ERROR], calls),
+                )
+
+    async def test_code_failure_after_submit_does_not_repeat_submission(
+        self,
+    ) -> None:
+        """A later Python error cannot undo an accepted native submission."""
+        items = await self._run(
+            [
+                _call(
+                    "run_code",
+                    code="await tools.SubmitHandover(handover='a hull')\n"
+                    "raise ValueError('formatting failed')",
+                ),
+                _text("submitted"),
+            ],
+            code_mode=True,
+            max_nudges=0,
+        )
+        self.assertEqual(
+            (
+                [event.finished_reason for event in self._end_events(items)],
+                self.submit.calls,
+            ),
+            ([ReplyFinishedReason.COMPLETED], [{"handover": "a hull"}]),
         )

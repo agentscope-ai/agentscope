@@ -60,6 +60,19 @@
 		"home": "Back to home"
 	},
 	"tool": {
+		"codeMode": {
+			"output": "Output preview",
+			"details": "Execution details",
+			"python": "Generated Python / input",
+			"calls": "Native tool calls",
+			"raw": "Original result",
+			"noOutput": "No text output",
+			"noCalls": "No native tools were called.",
+			"callsUnavailable": "Call records are not available for this result.",
+			"truncated": "Output reached the limit and was truncated.",
+			"interrupted": "Interrupted",
+			"denied": "Denied"
+		},
 		"callGeneric": "Call tool",
 		"read": {
 			"name": "Read",
@@ -171,6 +184,15 @@
 		"copy": "Copy"
 	},
 	"chat": {
+		"codeMode": {
+			"title": "Code Mode",
+			"on": "Code Mode enabled",
+			"off": "Code Mode disabled",
+			"description": "Let the model write Python to call tools and combine results in your workspace. Applies to the next text reply; voice chat is unchanged.",
+			"limitations": "Enabling this mode does not authorize execution. Approval covers the entire Python script; direct file and environment access bypasses native tool rules. Local execution uses the server user's permissions. Nested calls requiring approval or external execution are rejected.",
+			"unavailable": "Code Mode is unavailable in Explore mode and team sessions.",
+			"dontAsk": "Don't Ask never prompts for approval. Configure a run_code allow rule beforehand or scripts will be denied. This rule authorizes the entire Python script; deny rules still take priority."
+		},
 		"ttsFailed": "Speech generation failed. Text replies will continue.",
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",

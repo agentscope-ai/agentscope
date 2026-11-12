@@ -16,6 +16,7 @@ backed by ``fakeredis``. They assert:
 """
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 
@@ -222,6 +223,63 @@ class TestTeamCreate(_TeamToolsTestBase):
                 "name": "alpha",
                 "session_id": self.leader_session.id,
                 "member_ids": [],
+            },
+        )
+
+    async def test_rejects_code_mode_before_any_team_write(self) -> None:
+        """Use fresh config even if the tool predates the Code Mode switch."""
+        tool = TeamCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        before = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=self.leader_agent.id,
+            session_id=self.leader_session.id,
+            config=self.leader_session.config.model_copy(
+                update={"code_mode": True},
+            ),
+        )
+        with patch.object(
+            self.storage,
+            "upsert_team",
+            wraps=self.storage.upsert_team,
+        ) as create, patch.object(
+            self.storage,
+            "set_session_team_id",
+            wraps=self.storage.set_session_team_id,
+        ) as assign:
+            chunk = await tool(name="alpha", description="t-desc")
+            create.assert_not_awaited()
+            assign.assert_not_awaited()
+        after = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        self.assertEqual(after, before)
+        self.assertEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "TeamCreate: teams are unavailable while "
+                        "Code Mode is enabled. Disable Code Mode before "
+                        "creating a team.",
+                        "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
             },
         )
 

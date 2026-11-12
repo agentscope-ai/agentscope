@@ -116,6 +116,9 @@ from ..permission import (
 )
 from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
+from ..code_mode import CodeModeToolkit
+from ..code_mode._toolkit import CodeModeTool
+from ..tool._execution_context import nested_tool_call
 
 # The name of the tool that the agent uses to compress its own context
 _COMPRESSION_TOOL_NAME = "CompressContext"
@@ -256,6 +259,9 @@ class Agent:
         # Set when a `ReplyEndEvent` escapes the reply middleware chain; the
         # reply loop only exits after the event is delivered (not swallowed)
         self._receive_reply_end: bool = False
+
+        if isinstance(self.toolkit, CodeModeToolkit):
+            self.toolkit.bind(self.invoke_tool, self.state)
 
     def _validate_configs(self) -> None:
         """Validate the config combinations that a single config class cannot
@@ -1751,7 +1757,14 @@ class Agent:
 
         # Get the input arguments for the chat model, including messages and
         # tools
+        code_hints = []
+        if isinstance(self.toolkit, CodeModeToolkit):
+            code_hints, tool_choice = self.toolkit.adapt_tool_choice(
+                [],
+                tool_choice,
+            )
         kwargs = await self._prepare_model_input()
+        kwargs["messages"].extend(code_hints)
 
         # Call the chat model
         res = await self._call_model(
@@ -2361,6 +2374,82 @@ class Agent:
         """
         async for evt in self._execute_tool_call(tool_call, kept_rules):
             await queue.put(evt)
+
+    async def invoke_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> ToolResponse:
+        """Execute an immediate nested call without publishing raw context.
+
+        Availability, strict argument validation, permission middleware and
+        acting middleware are applied. Confirmation and external execution
+        cannot suspend this call: they return a denied response. Callers own
+        concurrency scheduling and must not replay completed side effects.
+        This entry does not append model messages or emit reply events.
+        """
+        call = ToolCallBlock(
+            id=_generate_id(),
+            name=name,
+            input=json.dumps(arguments, ensure_ascii=False),
+        )
+        was_nested = nested_tool_call.get()
+        token = nested_tool_call.set(True)
+        try:
+            tool = await self.toolkit.check_tool_available(
+                name,
+                self.state.tool_context.activated_groups,
+            )
+            if was_nested and isinstance(tool, CodeModeTool):
+                raise ValueError("Recursive code execution is not supported.")
+            await asyncio.to_thread(
+                jsonschema.validate,
+                arguments,
+                tool.input_schema,
+            )
+            decision = await self._check_permission(call, tool, arguments)
+            if decision.behavior != PermissionBehavior.ALLOW:
+                return ToolResponse(
+                    id=call.id,
+                    state=ToolResultState.DENIED,
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"Nested call not allowed "
+                                f"({decision.behavior}): {decision.message}. "
+                                "Pending confirmation is unsupported inside "
+                                "code; no action was executed."
+                            ),
+                        ),
+                    ],
+                )
+            if tool.is_external_tool:
+                return ToolResponse(
+                    id=call.id,
+                    state=ToolResultState.DENIED,
+                    content=[
+                        TextBlock(
+                            text=(
+                                "External execution is unsupported inside "
+                                "code; no action was executed."
+                            ),
+                        ),
+                    ],
+                )
+            response = None
+            async for item in self._acting(call):
+                if isinstance(item, ToolResponse):
+                    response = item
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise asyncio.CancelledError()
+            if response is None:
+                raise RuntimeError(
+                    f"Tool {name!r} returned no final response.",
+                )
+            return response
+        finally:
+            nested_tool_call.reset(token)
 
     async def _check_permission(
         self,

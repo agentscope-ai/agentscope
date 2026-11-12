@@ -60,6 +60,19 @@
 		"home": "返回首页"
 	},
 	"tool": {
+		"codeMode": {
+			"output": "输出预览",
+			"details": "执行详情",
+			"python": "生成的 Python / 输入参数",
+			"calls": "内部工具调用",
+			"raw": "原始结果",
+			"noOutput": "暂无文本输出",
+			"noCalls": "本次未调用原生工具。",
+			"callsUnavailable": "该结果没有可用的调用记录。",
+			"truncated": "输出已达到长度限制，内容被截断。",
+			"interrupted": "已中断",
+			"denied": "已拒绝"
+		},
 		"callGeneric": "调用工具",
 		"read": {
 			"name": "读取",
@@ -171,6 +184,15 @@
 		"copy": "复制"
 	},
 	"chat": {
+		"codeMode": {
+			"title": "Code Mode",
+			"on": "Code Mode 已开启",
+			"off": "Code Mode 已关闭",
+			"description": "让模型编写 Python，在当前工作区调用工具并汇总结果。从下一轮文字回复生效，不影响语音聊天。",
+			"limitations": "开启开关不代表授权执行。审批针对整段 Python；直接访问文件和环境变量不受原生工具规则逐项约束。本地执行具有服务进程用户的权限。嵌套调用若需要审批或外部执行，会被拒绝。",
+			"unavailable": "Explore 模式和团队会话不支持 Code Mode。",
+			"dontAsk": "Don't Ask 模式不会弹出审批。请预先配置 run_code 允许规则，否则脚本会被拒绝。该规则授权整段 Python 执行，拒绝规则仍优先。"
+		},
 		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",

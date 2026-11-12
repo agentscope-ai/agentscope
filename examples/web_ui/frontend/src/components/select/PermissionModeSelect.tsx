@@ -26,10 +26,18 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 	className?: string;
 	value?: PermissionMode;
 	disabled?: boolean;
+	disabledModes?: PermissionMode[];
 	onChange?: (value: PermissionMode) => void;
 }
 
-export function PermissionModeSelect({ className, value, disabled, onChange, ...props }: Props) {
+export function PermissionModeSelect({
+	className,
+	value,
+	disabled,
+	disabledModes,
+	onChange,
+	...props
+}: Props) {
 	const { t } = useTranslation();
 
 	const displayLabel = value
@@ -60,7 +68,10 @@ export function PermissionModeSelect({ className, value, disabled, onChange, ...
 					{PERMISSION_MODES.map((mode) => (
 						<Tooltip key={mode.value}>
 							<TooltipTrigger asChild>
-								<DropdownMenuItem onSelect={() => onChange?.(mode.value)}>
+								<DropdownMenuItem
+									disabled={disabledModes?.includes(mode.value)}
+									onSelect={() => onChange?.(mode.value)}
+								>
 									{mode.label}
 								</DropdownMenuItem>
 							</TooltipTrigger>
