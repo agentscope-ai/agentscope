@@ -10,7 +10,7 @@ import type {
 	ToolResultEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
-import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
+import { AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
@@ -28,6 +28,7 @@ import {
 import { useTranslation } from '@/i18n/useI18n';
 import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/lib/ask-user';
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
+import { appendMessageEvent } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 /**
@@ -374,7 +375,7 @@ export function useMessages(
 						: (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
 					: currentReplyRef.current;
 				if (reply) {
-					appendEvent(reply, event);
+					appendMessageEvent(reply, event);
 					// ``appendEvent`` mutates in place, which would leave
 					// every Msg identical across renders and force the whole
 					// list to re-render on each delta. Republish just the
