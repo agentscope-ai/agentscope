@@ -2,6 +2,7 @@
 """Tests for per-run client external tool definitions."""
 import json
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 
 from pydantic import ValidationError
 from utils import MockModel
@@ -10,6 +11,7 @@ from agentscope.agent import Agent, InjectionConfig
 from agentscope.app._client_external_tool import (
     ClientExternalTool,
     ClientExternalToolDefinition,
+    parse_client_tool_capabilities,
 )
 from agentscope.app._router._schema import ChatRequest
 from agentscope.event import (
@@ -53,6 +55,83 @@ def _definition(
 
 class ClientExternalToolDefinitionTest(TestCase):
     """Validate the public request contract and its guardrails."""
+
+    def test_schema_recursion_is_a_validation_error(self) -> None:
+        """Every recursive validation stage rejects excessive nesting."""
+        definition = _definition().model_dump()
+        for target in (
+            "json.dumps",
+            "Draft202012Validator.check_schema",
+            "_validate_local_references",
+        ):
+            with self.subTest(target=target), patch(
+                f"agentscope.app._client_external_tool.{target}",
+                side_effect=RecursionError,
+            ):
+                with self.assertRaises(ValidationError) as caught:
+                    ClientExternalToolDefinition.model_validate(definition)
+                self.assertEqual(
+                    caught.exception.errors(
+                        include_url=False,
+                        include_context=False,
+                        include_input=False,
+                    ),
+                    [
+                        {
+                            "type": "value_error",
+                            "loc": ("input_schema",),
+                            "msg": "Value error, Tool input_schema is "
+                            "nested too deeply.",
+                        },
+                    ],
+                )
+
+    def test_schema_size_precedes_recursive_validation(self) -> None:
+        """Oversized schemas never reach recursive JSON Schema validation."""
+        definition = _definition().model_dump()
+        definition["input_schema"]["description"] = "x" * (64 * 1024)
+        with patch(
+            "agentscope.app._client_external_tool."
+            "Draft202012Validator.check_schema",
+        ) as check_schema:
+            with self.assertRaises(ValidationError) as caught:
+                ClientExternalToolDefinition.model_validate(definition)
+        check_schema.assert_not_called()
+        self.assertEqual(
+            caught.exception.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            ),
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("input_schema",),
+                    "msg": "Value error, Tool input_schema exceeds 65536 "
+                    "bytes.",
+                },
+            ],
+        )
+
+    def test_capability_recursion_preserves_other_valid_tools(self) -> None:
+        """Optional capability failures cannot discard the other tool set."""
+        definition = _definition()
+        cases = (
+            ("_CLIENT_EXTERNAL_TOOLS_ADAPTER", ([], ["AskUser"])),
+            ("_CLIENT_BUILTIN_TOOLS_ADAPTER", ([definition], [])),
+        )
+        for adapter, expected in cases:
+            with self.subTest(adapter=adapter), patch(
+                f"agentscope.app._client_external_tool.{adapter}",
+            ) as mocked:
+                mocked.validate_python.side_effect = RecursionError
+                self.assertEqual(
+                    parse_client_tool_capabilities(
+                        [definition.model_dump()],
+                        ["AskUser"],
+                    ),
+                    expected,
+                )
 
     def test_native_resume_validates_metadata_when_tool_is_disabled(
         self,

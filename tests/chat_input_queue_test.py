@@ -55,6 +55,18 @@ from agentscope.message import (
 from agentscope.state import AgentState
 
 
+def _deep_tool_definition(depth: int = 120) -> dict:
+    """Build a small schema that exceeds recursive validator stack limits."""
+    schema: dict = {"type": "string"}
+    for _ in range(depth):
+        schema = {"type": "object", "properties": {"child": schema}}
+    return {
+        "name": "client__nested",
+        "description": "Nested input.",
+        "input_schema": schema,
+    }
+
+
 class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
     """Exercise real bus primitives, including Redis storage layouts."""
 
@@ -226,8 +238,13 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
             description="Ask the user to choose.",
             input_schema={"type": "object", "properties": {}},
         )
-        for invalid_key in ("client_external_tools", "client_builtin_tools"):
-            with self.subTest(invalid_key=invalid_key):
+        cases = (
+            ("client_external_tools", ["invalid"]),
+            ("client_builtin_tools", ["invalid"]),
+            ("client_external_tools", [_deep_tool_definition()]),
+        )
+        for index, (invalid_key, invalid_value) in enumerate(cases):
+            with self.subTest(case=index):
                 async with InMemoryMessageBus() as bus:
                     message = UserMsg("user", "Keep this message.")
                     await enqueue_chat_input(
@@ -243,7 +260,7 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                         MessageBusKeys.chat_inputs("s"),
                     )
                     payload = entries[0][1]
-                    payload[invalid_key] = ["invalid"]
+                    payload[invalid_key] = invalid_value
                     await bus.queue_replace(
                         MessageBusKeys.chat_inputs("s"),
                         [payload],
@@ -1077,6 +1094,72 @@ class TestTerminalChatClaims(IsolatedAsyncioTestCase):
 
 class TestChatInputPayloads(IsolatedAsyncioTestCase):
     """Preserve large input compatibility and read only referenced payloads."""
+
+    async def test_deep_client_schema_returns_422_without_queuing(
+        self,
+    ) -> None:
+        """Small but deeply nested schemas fail validation before dispatch."""
+        async with InMemoryMessageBus() as bus:
+            storage = _FakeStorage()
+            chat = _FakeChatService()
+            registry = ChatRunRegistry()
+            app = FastAPI()
+            app.include_router(chat_router)
+            app.dependency_overrides = {
+                get_current_user_id: lambda: "u",
+                get_storage: lambda: storage,
+                get_message_bus: lambda: bus,
+                get_chat_service: lambda: chat,
+                get_chat_run_registry: lambda: registry,
+            }
+            async with AsyncClient(
+                transport=ASGITransport(
+                    app=app,
+                    raise_app_exceptions=False,
+                ),
+                base_url="http://test",
+            ) as client:
+                for depth in (120, 200):
+                    with self.subTest(depth=depth):
+                        definition = _deep_tool_definition(depth)
+                        self.assertLess(
+                            len(json.dumps(definition).encode("utf-8")),
+                            64 * 1024,
+                        )
+                        response = await client.post(
+                            "/chat/",
+                            json={
+                                "agent_id": "a",
+                                "session_id": "s",
+                                "input": UserMsg("u", "Hello").model_dump(
+                                    mode="json",
+                                ),
+                                "client_external_tools": [definition],
+                            },
+                        )
+                        self.assertEqual(response.status_code, 422)
+                        self.assertEqual(
+                            response.json(),
+                            {
+                                "detail": [
+                                    {
+                                        "type": "value_error",
+                                        "loc": [
+                                            "body",
+                                            "client_external_tools",
+                                            0,
+                                            "input_schema",
+                                        ],
+                                        "msg": "Value error, Tool "
+                                        "input_schema is nested too deeply.",
+                                        "input": definition["input_schema"],
+                                        "ctx": {"error": {}},
+                                    },
+                                ],
+                            },
+                        )
+            self.assertEqual(chat.calls, [])
+            self.assertEqual(await list_chat_inputs(bus, "s"), [])
 
     async def test_large_attachment_can_be_enqueued_and_edited(self) -> None:
         """Inputs exceeding the removed attachment budget remain accepted."""

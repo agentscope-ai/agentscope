@@ -83,13 +83,28 @@ class ClientExternalToolDefinition(BaseModel):
     ) -> dict[str, Any]:
         """Validate schema syntax and the object shape tools require."""
         try:
+            schema_size = len(
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+            )
+            if schema_size > _MAX_INPUT_SCHEMA_BYTES:
+                raise ValueError(
+                    f"Tool input_schema exceeds {_MAX_INPUT_SCHEMA_BYTES} "
+                    "bytes.",
+                )
             Draft202012Validator.check_schema(value)
+            _validate_local_references(value)
         except SchemaError as error:
             raise ValueError(
                 f"Invalid JSON Schema: {error.message}",
             ) from error
-
-        _validate_local_references(value)
+        except RecursionError as error:
+            raise ValueError(
+                "Tool input_schema is nested too deeply.",
+            ) from error
 
         if value.get("type") != "object" or not isinstance(
             value.get("properties"),
@@ -99,18 +114,6 @@ class ClientExternalToolDefinition(BaseModel):
                 "Tool input_schema must define an object with properties.",
             )
 
-        schema_size = len(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8"),
-        )
-        if schema_size > _MAX_INPUT_SCHEMA_BYTES:
-            raise ValueError(
-                f"Tool input_schema exceeds {_MAX_INPUT_SCHEMA_BYTES} "
-                f"bytes.",
-            )
         return value
 
 
@@ -133,7 +136,7 @@ def parse_client_tool_capabilities(
             if raw_external_tools is not None
             else []
         )
-    except ValueError:
+    except (ValueError, RecursionError):
         logger.exception("Ignoring invalid queued client external tools.")
         external_tools = []
     try:
@@ -142,7 +145,7 @@ def parse_client_tool_capabilities(
             if raw_builtin_tools is not None
             else []
         )
-    except ValueError:
+    except (ValueError, RecursionError):
         logger.exception("Ignoring invalid queued client builtin tools.")
         builtin_tools = []
     return external_tools, builtin_tools

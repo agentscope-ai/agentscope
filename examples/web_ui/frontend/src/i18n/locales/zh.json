@@ -167,8 +167,6 @@
 		"availabilityNote": "自定义工具由你在此浏览器中手动返回结果，不会执行自定义代码。",
 		"deleteTitle": "删除自定义工具“{{name}}”？",
 		"deleteDescription": "该工具会从此浏览器的所有对话中移除；已经在等待结果的调用仍可继续完成。",
-		"unsupportedTitle": "当前客户端不支持此工具",
-		"unsupportedDescription": "当前会话正在等待 {{name}}，但此 Web UI 没有注册对应的处理器。",
 		"cancel": "取消请求",
 		"cancelling": "正在取消",
 		"editor": {

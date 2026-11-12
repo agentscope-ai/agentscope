@@ -722,7 +722,9 @@ export function useMessages(
 						id: crypto.randomUUID(),
 						text: nativeResult
 							? formatAskUserOutput(nativeResult)
-							: JSON.stringify(result),
+							: typeof result === 'string'
+								? result
+								: JSON.stringify(result),
 						created_at: createdAt,
 						finished_at: createdAt,
 					},

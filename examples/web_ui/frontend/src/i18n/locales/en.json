@@ -167,8 +167,6 @@
 		"availabilityNote": "Custom tools are completed manually in this browser. No custom code is executed.",
 		"deleteTitle": "Delete custom tool \"{{name}}\"?",
 		"deleteDescription": "The tool will be removed from every conversation in this browser. A call already waiting for a result can still be completed.",
-		"unsupportedTitle": "This client tool is not supported",
-		"unsupportedDescription": "This session is waiting for {{name}}, but this Web UI has no registered handler for it.",
 		"cancel": "Cancel request",
 		"cancelling": "Cancelling",
 		"editor": {
