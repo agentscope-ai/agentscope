@@ -641,6 +641,10 @@ class OpenAIResponseModel(ChatModelBase):
         Returns:
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
+
+        Raises:
+            `RuntimeError`:
+                If the response generation failed.
         """
         blocked_error = _openai_response_block_error(
             response,
@@ -649,6 +653,19 @@ class OpenAIResponseModel(ChatModelBase):
         )
         if blocked_error is not None:
             raise blocked_error
+
+        # HTTP 200 responses can contain failed generations without the SDK
+        # raising an exception. Surface them before parsing partial output.
+        if response.status == "failed":
+            error = response.error
+            details = (
+                f"{error.code}: {error.message}"
+                if error
+                else "no error details"
+            )
+            raise RuntimeError(
+                f"OpenAI response '{response.id}' failed: {details}",
+            )
 
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
