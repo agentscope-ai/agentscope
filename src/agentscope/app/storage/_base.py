@@ -24,6 +24,7 @@ from ._model import (
     TeamRecord,
     VoiceProfileRecord,
 )
+from ._model._session_list import SessionListItem
 from ...credential import CredentialBase
 from ...message import Msg
 from ...sop import SOPPhase, SOPRunState
@@ -467,6 +468,37 @@ class StorageBase(ABC):
         Returns:
             `list[SessionRecord]`: List of all sessions for the (user, agent).
         """
+
+    async def list_sessions_page(
+        self,
+        user_id: str,
+        agent_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[SessionListItem], int]:
+        """Return read-only summaries and the total matching count.
+
+        Omit ``limit`` to return every remaining session. Existing storage
+        backends inherit this fallback; SQL projects and pages in the DB.
+        Complete records remain available through ``list_sessions``.
+        """
+        if offset < 0 or (limit is not None and limit < 1):
+            raise ValueError("offset must be >= 0 and limit must be >= 1")
+        records = await self.list_sessions(user_id, agent_id)
+        records = sorted(
+            records,
+            key=lambda record: (record.created_at, record.id),
+            reverse=True,
+        )
+        end = None if limit is None else offset + limit
+        return (
+            [
+                SessionListItem.from_record(record)
+                for record in records[offset:end]
+            ],
+            len(records),
+        )
 
     @abstractmethod
     async def delete_session(
