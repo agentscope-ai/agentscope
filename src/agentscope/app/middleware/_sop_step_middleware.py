@@ -5,6 +5,7 @@ import json
 from typing import AsyncGenerator, Callable
 
 from ...agent import Agent
+from ...code_mode import CodeModeToolkit
 from ...event import HintBlockEvent, ReplyEndEvent
 from ...message import HintBlock, ToolCallBlock, ToolResultBlock
 from ...message import ToolResultState
@@ -63,9 +64,6 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
             )
             if last_call is None:
                 continue
-            if last_call.name not in self.TOOLS:
-                return False
-
             result = next(
                 (
                     block
@@ -75,8 +73,25 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
                 ),
                 None,
             )
+            if (
+                isinstance(agent.toolkit, CodeModeToolkit)
+                and last_call.name == agent.toolkit.code.name
+                and result is not None
+                and result.name == last_call.name
+            ):
+                # These records are produced by the host, not script output.
+                # A later Python error does not undo a completed submission.
+                calls = result.metadata.get("code_mode", {}).get("calls", [])
+                return bool(
+                    calls
+                    and calls[-1].get("name") in self.TOOLS
+                    and calls[-1].get("state") == ToolResultState.SUCCESS
+                    and calls[-1].get("id"),
+                )
             return (
-                result is not None and result.state == ToolResultState.SUCCESS
+                last_call.name in self.TOOLS
+                and result is not None
+                and result.state == ToolResultState.SUCCESS
             )
 
         return False
@@ -138,15 +153,27 @@ class SOPStepSubmitMiddleware(MiddlewareBase):
                 continue
 
             nudges += 1
+            toolkit = agent.toolkit
+            code_mode = isinstance(toolkit, CodeModeToolkit)
+            if code_mode:
+                toolkit = toolkit.catalog
             equipped = {
                 tool.name
-                for group in agent.toolkit.tool_groups
+                for group in toolkit.tool_groups
                 for tool in group.tools
             } & set(self.TOOLS)
+            route = " through `run_code`" if code_mode else ""
+            last_call = (
+                "Await all earlier calls and make the submission the last "
+                "native tool call in the script. "
+                if code_mode
+                else ""
+            )
             instruction = (
                 f"<system-reminder>Your turn is not over until you call "
-                f"`{sorted(equipped)[0] if equipped else self.TOOLS[0]}`. "
-                f"Call it now.</system-reminder>"
+                f"`{sorted(equipped)[0] if equipped else self.TOOLS[0]}`"
+                f"{route}. "
+                f"{last_call}Call it now.</system-reminder>"
             )
             # Free one iteration so the agent can actually make the call.
             agent.state.cur_iter = min(

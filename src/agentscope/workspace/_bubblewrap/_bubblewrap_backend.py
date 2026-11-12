@@ -44,6 +44,9 @@ class BubblewrapBackend(BackendBase):
             Extra environment variables for sandboxed processes.
     """
 
+    # --unshare-all includes PID isolation; --die-with-parent binds lifetime.
+    isolates_process_tree: bool = True
+
     def __init__(
         self,
         *,
@@ -177,6 +180,7 @@ class BubblewrapBackend(BackendBase):
         stdin: Any = asyncio.subprocess.DEVNULL,
         stdout: Any = asyncio.subprocess.DEVNULL,
         stderr: Any = asyncio.subprocess.DEVNULL,
+        limit: int = 65536,
     ) -> asyncio.subprocess.Process:
         """Start a long-running command inside Bubblewrap.
 
@@ -192,6 +196,7 @@ class BubblewrapBackend(BackendBase):
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
+            limit=limit,
             **kwargs,
         )
 

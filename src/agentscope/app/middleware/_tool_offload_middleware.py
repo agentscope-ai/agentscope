@@ -31,6 +31,7 @@ from typing import Any, AsyncGenerator, Callable
 from .._manager import BackgroundTaskManager
 from ...middleware import MiddlewareBase
 from ...tool import ToolChunk, ToolResponse
+from ...tool._execution_context import nested_tool_call
 from ...message import (
     DataBlock,
     HintBlock,
@@ -208,6 +209,11 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 Normal results when the tool finishes in time, or a
                 synthetic ``ToolResponse`` when offloaded.
         """
+        if nested_tool_call.get():
+            async for item in next_handler(**input_kwargs):
+                yield item
+            return
+
         tool_call = input_kwargs["tool_call"]
 
         # ----------------------------------------------------------------

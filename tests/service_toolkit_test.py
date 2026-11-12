@@ -18,6 +18,9 @@ Verifies the assembly rules:
 """
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, Mock
+
+from fastapi import HTTPException
 
 from utils import FakeWorkspaceManager
 from agentscope.agent import ContextConfig, ReActConfig
@@ -34,7 +37,9 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionRecord,
 )
-from agentscope.tool import ToolBase
+from agentscope.code_mode import CodeModeToolkit
+from agentscope.permission import PermissionMode
+from agentscope.tool import LocalBackend, ToolBase
 
 
 class _FakeWorkspace:
@@ -185,6 +190,105 @@ class _StubTool(ToolBase):
 
 class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
     """User-owned agent (``source="user"``) gets the full set."""
+
+    async def test_code_mode_rejects_incompatible_execution_context(
+        self,
+    ) -> None:
+        """Reject stored or caller-supplied conflicts before tool assembly."""
+        agent = _make_agent()
+        for mode, team_id, role, reason in (
+            (PermissionMode.EXPLORE, None, None, "Explore mode"),
+            (PermissionMode.DEFAULT, "team", None, "team sessions"),
+            (PermissionMode.DEFAULT, None, "leader", "team sessions"),
+            (PermissionMode.DEFAULT, None, "worker", "team sessions"),
+        ):
+            with self.subTest(mode=mode, team_id=team_id, role=role):
+                session = _make_session(
+                    user_id="u",
+                    agent_id=agent.id,
+                    with_model=False,
+                    team_id=team_id,
+                )
+                session.state.permission_context.mode = mode
+                workspace = Mock(list_tools=AsyncMock())
+                with self.assertRaises(HTTPException) as caught:
+                    await get_toolkit(
+                        storage=_NoOpStorage(),
+                        workspace=workspace,
+                        workspace_manager=FakeWorkspaceManager(),
+                        scheduler_manager=Mock(),
+                        background_task_manager=Mock(),
+                        message_bus=_NullBus(),
+                        middlewares=[],
+                        user_id="u",
+                        agent_record=agent,
+                        session_record=session,
+                        resource_access_service=_make_access(_NoOpStorage()),
+                        team_role=role,
+                        code_mode=True,
+                    )
+                self.assertEqual(
+                    (caught.exception.status_code, caught.exception.detail),
+                    (422, f"Code Mode is unavailable in {reason}."),
+                )
+                workspace.list_tools.assert_not_awaited()
+
+    async def test_code_mode_preserves_catalog_and_workspace(self) -> None:
+        """Text chat opts in without changing other toolkit consumers."""
+        agent = _make_agent()
+        session = _make_session(
+            user_id="u",
+            agent_id=agent.id,
+            with_model=False,
+        )
+        session.config.code_mode = True
+        session.config.cwd = "browsing-only"
+        backend = LocalBackend()
+        tool = _StubTool()
+        tool.input_schema = {"type": "object", "properties": {}}
+        workspace = Mock(
+            wraps=_FakeWorkspace(tools=[tool]),
+            workdir="workspace-root",
+            get_backend=Mock(return_value=backend),
+        )
+        toolkits = []
+        for enabled in (False, True):
+            toolkit = await get_toolkit(
+                storage=_NoOpStorage(),
+                workspace=workspace,
+                workspace_manager=FakeWorkspaceManager(),
+                scheduler_manager=Mock(),
+                background_task_manager=Mock(
+                    list_tools=AsyncMock(return_value=[]),
+                ),
+                message_bus=_NullBus(),
+                user_id="u",
+                agent_record=agent,
+                session_record=session,
+                middlewares=[],
+                resource_access_service=_make_access(_NoOpStorage()),
+                code_mode=enabled,
+            )
+            toolkits.append(toolkit)
+        normal, code = toolkits
+        self.assertIsInstance(code, CodeModeToolkit)
+        self.assertEqual(
+            {
+                "tools": [
+                    item["function"]["name"]
+                    for item in await code.get_tool_schemas()
+                ],
+                "catalog": _tool_names(code.catalog),
+                "backend": code.backend,
+                "cwd": code.cwd,
+            },
+            {
+                "tools": ["run_code"],
+                "catalog": _tool_names(normal),
+                "backend": backend,
+                "cwd": "workspace-root",
+            },
+        )
 
     async def test_user_agent_gets_all_sources(self) -> None:
         """A user-owned agent receives workspace, planning, scheduling,

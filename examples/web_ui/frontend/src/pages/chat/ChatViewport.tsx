@@ -38,6 +38,7 @@ import { PermissionPanel } from '@/components/panel/PermissionPanel';
 import { SkillPanel } from '@/components/panel/SkillPanel';
 import { TaskPanel } from '@/components/panel/TaskPanel';
 import { TeamPanel } from '@/components/panel/TeamPanel';
+import { CodeModePopover } from '@/components/popover/CodeModePopover';
 import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
@@ -920,6 +921,10 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		);
 	};
 
+	const handleCodeModeChange = async (enabled: boolean) => {
+		await patchConfig({ code_mode: enabled }, () => {});
+	};
+
 	return (
 		<>
 			<main ref={viewportRef} className="flex size-full min-w-0">
@@ -1006,11 +1011,31 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 										onASRChange={handleASRChange}
 										disabled={configPending || voiceBusy}
 									/>
+									<CodeModePopover
+										enabled={view?.session.config.code_mode ?? false}
+										unavailable={
+											selectedPermissionMode === 'explore' ||
+											!!view?.session.team_id
+										}
+										disabled={
+											!view ||
+											configPending ||
+											voiceBusy ||
+											messagesLoading ||
+											phase !== 'idle' ||
+											view.status !== 'idle' ||
+											getPendingHitlCalls(msgs).length > 0
+										}
+										onChange={handleCodeModeChange}
+									/>
 									<PermissionModeSelect
 										id="tour-permission-mode"
 										variant={'ghost'}
 										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedPermissionMode}
+										disabledModes={
+											view?.session.config.code_mode ? ['explore'] : undefined
+										}
 										disabled={!sessionId || configPending}
 										onChange={handlePermissionModeChange}
 									/>

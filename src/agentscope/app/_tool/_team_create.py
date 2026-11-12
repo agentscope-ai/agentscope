@@ -46,6 +46,7 @@ just wait for the members to report back.
 
 ## When NOT to Use This Tool
 - The task is small enough to handle yourself.
+- Code Mode is enabled in this session.
 - You already lead a team in this session — a session can only lead \
 one team at a time.
 """
@@ -60,7 +61,7 @@ one team at a time.
         """Create the team directly via storage.
 
         Reads the current session record from storage to enforce the
-        precondition: a session can only lead one team at a time.
+        preconditions: Code Mode is disabled and the session is not in a team.
         This makes the tool safe to attach unconditionally to
         ``source='user'`` agents — calling it when the session
         already leads a team returns a clear error rather than
@@ -90,6 +91,19 @@ one team at a time.
                             text=(
                                 "TeamCreate: session "
                                 f"{self._session_id} not found."
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
+            if session.config.code_mode:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "TeamCreate: teams are unavailable while "
+                                "Code Mode is enabled. Disable Code Mode "
+                                "before creating a team."
                             ),
                         ),
                     ],

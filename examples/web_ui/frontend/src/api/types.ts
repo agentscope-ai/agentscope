@@ -159,6 +159,8 @@ export type SessionSourceKind = SessionOrigin['type'];
 
 export interface SessionConfig {
 	name: string;
+	/** Run text-chat tools through generated Python. */
+	code_mode: boolean;
 	/** Who owns `name` — see the backend's `SessionNaming`. */
 	naming: { auto: boolean };
 	chat_model_config: ChatModelConfig;
@@ -201,6 +203,7 @@ export interface SessionRecord extends RecordBase {
 
 export interface CreateSessionRequest {
 	agent_id: string;
+	code_mode?: boolean;
 	workspace_id?: string;
 	chat_model_config?: ChatModelConfig | null;
 	/** Optional fallback model. Omit (or pass null) for no fallback. */
@@ -225,6 +228,8 @@ export interface InterruptSessionResponse {
 
 export interface UpdateSessionRequest {
 	name?: string;
+	/** Omit to retain the current text-chat execution mode. */
+	code_mode?: boolean;
 	chat_model_config?: ChatModelConfig;
 	/**
 	 * New fallback model. PATCH semantics:

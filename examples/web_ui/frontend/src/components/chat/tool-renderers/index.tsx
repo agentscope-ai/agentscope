@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { ToolCallRow } from './_shared';
 import { BashRenderer } from './BashRenderer';
+import { CodeModeRenderer } from './CodeModeRenderer';
 import {
 	defaultGetDisplayName,
 	defaultRenderBody,
@@ -18,6 +19,7 @@ import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
 import { WriteRenderer } from './WriteRenderer';
 
 const renderers: Record<string, ToolRenderer> = {
+	run_code: CodeModeRenderer,
 	Bash: BashRenderer,
 	Read: ReadRenderer,
 	Write: WriteRenderer,

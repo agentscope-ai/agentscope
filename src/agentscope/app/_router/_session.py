@@ -42,6 +42,10 @@ from .._service import (
     SubagentHitlProjector,
     validate_tts_model_config,
 )
+from .._service._toolkit import (
+    validate_code_mode_configuration,
+    validate_code_mode_workspace,
+)
 from ..storage import (
     ASRModelConfig,
     ChatModelConfig,
@@ -362,19 +366,31 @@ async def create_session(
     # ``body.workspace_id`` always wins (used by team invite / borrow
     # flows to force sharing); otherwise defer to the manager's
     # isolation policy — see ``WorkspaceManagerBase.assign_workspace_id``.
+    session_id = _generate_id()
     resolved_workspace_id = body.workspace_id or (
         await workspace_manager.assign_workspace_id(
             user_id=user_id,
             agent_id=body.agent_id,
-            session_id=_generate_id(),
+            session_id=session_id,
         )
     )
+
+    if body.code_mode:
+        workspace = await workspace_manager.get_workspace(
+            user_id=user_id,
+            agent_id=body.agent_id,
+            session_id=session_id,
+            workspace_id=resolved_workspace_id,
+        )
+        validate_code_mode_workspace(workspace)
 
     session_record = await storage.upsert_session(
         user_id=user_id,
         agent_id=body.agent_id,
+        session_id=session_id,
         config=SessionConfig(
             workspace_id=resolved_workspace_id,
+            code_mode=body.code_mode,
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
@@ -488,6 +504,7 @@ async def update_session(
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
     message_bus: MessageBus = Depends(get_message_bus),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> SessionRecord:
     """Update the configuration of an existing session.
 
@@ -504,6 +521,8 @@ async def update_session(
         access (`ResourceAccessService`): Injected access service.
         message_bus (`MessageBus`): Injected message bus; used to
             detect an in-flight run.
+        workspace_manager (`WorkspaceManagerBase`): Resolves the execution
+            backend when enabling Code Mode.
 
     Returns:
         `SessionRecord`: The full session record after the update.
@@ -530,6 +549,37 @@ async def update_session(
                 "is running."
             ),
         )
+
+    code_mode = (
+        body.code_mode
+        if "code_mode" in body.model_fields_set
+        else existing.config.code_mode
+    )
+    if code_mode:
+        validate_code_mode_configuration(
+            body.permission_mode or existing.state.permission_context.mode,
+            in_team=bool(existing.team_id),
+        )
+
+    if (
+        "code_mode" in body.model_fields_set
+        and body.code_mode != existing.config.code_mode
+    ):
+        parked = SessionService.derive_parked_status(existing.state.context)
+        if parked != SessionStatus.IDLE:
+            raise HTTPException(
+                status_code=409,
+                detail="Finish or interrupt the pending reply before "
+                "changing Code Mode.",
+            )
+        if body.code_mode:
+            workspace = await workspace_manager.get_workspace(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                workspace_id=existing.config.workspace_id,
+            )
+            validate_code_mode_workspace(workspace)
 
     await _ensure_credential_exists(access, user_id, body.chat_model_config)
     await _ensure_credential_exists(

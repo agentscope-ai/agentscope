@@ -324,6 +324,9 @@ class SessionConfig(BaseModel):
     chat_model_config: ChatModelConfig | None = None
     """The chat model config. None means no model has been configured yet."""
 
+    code_mode: bool = False
+    """Use generated Python to orchestrate tools in text chat."""
+
     fallback_chat_model_config: ChatModelConfig | None = None
     """The fallback chat model config. Used as a backup when the primary
     model fails. None means no fallback configured."""

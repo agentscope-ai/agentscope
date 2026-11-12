@@ -90,6 +90,10 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
         """One ``get_team`` read serves both consumers of the role."""
         await self._assert_worker_run(tts_available=True)
 
+    async def test_code_mode_setting_reaches_toolkit_assembly(self) -> None:
+        """The text chat run uses the persisted session's execution mode."""
+        await self._assert_worker_run(tts_available=True, code_mode=True)
+
     async def test_missing_voice_profile_does_not_block_reply(self) -> None:
         """A missing profile skips TTS while the worker still replies."""
         await self._assert_worker_run(tts_available=False)
@@ -104,6 +108,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
         self,
         tts_available: bool,
         queued: bool | None = None,
+        code_mode: bool = False,
     ) -> None:
         """Exercise assembly and reply with or without a usable TTS model."""
         user_id = "user-1"
@@ -128,6 +133,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
         )
         config = SessionConfig(
             workspace_id="ws-1",
+            code_mode=code_mode,
             chat_model_config=ChatModelConfig(
                 type="test",
                 credential_id="cred-1",
@@ -278,6 +284,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
             for call in publish.await_args_list
             if call.args[2].get("name") == "tts_error"
         ]
+        self.assertEqual(toolkit_kwargs["code_mode"], code_mode)
         self.assertEqual(
             [
                 {"name": item["name"], "value": item["value"]}

@@ -1233,6 +1233,7 @@ class ChatService:
                     team_role=team_ctx.role if team_ctx else None,
                     channel_tools=channel_tools,
                     sop_dispatch=sop_dispatch,
+                    code_mode=session_record.config.code_mode,
                 )
 
                 # -------------------------------------------------------------

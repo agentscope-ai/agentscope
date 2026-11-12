@@ -52,6 +52,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+code-mode = ["psutil>=5.9"]
 # ------------ Model APIs ------------
 model-gemini = ["google-genai>=2.30.1"]
 model-ollama = ["ollama>=0.5.4"]
@@ -197,7 +198,7 @@ full = [
 # ------------ Development ------------
 dev = [
     # Include full dependencies from local package
-    "agentscope[full]",
+    "agentscope[full,code-mode]",
     # Development tools
     "pre-commit",
     "pytest",
