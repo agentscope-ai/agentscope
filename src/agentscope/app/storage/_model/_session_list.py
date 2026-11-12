@@ -17,7 +17,7 @@ class SessionListItem:
     def from_record(cls, record: SessionRecord) -> "SessionListItem":
         """Project a full record without mutating the stored state."""
         context = record.state.context
-        states = []
+        states: list[str] = []
         if context and context[-1].role == "assistant":
             states = [
                 block.state
