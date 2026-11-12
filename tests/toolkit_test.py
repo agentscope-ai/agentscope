@@ -9,15 +9,19 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 
 from pydantic import BaseModel, Field
-from utils import AnyString
+from utils import AnyString, MockModel
 
+from agentscope.agent import Agent
+from agentscope.event import ToolResultStartEvent
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
     ToolCallBlock,
     DataBlock,
     Base64Source,
+    URLSource,
 )
 from agentscope.tool import (
     Toolkit,
@@ -451,7 +455,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
     async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
         """Base64 chunks with padding should merge as bytes, not strings."""
-        response = ToolResponse()
+        response = ToolResponse(id="tool")
         first = base64.b64encode(b"hello").decode("ascii")
         second = base64.b64encode(b"world").decode("ascii")
 
@@ -482,13 +486,113 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(len(response.content), 1)
-        merged = response.content[0]
-        self.assertIsInstance(merged, DataBlock)
         self.assertEqual(
-            base64.b64decode(merged.source.data),
-            b"helloworld",
+            response.model_dump(),
+            {
+                "id": "tool",
+                "state": "success",
+                "metadata": {},
+                "content": [
+                    {
+                        "type": "data",
+                        "id": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": base64.b64encode(b"helloworld").decode(),
+                        },
+                        "name": None,
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+            },
         )
+
+    async def test_tool_response_groups_streamed_blocks(self) -> None:
+        """The response and event replay preserve interleaved tool output."""
+
+        class CustomDataBlock(DataBlock):
+            """A tool-provided data block subclass."""
+
+        text = TextBlock(id="s", text="progress")
+        before = TextBlock(id="s", text="before")
+        after = TextBlock(id="s", text="after")
+        first = CustomDataBlock(
+            id="s",
+            source=Base64Source(data="YQ==", media_type="audio/wav"),
+        )
+        second = DataBlock(
+            id="s",
+            source=Base64Source(data="Yg==", media_type="audio/wav"),
+        )
+        urls = [
+            DataBlock(
+                id="s",
+                source=URLSource(url=url, media_type="image/png"),
+            )
+            for url in ("https://example.org/one", "https://example.org/two")
+        ]
+        blocks = [text, urls[0], first, before, urls[1], second, after]
+        expected: dict[str, Any] = {
+            "id": "tool",
+            "state": "success",
+            "metadata": {},
+            "content": [
+                text.model_dump(),
+                urls[0].model_dump(),
+                {
+                    **first.model_dump(),
+                    "source": {
+                        "type": "base64",
+                        "data": "YWI=",
+                        "media_type": "audio/wav",
+                    },
+                },
+                before.model_dump(),
+                urls[1].model_dump(),
+                after.model_dump(),
+            ],
+        }
+
+        agent = Agent(name="agent", system_prompt="", model=MockModel())
+        for chunks in ([blocks], [[block] for block in blocks]):
+            with self.subTest(chunk_count=len(chunks)):
+                response = ToolResponse(id="tool")
+                message = AssistantMsg(
+                    name=agent.name,
+                    id=agent.state.reply_id,
+                    content=[],
+                )
+                message.append_event(
+                    ToolResultStartEvent(
+                        reply_id=message.id,
+                        tool_call_id=response.id,
+                        tool_call_name="stream",
+                    ),
+                )
+                for content in chunks:
+                    response.append_chunk(ToolChunk(content=content))
+                    # pylint: disable-next=protected-access
+                    async for event in agent._convert_tool_chunk_to_event(
+                        response.id,
+                        content,
+                    ):
+                        message.append_event(event)
+                self.assertEqual(response.model_dump(), expected)
+                self.assertEqual(
+                    message.content[0].model_dump()["output"],
+                    [
+                        {
+                            **block,
+                            "created_at": AnyString(),
+                            "id": AnyString()
+                            if block["type"] == "text"
+                            else block["id"],
+                        }
+                        for block in expected["content"]
+                    ],
+                )
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):

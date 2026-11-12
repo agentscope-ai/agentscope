@@ -13,6 +13,8 @@ from ...formatter import FormatterBase, MiniMaxChatFormatter
 class MiniMaxChatModel(AnthropicChatModel):
     """Chat model for MiniMax's Anthropic-compatible API."""
 
+    _content_block_provider = "minimax"
+
     type: Literal["minimax_chat"] = "minimax_chat"
     """The type of the chat model."""
 
@@ -29,10 +31,15 @@ class MiniMaxChatModel(AnthropicChatModel):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="Whether to enable adaptive thinking.",
+            description=(
+                "None omits the thinking configuration and uses the "
+                "provider default. True sends thinking.type='adaptive'. "
+                "False sends thinking.type='disabled'; whether disabling "
+                "thinking is supported depends on the model."
+            ),
         )
 
     def __init__(
@@ -46,6 +53,7 @@ class MiniMaxChatModel(AnthropicChatModel):
         context_size: int = 1_000_000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
     ) -> None:
         """Initialize the MiniMax chat model.
 
@@ -69,6 +77,9 @@ class MiniMaxChatModel(AnthropicChatModel):
                 The formatter used to serialize messages.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra arguments forwarded to ``anthropic.AsyncAnthropic``.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit MiniMax refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
         """
         super().__init__(
             credential=credential,
@@ -80,13 +91,20 @@ class MiniMaxChatModel(AnthropicChatModel):
             context_size=context_size,
             formatter=formatter or MiniMaxChatFormatter(),
             client_kwargs=client_kwargs,
+            raise_on_refusal=raise_on_refusal,
         )
 
     def _build_thinking_config(
         self,
         max_tokens: int,
     ) -> tuple[dict[str, Any] | None, int]:
-        """MiniMax only accepts adaptive thinking, without a token budget."""
+        """Send adaptive or disabled thinking, without a token budget.
+
+        MiniMax-M3 accepts disabled; M3.1-Flash rejects it. See:
+        https://platform.minimax.io/docs/api-reference/text-anthropic-api
+        """
+        if self.parameters.thinking_enable is False:
+            return {"type": "disabled"}, max_tokens
         if self.parameters.thinking_enable:
             return {"type": "adaptive"}, max_tokens
         return None, max_tokens

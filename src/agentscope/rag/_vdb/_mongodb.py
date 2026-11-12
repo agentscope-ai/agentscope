@@ -293,6 +293,7 @@ class MongoDBStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -305,8 +306,13 @@ class MongoDBStore(VectorStoreBase):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
         """
-        await self._col(collection).delete_many({"document_id": document_id})
+        query = {"document_id": document_id}
+        query.update(self._build_metadata_filter(metadata_filter) or {})
+        await self._col(collection).delete_many(query)
 
     # ------------------------------------------------------------------
     # Search
@@ -434,6 +440,7 @@ class MongoDBStore(VectorStoreBase):
             metadata_filter (`dict[str, Any] | None`, optional):
                 If provided, restrict aggregation to records whose
                 ``chunk.metadata`` matches every ``key == value`` pair.
+                Values are matched literally, including dictionaries.
 
         Returns:
             `list[DocumentSummary]`:
@@ -444,7 +451,7 @@ class MongoDBStore(VectorStoreBase):
             pipeline.append(
                 {
                     "$match": {
-                        f"chunk.metadata.{key}": value
+                        f"chunk.metadata.{key}": {"$eq": value}
                         for key, value in metadata_filter.items()
                     },
                 },
@@ -502,6 +509,7 @@ class MongoDBStore(VectorStoreBase):
                 Maximum number of chunks to return.
             metadata_filter (`dict[str, Any] | None`, optional):
                 Extra ``chunk.metadata`` equality constraints.
+                Values are matched literally, including dictionaries.
 
         Returns:
             `list[Chunk]`:
@@ -511,7 +519,7 @@ class MongoDBStore(VectorStoreBase):
             return []
         query: dict[str, Any] = {"document_id": document_id}
         for key, value in (metadata_filter or {}).items():
-            query[f"chunk.metadata.{key}"] = value
+            query[f"chunk.metadata.{key}"] = {"$eq": value}
 
         cursor = (
             self._col(collection)

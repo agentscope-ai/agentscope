@@ -63,11 +63,6 @@ def _dream_steps() -> list[dict[str, Any]]:
         },
         {"backend": "dream_integrate_step"},
         {
-            "backend": "dream_topics_step",
-            "topic_count": 3,
-            "topic_diversity_days": 7,
-        },
-        {
             "backend": "dream_finish_step",
             "file_catalog": "dream",
         },
@@ -159,8 +154,7 @@ def _memory_jobs() -> dict[str, Any]:
         "auto_dream": {
             "backend": "base",
             "description": (
-                "Consolidate daily conversation memory into digest nodes "
-                "and interest topics."
+                "Consolidate daily conversation memory into digest nodes."
             ),
             "parameters": _object_schema(
                 {
@@ -290,7 +284,9 @@ def _memory_components(
                 },
                 "parameters": {
                     "max_tokens": 65_536,
-                    "thinking_enable": False,
+                    # Preserve the pre-tristate fallback behavior: omit
+                    # thinking controls and use the provider default.
+                    "thinking_enable": None,
                 },
             },
         },

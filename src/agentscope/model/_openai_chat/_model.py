@@ -2,6 +2,7 @@
 """The OpenAI Chat Completions model implementation."""
 import base64
 from collections import OrderedDict
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
@@ -13,9 +14,14 @@ from ..._utils._audio import (
 )
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _normalize_openai_compatible_content_error,
+    _openai_compatible_response_block_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
+from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
     Msg,
@@ -48,13 +54,15 @@ class OpenAIChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for reasoning models "
-                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
-                "control the depth of reasoning."
+                "None and True forward reasoning_effort when it is set, "
+                "including 'none'. If reasoning_effort is unset, neither "
+                "adds reasoning parameters; the provider default applies. "
+                "False overrides reasoning_effort with 'none' to request "
+                "that reasoning be disabled."
             ),
         )
 
@@ -69,6 +77,9 @@ class OpenAIChatModel(ChatModelBase):
                 "model-dependent and may include: none, minimal, low, "
                 "medium, high, xhigh."
             ),
+            json_schema_extra={
+                "x-reset-hidden-on-change": {"thinking_enable": None},
+            },
         )
 
         temperature: float | None = Field(
@@ -123,6 +134,8 @@ class OpenAIChatModel(ChatModelBase):
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
         extra_body: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the OpenAI chat model.
 
@@ -153,6 +166,13 @@ class OpenAIChatModel(ChatModelBase):
             extra_body (`dict[str, Any] | None`, defaults to `None`):
                 Additional request body fields forwarded to
                 OpenAI-compatible APIs.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit OpenAI refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -162,6 +182,8 @@ class OpenAIChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or OpenAIChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -194,6 +216,18 @@ class OpenAIChatModel(ChatModelBase):
         import openai
 
         return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize structured OpenAI content-filter errors."""
+        if not self.raise_on_content_filter:
+            return error
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="openai",
+            blocked_codes={"content_filter"},
+            phase=ContentBlockedPhase.INPUT,
+        )
+        return normalized or error
 
     async def _call_api(
         self,
@@ -240,10 +274,9 @@ class OpenAIChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.thinking_enable is False:
+            kwargs["reasoning_effort"] = "none"
+        elif self.parameters.reasoning_effort is not None:
             kwargs["reasoning_effort"] = self.parameters.reasoning_effort
 
         if self.parameters.voice is not None:
@@ -280,9 +313,14 @@ class OpenAIChatModel(ChatModelBase):
         response = await self.client.chat.completions.create(**kwargs)
 
         audio_cfg = kwargs.get("audio")
+        extra_body = kwargs.get("extra_body")
+        if isinstance(extra_body, Mapping):
+            # The SDK merges extra_body over the request at the top level.
+            # Decode the format actually sent, including per-call overrides.
+            audio_cfg = extra_body.get("audio", audio_cfg)
         audio_fmt = (
             audio_cfg.get("format", "wav")
-            if isinstance(audio_cfg, dict)
+            if isinstance(audio_cfg, Mapping)
             else "wav"
         )
 
@@ -336,6 +374,7 @@ class OpenAIChatModel(ChatModelBase):
         audio_id: str = _generate_id()
         # The mapping from index to (tool call id, tool call name)
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -353,14 +392,15 @@ class OpenAIChatModel(ChatModelBase):
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
                             0,
                         )
+                        or 0
                         if details
                         else 0,
                     )
@@ -372,6 +412,16 @@ class OpenAIChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    include_content_filter=self.raise_on_content_filter,
+                    provider="openai",
+                    request_id=response_id,
+                    partial_output=has_output,
+                    include_refusal=self.raise_on_refusal,
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking
@@ -386,6 +436,9 @@ class OpenAIChatModel(ChatModelBase):
 
                 # Text
                 delta_text = getattr(delta, "content", None) or ""
+                refusal = getattr(delta, "refusal", None)
+                if not delta_text and isinstance(refusal, str):
+                    delta_text = refusal
 
                 # Audio (delta.audio.data / delta.audio.transcript). Omni
                 # models deliver text via ``delta.audio.transcript`` rather
@@ -455,6 +508,7 @@ class OpenAIChatModel(ChatModelBase):
 
                 if delta_res.content or usage:
                     delta_res.usage = usage
+                    has_output = has_output or bool(delta_res.content)
                     yield delta_res
 
     def _parse_completion_response(
@@ -484,6 +538,15 @@ class OpenAIChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                include_content_filter=self.raise_on_content_filter,
+                provider="openai",
+                request_id=getattr(response, "id", None),
+                include_refusal=self.raise_on_refusal,
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if not isinstance(reasoning, str):
                 reasoning = getattr(choice.message, "reasoning", None)
@@ -492,6 +555,14 @@ class OpenAIChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
+
+            refusal = getattr(choice.message, "refusal", None)
+            if (
+                not choice.message.content
+                and isinstance(refusal, str)
+                and refusal
+            ):
+                content_blocks.append(TextBlock(text=refusal))
 
             # Extract audio output (message.audio.data /
             # message.audio.transcript)
@@ -542,14 +613,15 @@ class OpenAIChatModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )

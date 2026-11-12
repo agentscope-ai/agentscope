@@ -7,18 +7,28 @@ import type {
 	DataBlockEndEvent,
 	ExternalExecutionResultEvent,
 	ReplyStartEvent,
+	ToolResultEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
+import { toast } from 'sonner';
 
-import { sessionApi, takeFreshlyCreated } from '@/api';
-import { chatApi } from '@/api';
+import { chatApi, sessionApi, takeFreshlyCreated } from '@/api';
+import type { ChatQueueItem } from '@/api/chat';
 import { useAudioManager } from '@/context/AudioContext';
+import {
+	getQueueMessages,
+	type ChatInputStartedValue,
+	type ChatInputTerminalValue,
+	useChatQueue,
+} from '@/hooks/useChatQueue';
+import { useTranslation } from '@/i18n/useI18n';
 import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/lib/ask-user';
 import type { ClientExternalToolResult } from '@/lib/client-external-tools';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 /**
  * One pending subagent HITL request, projected from a team *member*
@@ -38,23 +48,6 @@ export type SubagentHitlEntry = {
 	created_at: string;
 };
 
-/**
- * Return true if ``msg`` is an assistant reply currently parked on a
- * pending tool_call (awaiting user confirmation or an external
- * execution result). Used both to detect the "in-flight reply on page
- * load" case and as the SDK-gap workaround that hides the confirm
- * card once the paired tool_result lands.
- */
-const hasPendingToolCall = (msg: Msg | undefined): boolean => {
-	if (!msg || msg.role !== 'assistant') return false;
-	for (const block of msg.content) {
-		if (block.type !== 'tool_call') continue;
-		const state = (block as ToolCallBlock).state;
-		if (state === 'asking' || state === 'submitted') return true;
-	}
-	return false;
-};
-
 const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
 	`${e.worker_session_id}:${e.reply_id}`;
 
@@ -63,9 +56,10 @@ const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
  *
  * - ``idle`` — no in-flight reply; the send button is enabled.
  * - ``streaming`` — a reply is in progress (either actively producing
- *   events or parked awaiting HITL). The send button is replaced by a
- *   Stop button. The parked-vs-generating distinction is not tracked
- *   here; HITL cards render themselves from message content when a
+ *   events or parked awaiting HITL). A separate Stop button is shown,
+ *   while Send remains available to enqueue another turn. The
+ *   parked-vs-generating distinction is not tracked here; HITL cards
+ *   render themselves from message content when a
  *   ``RequireUserConfirmEvent`` block is present.
  * - ``interrupting`` — the user has requested a stop and we are
  *   waiting for the backend's terminating ``ReplyEndEvent``. Stop
@@ -91,10 +85,10 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  *   background retrigger, team member message, …).
  *
  * The hook opens the SSE connection immediately after fetching
- * history. User input is sent via ``POST /chat/``. Human-in-the-loop
- * confirmations use the active realtime control channel during voice
- * mode and ``POST /chat/`` otherwise. Resulting events arrive through
- * the already-open SSE connection.
+ * history. Ordinary user input is accepted into the backend FIFO.
+ * Human-in-the-loop confirmations use the active realtime control
+ * channel during voice mode and ``POST /chat/`` otherwise. Resulting
+ * events arrive through the already-open SSE connection.
  *
  * ``phase`` is driven by event content, not HTTP lifecycle: it moves
  * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
@@ -105,10 +99,9 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  * @param agentId - The agent whose session to subscribe. ``null`` to
  *   skip.
  * @param sessionId - The session to subscribe. ``null`` to skip.
- * @returns Object with ``msgs``, ``loading``, ``phase``, ``error``,
- *   ``send``, ``onUserConfirm``, and ``abort``. ``loading`` stays true
- *   until the history for the *current* ``(agentId, sessionId)`` has
- *   landed, so ``msgs`` must not be rendered while it is set.
+ * @returns Message/reply state, editable queue state and mutations, HITL
+ *   handlers, send/interrupt actions, loading state, and the latest error.
+ *   ``loading`` stays true until history for the current session lands.
  */
 export function useMessages(
 	agentId: string | null,
@@ -139,8 +132,38 @@ export function useMessages(
 		isRealtimeAudioActive?: () => boolean;
 		/** Send a tool confirmation over the active realtime transport. */
 		sendRealtimeUserConfirm?: (event: UserConfirmResultEvent) => Promise<void>;
+		/** Return an external tool result over the realtime transport. */
+		sendRealtimeExternalExecutionResult?: (
+			event: ExternalExecutionResultEvent,
+		) => Promise<void>;
 	},
 ) {
+	const { t } = useTranslation();
+	// A new identity for each visit also rejects late responses after A -> B -> A.
+	const session = useMemo(() => ({ agentId, sessionId }), [agentId, sessionId]);
+	const externalSubmissionsRef = useRef(
+		new Map<
+			string,
+			{
+				replyId: string;
+				toolCallIds: Set<string>;
+				resolve: () => void;
+				reject: (error: Error) => void;
+			}
+		>(),
+	);
+	const activeSessionRef = useRef<typeof session | null>(null);
+	useLayoutEffect(() => {
+		activeSessionRef.current = session;
+		const externalSubmissions = externalSubmissionsRef.current;
+		return () => {
+			activeSessionRef.current = null;
+			for (const pending of externalSubmissions.values()) {
+				pending.reject(new Error('The session closed before the result was acknowledged.'));
+			}
+			externalSubmissions.clear();
+		};
+	}, [session]);
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	// The (agent, session) pair `msgs` actually belongs to. Loading is
 	// derived from it rather than set inside the fetch effect: an effect
@@ -149,12 +172,33 @@ export function useMessages(
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	// Only a running reply accepts steering. Parked replies retain their
+	// streaming phase and currentReplyRef for confirmation and Stop.
+	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
+	const {
+		items: queuedItems,
+		visibleCount: queuedCount,
+		pendingCount: pendingQueueCount,
+		reorderDisabled: queueReorderDisabled,
+		addOptimistic,
+		acceptOptimistic,
+		rollbackOptimistic,
+		applyQueueSnapshot,
+		startItem,
+		finishItem,
+		updateQueued,
+		deleteQueued,
+		steerQueued,
+		moveQueued,
+		reorderQueued,
+	} = useChatQueue(agentId, sessionId, setError);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
+	const ttsConfigurationWarningsRef = useRef(new Set<string>());
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
@@ -189,7 +233,33 @@ export function useMessages(
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
-				if (custom.name === 'team_updated') {
+				if (custom.name === 'external_execution_result_rejected') {
+					const failure = custom.value as {
+						request_id: string;
+						reply_id: string;
+						tool_call_ids: string[];
+					};
+					const pending = externalSubmissionsRef.current.get(failure.request_id);
+					if (
+						pending?.replyId === failure.reply_id &&
+						failure.tool_call_ids.some((id) => pending.toolCallIds.has(id))
+					) {
+						externalSubmissionsRef.current.delete(failure.request_id);
+						const error = new Error(t('chat.externalExecution.rejected'));
+						pending.reject(error);
+						toast.error(error.message);
+					}
+				} else if (custom.name === 'tts_error') {
+					const failure = custom.value as { stage?: string; reply_id?: string };
+					const sessionKey = JSON.stringify([agentId, sessionId]);
+					if (failure.stage === 'configuration') {
+						if (ttsConfigurationWarningsRef.current.has(sessionKey)) return;
+						ttsConfigurationWarningsRef.current.add(sessionKey);
+					}
+					toast.warning(t('chat.ttsFailed'), {
+						id: `tts-error-${sessionKey}-${failure.reply_id ?? custom.id}`,
+					});
+				} else if (custom.name === 'team_updated') {
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
@@ -208,8 +278,66 @@ export function useMessages(
 					// The member resolved (or its run ended); clear the card.
 					const v = custom.value as { worker_session_id: string; reply_id: string };
 					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
+				} else if (custom.name === 'chat_input_started') {
+					const startedItem = startItem(custom.value as ChatInputStartedValue);
+					if (startedItem) {
+						const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
+						msgsRef.current = [
+							...msgsRef.current,
+							...getQueueMessages([startedItem]).filter(
+								(msg) => !existingIds.has(msg.id),
+							),
+						];
+						scheduleUpdate();
+					}
+				} else if (custom.name === 'chat_queue_changed') {
+					const value = custom.value as { items?: ChatQueueItem[] };
+					applyQueueSnapshot(value.items ?? []);
+				} else if (custom.name === 'chat_input_failed') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					const failure = new Error(value.message ?? t('chatQueue.processFailed'));
+					clearInterruptTimer();
+					currentReplyRef.current = null;
+					setPhase('idle');
+					setActiveReplyId(null);
+					setError(failure);
+					toast.error(failure.message);
+				} else if (custom.name === 'chat_input_cancelled') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					const message = value.message ?? t('chatQueue.processingCancelled');
+					clearInterruptTimer();
+					currentReplyRef.current = null;
+					setPhase('idle');
+					setActiveReplyId(null);
+					toast.info(message);
+				} else if (custom.name === 'chat_input_injected') {
+					const value = custom.value as ChatInputTerminalValue;
+					finishItem(value);
+					toast.success(t('chatQueue.injected'));
+				} else if (custom.name === 'chat_input_steer_failed') {
+					const value = custom.value as ChatInputTerminalValue;
+					toast.error(value.message ?? t('chatQueue.steerFailed'));
 				}
 				return;
+			}
+			if (event.type === EventType.TOOL_RESULT_END) {
+				const result = event as ToolResultEndEvent;
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (pending.replyId !== result.reply_id) continue;
+					pending.toolCallIds.delete(result.tool_call_id);
+					if (pending.toolCallIds.size === 0) {
+						externalSubmissionsRef.current.delete(requestId);
+						pending.resolve();
+					}
+				}
+			} else if (event.type === EventType.REPLY_END) {
+				for (const [requestId, pending] of externalSubmissionsRef.current) {
+					if (pending.replyId !== event.reply_id) continue;
+					externalSubmissionsRef.current.delete(requestId);
+					pending.reject(new Error(t('chat.externalExecution.rejected')));
+				}
 			}
 			if (event.type === EventType.REPLY_START) {
 				const e = event as ReplyStartEvent;
@@ -233,6 +361,7 @@ export function useMessages(
 					msgsRef.current = [...msgsRef.current, msg];
 					currentReplyRef.current = msg;
 				}
+				setActiveReplyId(e.reply_id);
 				clearInterruptTimer();
 				setPhase('streaming');
 			} else {
@@ -261,6 +390,14 @@ export function useMessages(
 					}
 				}
 				if (
+					event.type === EventType.REQUIRE_USER_CONFIRM ||
+					event.type === EventType.REQUIRE_EXTERNAL_EXECUTION
+				) {
+					setActiveReplyId((active) =>
+						!event.reply_id || active === event.reply_id ? null : active,
+					);
+				}
+				if (
 					event.type === EventType.REPLY_END &&
 					(!event.reply_id ||
 						currentReplyRef.current === null ||
@@ -268,6 +405,7 @@ export function useMessages(
 				) {
 					clearInterruptTimer();
 					setPhase('idle');
+					setActiveReplyId(null);
 					currentReplyRef.current = null;
 				}
 			}
@@ -297,7 +435,17 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[
+			scheduleUpdate,
+			audioManager,
+			clearInterruptTimer,
+			startItem,
+			applyQueueSnapshot,
+			finishItem,
+			t,
+			agentId,
+			sessionId,
+		],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -309,6 +457,7 @@ export function useMessages(
 		setError(null);
 		clearInterruptTimer();
 		setPhase('idle');
+		setActiveReplyId(null);
 		setSubagentHitl([]);
 		audioManager?.disposeAll();
 
@@ -333,21 +482,27 @@ export function useMessages(
 					if (cancelled) return;
 					eventCursor = event_cursor;
 					msgsRef.current = messages;
-					// If a reply is in flight (running on a worker) OR the
-					// tail msg is parked on a pending tool_call (awaiting
+					// If a reply is in flight (running on a worker) OR any
+					// persisted msg is parked on a pending tool_call (awaiting
 					// user confirmation / external execution), initialise the
 					// phase to ``streaming`` so the interrupt button is
 					// available immediately — otherwise a fresh page load
 					// while parked leaves the UI stuck on ``idle`` with no
 					// way to abort.
 					const tail = messages[messages.length - 1];
-					if (is_running || hasPendingToolCall(tail)) {
+					const pendingHitl = getPendingHitlCalls(messages)[0];
+					if (is_running || pendingHitl) {
 						setPhase('streaming');
-						if (hasPendingToolCall(tail)) {
+						if (is_running && !pendingHitl && tail?.role === 'assistant') {
+							setActiveReplyId(tail.id);
+						}
+						if (pendingHitl) {
 							// Prime the ref so continuation events (which
 							// arrive without a fresh REPLY_START) apply to
 							// the right msg.
-							currentReplyRef.current = tail ?? null;
+							currentReplyRef.current =
+								messages.find((message) => message.id === pendingHitl.replyId) ??
+								null;
 						}
 					}
 					// Published synchronously, not through `scheduleUpdate`:
@@ -397,31 +552,55 @@ export function useMessages(
 	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
 
 	/**
-	 * Send a user message. Appends the message to the local list
-	 * optimistically, then fires a ``POST /chat/`` trigger. Events
-	 * arrive via the already-open SSE connection.
+	 * Send a user message. The first idle input appears in the conversation
+	 * immediately (with its matching queue row hidden); later inputs remain
+	 * in the editable queue until ``chat_input_started`` arrives.
 	 *
 	 * @param content - The message content blocks.
 	 */
 	const send = useCallback(
 		async (content: ContentBlock[]) => {
-			if (!agentId || !sessionId) return;
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
-			msgsRef.current = [...msgsRef.current, userMsg];
-			scheduleUpdate();
-
+			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
+			if (showInConversationImmediately) {
+				msgsRef.current = [...msgsRef.current, userMsg];
+				scheduleUpdate();
+			}
+			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
 			try {
-				await chatApi.trigger({
+				const response = await chatApi.trigger({
 					agent_id: agentId,
 					session_id: sessionId,
 					input: userMsg,
 				});
+				if (activeSessionRef.current !== session) return;
+				acceptOptimistic(optimisticId, response.queue_item_id);
 			} catch (e) {
+				if (activeSessionRef.current !== session) return;
+				// The server never accepted this input. Remove the
+				// optimistic queue row and restore the caller's draft.
+				rollbackOptimistic(optimisticId, userMsg.id);
+				if (showInConversationImmediately) {
+					msgsRef.current = msgsRef.current.filter((msg) => msg.id !== userMsg.id);
+					scheduleUpdate();
+				}
 				setError(e as Error);
+				throw e;
 			}
 		},
-		[agentId, sessionId, scheduleUpdate],
+		[
+			agentId,
+			sessionId,
+			phase,
+			pendingQueueCount,
+			session,
+			scheduleUpdate,
+			addOptimistic,
+			acceptOptimistic,
+			rollbackOptimistic,
+		],
 	);
 
 	/**
@@ -479,10 +658,51 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
+	const onExternalExecutionResult = useCallback(
+		async (event: ExternalExecutionResultEvent) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+			try {
+				if (
+					optionsRef.current?.isRealtimeAudioActive?.() &&
+					optionsRef.current.sendRealtimeExternalExecutionResult
+				) {
+					// Sending a DataChannel frame does not acknowledge its result.
+					// Register first so even an immediate SSE response is matched.
+					const receipt = new Promise<void>((resolve, reject) => {
+						externalSubmissionsRef.current.set(event.id, {
+							replyId: event.reply_id,
+							toolCallIds: new Set(
+								event.execution_results.map((result) => result.id),
+							),
+							resolve,
+							reject,
+						});
+					});
+					await Promise.all([
+						receipt,
+						optionsRef.current.sendRealtimeExternalExecutionResult(event),
+					]);
+				} else {
+					await chatApi.trigger({
+						agent_id: agentId,
+						session_id: sessionId,
+						input: event,
+					});
+				}
+			} catch (e) {
+				if (activeSessionRef.current === session) setError(e as Error);
+				throw e;
+			} finally {
+				externalSubmissionsRef.current.delete(event.id);
+			}
+		},
+		[agentId, sessionId, session],
+	);
+
 	/** Return a client-executed tool result and resume the parked reply. */
 	const onClientExternalToolResult = useCallback(
 		async (toolCall: ToolCallBlock, result: ClientExternalToolResult, replyId: string) => {
-			if (!agentId || !sessionId) return;
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			currentReplyRef.current = msgsRef.current.find((msg) => msg.id === replyId) ?? null;
 			const createdAt = new Date().toISOString();
@@ -519,18 +739,9 @@ export function useMessages(
 				execution_results: [toolResult],
 			};
 
-			try {
-				await chatApi.trigger({
-					agent_id: agentId,
-					session_id: sessionId,
-					input: event,
-				});
-			} catch (error) {
-				setError(error as Error);
-				throw error;
-			}
+			await onExternalExecutionResult(event);
 		},
-		[agentId, sessionId],
+		[agentId, sessionId, session, onExternalExecutionResult],
 	);
 
 	/** Abort the current SSE connection. */
@@ -649,11 +860,21 @@ export function useMessages(
 	return {
 		msgs: ownsConversation ? msgs : [],
 		loading,
+		queuedItems: ownsConversation ? queuedItems : [],
+		queuedCount: ownsConversation ? queuedCount : 0,
+		queueReorderDisabled: !ownsConversation || queueReorderDisabled,
+		updateQueued,
+		deleteQueued,
+		moveQueued,
+		reorderQueued,
 		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
 		error: ownsConversation ? error : null,
+		activeReplyId: ownsConversation && phase === 'streaming' ? activeReplyId : null,
+		steerQueued,
 		send,
 		onUserConfirm,
 		onClientExternalToolResult,
+		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,

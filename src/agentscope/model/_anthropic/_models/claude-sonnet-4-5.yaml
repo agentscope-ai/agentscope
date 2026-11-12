@@ -1,6 +1,7 @@
 name: claude-sonnet-4-5
 label: Claude Sonnet 4.5
-status: active
+status: deprecated
+deprecated_at: "2026-11-30T00:00:00"
 
 input_types:
   - text/plain

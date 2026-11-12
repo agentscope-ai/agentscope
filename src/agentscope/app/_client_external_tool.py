@@ -5,8 +5,15 @@ from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+)
 
+from .._logging import logger
 from ..permission import (
     PermissionBehavior,
     PermissionContext,
@@ -105,6 +112,40 @@ class ClientExternalToolDefinition(BaseModel):
                 f"bytes.",
             )
         return value
+
+
+_CLIENT_EXTERNAL_TOOLS_ADAPTER: TypeAdapter = TypeAdapter(
+    list[ClientExternalToolDefinition],
+)
+_CLIENT_BUILTIN_TOOLS_ADAPTER: TypeAdapter = TypeAdapter(
+    list[ClientBuiltinToolName],
+)
+
+
+def parse_client_tool_capabilities(
+    raw_external_tools: object,
+    raw_builtin_tools: object,
+) -> tuple[list[ClientExternalToolDefinition], list[ClientBuiltinToolName]]:
+    """Decode optional queued capabilities without discarding valid input."""
+    try:
+        external_tools = (
+            _CLIENT_EXTERNAL_TOOLS_ADAPTER.validate_python(raw_external_tools)
+            if raw_external_tools is not None
+            else []
+        )
+    except ValueError:
+        logger.exception("Ignoring invalid queued client external tools.")
+        external_tools = []
+    try:
+        builtin_tools = (
+            _CLIENT_BUILTIN_TOOLS_ADAPTER.validate_python(raw_builtin_tools)
+            if raw_builtin_tools is not None
+            else []
+        )
+    except ValueError:
+        logger.exception("Ignoring invalid queued client builtin tools.")
+        builtin_tools = []
+    return external_tools, builtin_tools
 
 
 class ClientExternalTool(ToolBase):

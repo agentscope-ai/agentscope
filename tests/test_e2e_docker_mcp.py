@@ -12,6 +12,8 @@ import sys
 import tempfile
 import unittest
 
+from sandbox_test_support import CheckoutWheelTestCase
+
 from agentscope.workspace import DockerWorkspace
 from agentscope.mcp import MCPClient, StdioMCPConfig
 
@@ -68,8 +70,10 @@ _SKIP_REASON = "Docker daemon not available"
     "Docker on Windows CI uses Windows container mode, "
     "Linux images unavailable",
 )
-class TestDockerPerScopeMCP(unittest.IsolatedAsyncioTestCase):
+class TestDockerPerScopeMCP(CheckoutWheelTestCase):
     """Per-``(agent_id, session_id)`` MCP isolation for DockerWorkspace."""
+
+    workspace_type = DockerWorkspace
 
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()

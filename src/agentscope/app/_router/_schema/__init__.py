@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Schema models for the agent service."""
 
+from ._background_task import (
+    BackgroundTaskInfo,
+    ListBackgroundTasksResponse,
+)
 from ._channel import (
     StartCredentialBindingRequest,
     ChannelActionResponse,
@@ -15,6 +19,19 @@ from ._chat import (
     ChatRequest,
     ChatTriggerResponse,
     ClientExternalToolDefinition,
+    ChatQueueItem,
+    ChatQueueResponse,
+    ReorderChatQueueRequest,
+    SteerChatQueueItemRequest,
+    UpdateChatQueueItemRequest,
+)
+from ._asr import (
+    ListASRModelsRequest,
+    ListASRModelsResponse,
+    RealtimeASRStartRequest,
+    RealtimeASRTokenRequest,
+    RealtimeASRTokenResponse,
+    TranscriptionResponse,
 )
 from ._health import ComponentStatus, HealthResponse
 from ._hub import HubInfo
@@ -23,7 +40,6 @@ from ._hub_skill import SkillView
 from ._workspace import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
-    AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
     DirectoryListing,
@@ -109,6 +125,20 @@ from ._session import (
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._voice_profile import (
+    AvailableEnginesResponse,
+    CloneVoiceRequest,
+    CloneVoiceResponse,
+    CreateVoiceProfileRequest,
+    CreateVoiceProfileResponse,
+    CredentialRef,
+    EngineInfo,
+    EngineModelInfo,
+    ListVoiceProfilesResponse,
+    OpenAIConsentRequest,
+    OpenAIConsentResponse,
+    UpdateVoiceProfileRequest,
+)
 
 __all__ = [
     # Health
@@ -123,7 +153,6 @@ __all__ = [
     # Workspace
     "AddFromLibraryRequest",
     "AddFromLibraryResponse",
-    "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
     "DirectoryEntry",
     "DirectoryListing",
@@ -146,6 +175,9 @@ __all__ = [
     "CreateAgentResponse",
     "UpdateAgentRequest",
     "ListSchedulesResponse",
+    # Background Task
+    "BackgroundTaskInfo",
+    "ListBackgroundTasksResponse",
     # Channel
     "ChannelActionResponse",
     "ChannelChatId",
@@ -159,6 +191,18 @@ __all__ = [
     "ClientExternalToolDefinition",
     "ChatRequest",
     "ChatTriggerResponse",
+    "ChatQueueItem",
+    "ChatQueueResponse",
+    "ReorderChatQueueRequest",
+    "SteerChatQueueItemRequest",
+    "UpdateChatQueueItemRequest",
+    # ASR
+    "ListASRModelsRequest",
+    "ListASRModelsResponse",
+    "RealtimeASRStartRequest",
+    "RealtimeASRTokenRequest",
+    "RealtimeASRTokenResponse",
+    "TranscriptionResponse",
     # Credential
     "CreateCredentialRequest",
     "CreateCredentialResponse",
@@ -215,4 +259,17 @@ __all__ = [
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # Voice Profile
+    "AvailableEnginesResponse",
+    "CloneVoiceRequest",
+    "CloneVoiceResponse",
+    "CreateVoiceProfileRequest",
+    "CreateVoiceProfileResponse",
+    "CredentialRef",
+    "EngineInfo",
+    "EngineModelInfo",
+    "ListVoiceProfilesResponse",
+    "OpenAIConsentRequest",
+    "OpenAIConsentResponse",
+    "UpdateVoiceProfileRequest",
 ]

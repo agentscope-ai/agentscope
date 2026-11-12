@@ -14,6 +14,9 @@ import importlib.resources as _res
 
 # ── shared constants ───────────────────────────────────────────────
 
+#: Pinned installer version shared by sandbox bootstraps and Docker.
+UV_VERSION = "0.13.4"
+
 #: Standard prompt injected to the system prompt
 DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>You have access to a {backend} \
 workspace at {workdir} with the following structure:
@@ -106,6 +109,7 @@ DEFAULT_GLOB_HELPER_SCRIPT = "_glob_helper.py"
 #: The version on ``mcp`` mirrors ``pyproject.toml``, so the gateway
 #: speaks the same protocol version as the process driving it.
 _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
+    "certifi>=2026.10.19",
     "mcp>=2.0.0",
     "uvicorn",
     "fastapi",

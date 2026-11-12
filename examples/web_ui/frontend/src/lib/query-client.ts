@@ -3,8 +3,9 @@ import { QueryClient } from '@tanstack/react-query';
 /**
  * The app-wide query cache.
  *
- * Nothing here is polled. A cached entry is only re-fetched when a
- * component that needs it mounts again after `staleTime` has passed, and
+ * By default, nothing here is polled. Background tools opt into polling
+ * while their panel and page are visible. Other cached entries are re-fetched
+ * when a component needs them after `staleTime` has passed, and
  * anything the user changes is re-fetched explicitly by the hook that
  * changed it — so this window is not a correctness mechanism, it only
  * bounds how old a passively open view may get. That is what makes a

@@ -7,6 +7,9 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _openai_compatible_response_block_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
@@ -36,13 +39,12 @@ class DeepSeekChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable thinking mode. When enabled, the model "
-                "outputs a chain-of-thought reasoning before the final "
-                "answer via the reasoning_content field."
+                "Whether to enable or disable thinking mode. When unset, "
+                "DeepSeek uses its default behavior for the model."
             ),
         )
 
@@ -87,6 +89,7 @@ class DeepSeekChatModel(ChatModelBase):
         context_size: int = 65536,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the DeepSeek chat model.
 
@@ -114,6 +117,10 @@ class DeepSeekChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -123,6 +130,7 @@ class DeepSeekChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
         )
         self.formatter = formatter or DeepSeekChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -204,18 +212,19 @@ class DeepSeekChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        thinking_type = (
-            "enabled" if self.parameters.thinking_enable else "disabled"
-        )
-        # Build a new dict so the caller's extra_body is never mutated
-        extra_body = kwargs.get("extra_body") or {}
-        kwargs["extra_body"] = {
-            **extra_body,
-            "thinking": {
-                "type": thinking_type,
-                **extra_body.get("thinking", {}),
-            },
-        }
+        if self.parameters.thinking_enable is not None:
+            thinking_type = (
+                "enabled" if self.parameters.thinking_enable else "disabled"
+            )
+            # Build a new dict so the caller's extra_body is never mutated
+            extra_body = kwargs.get("extra_body") or {}
+            kwargs["extra_body"] = {
+                **extra_body,
+                "thinking": {
+                    "type": thinking_type,
+                    **extra_body.get("thinking", {}),
+                },
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -260,6 +269,7 @@ class DeepSeekChatModel(ChatModelBase):
         thinking_id: str = _generate_id()
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -276,14 +286,15 @@ class DeepSeekChatModel(ChatModelBase):
                 if chunk.usage:
                     u = chunk.usage
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
                             u,
                             "prompt_cache_hit_tokens",
                             0,
-                        ),
+                        )
+                        or 0,
                     )
 
                 if not chunk.choices:
@@ -298,6 +309,15 @@ class DeepSeekChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    include_content_filter=self.raise_on_content_filter,
+                    provider="deepseek",
+                    request_id=response_id,
+                    partial_output=has_output,
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking block
@@ -338,6 +358,7 @@ class DeepSeekChatModel(ChatModelBase):
                     )
 
                 if delta_res.content or usage:
+                    has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
 
@@ -362,6 +383,14 @@ class DeepSeekChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                include_content_filter=self.raise_on_content_filter,
+                provider="deepseek",
+                request_id=getattr(response, "id", None),
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if isinstance(reasoning, str) and reasoning:
                 content_blocks.append(ThinkingBlock(thinking=reasoning))
@@ -382,14 +411,15 @@ class DeepSeekChatModel(ChatModelBase):
         if response.usage:
             u = response.usage
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     u,
                     "prompt_cache_hit_tokens",
                     0,
-                ),
+                )
+                or 0,
             )
 
         resp_kwargs: dict[str, Any] = {
