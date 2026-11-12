@@ -10,6 +10,7 @@ import { CreateKnowledgeBaseDialog } from '@/components/dialog/CreateKnowledgeBa
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { EditKnowledgeBaseDialog } from '@/components/dialog/EditKnowledgeBaseDialog.tsx';
 import { KnowledgeSearchDrawer } from '@/components/drawer/KnowledgeSearchDrawer.tsx';
+import { ChunkerConfigSummary } from '@/components/knowledge/ChunkerConfigSummary';
 import { KnowledgeDocumentsPanel } from '@/components/knowledge/KnowledgeDocumentsPanel.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -42,8 +43,6 @@ import {
 	SidebarMenuItem,
 } from '@/components/ui/sidebar.tsx';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases.ts';
-import { cn } from '@/lib/utils.ts';
-import { formatChunkerParameterValue } from '@/utils/chunker.ts';
 
 interface DetailPanelProps {
 	knowledgeBase?: KnowledgeBaseView;
@@ -109,27 +108,11 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 	);
 }
 
-function ConfigItem({
-	label,
-	value,
-	wrap = false,
-	className,
-}: {
-	label: string;
-	value: string;
-	wrap?: boolean;
-	className?: string;
-}) {
+function ConfigItem({ label, value }: { label: string; value: string }) {
 	return (
-		<div className={cn('flex min-w-0 flex-col gap-y-0.5', className)}>
+		<div className="flex min-w-0 flex-col gap-y-0.5">
 			<span className="text-muted-foreground text-xs">{label}</span>
-			<span
-				className={cn(
-					'text-sm text-foreground',
-					wrap ? 'break-words whitespace-normal' : 'truncate',
-				)}
-				title={value}
-			>
+			<span className="truncate text-sm text-foreground" title={value}>
 				{value}
 			</span>
 		</div>
@@ -159,22 +142,6 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 				})
 			: null;
 
-	const chunkerValue = (() => {
-		if (!chunker) return '—';
-		const typeLabel = t(`chunker-types.${chunker.type}.label`, {
-			defaultValue: chunker.type,
-		});
-		const parameters = Object.entries(chunker.parameters)
-			.map(([key, value]) => {
-				const parameterLabel = t(`chunker-types.${chunker.type}.params.${key}.label`, {
-					defaultValue: key,
-				});
-				return `${parameterLabel}=${formatChunkerParameterValue(value)}`;
-			})
-			.join(', ');
-		return parameters ? `${typeLabel} · ${parameters}` : typeLabel;
-	})();
-
 	return (
 		<div className="flex flex-col gap-y-3">
 			<h3 className="text-[13.5px] font-medium text-foreground">
@@ -190,12 +157,16 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 					label={t('knowledge.config.credential')}
 					value={knowledgeBase.credential_name ?? embedding.credential_id}
 				/>
-				<ConfigItem
-					label={t('knowledge.config.chunker')}
-					value={chunkerValue}
-					wrap
-					className="col-span-2 sm:col-span-3"
-				/>
+				<div className="col-span-2 min-w-0 space-y-1.5 sm:col-span-3">
+					<span className="text-xs text-muted-foreground">
+						{t('knowledge.config.chunker')}
+					</span>
+					{chunker ? (
+						<ChunkerConfigSummary key={knowledgeBase.id} config={chunker} />
+					) : (
+						<span className="block text-sm">—</span>
+					)}
+				</div>
 				<ConfigItem
 					label={t('knowledge.config.counts')}
 					value={t('knowledge.config.countsValue', {

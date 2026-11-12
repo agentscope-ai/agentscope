@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, type Ref, useRef, useState } from 'react';
 
 import type { JSONSchema, JSONSchemaProperty } from '@/api';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import {
 	FieldLabel,
 } from '@/components/ui/field.tsx';
 import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import {
 	Select,
 	SelectContent,
@@ -30,6 +31,8 @@ interface Props {
 	schema: JSONSchema;
 	values: Record<string, SchemaFormValue>;
 	onChange: (key: string, value: SchemaFormValue) => void;
+	/** Optional helper text explaining an individual string-array value. */
+	arrayItemDescriptionFor?: (key: string, value: string) => string | undefined;
 	/** Field names to omit from rendering. Defaults to `id` and `type`. */
 	skipFields?: ReadonlySet<string>;
 	/** Optional override for a field label. Falls back to `prop.title`. */
@@ -70,12 +73,68 @@ function inferStep(type: string): number | string | undefined {
 
 /** Render control characters as editable, single-line escape sequences. */
 function displayStringArrayItem(value: string): string {
-	return value.replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+	return value
+		.replace(/\\/g, '\\\\')
+		.replace(/\r/g, '\\r')
+		.replace(/\n/g, '\\n')
+		.replace(/\t/g, '\\t');
 }
 
 /** Restore supported control-character escapes before schema submission. */
 function parseStringArrayItem(value: string): string {
-	return value.replace(/\\r/g, '\r').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+	const escapes: Record<string, string> = {
+		'\\': '\\',
+		r: '\r',
+		n: '\n',
+		t: '\t',
+	};
+	return value.replace(/\\([\\rnt])/g, (_, character: string) => escapes[character]);
+}
+
+function StringArrayItemInput({
+	id,
+	value,
+	onChange,
+	description,
+	inputRef,
+}: {
+	id: string;
+	value: string;
+	onChange: (value: string) => void;
+	description?: string;
+	inputRef?: Ref<HTMLInputElement>;
+}) {
+	const { t } = useTranslation();
+	const [draft, setDraft] = useState<string | null>(null);
+	return (
+		<InputGroup className="min-w-0 flex-1">
+			<InputGroupInput
+				ref={inputRef}
+				id={id}
+				className="font-mono"
+				value={draft ?? displayStringArrayItem(value)}
+				placeholder={description ? undefined : t('schema-form.array.emptyString')}
+				aria-describedby={description ? `${id}-description` : undefined}
+				onFocus={() => setDraft(displayStringArrayItem(value))}
+				onBlur={() => setDraft(null)}
+				onChange={(event) => {
+					setDraft(event.target.value);
+					onChange(parseStringArrayItem(event.target.value));
+				}}
+			/>
+			{description && (
+				<InputGroupAddon align="inline-end" className="min-w-0 max-w-[60%] shrink-0">
+					<span
+						id={`${id}-description`}
+						className="truncate text-xs font-normal"
+						title={description}
+					>
+						{description}
+					</span>
+				</InputGroupAddon>
+			)}
+		</InputGroup>
+	);
 }
 
 /** Extract initial values from a JSON Schema's `default` fields. */
@@ -97,6 +156,7 @@ export function SchemaForm({
 	schema,
 	values,
 	onChange,
+	arrayItemDescriptionFor,
 	skipFields = DEFAULT_SKIP_FIELDS,
 	labelFor,
 	placeholderFor,
@@ -106,6 +166,7 @@ export function SchemaForm({
 	className,
 }: Props) {
 	const { t } = useTranslation();
+	const pendingArrayInput = useRef<string | null>(null);
 	const entries = Object.entries(schema.properties ?? {}).filter(
 		([key, prop]) => !skipFields.has(key) && prop.const === undefined,
 	);
@@ -256,17 +317,27 @@ export function SchemaForm({
 						<div className="space-y-1.5">
 							<div className="max-h-44 space-y-1.5 overflow-y-auto pr-1">
 								{items.map((item, index) => (
-									<div key={index} className="flex items-center gap-1.5">
-										<Input
+									<div key={index} className="flex items-start gap-1.5">
+										<StringArrayItemInput
 											id={index === 0 ? fieldId : `${fieldId}-${index}`}
-											className="font-mono"
-											value={displayStringArrayItem(item)}
-											placeholder={'""'}
-											onChange={(event) => {
+											inputRef={(input) => {
+												if (
+													input &&
+													pendingArrayInput.current === input.id
+												) {
+													pendingArrayInput.current = null;
+													input.focus({ preventScroll: true });
+													input.scrollIntoView({
+														block: 'nearest',
+														inline: 'nearest',
+													});
+												}
+											}}
+											value={item}
+											description={arrayItemDescriptionFor?.(key, item)}
+											onChange={(value) => {
 												const next = [...items];
-												next[index] = parseStringArrayItem(
-													event.target.value,
-												);
+												next[index] = value;
 												onChange(key, next);
 											}}
 										/>
@@ -304,7 +375,11 @@ export function SchemaForm({
 								disabled={
 									maximumItems !== undefined && items.length >= maximumItems
 								}
-								onClick={() => onChange(key, [...items, ''])}
+								onClick={() => {
+									pendingArrayInput.current =
+										items.length === 0 ? fieldId : `${fieldId}-${items.length}`;
+									onChange(key, [...items, '']);
+								}}
 							>
 								<Plus />
 								{t('schema-form.array.add')}

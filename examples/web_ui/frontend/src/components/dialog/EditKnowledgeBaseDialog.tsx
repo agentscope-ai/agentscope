@@ -2,6 +2,7 @@ import { CheckCircle, CircleAlert, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { KnowledgeBaseView } from '@/api';
+import { ChunkerConfigSummary } from '@/components/knowledge/ChunkerConfigSummary';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -17,7 +18,6 @@ import { Input } from '@/components/ui/input.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useTranslation } from '@/i18n/useI18n.ts';
-import { formatChunkerParameterValue } from '@/utils/chunker.ts';
 
 interface Props {
 	open: boolean;
@@ -73,21 +73,6 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 		? `${knowledgeBase.embedding_model_config.model} · ${knowledgeBase.embedding_model_config.dimensions}d`
 		: '';
 
-	const chunkerLabel = (() => {
-		if (!knowledgeBase?.chunker_config) return null;
-		const cfg = knowledgeBase.chunker_config;
-		const typeLabel = t(`chunker-types.${cfg.type}.label`, { defaultValue: cfg.type });
-		const paramStr = Object.entries(cfg.parameters)
-			.map(([k, v]) => {
-				const paramLabel = t(`chunker-types.${cfg.type}.params.${k}.label`, {
-					defaultValue: k,
-				});
-				return `${paramLabel}=${formatChunkerParameterValue(v)}`;
-			})
-			.join(', ');
-		return paramStr ? `${typeLabel} (${paramStr})` : typeLabel;
-	})();
-
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-2rem)] !max-w-[500px] overflow-y-auto">
@@ -129,11 +114,14 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 							{embeddingModelLabel}
 						</Badge>
 					</Field>
-					{chunkerLabel && (
-						<Field orientation="horizontal">
+					{knowledgeBase?.chunker_config && (
+						<Field>
 							<FieldLabel>{t('dialog-knowledge-base-edit.chunker.label')}</FieldLabel>
-							<div className="bg-secondary text-secondary-foreground min-w-0 max-w-[70%] rounded-lg px-2.5 py-1.5 font-mono text-xs leading-relaxed break-words whitespace-normal">
-								{chunkerLabel}
+							<div className="min-w-0 rounded-lg border border-border bg-muted/30 p-3">
+								<ChunkerConfigSummary
+									key={knowledgeBase.id}
+									config={knowledgeBase.chunker_config}
+								/>
 							</div>
 						</Field>
 					)}

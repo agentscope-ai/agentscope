@@ -134,6 +134,7 @@ class RecursiveTokenChunker(ChunkerBase):
                 contents = [
                     TextBlock(text=piece)
                     for piece in self._split_text(section.content.text)
+                    if piece.strip()
                 ]
             else:
                 contents = [section.content]

@@ -544,13 +544,35 @@
 				},
 				"separators": {
 					"label": "分隔符优先级",
-					"description": "按从粗到细的顺序切分；换行符使用 \\n 表示。"
+					"description": "按从粗到细的顺序切分；换行符使用 \\n，字面量反斜杠使用 \\\\ 表示。"
 				}
 			}
 		}
 	},
+	"chunker-summary": {
+		"automaticFallback": "超长文本自动按字符切分。",
+		"enterSeparator": "输入分隔符",
+		"separators": "分隔符",
+		"count": "{{count}} 项",
+		"expand": "展开",
+		"collapse": "收起",
+		"priority": "按优先级从高到低排列",
+		"labels": {
+			"paragraph": "段落",
+			"newline": "换行",
+			"carriageReturn": "回车",
+			"tab": "制表符",
+			"periodSpace": "句点＋空格",
+			"exclamationSpace": "叹号＋空格",
+			"questionSpace": "问号＋空格",
+			"semicolonSpace": "分号＋空格",
+			"commaSpace": "逗号＋空格",
+			"space": "空格"
+		}
+	},
 	"schema-form": {
 		"array": {
+			"emptyString": "空字符串",
 			"add": "添加一项",
 			"remove": "删除第 {{index}} 项"
 		}

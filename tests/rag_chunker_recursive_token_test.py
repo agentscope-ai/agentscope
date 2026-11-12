@@ -192,6 +192,34 @@ class RecursiveTokenChunkerTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_blank_sections_are_dropped(self) -> None:
+        """Blank sections must never reach embedding or affect indices."""
+        chunker = _make_chunker(chunk_size=2, overlap=0)
+        for texts, expected in (
+            (["", " \n\t", " " * 24], []),
+            (
+                ["", "first", " \n\t", " " * 24, "tail", ""],
+                [
+                    _text_chunk("first", "blank.txt", 0, 2),
+                    _text_chunk("tail", "blank.txt", 1, 2),
+                ],
+            ),
+            (
+                [" " * 16 + "tail"],
+                [_text_chunk("tail", "blank.txt", 0, 1)],
+            ),
+        ):
+            with self.subTest(texts=texts):
+                sections = [
+                    Section(
+                        content=TextBlock(text=text),
+                        source="blank.txt",
+                    )
+                    for text in texts
+                ]
+                chunks = await chunker.chunk(sections)
+                self.assertEqual(_dump_chunks(chunks), expected)
+
     async def test_data_block_and_section_isolation(self) -> None:
         """DataBlock content and separate Sections should stay isolated."""
         chunker = _make_chunker(chunk_size=2, overlap=0)
