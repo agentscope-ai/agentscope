@@ -179,7 +179,7 @@ class DockerWorkspaceManager(
         """
         root = os.path.realpath(self._basedir)
         workdir = os.path.realpath(os.path.join(root, workspace_id))
-        if not workdir.startswith(root + os.sep):
+        if not self._is_strictly_inside(root, workdir):
             raise ValueError(
                 f"workspace_id {workspace_id!r} escapes the workspace "
                 f"base directory",
@@ -194,9 +194,42 @@ class DockerWorkspaceManager(
         # ``basedir`` are declined rather than rejected, leaving the
         # caller with an ordinary empty workspace.
         legacy = os.path.realpath(os.path.join(root, user_id, agent_id))
-        if legacy.startswith(root + os.sep) and os.path.isdir(legacy):
+        if self._is_strictly_inside(root, legacy) and os.path.isdir(legacy):
             return legacy
         return workdir
+
+    @staticmethod
+    def _is_strictly_inside(root: str, path: str) -> bool:
+        """Whether ``path`` is an entry strictly below ``root``.
+
+        ``path.startswith(root + os.sep)`` cannot decide this: when
+        ``root`` is a filesystem root the separator doubles (``"/"``
+        becomes ``"//"`` and ``"D:\\"`` becomes ``"D:\\\\"``), so no path
+        ever matches and every workspace id is rejected. The relative
+        path carries the same relation and stays valid for every root.
+
+        Args:
+            root (`str`):
+                The absolute, resolved directory expected to contain
+                ``path``.
+            path (`str`):
+                The absolute, resolved candidate entry.
+
+        Returns:
+            `bool`:
+                `True` if ``path`` lies below ``root`` rather than at or
+                above it.
+        """
+        try:
+            relative = os.path.relpath(path, root)
+        except ValueError:
+            # Different drives on Windows: nothing is below the root.
+            return False
+        return (
+            relative != os.curdir
+            and relative != os.pardir
+            and not relative.startswith(os.pardir + os.sep)
+        )
 
     # ── workspace construction ────────────────────────────────────
 
