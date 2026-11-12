@@ -26,12 +26,25 @@ _MAX_INPUT_SCHEMA_BYTES = 64 * 1024
 ClientBuiltinToolName = Literal["AskUser"]
 CLIENT_EXTERNAL_TOOL_NAME_PREFIX = "client__"
 _REFERENCE_KEYWORDS = {"$ref", "$dynamicRef", "$recursiveRef"}
+_SUPPORTED_SCHEMA_URIS = {
+    "https://json-schema.org/draft/2020-12/schema",
+    "https://json-schema.org/draft/2020-12/schema#",
+}
 
 
-def _validate_local_references(value: object) -> None:
-    """Reject references that can make JSON Schema retrieve a URI."""
+def _validate_schema_metadata(value: object) -> None:
+    """Reject unsupported dialects and references to remote schemas."""
     if isinstance(value, dict):
         for key, child in value.items():
+            if (
+                key == "$schema"
+                and isinstance(child, str)
+                and child not in _SUPPORTED_SCHEMA_URIS
+            ):
+                raise ValueError(
+                    "Client tool schemas only support JSON Schema "
+                    "Draft 2020-12.",
+                )
             if (
                 key in _REFERENCE_KEYWORDS
                 and isinstance(child, str)
@@ -40,10 +53,10 @@ def _validate_local_references(value: object) -> None:
                 raise ValueError(
                     f"Client tool schemas only support local {key} values.",
                 )
-            _validate_local_references(child)
+            _validate_schema_metadata(child)
     elif isinstance(value, list):
         for child in value:
-            _validate_local_references(child)
+            _validate_schema_metadata(child)
 
 
 class ClientExternalToolDefinition(BaseModel):
@@ -96,7 +109,7 @@ class ClientExternalToolDefinition(BaseModel):
                     "bytes.",
                 )
             Draft202012Validator.check_schema(value)
-            _validate_local_references(value)
+            _validate_schema_metadata(value)
         except SchemaError as error:
             raise ValueError(
                 f"Invalid JSON Schema: {error.message}",

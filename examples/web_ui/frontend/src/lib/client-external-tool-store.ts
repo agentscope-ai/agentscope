@@ -13,6 +13,10 @@ const MAX_SCHEMA_BYTES = 64 * 1024;
 const MAX_CLIENT_TOOLS = 16;
 const TOOL_NAME_PATTERN = /^client__[a-zA-Z0-9_-]+$/;
 const REFERENCE_KEYWORDS = new Set(['$ref', '$dynamicRef', '$recursiveRef']);
+const SUPPORTED_SCHEMA_URIS = new Set([
+	'https://json-schema.org/draft/2020-12/schema',
+	'https://json-schema.org/draft/2020-12/schema#',
+]);
 
 export interface CustomClientExternalTool {
 	display_name: string;
@@ -165,13 +169,23 @@ function schemaByteLength(schema: Record<string, unknown>): number {
 	return new TextEncoder().encode(JSON.stringify(schema)).byteLength;
 }
 
+function containsUnsupportedSchemaDialect(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(containsUnsupportedSchemaDialect);
+	if (!isRecord(value)) return false;
+	return Object.entries(value).some(
+		([key, child]) =>
+			(key === '$schema' && typeof child === 'string' && !SUPPORTED_SCHEMA_URIS.has(child)) ||
+			containsUnsupportedSchemaDialect(child),
+	);
+}
+
 function isValidDraft202012Schema(schema: Record<string, unknown>): boolean {
-	// Match the backend's Draft202012Validator.check_schema behavior instead
-	// of letting Ajv switch validators based on a user-provided `$schema` URI.
 	if ('$schema' in schema && typeof schema.$schema !== 'string') return false;
 	const schemaToValidate = { ...schema };
 	delete schemaToValidate.$schema;
 	try {
+		// Reject dialect switches before using the fixed Draft 2020-12 validator.
+		if (containsUnsupportedSchemaDialect(schema)) return false;
 		return schemaValidator.validateSchema(schemaToValidate) === true;
 	} catch {
 		return false;

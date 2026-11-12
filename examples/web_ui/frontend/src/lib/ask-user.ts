@@ -26,7 +26,7 @@ export function parseAskUserPayload(input: string): { questions: AskUserQuestion
 				!record(question) ||
 				typeof question.question !== 'string' ||
 				typeof question.header !== 'string' ||
-				question.header.length > 12 ||
+				[...question.header].length > 12 ||
 				!optionalText(question.context) ||
 				(question.multi_select !== undefined &&
 					typeof question.multi_select !== 'boolean') ||

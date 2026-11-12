@@ -62,7 +62,7 @@ class ClientExternalToolDefinitionTest(TestCase):
         for target in (
             "json.dumps",
             "Draft202012Validator.check_schema",
-            "_validate_local_references",
+            "_validate_schema_metadata",
         ):
             with self.subTest(target=target), patch(
                 f"agentscope.app._client_external_tool.{target}",
@@ -242,6 +242,53 @@ class ClientExternalToolDefinitionTest(TestCase):
                 },
             )
 
+    def test_unsupported_schema_dialects_are_rejected(self) -> None:
+        """Root and nested declarations cannot switch execution dialects."""
+        for dialect in (
+            "http://json-schema.org/draft-07/schema#",
+            "https://json-schema.org/draft/2019-09/schema",
+            "https://example.com/unknown-schema",
+        ):
+            schema = {
+                "$schema": dialect,
+                "type": "object",
+                "properties": {},
+                "unevaluatedProperties": False,
+            }
+            for nested in (False, True):
+                with self.subTest(dialect=dialect, nested=nested):
+                    value = (
+                        {
+                            "type": "object",
+                            "properties": {},
+                            "$defs": {"nested": schema},
+                            "$ref": "#/$defs/nested",
+                        }
+                        if nested
+                        else schema
+                    )
+                    with self.assertRaises(ValidationError) as caught:
+                        ClientExternalToolDefinition(
+                            name="client__dialect",
+                            description="Check schema dialect.",
+                            input_schema=value,
+                        )
+                    self.assertEqual(
+                        caught.exception.errors(
+                            include_url=False,
+                            include_context=False,
+                            include_input=False,
+                        ),
+                        [
+                            {
+                                "type": "value_error",
+                                "loc": ("input_schema",),
+                                "msg": "Value error, Client tool schemas "
+                                "only support JSON Schema Draft 2020-12.",
+                            },
+                        ],
+                    )
+
     def test_non_object_input_schema_is_rejected(self) -> None:
         """Tool schemas must match the toolkit's object contract."""
         with self.assertRaises(ValidationError):
@@ -332,6 +379,81 @@ class ClientExternalToolDefinitionTest(TestCase):
 
 class ClientExternalToolRuntimeTest(IsolatedAsyncioTestCase):
     """Validate failures at the agent's schema evaluation boundary."""
+
+    async def test_supported_dialects_enforce_unevaluated_properties(
+        self,
+    ) -> None:
+        """Saved schemas retain Draft 2020-12 constraints during execution."""
+        for dialect in (
+            None,
+            "https://json-schema.org/draft/2020-12/schema",
+            "https://json-schema.org/draft/2020-12/schema#",
+        ):
+            with self.subTest(dialect=dialect):
+                schema = {
+                    "type": "object",
+                    "properties": {"known": {"type": "string"}},
+                    "unevaluatedProperties": False,
+                }
+                if dialect is not None:
+                    schema["$schema"] = dialect
+                definition = ClientExternalToolDefinition(
+                    name="client__strict",
+                    description="Reject extra arguments.",
+                    read_only=True,
+                    input_schema=schema,
+                )
+                self.assertEqual(definition.input_schema, schema)
+                model = MockModel()
+                model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[
+                                ToolCallBlock(
+                                    id="strict-call",
+                                    name=definition.name,
+                                    input='{"known":"ok","extra":true}',
+                                ),
+                            ],
+                            is_last=True,
+                        ),
+                        ChatResponse(
+                            content=[TextBlock(text="Rejected extra input.")],
+                            is_last=True,
+                        ),
+                    ],
+                )
+                agent = Agent(
+                    name="Friday",
+                    system_prompt="Help the user.",
+                    model=model,
+                    toolkit=Toolkit(tools=[ClientExternalTool(definition)]),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                )
+                events = [
+                    event
+                    async for event in agent.reply_stream(
+                        UserMsg(name="user", content="Call the client tool."),
+                    )
+                ]
+                self.assertEqual(
+                    [
+                        event
+                        for event in events
+                        if isinstance(event, RequireExternalExecutionEvent)
+                    ],
+                    [],
+                )
+                self.assertEqual(
+                    [
+                        (result.id, result.name, result.state)
+                        for message in agent.state.context
+                        for result in message.get_content_blocks("tool_result")
+                    ],
+                    [("strict-call", definition.name, "error")],
+                )
 
     async def test_native_ask_user_parks_and_resumes_with_metadata(
         self,
