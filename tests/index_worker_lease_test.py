@@ -199,10 +199,10 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(storage.released), 1)
 
-    async def test_external_cancel_stops_child_tasks_and_releases(
+    async def test_external_cancel_stops_child_tasks_and_keeps_lease(
         self,
     ) -> None:
-        """Caller cancellation must tear down pipeline and heartbeat."""
+        """Cancellation stops child tasks and preserves sweep recovery."""
         storage = _LeaseStorage()
 
         worker = _SlowPipelineWorker(storage, pipeline_seconds=5.0)
@@ -237,7 +237,7 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
             [u for u in storage.status_updates if u["status"] == "error"],
             [],
         )
-        self.assertEqual(len(storage.released), 1)
+        self.assertEqual(storage.released, [])
 
     async def test_not_acquired_short_circuits(self) -> None:
         """When the lease is already held by another worker, do nothing."""
