@@ -244,12 +244,20 @@ class LocalWorkspace(WorkspaceBase):
                 continue
 
             try:
-                await asyncio.to_thread(
-                    shutil.copytree,
+                os.mkdir(dest_path)
+            except FileExistsError:
+                logger.warning(
+                    "Failed to copy skill '%s' from %s: "
+                    "destination already exists",
+                    raw_name,
                     skill_path,
-                    dest_path,
-                    dirs_exist_ok=False,
                 )
+                continue
+
+            # The reservation is rolled back on cancellation or copy
+            # failure; see _copy_seed_with_rollback.
+            try:
+                await self._copy_seed_with_rollback(skill_path, dest_path)
             except Exception as e:
                 logger.warning(
                     "Failed to copy skill '%s' from %s: %s",
@@ -283,6 +291,56 @@ class LocalWorkspace(WorkspaceBase):
             await self._save_skills_file(skills_dir, skills_file)
 
         self.is_alive = True
+
+    async def _copy_seed_with_rollback(
+        self,
+        skill_path: str,
+        dest_path: str,
+    ) -> None:
+        """Copy one seed skill, rolling the copy back on cancellation.
+
+        The copy worker outlives cancellation of its asyncio waiter
+        (the same window ``add_skill`` guards against), so a cancelled
+        copy waits for the worker and removes the reserved destination
+        before re-raising. A failed copy removes its own reservation so
+        one bad seed cannot leave a half-written directory behind.
+        """
+        copy_task = asyncio.create_task(
+            asyncio.to_thread(
+                shutil.copytree,
+                skill_path,
+                dest_path,
+                dirs_exist_ok=True,
+            ),
+        )
+        try:
+            await asyncio.shield(copy_task)
+        except asyncio.CancelledError:
+
+            async def rollback() -> None:
+                """Finish writing before removing this install."""
+                await asyncio.gather(copy_task, return_exceptions=True)
+                await self._backend.delete_path(dest_path)
+
+            cleanup = asyncio.create_task(rollback())
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    # Repeated cancellation must not abandon the
+                    # rollback while the worker can still write.
+                    continue
+            cleanup.result()
+            raise
+        except Exception:
+            try:
+                await self._backend.delete_path(dest_path)
+            except Exception:
+                logger.warning(
+                    "Failed to clean up '%s' after a copy error",
+                    dest_path,
+                )
+            raise
 
     async def get_instructions(self) -> str:
         """Get the workspace instructions."""

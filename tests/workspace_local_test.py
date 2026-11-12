@@ -2520,3 +2520,65 @@ class TestSkillCopyCancellation(IsolatedAsyncioTestCase):
                         await asyncio.gather(reset, return_exceptions=True)
                     self.assertTrue(await asyncio.to_thread(finished.wait, 5))
                     await workspace.close()
+
+
+class TestInitializeSkillCopyCancellation(IsolatedAsyncioTestCase):
+    """initialize() must not leave a half-written seed skill behind."""
+
+    async def test_cancelled_seed_copy_rolls_back(self) -> None:
+        """Cancelling initialize mid-copy leaves no skill directory."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "SKILL.md").write_text(
+                "---\nname: seed-audit\ndescription: Test skill\n---\nBody\n",
+                encoding="utf-8",
+            )
+
+            entered = threading.Event()
+            release = threading.Event()
+            finished = threading.Event()
+            real_copytree = shutil.copytree
+
+            def gated_copytree(
+                src: str,
+                dst: str,
+                **kwargs: Any,
+            ) -> None:
+                """Gate the worker so cancellation lands mid-copy."""
+                entered.set()
+                release.wait(timeout=10)
+                real_copytree(src, dst, **kwargs)
+                finished.set()
+
+            workspace = LocalWorkspace(
+                workdir=str(root / "workspace"),
+                skill_paths=[str(source)],
+            )
+            with patch(
+                "agentscope.workspace._local_workspace.shutil.copytree",
+                gated_copytree,
+            ):
+                init_task = asyncio.create_task(workspace.initialize())
+                self.assertTrue(
+                    await asyncio.wait_for(
+                        asyncio.to_thread(entered.wait, 10),
+                        timeout=5,
+                    ),
+                )
+                init_task.cancel()
+                release.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(init_task, timeout=5)
+
+            # The worker finishes after cancellation; nothing it wrote
+            # may survive (the rollback removed the reservation).
+            self.assertTrue(await asyncio.to_thread(finished.wait, 10))
+            seed_dir = workspace._skill_seed_dir
+            leftovers = [
+                name
+                for name in os.listdir(seed_dir)
+                if os.path.isdir(os.path.join(seed_dir, name))
+            ]
+            self.assertEqual(leftovers, [])
