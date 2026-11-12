@@ -419,6 +419,13 @@ def _flatten_json_schema(schema: dict) -> dict:
 
             visited = visited | {def_name}
             resolved = _resolve_ref(defs[def_name], visited)
+            if not isinstance(resolved, dict):
+                # A definition may be a boolean schema (``true``/``false``).
+                # It has no keyword object to merge the sibling keywords into,
+                # and annotations such as ``description`` do not change what a
+                # boolean schema accepts, so keep it instead of assigning into
+                # a bool, which raises TypeError and aborts the whole flatten.
+                return resolved
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
