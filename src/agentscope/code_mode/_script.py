@@ -26,6 +26,8 @@ _TRUNCATED = "\n[Code output truncated]"
 # Strong references survive toolkit reconstruction in this host process.
 # Live tasks cannot be serialized into AgentState or moved between hosts.
 _CLEANING_TASKS: dict[str, set[asyncio.Task]] = {}
+# Retain shared-marker release tasks after the script has returned.
+_GUARD_TASKS: set[asyncio.Task] = set()
 
 
 def _source_key(source: Base64Source | URLSource) -> str:
@@ -302,7 +304,8 @@ class Script:
             if self.cleanup_pending:
                 logger.warning(
                     "Code Mode session %s still has host calls cleaning up: "
-                    "%s. Further scripts are blocked until they finish.",
+                    "%s. Further scripts are blocked within the execution "
+                    "guard's scope until they finish.",
                     self.session_id,
                     self.cleanup_pending,
                 )
@@ -364,6 +367,7 @@ class Script:
         """Run once, preserve selected partial output, and cancel leftovers."""
         status = ToolResultState.SUCCESS
         error = None
+        token = None
         deadline = asyncio.timeout(self.toolkit.config.timeout)
         try:
             if any(
@@ -375,6 +379,10 @@ class Script:
                     "wait for them to finish before running another script.",
                 )
             async with deadline:
+                if self.toolkit.execution_guard is not None:
+                    token = await self.toolkit.execution_guard.acquire(
+                        self.session_id,
+                    )
                 definitions = await self.definitions()
                 async with WorkerProcess(
                     self.toolkit.backend,
@@ -410,12 +418,24 @@ class Script:
             error = f"{type(exc).__name__}: {exc}"[:2048]
             if deadline.expired():
                 error = f"Code Mode execution timed out; cleanup: {error}"
+        finally:
+            if token is not None:
+                pending = {task for task in self.pending if not task.done()}
+                release = asyncio.create_task(
+                    self.release_execution(token, pending),
+                    name=f"code-mode-release:{self.session_id}",
+                )
+                _GUARD_TASKS.add(release)
+                release.add_done_callback(_GUARD_TASKS.discard)
+                if not pending:
+                    await asyncio.shield(release)
         if self.cleanup_pending:
             cleanup_error = (
                 "Host tool cleanup did not finish within the wait limit; "
                 f"still tracked: {', '.join(self.cleanup_pending)}. "
-                "Further scripts in this session are blocked until these "
-                "calls finish; their side effects may still occur."
+                "Further scripts in this session are blocked within the "
+                "execution guard's scope until these calls finish; their "
+                "side effects may still occur."
             )
             error = f"{error}; {cleanup_error}" if error else cleanup_error
         if error is None and self.required_tool is not None:
@@ -448,3 +468,28 @@ class Script:
                 },
             },
         )
+
+    async def release_execution(
+        self,
+        token: str,
+        pending: set[asyncio.Task],
+    ) -> None:
+        """Keep shared ownership until actual host completion, not timeout."""
+        try:
+            if pending:
+                # Never propagate cancellation to calls already unwinding.
+                await asyncio.wait(pending)
+            guard = self.toolkit.execution_guard
+            assert guard is not None
+            async with asyncio.timeout(
+                self.toolkit.config.tool_cleanup_timeout,
+            ):
+                await guard.release(self.session_id, token)
+        except Exception:
+            # Do not clear an uncertain marker or release another owner's
+            # token. A failed release remains blocked for explicit recovery.
+            logger.exception(
+                "Code Mode session %s ownership release failed; "
+                "the shared marker requires recovery",
+                self.session_id,
+            )

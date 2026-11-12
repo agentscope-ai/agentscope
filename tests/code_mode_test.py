@@ -21,6 +21,8 @@ from pydantic import BaseModel
 from utils import AnyString, MockModel
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.app.middleware import ToolOffloadMiddleware
+from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app._service._code_mode_guard import CodeModeRegistryGuard
 from agentscope.event import (
     ConfirmResult,
     RequireUserConfirmEvent,
@@ -28,7 +30,7 @@ from agentscope.event import (
 )
 from agentscope.code_mode import CodeModeConfig, CodeModeToolkit
 from agentscope.code_mode._process import WorkerProcess
-from agentscope.code_mode._script import Script, _CLEANING_TASKS
+from agentscope.code_mode._script import Script, _CLEANING_TASKS, _GUARD_TASKS
 from agentscope.code_mode._toolkit import python_name
 from agentscope.message import (
     Base64Source,
@@ -1439,6 +1441,79 @@ class CodeModeTest(IsolatedAsyncioTestCase):
                     (resumed.state, self.text(resumed)),
                     (ToolResultState.SUCCESS, "resumed"),
                 )
+
+    async def test_shared_guard_blocks_replica_until_host_cleanup(
+        self,
+    ) -> None:
+        """Another replica cannot bypass a live call after script exit."""
+        bus = InMemoryMessageBus()
+        self.toolkit.execution_guard = CodeModeRegistryGuard(bus)
+        self.toolkit.config.tool_cleanup_timeout = 0.01
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def stubborn() -> None:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        continue
+                self.effects.append("old-call-finished")
+
+        await self.native.add_tool(FunctionTool(stubborn, is_read_only=True))
+        execution = asyncio.create_task(
+            self.run_code("await tools.stubborn()"),
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            execution.cancel()
+            done, _ = await asyncio.wait({execution}, timeout=5)
+            self.assertEqual(done, {execution})
+            with self.assertRaises(asyncio.CancelledError):
+                await execution
+            replica = Agent(
+                name="replica",
+                system_prompt="Test shared execution ownership.",
+                model=self.model,
+                state=AgentState.model_validate_json(
+                    self.agent.state.model_dump_json(),
+                ),
+                toolkit=CodeModeToolkit(
+                    self.native,
+                    backend=LocalBackend(),
+                    cwd=self.directory.name,
+                    auto_approve=True,
+                    execution_guard=CodeModeRegistryGuard(bus),
+                ),
+            )
+            # Replica B has no access to A's process-local task registry.
+            with patch("agentscope.code_mode._script._CLEANING_TASKS", {}):
+                blocked = await replica.invoke_tool(
+                    "run_code",
+                    {"code": "await tools.echo(value=99)"},
+                )
+            self.assertEqual(
+                (blocked.state, self.effects),
+                (ToolResultState.ERROR, []),
+            )
+            self.assertIn("shared ownership", self.text(blocked))
+        finally:
+            release.set()
+            execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+            await asyncio.gather(*list(_GUARD_TASKS))
+        result = await replica.invoke_tool(
+            "run_code",
+            {"code": "await tools.echo(value=99)"},
+        )
+        self.assertEqual(
+            (result.state, self.effects),
+            (ToolResultState.SUCCESS, ["old-call-finished", 99]),
+        )
 
     async def test_cancel_after_streamed_error_propagates(self) -> None:
         """An earlier error chunk must not hide cancellation of the task."""

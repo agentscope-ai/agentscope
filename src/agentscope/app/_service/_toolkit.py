@@ -41,6 +41,7 @@ from ...tool import (
 from ...workspace import WorkspaceBase
 from ..access import ResourceKind
 from ._access import ResourceAccessService
+from ._code_mode_guard import CodeModeRegistryGuard
 
 
 def validate_code_mode_configuration(
@@ -338,5 +339,6 @@ time or interval"
             toolkit,
             backend=workspace.get_backend(),
             cwd=workspace.workdir,
+            execution_guard=CodeModeRegistryGuard(message_bus),
         )
     return toolkit

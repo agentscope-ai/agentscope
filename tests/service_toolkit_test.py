@@ -29,6 +29,7 @@ from agentscope.app._manager import (
     SchedulerManager,
 )
 from agentscope.app._service import ResourceAccessService, get_toolkit
+from agentscope.app._service._code_mode_guard import CodeModeRegistryGuard
 from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.storage import (
     AgentData,
@@ -272,6 +273,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             toolkits.append(toolkit)
         normal, code = toolkits
         self.assertIsInstance(code, CodeModeToolkit)
+        self.assertIsInstance(code.execution_guard, CodeModeRegistryGuard)
         self.assertEqual(
             {
                 "tools": [

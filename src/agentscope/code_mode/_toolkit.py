@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from ._config import CodeModeConfig
+from ._execution_guard import CodeModeExecutionGuard
 from ._script import Script
 from ..message import Msg, ToolCallBlock, UserMsg
 from ..permission import PermissionBehavior, PermissionDecision
@@ -46,8 +47,9 @@ exceptions. Cancelling an awaited call cancels its host task and waits for
 cleanup; completed effects are not rolled back. Nested calls requiring
 confirmation or external execution fail without executing the action.
 Host cleanup has a separate wait limit. Calls still running after that limit
-remain tracked; further scripts in the same session are blocked until they
-finish. Their side effects may still occur after run_code returns.
+remain tracked; further scripts are blocked within the execution guard's
+scope until they finish. Their side effects may still occur after run_code
+returns. A guard cannot stop remote work after a native call has returned.
 Use run_code even when other instructions name a native tool directly.
 For SOP submissions, await all earlier calls and make SubmitHandover or
 SubmitVerdict the last native tool call in the script.
@@ -76,6 +78,8 @@ class CodeModeToolkit(Toolkit):
     ``auto_approve=True`` explicitly authorizes generated Python without the
     default confirmation. Native tool deny rules still apply to RPC calls;
     direct Python operations are outside those rules.
+    Without ``execution_guard``, cleanup blocking is process-local. App
+    toolkits inject shared ownership through their configured MessageBus.
     """
 
     def __init__(
@@ -87,6 +91,7 @@ class CodeModeToolkit(Toolkit):
         python_executable: str | None = None,
         config: CodeModeConfig | None = None,
         auto_approve: bool = False,
+        execution_guard: CodeModeExecutionGuard | None = None,
     ) -> None:
         if isinstance(catalog, CodeModeToolkit):
             raise ValueError("Code Mode toolkits cannot be nested.")
@@ -109,6 +114,7 @@ class CodeModeToolkit(Toolkit):
         self.config: CodeModeConfig = config or CodeModeConfig()
         # Explicit SDK opt-in; app callers always use the permission engine.
         self.auto_approve = auto_approve
+        self.execution_guard = execution_guard
         self.allowed_tools: frozenset[str] | None = None
         self.required_tool: str | None = None
         self._state: AgentState | None = None
@@ -180,7 +186,13 @@ class CodeModeToolkit(Toolkit):
         )
         schemas[0]["function"]["description"] = (
             f"{DESCRIPTION}\n{process_policy}\n"
-            "Available contracts (possibly partial):\n" + "\n".join(sections)
+            + (
+                "Execution ownership uses the configured shared guard.\n"
+                if self.execution_guard is not None
+                else "Cleanup blocking applies only in this host process.\n"
+            )
+            + "Available contracts (possibly partial):\n"
+            + "\n".join(sections)
         )
         return schemas
 
