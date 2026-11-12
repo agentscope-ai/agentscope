@@ -985,10 +985,7 @@ class DingTalkChannel(ChannelBase):
                 approver_id,
                 template_id,
                 _approval_card_data(tool, agent_name, approval_id),
-                # DingTalk always returns outTrackId on a card callback,
-                # while only explicitly configured button params are echoed.
-                # Reuse the already-random opaque id so built-in and custom
-                # templates can both recover the server-side approval record.
+                # DingTalk echoes this tracking ID on every card callback.
                 approval_id,
             )
             if out_track_id is None:
@@ -1016,18 +1013,24 @@ class DingTalkChannel(ChannelBase):
             return
         if self._emit is None:
             return
-        status = await self._emit(
-            ChannelConfirmationResultEvent(
-                channel_id=self._channel_id,
-                chat_id=decision.chat_id,
-                channel_user_id=decision.user_id,
-                approved=decision.approved,
-                actor=decision.user_id,
-                approval_id=decision.approval_id,
-            ),
+        event = ChannelConfirmationResultEvent(
+            channel_id=self._channel_id,
+            chat_id="",
+            channel_user_id=decision.user_id,
+            approved=decision.approved,
+            actor=decision.user_id,
+            approval_id=decision.out_track_id,
         )
+        status = await self._emit(event)
         status = status or ChannelDecisionStatus.ACCEPTED
         if status is not ChannelDecisionStatus.ACCEPTED:
+            if not event.chat_id:
+                # The gateway could not resolve a destination for this card.
+                logger.warning(
+                    "DingTalk '%s' rejected approval without a verified chat",
+                    self._channel_id,
+                )
+                return
             if status is ChannelDecisionStatus.UNAUTHORIZED:
                 notice = (
                     "Only the requester can approve or deny this tool call."
@@ -1039,7 +1042,12 @@ class DingTalkChannel(ChannelBase):
                     "Your approval permission could not be verified. Please "
                     "try again later."
                 )
-            await self._api().send_text(decision.chat_id, notice)
+            if not await self._api().send_text(event.chat_id, notice):
+                logger.warning(
+                    "DingTalk '%s' could not deliver approval rejection "
+                    "notice",
+                    self._channel_id,
+                )
             return
         await self._api().update_approval_card(
             decision.out_track_id,

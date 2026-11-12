@@ -115,7 +115,8 @@ class ChannelConfirmationResultEvent(BaseModel):
     """Source channel instance identifier."""
 
     chat_id: str
-    """Platform chat the decision came from; validates card origin."""
+    """Platform chat for origin validation. An empty value asks the gateway
+    to use the destination from the approval record."""
 
     channel_user_id: str
     """Platform user who decided; used for authorization and audit."""

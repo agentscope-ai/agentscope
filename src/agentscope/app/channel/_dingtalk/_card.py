@@ -57,9 +57,7 @@ class _ApprovalDecision:
 
     out_track_id: str
     user_id: str
-    chat_id: str
     approved: bool
-    approval_id: str
 
 
 def _approval_card_data(
@@ -134,9 +132,8 @@ def _resolved_card_data(approved: bool) -> dict[str, str]:
 def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     """Parse and validate one advanced-card action callback.
 
-    The configured allow and deny buttons must return ``action`` plus the
-    routing fields from :func:`_approval_card_data` in
-    ``cardPrivateData.params``.
+    Button params identify the action. The platform supplies the card's
+    ``outTrackId`` and the clicker's ``userId``.
 
     Args:
         payload (`Any`): Callback data supplied by the Stream SDK.
@@ -171,47 +168,11 @@ def _parse_card_callback(payload: Any) -> _ApprovalDecision | None:
     out_track_id = _field(payload, "outTrackId", "out_track_id")
     if not all((user_id, out_track_id)):
         return None
-    chat_id = _field(params, "chatId", "chat_id") or _chat_from_space(
-        payload,
-        user_id,
-    )
-    if not chat_id:
-        return None
     return _ApprovalDecision(
         out_track_id=out_track_id,
         user_id=user_id,
-        chat_id=chat_id,
         approved=approved,
-        # Custom templates can explicitly return ``approvalId`` in their
-        # button params. The built-in layout only guarantees ``outTrackId``,
-        # which the sender sets to the same opaque approval id.
-        approval_id=(
-            _field(params, "approvalId", "approval_id") or out_track_id
-        ),
     )
-
-
-def _chat_from_space(payload: dict[str, Any], user_id: str) -> str:
-    """Recover the chat a card was delivered into from its callback.
-
-    Args:
-        payload (`dict[str, Any]`): Callback data supplied by the SDK.
-        user_id (`str`): The staff id of whoever clicked.
-
-    Returns:
-        `str`: Encoded chat, or ``""`` when the space is unrecognised.
-    """
-    space_type = _field(payload, "spaceType", "space_type").upper()
-    space_id = _field(payload, "spaceId", "space_id")
-    if "GROUP" in space_type and space_id:
-        return f"group:{space_id}"
-    if "ROBOT" in space_type and user_id:
-        return f"user:{user_id}"
-    # A plain "im" space names the conversation the card sits in — which
-    # in a one-to-one chat is the person who clicked.
-    if space_id and space_id != user_id:
-        return f"group:{space_id}"
-    return f"user:{user_id}" if user_id else ""
 
 
 def _json_object(value: Any) -> dict[str, Any]:

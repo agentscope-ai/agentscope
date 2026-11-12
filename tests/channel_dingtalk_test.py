@@ -516,11 +516,11 @@ def _card_callback(
     *,
     action: str = "approve",
     user_id: str = "user-1",
-    approval_id: str = "approval-1",
+    out_track_id: str = "track-1",
 ) -> dict[str, Any]:
     return {
         "type": "actionCallback",
-        "outTrackId": "track-1",
+        "outTrackId": out_track_id,
         "userId": user_id,
         "content": json.dumps(
             {
@@ -528,7 +528,7 @@ def _card_callback(
                     "params": {
                         "action": action,
                         "chatId": "group:cid-group-1",
-                        "approvalId": approval_id,
+                        "approvalId": "template-approval-id",
                     },
                 },
             },
@@ -994,7 +994,22 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             },
         )
 
-    async def test_built_in_button_callback_routes_on_id_and_space(
+    async def test_missing_requester_sends_web_ui_notice_without_buttons(
+        self,
+    ) -> None:
+        """Identity-unavailable runs offer the supported approval path."""
+        channel, api = _channel_with_openapi()
+
+        async def events() -> AsyncIterator[dict]:
+            async for raw in _confirmation_event_stream():
+                raw["metadata"] = {}
+                yield raw
+
+        await channel.send_response(_message_event(), events())
+        self.assertEqual(api.approval_calls, [])
+        self.assertTrue(any("Web UI" in text for _, text in api.text_calls))
+
+    async def test_built_in_button_callback_uses_tracking_id(
         self,
     ) -> None:
         """The shape a real click sends: button id, and a plain "im" space."""
@@ -1026,7 +1041,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             received[0].model_dump(),
             {
                 "channel_id": "ding-1",
-                "chat_id": "group:cidAAABBBCCCDDDEEE000111222333444==",
+                "chat_id": "",
                 "channel_user_id": "staff-1",
                 "approved": True,
                 "actor": "staff-1",
@@ -1034,10 +1049,10 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             },
         )
 
-    async def test_built_in_button_callback_routes_a_private_chat(
+    async def test_private_button_callback_uses_tracking_id(
         self,
     ) -> None:
-        """A one-to-one card sits in the space of whoever clicked."""
+        """A real private callback has a cid, distinct from its clicker."""
         channel, _ = _channel_with_openapi()
         received = await _confirmation_callbacks(
             channel,
@@ -1046,7 +1061,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
                 "outTrackId": "approval-1",
                 "userId": "user-7",
                 "spaceType": "im",
-                "spaceId": "user-7",
+                "spaceId": "cid-private-7",
                 "content": json.dumps(
                     {
                         "cardPrivateData": {
@@ -1064,7 +1079,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             received[0].model_dump(),
             {
                 "channel_id": "ding-1",
-                "chat_id": "user:user-7",
+                "chat_id": "",
                 "channel_user_id": "user-7",
                 "approved": False,
                 "actor": "user-7",
@@ -1086,15 +1101,26 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
             received[0].model_dump(),
             {
                 "channel_id": "ding-1",
-                "chat_id": "group:cid-group-1",
+                "chat_id": "",
                 "channel_user_id": "user-1",
                 "approved": False,
                 "actor": "user-1",
-                "approval_id": "approval-1",
+                "approval_id": "track-1",
             },
         )
         self.assertEqual(media_api.card_updates[0][0], "track-1")
         self.assertEqual(media_api.card_updates[0][1]["status"], "denied")
+
+    async def test_template_approval_id_cannot_replace_tracking_id(
+        self,
+    ) -> None:
+        channel, api = _channel_with_openapi()
+        received = await _confirmation_callbacks(
+            channel,
+            _card_callback(out_track_id=""),
+        )
+        self.assertEqual(received, [])
+        self.assertEqual(api.card_updates, [])
 
     async def test_unauthorized_click_keeps_shared_card_pending(self) -> None:
         channel, media_api = _channel_with_openapi()
@@ -1102,7 +1128,7 @@ class DingTalkChannelTest(  # pylint: disable=too-many-public-methods
         async def reject(
             event: ChannelConfirmationResultEvent,
         ) -> ChannelDecisionStatus:
-            del event
+            event.chat_id = "group:cid-group-1"
             return ChannelDecisionStatus.UNAUTHORIZED
 
         channel._emit = reject

@@ -177,9 +177,11 @@ class ChannelGateway:
             )
             return ChannelDecisionStatus.STALE
         wrong_channel = approval.channel_id != event.channel_id
-        wrong_chat = approval.chat_id != event.chat_id
+        wrong_chat = bool(event.chat_id) and approval.chat_id != event.chat_id
         if wrong_channel or wrong_chat:
             return ChannelDecisionStatus.STALE
+        if not event.chat_id:
+            event.chat_id = approval.chat_id
         actor = event.actor or event.channel_user_id
         if actor != approval.requester_id:
             logger.warning(

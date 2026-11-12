@@ -9,6 +9,7 @@ needs a running agent and is exercised end-to-end against a real bot.
 # pylint: disable=protected-access,missing-function-docstring,unused-argument
 # pylint: disable=attribute-defined-outside-init
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
@@ -57,6 +58,7 @@ from agentscope.app.workspace_manager import (
     WorkspaceManagerBase,
 )
 from agentscope.event import (
+    EventType,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -762,6 +764,124 @@ class ChatNameRecordingTest(IsolatedAsyncioTestCase):
 class DecisionRoutingTest(IsolatedAsyncioTestCase):
     """Approval routing and authorization come only from server state."""
 
+    async def test_dingtalk_callback_uses_saved_approval(
+        self,
+    ) -> None:
+        """Use the card ID and enforce channel and requester checks."""
+        for private, action, actor, conversation, channel_id in (
+            (True, "agree", "requester-1", "cid-origin", "chan-1"),
+            (True, "reject", "requester-1", "cid-origin", "chan-1"),
+            (False, "agree", "requester-1", "cid-origin", "chan-1"),
+            (True, "agree", "other-user", "cid-origin", "chan-1"),
+            (True, "agree", "requester-1", "cid-other", "chan-1"),
+            (True, "agree", "requester-1", "", "chan-1"),
+            (True, "agree", "requester-1", "cid-origin", "other-channel"),
+        ):
+            with self.subTest(
+                private=private,
+                action=action,
+                actor=actor,
+                conversation=conversation,
+                channel_id=channel_id,
+            ):
+                record = _channel_record("owner-1").model_copy(
+                    update={"channel_type": "dingtalk"},
+                )
+                storage = _AwaitingStorage(record, "the-parked-session")
+                bus = InMemoryMessageBus()
+                gateway = ChannelGateway(
+                    storage=storage,
+                    message_bus=bus,
+                    workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
+                )
+                clients = ChannelClients(storage, bus, ChannelTypeRegistry([]))
+                chat_id = "user:requester-1" if private else "group:cid-origin"
+
+                async def events() -> AsyncIterator[dict]:
+                    yield {
+                        "type": EventType.REQUIRE_USER_CONFIRM,
+                        "reply_id": "reply-1",
+                        "tool_calls": [{"id": "call_abc"}],
+                    }
+
+                [confirmation] = [
+                    raw
+                    async for raw in clients._approval_events(
+                        events(),
+                        requester_id="requester-1",
+                        channel_id="chan-1",
+                        chat_id=chat_id,
+                        agent_id="agent-x",
+                        session_id="the-parked-session",
+                    )
+                ]
+                approval_id = confirmation["metadata"]["channel_approval_ids"][
+                    "call_abc"
+                ]
+                channel = DingTalkChannel(
+                    channel_id,
+                    DingTalkChannel.Credentials(
+                        client_id="app",
+                        client_secret="secret",
+                    ),
+                    DingTalkChannel.Config(),
+                )
+                api = SimpleNamespace(
+                    send_text=AsyncMock(return_value=True),
+                    update_approval_card=AsyncMock(return_value=True),
+                )
+                channel._openapi = api
+                channel._emit = gateway.process
+                payload = {
+                    "type": "actionCallback",
+                    "outTrackId": approval_id,
+                    "userId": actor,
+                    "spaceType": "im",
+                    "spaceId": conversation,
+                    "content": json.dumps(
+                        {
+                            "cardPrivateData": {
+                                "actionIds": ["single_button_node"],
+                                "params": {
+                                    "id": action,
+                                    "chatId": "group:untrusted",
+                                    "approvalId": "untrusted",
+                                },
+                            },
+                        },
+                    ),
+                }
+                await channel._on_card_callback(payload)
+                queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
+                accepted = actor == "requester-1" and channel_id == "chan-1"
+                if accepted:
+                    self.assertEqual(len(queued), 1)
+                    self.assertEqual(
+                        queued[0][1]["input"]["confirm_results"][0][
+                            "confirmed"
+                        ],
+                        action == "agree",
+                    )
+                    self.assertIsNone(await load_approval(bus, approval_id))
+                    api.update_approval_card.assert_awaited_once()
+                    # A repeat callback cannot queue another decision.
+                    await channel._on_card_callback(payload)
+                    self.assertEqual(
+                        await bus.queue_drain(MessageBusKeys.wakeup_queue()),
+                        [],
+                    )
+                else:
+                    self.assertEqual(queued, [])
+                    self.assertIsNotNone(await load_approval(bus, approval_id))
+                    api.update_approval_card.assert_not_awaited()
+                    if actor == "other-user":
+                        self.assertEqual(
+                            api.send_text.await_args.args[0],
+                            chat_id,
+                        )
+                    else:
+                        api.send_text.assert_not_awaited()
+
     @staticmethod
     async def _approval(bus: InMemoryMessageBus) -> str:
         approval_id = new_approval_id("the-parked-session")
@@ -791,16 +911,23 @@ class DecisionRoutingTest(IsolatedAsyncioTestCase):
             workspace_manager=_WM(isolation=IsolationPolicy.PER_AGENT),
         )
 
-        status = await gw.process(
-            ChannelConfirmationResultEvent(
-                channel_id="chan-1",
-                chat_id="group:cid-1",
-                channel_user_id="requester-1",
-                approved=True,
-                actor="requester-1",
-                approval_id=approval_id,
-            ),
+        decision = ChannelConfirmationResultEvent(
+            channel_id="chan-1",
+            chat_id="",
+            channel_user_id="requester-1",
+            approved=True,
+            actor="requester-1",
+            approval_id=approval_id,
         )
+        wrong_chat = decision.model_copy()
+        wrong_chat.chat_id = "group:other"
+        self.assertIs(
+            await gw.process(wrong_chat),
+            ChannelDecisionStatus.STALE,
+        )
+
+        status = await gw.process(decision)
+        self.assertEqual(decision.chat_id, "group:cid-1")
 
         self.assertIs(status, ChannelDecisionStatus.ACCEPTED)
         queued = await bus.queue_drain(MessageBusKeys.wakeup_queue())
