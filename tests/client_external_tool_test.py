@@ -450,7 +450,8 @@ class ClientExternalToolRuntimeTest(IsolatedAsyncioTestCase):
                     [
                         (result.id, result.name, result.state)
                         for message in agent.state.context
-                        for result in message.get_content_blocks("tool_result")
+                        for result in message.content
+                        if isinstance(result, ToolResultBlock)
                     ],
                     [("strict-call", definition.name, "error")],
                 )
@@ -540,7 +541,8 @@ class ClientExternalToolRuntimeTest(IsolatedAsyncioTestCase):
         results = [
             result
             for message in agent.state.context
-            for result in message.get_content_blocks("tool_result")
+            for result in message.content
+            if isinstance(result, ToolResultBlock)
         ]
         self.assertEqual([result.metadata for result in results], [metadata])
 
