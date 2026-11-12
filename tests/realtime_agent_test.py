@@ -274,6 +274,26 @@ class QueueSessionModel(ScriptedModel):
             self.iterator_finished[index].set()
 
 
+class CrashingSessionModel(ScriptedModel):
+    """The first sessions' event streams raise, like a websocket that
+    dies mid-frame; later sessions behave and play their script."""
+
+    def __init__(
+        self,
+        scripts: list[list[Any]],
+        crash_sessions: int = 1,
+    ) -> None:
+        super().__init__(scripts)
+        self.crash_sessions = crash_sessions
+
+    async def events(self) -> AsyncIterator[me.ModelEvent]:
+        """Crash the stream for the first sessions, then play the script."""
+        if self.sessions <= self.crash_sessions:
+            raise RuntimeError("provider event stream exploded")
+        async for event in super().events():
+            yield event
+
+
 class FakeTransport(TransportBase):
     """Emit ``frames`` chunks of silence and record transport calls."""
 
@@ -861,6 +881,45 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 ("assistant", "Once "),
                 ("user", "Hello"),
                 ("assistant", "Hi there."),
+            ],
+        )
+
+    async def test_crashed_downlink_pump_is_replaced_on_reconnect(
+        self,
+    ) -> None:
+        """A downlink pump that dies from a provider stream error must be
+        replaced: after the crash the next audio reconnects, and the new
+        session's events must be pumped instead of silently dropped."""
+        model = CrashingSessionModel([[], REPLY_R2])
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            # The first session's event stream raises and kills the pump.
+            for _ in range(500):
+                if agent._connected:
+                    await asyncio.sleep(0.01)
+                    continue
+                if agent._downlink is None or agent._downlink.done():
+                    break
+                await asyncio.sleep(0.01)
+            self.assertFalse(agent._connected)  # pylint: disable=W0212
+            # The crashed task is no longer the live pump.
+            self.assertTrue(
+                agent._downlink is None or agent._downlink.done(),
+            )  # pylint: disable=W0212
+
+            summary = await self._collect(agent, FakeTransport(frames=2))
+
+            # The pump must be live again: not the finished, crashed task.
+            self.assertIsNotNone(agent._downlink)  # pylint: disable=W0212
+            self.assertFalse(agent._downlink.done())  # pylint: disable=W0212
+
+        self.assertEqual(model.sessions, 2)
+        self.assertListEqual(
+            summary,
+            [
+                ("user", "Hello"),
+                ("reply_end", "completed"),
             ],
         )
 
