@@ -362,10 +362,16 @@ async def _search_across(
     Each knowledge base handles its own filtering — it silently drops
     :class:`DataBlock` inputs when its embedding model is not
     multimodal — so callers can pass the same query list to every
-    knowledge base without per-KB pre-filtering.  Per-KB hits are
-    flattened, sorted by descending score, and truncated to ``top_k``.
-    With a ``rerank_model``, retrieval widens to ``rerank_candidate_k`` hits
-    and :func:`_rerank_results` picks the final ``top_k`` out of them.
+    knowledge base without per-KB pre-filtering.  That filtering is
+    best-effort: a multimodal model can still reject a block it does
+    not accept, and a knowledge base can fail for unrelated reasons
+    (unavailable embedding provider or vector store).  A failing
+    knowledge base is logged by name and skipped, so the others still
+    contribute; only when every knowledge base fails does the first
+    error propagate.  Per-KB hits are flattened, sorted by descending
+    score, and truncated to ``top_k``.  With a ``rerank_model``,
+    retrieval widens to ``rerank_candidate_k`` hits and
+    :func:`_rerank_results` picks the final ``top_k`` out of them.
     Rerank is best-effort — a failing model keeps the vector order.
 
     .. note::
@@ -420,9 +426,32 @@ async def _search_across(
             )
             for kb in knowledge_bases
         ),
+        return_exceptions=True,
     )
 
-    merged = [r for sub in per_kb for r in sub]
+    # One knowledge base must not erase the others' context.  Cancelled
+    # replies are not a scoring problem, so they still propagate.
+    failures: list[BaseException] = []
+    successful: list[list["VectorSearchResult"]] = []
+    for kb, hits in zip(knowledge_bases, per_kb):
+        if isinstance(hits, BaseException):
+            if not isinstance(hits, Exception):
+                raise hits
+            logger.warning(
+                "Knowledge base %r search failed; skipping it.",
+                kb.name,
+                exc_info=hits,
+            )
+            failures.append(hits)
+        else:
+            successful.append(hits)
+
+    if failures and len(failures) == len(per_kb):
+        raise failures[0]
+
+    # A cancelled reply already logged its own warning; one surviving
+    # knowledge base is enough to serve the merged order.
+    merged = [r for sub in successful for r in sub]
     merged.sort(key=lambda r: r.score, reverse=True)
     results = merged[:rerank_candidate_k]
     if rerank_model is None or not results:

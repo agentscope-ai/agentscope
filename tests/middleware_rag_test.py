@@ -129,9 +129,17 @@ class _StubKnowledgeBase:
     name = "stub-kb"
     description = "Stub knowledge base."
 
-    def __init__(self, results: list[VectorSearchResult]) -> None:
+    def __init__(
+        self,
+        results: list[VectorSearchResult],
+        error: BaseException | None = None,
+        name: str | None = None,
+    ) -> None:
         self.results = results
+        self.error = error
         self.search_calls: list[dict[str, Any]] = []
+        if name is not None:
+            self.name = name
 
     async def search(
         self,
@@ -147,6 +155,8 @@ class _StubKnowledgeBase:
                 "score_threshold": score_threshold,
             },
         )
+        if self.error is not None:
+            raise self.error
         return self.results[:top_k]
 
 
@@ -1205,6 +1215,86 @@ class SearchAcrossRerankTest(IsolatedAsyncioTestCase):
             [result.document_id for result in results],
             ["doc-broad"],
         )
+
+
+class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
+    """A failing knowledge base must not drop the others' context."""
+
+    async def test_failing_kb_does_not_drop_the_others(self) -> None:
+        """The working knowledge base still returns its hits."""
+        failing = _StubKnowledgeBase(
+            [],
+            error=ValueError("Unsupported media type 'application/pdf'"),
+            name="catalog",
+        )
+        with self.assertLogs("as", level="WARNING") as captured:
+            results = await _search_across(
+                [
+                    _StubKnowledgeBase(
+                        [
+                            _make_result(
+                                "Returns within 30 days.",
+                                "doc-1",
+                                0.8,
+                            ),
+                        ],
+                        name="policies",
+                    ),
+                    failing,
+                ],
+                ["How long do I have to return this order?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
+        self.assertListEqual(
+            [result.document_id for result in results],
+            ["doc-1"],
+        )
+        # The skipped knowledge base is named, so an operator can tell
+        # which one to look at without correlating stack traces.
+        self.assertIn("catalog", captured.records[0].getMessage())
+
+    async def test_all_knowledge_bases_failing_raises(self) -> None:
+        """With nothing left to merge, the error still surfaces."""
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            await _search_across(
+                [
+                    _StubKnowledgeBase(
+                        [],
+                        error=ValueError("provider unavailable"),
+                        name="policies",
+                    ),
+                    _StubKnowledgeBase(
+                        [],
+                        error=ValueError("provider unavailable"),
+                        name="catalog",
+                    ),
+                ],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
+    async def test_cancelled_reply_is_not_swallowed(self) -> None:
+        """Cancellation is not a per-KB scoring problem."""
+        with self.assertRaises(asyncio.CancelledError):
+            await _search_across(
+                [
+                    _StubKnowledgeBase(
+                        [_make_result("Paris is in France.", "doc-1", 0.8)],
+                        name="policies",
+                    ),
+                    _StubKnowledgeBase(
+                        [],
+                        error=asyncio.CancelledError(),
+                        name="catalog",
+                    ),
+                ],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            )
 
 
 class RAGHintTemplateValidationTest(IsolatedAsyncioTestCase):
