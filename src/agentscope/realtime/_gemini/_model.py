@@ -9,16 +9,17 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import Field
 
 from .. import _events as me
-from .._base import (
-    ModelDisconnectedError,
-    RealtimeModelBase,
-    TruncationSupport,
-)
+from .._base import ModelDisconnectedError, RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ..._utils._common import _flatten_json_schema
 from ...credential import GeminiCredential
-from ...message import TextBlock, ToolCallBlock, ToolResultBlock
+from ...message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from ...model._gemini._model import _sanitize_schema_for_gemini
 
 _LIVE_URL = (
@@ -39,7 +40,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
       starts the reply, so :meth:`request_response` sends nothing.
     - Interruption is the server's job — it reports
       ``serverContent.interrupted`` and drops the rest of the reply
-      itself — so :meth:`truncate` and :meth:`cancel_response` are no-ops.
+      itself — so :meth:`cancel_response` sends no wire frame.
       With caller-owned turns the caller silences the reply locally
       instead, and the server is told not to interrupt on its own.
     """
@@ -48,6 +49,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """Tuneables surfaced to the UI."""
 
         voice: str = Field(default="Puck", title="Voice")
+        thinking_level: Literal["low", "medium", "high"] | None = Field(
+            default=None,
+            title="Thinking Level",
+            description="Background reasoning depth for Extended Thinking.",
+        )
         turn_detection: Literal["automatic", "none"] = Field(
             default="automatic",
             title="Turn Detection",
@@ -70,8 +76,12 @@ class GeminiRealtimeModel(RealtimeModelBase):
         )
 
     type = "gemini_realtime"
-    truncation = TruncationSupport.SERVER
     supports_text_input = True
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether Gemini input transcription is enabled."""
+        return self.parameters.input_audio_transcription
 
     def __init__(
         self,
@@ -94,6 +104,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """
         super().__init__(model, credential, parameters, model_card)
         self.parameters: GeminiRealtimeModel.Parameters
+        self._extended_thinking = self.card.supports_extended_thinking
+        if self.parameters.thinking_level and not self._extended_thinking:
+            raise ValueError(
+                "thinking_level requires Gemini Live Extended Thinking.",
+            )
         self.resumption_handle = ""
         """The latest handle the server offered. Not used on reconnect:
         the agent carries the transcript in the instructions instead."""
@@ -101,10 +116,14 @@ class GeminiRealtimeModel(RealtimeModelBase):
         self._reader: asyncio.Task | None = None
         self._queue: asyncio.Queue[me.ModelEvent | None] = asyncio.Queue()
         self._response_id = ""
+        self._transcription_response_id = ""
+        self._response_cancelled = False
         self._user_id = ""
         self._input_text = ""
         self._usage: dict = {}
         self._activity = False
+        self._awaiting_tool_reply = False
+        self._pending_tool_calls: set[str] = set()
         self._ready = asyncio.Event()
 
     # ------------------------------------------------------------------
@@ -120,16 +139,29 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """Open the WebSocket and send the setup message."""
         import websockets
 
+        # Stop the previous session and drop its terminal events.
+        await self.close()
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
                 update={"turn_detection": "none"},
             )
         self._response_id, self._user_id, self._input_text = "", "", ""
+        self._response_cancelled = False
         self._usage, self._activity = {}, False
+        self._awaiting_tool_reply = False
+        self._pending_tool_calls.clear()
 
         credential: GeminiCredential = self.credential  # type: ignore
+        url = (
+            _LIVE_URL.replace("v1beta", "v1alpha")
+            if self._extended_thinking
+            else _LIVE_URL
+        )
         self._ws = await websockets.connect(
-            f"{_LIVE_URL}?key={credential.api_key.get_secret_value()}",
+            f"{url}?key={credential.api_key.get_secret_value()}",
         )
         self._ready.clear()
         self._reader = asyncio.create_task(self._read(), name="gemini-rt")
@@ -146,14 +178,16 @@ class GeminiRealtimeModel(RealtimeModelBase):
             raise ModelDisconnectedError("Session closed during setup.")
 
     async def close(self) -> None:
-        """Stop reading and close the WebSocket."""
+        """Close the WebSocket and stop reading."""
+        # Close the socket first: the reader's finally resets ``self._ws``.
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
         if self._reader is not None:
             self._reader.cancel()
             await asyncio.gather(self._reader, return_exceptions=True)
             self._reader = None
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
+        self._transcription_response_id = ""
 
     async def events(self) -> AsyncIterator[me.ModelEvent]:
         """Yield events until the session ends."""
@@ -187,6 +221,11 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     async def push_text(self, text: str) -> None:
         """Send a complete text turn, which the model answers at once."""
+        if self._extended_thinking:
+            for event in self._settle_input():
+                self._queue.put_nowait(event)
+            self._user_id = ""
+        self._transcription_response_id = ""
         await self._send(
             {
                 "clientContent": {
@@ -198,6 +237,23 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     async def push_tool_result(self, block: ToolResultBlock) -> None:
         """Send one ``functionResponse``; the model resumes on its own."""
+        await self._push_tool_result(block, silent=False)
+
+    async def push_tool_result_silently(self, block: ToolResultBlock) -> None:
+        """Keep a stale Thinking result without triggering generation.
+
+        Scheduling is only supported for non-blocking tools. Ordinary Live
+        retains its existing blocking-tool result behavior.
+        """
+        await self._push_tool_result(block, silent=True)
+
+    async def _push_tool_result(
+        self,
+        block: ToolResultBlock,
+        *,
+        silent: bool,
+    ) -> None:
+        """Serialize a tool result with its generation and error semantics."""
         output = (
             block.output
             if isinstance(block.output, str)
@@ -205,19 +261,40 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 _.text for _ in block.output if isinstance(_, TextBlock)
             )
         )
+        if self._extended_thinking and block.id in self._pending_tool_calls:
+            if not silent:
+                self._awaiting_tool_reply = True
+            self._pending_tool_calls.discard(block.id)
+        failed = block.state in (
+            ToolResultState.ERROR,
+            ToolResultState.DENIED,
+            ToolResultState.INTERRUPTED,
+        )
+        response = {
+            "id": block.id,
+            "name": block.name,
+            "response": {"error" if failed else "output": output},
+        }
+        if self._extended_thinking and silent:
+            response["scheduling"] = "SILENT"
         await self._send(
             {
                 "toolResponse": {
-                    "functionResponses": [
-                        {
-                            "id": block.id,
-                            "name": block.name,
-                            "response": {"output": output},
-                        },
-                    ],
+                    "functionResponses": [response],
                 },
             },
         )
+
+    async def start_turn(self) -> None:
+        """Settle prior input at a local speech boundary, even after cancel."""
+        if (
+            self._extended_thinking
+            and self.parameters.turn_detection == "none"
+        ):
+            self._transcription_response_id = ""
+            for event in self._settle_input():
+                self._queue.put_nowait(event)
+            self._user_id = ""
 
     async def commit_turn(self) -> None:
         """Close the activity window, which asks for the reply."""
@@ -233,15 +310,20 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """No-op: a finished turn or a tool response is the request."""
 
     async def cancel_response(self) -> None:
-        """No-op: the protocol has no cancel frame."""
-
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """No-op: the server drops the interrupted reply itself."""
+        """Settle locally interrupted input; there is no wire cancel."""
+        if (
+            self._extended_thinking
+            and self.parameters.turn_detection == "none"
+            and (self._response_id or self._transcription_response_id)
+            and not self._response_cancelled
+        ):
+            self._response_cancelled = True
+            for event in self._settle_input():
+                self._queue.put_nowait(event)
+            self._user_id = ""
+        self._transcription_response_id = ""
+        self._awaiting_tool_reply = False
+        self._pending_tool_calls.clear()
 
     # ------------------------------------------------------------------
     # Wire
@@ -298,12 +380,21 @@ class GeminiRealtimeModel(RealtimeModelBase):
         }
         if p.input_audio_transcription:
             setup["inputAudioTranscription"] = {}
+        if self._extended_thinking and p.thinking_level:
+            setup["generationConfig"]["thinkingConfig"] = {
+                "thinkingLevel": p.thinking_level.upper(),
+            }
         if tools and self.card.supports_tools:
             setup["tools"] = [
                 {
                     "functionDeclarations": [
                         {
                             **schema["function"],
+                            **(
+                                {"behavior": "NON_BLOCKING"}
+                                if self._extended_thinking
+                                else {}
+                            ),
                             "parameters": _sanitize_schema_for_gemini(
                                 _flatten_json_schema(
                                     schema["function"].get("parameters", {}),
@@ -351,6 +442,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
             logger.error("GeminiRealtimeModel: connection lost: %s", exc)
         finally:
             self._ws = None
+            self._transcription_response_id = ""
             self._ready.set()  # release a connect() still waiting
             self._queue.put_nowait(me.SessionEndedEvent(reason="closed"))
             self._queue.put_nowait(None)
@@ -360,10 +452,21 @@ class GeminiRealtimeModel(RealtimeModelBase):
         the id every event of this turn carries."""
         if self._response_id:
             return []
+        events = [] if self._extended_thinking else self._settle_input()
+        self._response_id = uuid.uuid4().hex
+        if self._extended_thinking and not self._transcription_response_id:
+            # All background continuations belong to the first response.
+            self._transcription_response_id = self._response_id
+        self._response_cancelled = False
+        events.append(me.ResponseCreatedEvent(item_id=self._response_id))
+        return events
+
+    def _settle_input(self) -> list[me.ModelEvent]:
+        """Flush the transcription fragments of the pending user turn."""
         events: list[me.ModelEvent] = []
         if self._input_text:
             # Input transcription arrives in fragments; the user turn is
-            # settled only once the model starts answering it.
+            # settled when the model answers or finishes background work.
             events.append(
                 me.InputTranscriptionEvent(
                     item_id=self._user_id,
@@ -371,25 +474,45 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 ),
             )
             self._user_id, self._input_text = "", ""
-        self._response_id = uuid.uuid4().hex
-        events.append(me.ResponseCreatedEvent(item_id=self._response_id))
         return events
 
     def _parse(self, data: dict) -> list[me.ModelEvent]:
         """Translate one server message into model events."""
+        if "setupComplete" in data:
+            self._ready.set()
         if usage := data.get("usageMetadata"):
             self._usage = usage
 
-        if "serverContent" in data:
-            return self._parse_content(data["serverContent"])
+        content = data.get("serverContent") or {}
+        # The Thinking guide includes root status alongside toolCall.
+        # Source: https://ai.google.dev/gemini-api/docs/live-api/thinking
+        status = content.get("interactionStatus") or data.get(
+            "interactionStatus",
+        )
+        events: list[me.ModelEvent] = []
+        if (
+            self._extended_thinking
+            and self._awaiting_tool_reply
+            and status == "IDLE"
+            and not content.get("interrupted")
+        ):
+            # A result may receive a silent completion after an earlier
+            # IDLE already closed its original model response.
+            events += self._open_response()
+        if (
+            self._extended_thinking
+            and status == "IN_PROGRESS"
+            and not content.get("interrupted")
+        ):
+            events += self._open_response()
+        events += self._parse_content(content)
 
         if tool_call := data.get("toolCall"):
-            # The server hands the floor over with a tool call, so the
-            # reply ends here and the follow-up is a turn of its own.
-            events = self._open_response()
-            events += [
+            events += self._open_response()
+            tool_events = [
                 me.ToolCallEvent(
                     item_id=self._response_id,
+                    non_blocking=self._extended_thinking,
                     tool_call=ToolCallBlock(
                         id=call.get("id") or uuid.uuid4().hex,
                         name=call.get("name", ""),
@@ -401,7 +524,20 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 )
                 for call in tool_call.get("functionCalls") or []
             ]
-            return events + self._close_response()
+            events += tool_events
+            if self._extended_thinking:
+                self._pending_tool_calls.update(
+                    event.tool_call.id for event in tool_events
+                )
+            # Blocking tools hand over the floor; background tools do not.
+            if not self._extended_thinking:
+                events += self._close_response()
+
+        if self._extended_thinking and status == "IDLE":
+            self._awaiting_tool_reply = False
+            events += self._close_response()
+        if "serverContent" in data or tool_call or status:
+            return events
 
         if go_away := data.get("goAway"):
             # Advance notice only; the session ends when the socket does.
@@ -416,9 +552,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 self.resumption_handle = update.get("newHandle", "")
             return []
 
-        if "setupComplete" in data:
-            self._ready.set()
-        else:
+        if "setupComplete" not in data:
             logger.debug("GeminiRealtimeModel: ignoring %s", list(data))
         return []
 
@@ -426,22 +560,53 @@ class GeminiRealtimeModel(RealtimeModelBase):
         """Translate one ``serverContent`` message into model events."""
         events: list[me.ModelEvent] = []
 
+        if self._extended_thinking and content.get("interrupted"):
+            self._awaiting_tool_reply = False
+            self._pending_tool_calls.clear()
+            self._transcription_response_id = ""
+            events += self._settle_input()
+            self._user_id, self._response_id, self._usage = "", "", {}
+
+        parts = (content.get("modelTurn") or {}).get("parts") or []
+        transcript = (content.get("outputTranscription") or {}).get("text", "")
+        if (
+            self._extended_thinking
+            and not content.get("interrupted")
+            and (parts or transcript)
+        ):
+            # Bind same-frame input to the response before emitting it.
+            events += self._open_response()
+
         if text := (content.get("inputTranscription") or {}).get("text"):
             self._user_id = self._user_id or uuid.uuid4().hex
             self._input_text += text
+            if self._extended_thinking:
+                events.append(
+                    me.InputTranscriptionDeltaEvent(
+                        item_id=self._user_id,
+                        delta=text,
+                        response_id=(
+                            ""
+                            if self._response_cancelled
+                            else self._transcription_response_id
+                        ),
+                    ),
+                )
 
         if content.get("interrupted"):
             # The only notice that the user spoke over the reply; the
             # server has already dropped the rest of it.
             self._user_id = self._user_id or uuid.uuid4().hex
             self._response_id, self._usage = "", {}
-            return [me.SpeechStartedEvent(item_id=self._user_id)]
+            return events + [me.SpeechStartedEvent(item_id=self._user_id)]
 
-        parts = (content.get("modelTurn") or {}).get("parts") or []
-        transcript = (content.get("outputTranscription") or {}).get("text", "")
         if parts or transcript:
             events += self._open_response()
         for part in parts:
+            if part.get("thought"):
+                # Provider thought summaries are not spoken transcript.
+                # They can still open a response that finishes at IDLE.
+                continue
             if data := (part.get("inlineData") or {}).get("data"):
                 events.append(
                     me.AudioDeltaEvent(
@@ -465,18 +630,34 @@ class GeminiRealtimeModel(RealtimeModelBase):
                 ),
             )
 
-        if content.get("turnComplete"):
+        if content.get("turnComplete") and not self._extended_thinking:
             events += self._close_response()
         return events
 
     def _close_response(self) -> list[me.ModelEvent]:
         """End the open model turn with the usage last reported."""
+        # A thinking status can arrive before input transcription. Proactive
+        # audio may also finish processing without producing any speech.
+        # A cancelled response's late IDLE does not end the next user turn.
+        # Tool handoffs keep fragments buffered until the interaction ends.
+        interaction_done = not (
+            self._pending_tool_calls or self._awaiting_tool_reply
+        )
+        events = (
+            self._settle_input()
+            if self._extended_thinking
+            and interaction_done
+            and not self._response_cancelled
+            else []
+        )
+        if interaction_done:
+            self._transcription_response_id = ""
         if not self._response_id:
-            return []
+            return events
         event = me.ResponseDoneEvent(
             item_id=self._response_id,
             input_tokens=self._usage.get("promptTokenCount", 0),
             output_tokens=self._usage.get("responseTokenCount", 0),
         )
         self._response_id, self._usage = "", {}
-        return [event]
+        return events + [event]

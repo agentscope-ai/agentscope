@@ -24,7 +24,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from pydantic import BaseModel
 from utils import MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ReActConfig
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.app._manager import (
     CancelDispatcher,
@@ -47,6 +47,7 @@ class ServiceAgentInterruptTest(IsolatedAsyncioTestCase):
     async def _assert_chat_model_base_interruption(
         self,
         structured_schema: type[BaseModel] | None = None,
+        raise_cancelled_error: bool = False,
     ) -> None:
         """A cancelled model call must terminate the reply as interrupted."""
 
@@ -78,6 +79,9 @@ class ServiceAgentInterruptTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test agent.",
             model=model,
             toolkit=Toolkit(),
+            react_config=ReActConfig(
+                interruption_raise_cancelled_error=raise_cancelled_error,
+            ),
         )
         registry = ChatRunRegistry()
         end_events: list[ReplyEndEvent] = []
@@ -96,15 +100,28 @@ class ServiceAgentInterruptTest(IsolatedAsyncioTestCase):
         )
         await asyncio.wait_for(model.call_started.wait(), timeout=1)
         task.cancel()
-        await asyncio.wait_for(task, timeout=1)
+        try:
+            await asyncio.wait_for(task, timeout=1)
+        except asyncio.CancelledError:
+            if not raise_cancelled_error:
+                raise
 
         self.assertEqual(model.call_count, 1)
         self.assertEqual(len(end_events), 1)
         self.assertEqual(end_events[0].finished_reason, "interrupted")
+        self.assertEqual(task.cancelled(), raise_cancelled_error)
 
     async def test_chat_model_base_interruption(self) -> None:
         """ChatModelBase cancellation is reported as interrupted."""
         await self._assert_chat_model_base_interruption()
+
+    async def test_chat_model_base_interruption_propagates_when_configured(
+        self,
+    ) -> None:
+        """Configured cancellation propagates after terminal events."""
+        await self._assert_chat_model_base_interruption(
+            raise_cancelled_error=True,
+        )
 
     async def test_chat_model_base_interruption_with_structured_schema(
         self,

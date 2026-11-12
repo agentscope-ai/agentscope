@@ -11,6 +11,7 @@ import jsonschema
 
 from pydantic import BaseModel
 
+from ..message import ToolResultState
 from ._constants import DEFAULT_DANGEROUS_FILES, DEFAULT_DANGEROUS_DIRECTORIES
 from ..permission import (
     PermissionContext,
@@ -281,7 +282,8 @@ class ToolBase(ABC):
         its own result has nothing to check. Shape only, against
         :attr:`metadata_schema`; whether the content is any good is the
         caller's judgement, not this tool's, since a user who answers
-        "no idea" has produced a perfectly valid result.
+        "no idea" has produced a perfectly valid result. Only successful
+        results are checked, since the schema describes a successful run.
 
         Raises:
             `jsonschema.ValidationError`:
@@ -289,7 +291,10 @@ class ToolBase(ABC):
                 caller. The reply stays parked, so the executor can fix
                 what it sent and try again.
         """
-        if self.metadata_schema is not None:
+        if (
+            self.metadata_schema is not None
+            and result.state == ToolResultState.SUCCESS
+        ):
             jsonschema.validate(result.metadata, self.metadata_schema)
 
     async def check_read_only(
@@ -315,6 +320,19 @@ class ToolBase(ABC):
                 ``True`` if this invocation is read-only, ``False`` otherwise.
         """
         return self.is_read_only
+
+    def get_permission_inputs(
+        self,
+        tool_input: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return the inputs that must each be covered by permission rules.
+
+        Compound tools may split an invocation into individual operations.
+        Deny and ask rules apply when any operation matches; allow rules
+        must cover every operation. Safety checks still receive the
+        original input. The returned list must not be empty.
+        """
+        return [tool_input]
 
     async def match_rule(
         self,
@@ -423,16 +441,21 @@ class ToolBase(ABC):
                 os.path.expanduser(working_dir),
             )
             try:
-                os.path.relpath(abs_file_path, abs_working_dir)
-                if (
-                    abs_file_path.startswith(abs_working_dir + os.sep)
-                    or abs_file_path == abs_working_dir
-                ):
-                    return True
+                relative = os.path.relpath(abs_file_path, abs_working_dir)
             except ValueError:
                 # On Windows, relpath raises ValueError if paths are on
                 # different drives.
                 continue
+            # A plain prefix test misses every filesystem root: for
+            # ``/`` it builds ``"//"`` and for ``D:\`` it builds
+            # ``"D:\\"``, neither of which a real path starts with. The
+            # relative path is ``"."`` for the directory itself and
+            # otherwise only escapes upwards when it begins with
+            # ``".."``.
+            if relative != os.pardir and not relative.startswith(
+                os.pardir + os.sep,
+            ):
+                return True
 
         return False
 
@@ -464,8 +487,8 @@ class ToolBase(ABC):
             False
         """
 
-        # Normalize path
-        abs_path = os.path.abspath(os.path.expanduser(file_path))
+        # Resolve symlinks so an alias is judged by its target
+        abs_path = os.path.realpath(os.path.expanduser(file_path))
 
         # Split path into segments
         path_parts = Path(abs_path).parts

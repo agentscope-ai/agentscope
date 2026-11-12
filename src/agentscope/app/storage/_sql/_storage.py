@@ -19,6 +19,8 @@ need no dialect-specific timezone handling.
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
+import sqlalchemy as sa
+
 from .._base import StorageBase
 from .._model._session import _origin_kwargs
 from .._model import (
@@ -34,7 +36,10 @@ from .._model import (
     SessionConfig,
     SessionOrigin,
     SkillRecord,
+    SOPRecord,
+    SOPRunRecord,
     TeamRecord,
+    VoiceProfileRecord,
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
@@ -51,10 +56,14 @@ from ._tables import (
     ScheduleRow,
     SessionRow,
     SkillRow,
+    SOPRow,
+    SOPRunRow,
     TeamRow,
+    VoiceProfileRow,
 )
 from ....credential import CredentialBase
 from ....message import Msg
+from ....sop import SOPPhase, SOPRunState
 from ....state import AgentState
 
 if TYPE_CHECKING:
@@ -232,7 +241,8 @@ class AsyncSQLAlchemyStorage(StorageBase):
         alembic_dir = Path(__file__).resolve().parent / "_alembic"
         cfg = Config(str(alembic_dir / "alembic.ini"))
         cfg.set_main_option("script_location", str(alembic_dir))
-        cfg.set_main_option("sqlalchemy.url", self._url)
+        # ConfigParser requires literal percent signs to be escaped.
+        cfg.set_main_option("sqlalchemy.url", self._url.replace("%", "%%"))
 
         await asyncio.to_thread(command.upgrade, cfg, "head")
 
@@ -1051,6 +1061,158 @@ class AsyncSQLAlchemyStorage(StorageBase):
         return ok
 
     # ------------------------------------------------------------------
+    # SOPs
+    # ------------------------------------------------------------------
+
+    async def upsert_sop(self, user_id: str, record: SOPRecord) -> SOPRecord:
+        """Persist a procedure (create or overwrite)."""
+        _ = user_id  # scoping is enforced by the caller
+        return await self._write_row(SOPRow, record)
+
+    async def get_sop(self, user_id: str, sop_id: str) -> SOPRecord | None:
+        """Fetch one procedure; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRow, sop_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, SOPRecord)
+
+    async def list_sops(self, user_id: str) -> list[SOPRecord]:
+        """Return the user's procedures."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(SOPRow).where(SOPRow.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, SOPRecord) for r in rows]
+
+    async def delete_sop(self, user_id: str, sop_id: str) -> bool:
+        """Delete a procedure, its runs and their sessions atomically."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            row = await sess.get(SOPRow, sop_id)
+            if row is None or row.user_id != user_id:
+                return False
+            runs = (
+                (
+                    await sess.execute(
+                        select(SOPRunRow).where(
+                            SOPRunRow.user_id == user_id,
+                            SOPRunRow.sop_id == sop_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in runs:
+                await self._delete_sop_run_impl(sess, user_id, run)
+            await sess.delete(row)
+            await sess.commit()
+        return True
+
+    async def _delete_sop_run_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        row: Any,
+    ) -> None:
+        """Delete a run row and the sessions it opened, on *sess*."""
+        record = _to_record(row, SOPRunRecord)
+        for session_id in record.sessions.values():
+            session_row = await sess.get(SessionRow, session_id)
+            if session_row is not None:
+                await self._delete_session_impl(
+                    sess,
+                    user_id,
+                    session_row.agent_id,
+                    session_id,
+                )
+        await sess.delete(row)
+
+    async def upsert_sop_run(
+        self,
+        user_id: str,
+        record: SOPRunRecord,
+    ) -> SOPRunRecord:
+        """Persist a run (create or overwrite)."""
+        _ = user_id  # scoping is enforced by the caller
+        return await self._write_row(SOPRunRow, record)
+
+    async def get_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+    ) -> SOPRunRecord | None:
+        """Fetch one run; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRunRow, sop_run_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, SOPRunRecord)
+
+    async def list_sop_runs(
+        self,
+        user_id: str,
+        sop_id: str | None = None,
+        phase: SOPPhase | None = None,
+    ) -> list[SOPRunRecord]:
+        """Return the user's runs, newest first, filtered in the database."""
+        from sqlalchemy import select
+
+        stmt = select(SOPRunRow).where(SOPRunRow.user_id == user_id)
+        if sop_id is not None:
+            stmt = stmt.where(SOPRunRow.sop_id == sop_id)
+        if phase is not None:
+            stmt = stmt.where(SOPRunRow.phase == phase.value)
+        stmt = stmt.order_by(SOPRunRow.created_at.desc())
+
+        async with self._session() as sess:
+            rows = (await sess.execute(stmt)).scalars().all()
+        return [_to_record(r, SOPRunRecord) for r in rows]
+
+    async def update_sop_run(
+        self,
+        user_id: str,
+        sop_run_id: str,
+        state: SOPRunState,
+        sessions: dict[str, str] | None = None,
+    ) -> None:
+        """Read-modify-write on the payload; raises if absent."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRunRow, sop_run_id)
+            if row is None or row.user_id != user_id:
+                raise KeyError(f"SOP run {sop_run_id!r} not found.")
+            record = _to_record(row, SOPRunRecord)
+            record.state = state
+            if sessions is not None:
+                record.sessions = sessions
+            record.updated_at = _utcnow()
+            new_row = _from_record(SOPRunRow, record)
+            row.payload = new_row.payload
+            row.updated_at = new_row.updated_at
+            row.phase = new_row.phase
+            await sess.commit()
+
+    async def delete_sop_run(self, user_id: str, sop_run_id: str) -> bool:
+        """Delete one run and its sessions in one transaction."""
+        async with self._session() as sess:
+            row = await sess.get(SOPRunRow, sop_run_id)
+            if row is None or row.user_id != user_id:
+                return False
+            await self._delete_sop_run_impl(sess, user_id, row)
+            await sess.commit()
+        return True
+
+    # ------------------------------------------------------------------
     # Sessions
     # ------------------------------------------------------------------
 
@@ -1582,14 +1744,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         session_id: str,
         msg: Msg,
     ) -> None:
-        """Insert-or-update by ``(session_id, msg_id)``.
-
-        Semantics mirror :meth:`RedisStorage.upsert_message` closely
-        enough for every caller in the codebase — the Redis version
-        only replaces when the *tail* message matches; ours replaces
-        on any matching id.  The looser rule is safe because callers
-        never reuse a message id across turns.
-        """
+        """Insert-or-update by ``(session_id, msg_id)``."""
         _ = user_id  # scoping enforced by caller
         now = _utcnow()
         payload = msg.model_dump(mode="json")
@@ -1613,6 +1768,26 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 ),
             )
             await sess.commit()
+
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete one message by ``(session_id, message_id)``."""
+        _ = user_id
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(MessageRow).where(
+                    MessageRow.session_id == session_id,
+                    MessageRow.msg_id == message_id,
+                ),
+            )
+            await sess.commit()
+        return bool(result.rowcount)
 
     async def get_message(
         self,
@@ -2112,3 +2287,113 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .all()
             )
         return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+
+    # ---- Voice Profile ----
+
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Insert a voice profile or update it under an ownership predicate.
+
+        Primary-key collisions never transfer ownership. Concurrent writes
+        from the same owner may update the payload; a different owner gets
+        ``PermissionError``. Updates preserve the stored creation time.
+        """
+        record.user_id = user_id
+        record.created_at = _to_naive_utc(record.created_at)
+        record.updated_at = _utcnow()
+        row = _from_record(VoiceProfileRow, record)
+        async with self._session() as sess:
+            try:
+                await sess.execute(
+                    sa.insert(VoiceProfileRow).values(
+                        id=record.id,
+                        user_id=user_id,
+                        created_at=record.created_at,
+                        updated_at=record.updated_at,
+                        payload=row.payload,
+                    ),
+                )
+            except sa.exc.IntegrityError as exc:
+                await sess.rollback()
+                # Ownership is enforced by the write itself, not a precheck.
+                owned = (
+                    VoiceProfileRow.id == record.id,
+                    VoiceProfileRow.user_id == user_id,
+                )
+                result = await sess.execute(
+                    sa.update(VoiceProfileRow)
+                    .where(*owned)
+                    .values(payload=row.payload, updated_at=record.updated_at),
+                )
+                if result.rowcount == 0:
+                    owner = await sess.scalar(
+                        sa.select(VoiceProfileRow.user_id).where(
+                            VoiceProfileRow.id == record.id,
+                        ),
+                    )
+                    if owner is not None and owner != user_id:
+                        raise PermissionError(
+                            "Cannot overwrite another user's voice profile.",
+                        ) from exc
+                    raise
+                record.created_at = (
+                    await sess.execute(
+                        sa.select(VoiceProfileRow.created_at).where(*owned),
+                    )
+                ).scalar_one()
+            await sess.commit()
+        return record.id
+
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch one voice profile; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(VoiceProfileRow, profile_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, VoiceProfileRecord)
+
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """Return all voice profiles for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(VoiceProfileRow).where(
+                            VoiceProfileRow.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, VoiceProfileRecord) for r in rows]
+
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(VoiceProfileRow).where(
+                    VoiceProfileRow.id == profile_id,
+                    VoiceProfileRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0

@@ -7,10 +7,11 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..asr import ASRModelBase
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
     from ..realtime import RealtimeModelBase
-    from ..tts import TTSModelBase
+    from ..tts import TTSModelBase, VoiceCloningClientBase
 
 
 class OpenAICredential(CredentialBase):
@@ -51,11 +52,30 @@ class OpenAICredential(CredentialBase):
         return OpenAIChatModel
 
     @classmethod
+    def get_chat_model_classes(cls) -> list[Type["ChatModelBase"]]:
+        """Return both APIs unless the legacy getter selects a custom model."""
+        from ..model import OpenAIChatModel, OpenAIResponseModel
+
+        model_cls = cls.get_chat_model_class()
+        if model_cls is not OpenAIChatModel:
+            return [model_cls]
+        return [OpenAIChatModel, OpenAIResponseModel]
+
+    @classmethod
     def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:
         """Return the OpenAIEmbeddingModel class."""
         from ..embedding import OpenAIEmbeddingModel
 
         return OpenAIEmbeddingModel
+
+    @classmethod
+    def get_voice_cloning_client_class(
+        cls,
+    ) -> Type["VoiceCloningClientBase"] | None:
+        """Return the voice creation client, or None when unsupported."""
+        from ..tts import OpenAIVoiceCloningClient
+
+        return OpenAIVoiceCloningClient
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:
@@ -65,8 +85,15 @@ class OpenAICredential(CredentialBase):
         return [OpenAITTSModel]
 
     @classmethod
+    def get_asr_model_classes(cls) -> list[Type["ASRModelBase"]]:
+        """Return the OpenAI transcription implementation."""
+        from ..asr import OpenAIASRModel
+
+        return [OpenAIASRModel]
+
+    @classmethod
     def get_realtime_model_classes(cls) -> list[Type["RealtimeModelBase"]]:
         """Return the OpenAI realtime model classes."""
-        from ..realtime import OpenAIRealtimeModel
+        from ..realtime import OpenAILiveModel, OpenAIRealtimeModel
 
-        return [OpenAIRealtimeModel]
+        return [OpenAIRealtimeModel, OpenAILiveModel]

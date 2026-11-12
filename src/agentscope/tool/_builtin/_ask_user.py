@@ -2,7 +2,7 @@
 """The asking user tool class."""
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .._base import ToolBase
 from ...permission import (
@@ -94,6 +94,14 @@ class _Question(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _validate_options(self) -> "_Question":
+        """Reject ambiguous or unsupported option combinations."""
+        labels = [option.label for option in self.options]
+        if len(labels) != len(set(labels)):
+            raise ValueError("option labels must be unique within a question")
+        return self
+
 
 class AskUserAnswer(BaseModel):
     """One question's answer, as the caller must return it.
@@ -145,6 +153,14 @@ class AskUserParams(BaseModel):
             "be unique; option labels must be unique within each question."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_question_texts(self) -> "AskUserParams":
+        """Reject question batches whose answers cannot be correlated."""
+        questions = [question.question for question in self.questions]
+        if len(questions) != len(set(questions)):
+            raise ValueError("question texts must be unique across the batch")
+        return self
 
 
 class AskUser(ToolBase):

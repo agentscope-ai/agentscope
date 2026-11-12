@@ -17,13 +17,20 @@ from agentscope.event import (
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import AssistantMsg, ToolCallBlock, UserMsg
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 from agentscope.sop import (
     SOP,
     SOPEngine,
     SOPRunState,
     SOPPhase,
     SOPStep,
+    SOPStepBase,
     SOPStepRunState,
 )
 from agentscope.types import ReplyFinishedReason
@@ -66,6 +73,43 @@ def _answer() -> UserConfirmResultEvent:
         reply_id="reply-1",
         confirm_results=[ConfirmResult(confirmed=True, tool_call=call)],
     )
+
+
+class _NoteState(SOPStepRunState):
+    """A step state that remembers one thing more than the base."""
+
+    note: str = ""
+
+
+class _Noting(SOPStepBase):
+    """A step that keeps that one thing and passes."""
+
+    state_type = _NoteState
+
+    async def reply_stream(  # pylint: disable=invalid-overridden-method
+        self,
+        inputs: Any,
+        state: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Note something, hand something over, and pass."""
+        yield _finished("noting", {})
+        state.note = "kept"
+        state.submission = [TextBlock(type="text", text="done")]
+        self.record(state, True)
+
+
+class _Abandoning(SOPStepBase):
+    """A step that gives up on the run without filing a verdict."""
+
+    async def reply_stream(  # pylint: disable=invalid-overridden-method
+        self,
+        inputs: Any,
+        state: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Mark the step failed, failing loudly if restarted after that."""
+        assert state.phase is not SOPPhase.FAILED, "restarted a failed step"
+        yield _finished("abandoning", {})
+        state.phase = SOPPhase.FAILED
 
 
 class _Scripted:
@@ -222,6 +266,7 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
                         ],
                     },
                 ],
+                "phase": SOPPhase.COMPLETED,
             },
         )
 
@@ -436,6 +481,61 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(engine2.phase, SOPPhase.COMPLETED)
 
+    async def test_a_step_that_remembers_more_survives_storage(
+        self,
+    ) -> None:
+        """What a ``state_type`` subclass keeps is written out and read
+        back."""
+        sop = SOP(
+            name="demo",
+            description="d",
+            steps=[_Noting("A", "do a")],
+        )
+        engine = SOPEngine(sop)
+        await self._drive(engine)
+
+        self.assertDictEqual(
+            engine.state.model_dump(mode="json"),
+            {
+                "id": AnyString(),
+                "inputs": [],
+                "steps": [
+                    {
+                        "phase": "completed",
+                        "given": [],
+                        "submission": [
+                            {
+                                "type": "text",
+                                "text": "done",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "verifications": [
+                            {
+                                "passed": True,
+                                "message": "",
+                                "verifier": "",
+                                "created_at": AnyString(),
+                            },
+                        ],
+                        "note": "kept",
+                    },
+                ],
+                "created_at": AnyString(),
+                "phase": "completed",
+            },
+        )
+
+        engine2 = SOPEngine(
+            SOP(name="demo", description="d", steps=[_Noting("A", "do a")]),
+            SOPRunState.model_validate_json(engine.state.model_dump_json()),
+        )
+
+        self.assertIsInstance(engine2.state.steps[0], _NoteState)
+        self.assertEqual(engine2.state.steps[0].note, "kept")
+
     async def test_a_run_from_an_edited_sop_is_refused(self) -> None:
         """Editing the SOP retires the runs of the old one."""
         sop = SOP(
@@ -517,5 +617,25 @@ class SOPEngineTest(IsolatedAsyncioTestCase):
             [
                 ("SOP_STEP_STARTED", {"step": "A", "attempt": 1}),
                 ("SOP_STEP_ENDED", {"step": "A", "phase": "pending"}),
+            ],
+        )
+
+    async def test_a_step_that_fails_itself_ends_the_run(self) -> None:
+        """A step that marks itself failed is not restarted."""
+        sop = SOP(name="demo", description="d", steps=[_Abandoning("A", "a")])
+        engine = SOPEngine(sop)
+
+        events = await self._drive(engine, UserMsg(name="user", content="go"))
+
+        self.assertEqual(engine.phase, SOPPhase.FAILED)
+        self.assertListEqual(
+            [
+                (_.name, _.value) if isinstance(_, CustomEvent) else type(_)
+                for _ in events
+            ],
+            [
+                ("SOP_STEP_STARTED", {"step": "A", "attempt": 1}),
+                Msg,
+                ("SOP_STEP_ENDED", {"step": "A", "phase": "failed"}),
             ],
         )

@@ -332,6 +332,47 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """Responses API forwards image detail at input_image top level."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                        custom_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Inspect this image.",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_url,
+                            "detail": "high",
+                            "custom_param": "value",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_base64_pdf(self) -> None:
         """Base64-encoded PDF becomes an ``input_file`` item."""
         fmt = OpenAIResponseFormatter()
@@ -431,7 +472,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         )
 
     async def test_chat_formatter_replays_raw_reasoning_item(self) -> None:
-        """A valid raw reasoning item is replayed without reconstruction."""
+        """Split thinking blocks replay one complete item before tool calls."""
         reasoning_item_raw = {
             "type": "reasoning",
             "id": "rs_encrypted",
@@ -445,7 +486,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             "status": "completed",
         }
         thinking = ThinkingBlock(
-            thinking="",
+            thinking="summary",
             reasoning_item_id="rs_encrypted",
             reasoning_item_raw=reasoning_item_raw,
         )
@@ -455,7 +496,23 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             [
                 AssistantMsg(
                     name="assistant",
-                    content=[thinking, TextBlock(text="reply")],
+                    content=[
+                        thinking,
+                        TextBlock(text="reply"),
+                        thinking.model_copy(
+                            update={
+                                "id": "raw-block",
+                                "thinking": "reasoning",
+                            },
+                        ),
+                        ToolCallBlock(id="call_1", name="lookup", input="{}"),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="lookup",
+                            output=[TextBlock(text="result")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
                 ),
             ],
         )
@@ -469,6 +526,17 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     "content": [
                         {"type": "output_text", "text": "reply"},
                     ],
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "result",
                 },
             ],
         )

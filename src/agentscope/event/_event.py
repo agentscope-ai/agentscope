@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
-from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict, Literal, List, Self, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing_extensions import deprecated
 
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from ..message import (
     DataBlock,
     TextBlock,
@@ -74,7 +73,7 @@ class EventBase(BaseModel):
 
     id: str = Field(default_factory=_generate_id)
     """Unique event identifier."""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """ISO 8601 timestamp of when the event was created."""
     metadata: Dict[str, Any] = Field(default_factory=dict)
     """Optional metadata attached to the event."""
@@ -551,6 +550,24 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"delegation_checkpoint"`` — a hidden Live tool result is
+              ready to persist without displaying a tool card. ``value``
+              contains ``delegation_id``, ``reply_id``, and ``tool_call_id``.
+            - ``"external_execution_result_rejected"`` — a Live result
+              submission needs retry. ``value`` contains ``request_id``
+              (the submitted event ID), ``reply_id``, ``tool_call_ids``
+              (only unaccepted results), and a safe ``message``.
+            - ``"chat_input_started"`` — one or more FIFO-queued user
+              messages have started their agent turn.
+            - ``"chat_input_failed"`` — a dequeued user turn failed before
+              the service could produce a usable reply.
+            - ``"chat_input_cancelled"`` — an already-started queued turn
+              was interrupted and will not be replayed automatically.
+            - ``"chat_queue_changed"`` — the editable pending-turn
+              snapshot changed after enqueue, edit, delete, or reorder.
+            - ``"mcp_progress"`` — transient MCP tool progress, with
+              ``reply_id``, ``tool_call_id``, ``progress``, ``total`` and
+              ``message`` in ``value``. Not part of the final tool result.
 
         value (`dict`):
             Arbitrary JSON-serializable payload whose schema depends

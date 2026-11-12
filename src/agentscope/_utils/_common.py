@@ -16,6 +16,15 @@ from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
 
+# These mappings use property names as keys and schemas as values.
+_SCHEMA_MAP_KEYWORDS = frozenset(
+    {"properties", "patternProperties", "dependentSchemas", "dependencies"},
+)
+# These keywords hold instance data, which must be kept verbatim.
+_INSTANCE_VALUE_KEYWORDS = frozenset(
+    {"default", "const", "enum", "examples"},
+)
+
 _id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
 _timestamp_factory: Callable[[], str] = lambda: datetime.now().isoformat()
 
@@ -83,6 +92,22 @@ def _normalize_local_path(path: str) -> str:
     return os.path.abspath(os.path.expanduser(path))
 
 
+def _has_dropped_keys(original: Any, repaired: Any) -> bool:
+    """Whether any dict in ``repaired`` lost a key it has in ``original``."""
+    if isinstance(original, dict) and isinstance(repaired, dict):
+        return bool(original.keys() - repaired.keys()) or any(
+            _has_dropped_keys(original[key], value)
+            for key, value in repaired.items()
+            if key in original
+        )
+    if isinstance(original, list) and isinstance(repaired, list):
+        return any(
+            _has_dropped_keys(item, fixed)
+            for item, fixed in zip(original, repaired)
+        )
+    return False
+
+
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,
@@ -112,6 +137,10 @@ def _json_loads_with_repair(
         `ToolJSONDecodeError`:
             If the JSON string cannot be loaded into a dict.
     """
+    # Some providers stream no arguments at all for a no-argument tool call
+    if not json_str.strip():
+        return {}
+
     parsed = None
     error_message = "Error: Failed to parse your tool arguments."
     try:
@@ -125,7 +154,18 @@ def _json_loads_with_repair(
             )
 
         elif schema is None:
-            return parsed
+            try:
+                # NaN and Infinity are accepted as numbers by jsonschema, but
+                # silently bypass the minimum/maximum constraints. Apply the
+                # same guard as the schema path so both paths treat them
+                # identically.
+                json.dumps(parsed, allow_nan=False)
+            except ValueError:
+                error_message = (
+                    "Error: NaN and Infinity are not valid JSON numbers."
+                )
+            else:
+                return parsed
     except json.JSONDecodeError as e:
         error_message = (
             f"Error: When decoding your tool arguments from JSON format "
@@ -151,7 +191,7 @@ def _json_loads_with_repair(
             res = parsed
 
         if isinstance(res, dict):
-            if isinstance(parsed, dict) and parsed.keys() - res.keys():
+            if isinstance(parsed, dict) and _has_dropped_keys(parsed, res):
                 # Dropping arguments, e.g. under `additionalProperties:
                 # false`, is a rewrite rather than a type repair.
                 res = parsed
@@ -312,7 +352,10 @@ def _flatten_json_schema(schema: dict) -> dict:
 
     This function resolves every such reference by substituting the full
     definition inline, then drops the ``$defs`` / ``definitions``
-    sections so the output is a flat, self-contained schema.
+    sections so the output is a flat, self-contained schema. Discriminators
+    mapping to removed definitions are dropped: their mapping values must
+    be strings, not inline schemas. Union branches and their constraints
+    are preserved. Other discriminators are left unchanged.
 
     Circular references are detected and replaced with a fallback object
     schema to avoid infinite recursion.  Only local references of the
@@ -345,67 +388,61 @@ def _flatten_json_schema(schema: dict) -> dict:
     if not defs:
         return schema
 
-    schema_map_keywords = {
-        "properties",
-        "patternProperties",
-        "dependentSchemas",
-        "dependencies",
-    }
-
-    def _resolve_ref(
-        obj: Any,
-        visited: frozenset = frozenset(),
-        is_schema_map: bool = False,
-    ) -> Any:
+    def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
             return [_resolve_ref(item, visited) for item in obj]
         if not isinstance(obj, dict):
             return obj
-        if is_schema_map:
-            return {
-                key: _resolve_ref(value, visited) for key, value in obj.items()
-            }
+
+        resolved: dict[str, Any] = {}
         if "$ref" in obj:
             ref_path = obj["$ref"]
-            if isinstance(ref_path, str) and (
-                ref_path.startswith("#/$defs/")
-                or ref_path.startswith("#/definitions/")
+            if not isinstance(ref_path, str) or not ref_path.startswith(
+                ("#/$defs/", "#/definitions/"),
             ):
-                def_name = ref_path.split("/")[-1]
-                if def_name in visited:
-                    logger.warning(
-                        "Circular reference detected for '%s' in tool "
-                        "schema",
-                        def_name,
-                    )
-                    return {
-                        "type": "object",
-                        "description": f"(circular: {def_name})",
-                    }
-                if def_name in defs:
-                    resolved = _resolve_ref(
-                        defs[def_name],
-                        visited | {def_name},
-                    )
-                    for key, value in obj.items():
-                        if key != "$ref":
-                            resolved[key] = _resolve_ref(
-                                value,
-                                visited | {def_name},
-                                key in schema_map_keywords,
-                            )
-                    return resolved
-            return obj
-        result: dict[str, Any] = {}
+                return obj
+
+            def_name = ref_path.split("/")[-1]
+            # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
+            def_name = def_name.replace("~1", "/").replace("~0", "~")
+            if def_name in visited:
+                logger.warning(
+                    "Circular reference detected for '%s' in tool schema",
+                    def_name,
+                )
+                return {
+                    "type": "object",
+                    "description": f"(circular: {def_name})",
+                }
+            if def_name not in defs:
+                return obj
+
+            visited = visited | {def_name}
+            resolved = _resolve_ref(defs[def_name], visited)
+
         for key, value in obj.items():
-            if key in ("$defs", "definitions"):
+            if key in ("$ref", "$defs", "definitions"):
                 continue
-            result[key] = _resolve_ref(
-                value,
-                visited,
-                key in schema_map_keywords,
-            )
-        return result
+            if key in _INSTANCE_VALUE_KEYWORDS:
+                resolved[key] = value
+            elif key == "discriminator" and isinstance(value, dict):
+                mapping = value.get("mapping")
+                if isinstance(mapping, dict) and any(
+                    isinstance(ref, str)
+                    and ref.startswith(("#/$defs/", "#/definitions/"))
+                    and ref.rsplit("/", 1)[-1] in defs
+                    for ref in mapping.values()
+                ):
+                    continue
+                resolved[key] = value
+            elif key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+                resolved[key] = {
+                    name: _resolve_ref(sub, visited)
+                    for name, sub in value.items()
+                }
+            else:
+                resolved[key] = _resolve_ref(value, visited)
+        return resolved
 
     return _resolve_ref(schema)
 

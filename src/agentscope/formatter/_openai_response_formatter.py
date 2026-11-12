@@ -52,6 +52,11 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
           audio input yet; use Chat Completions API instead). See
           https://developers.openai.com/api/docs/guides/audio
 
+        For image blocks, ``DataBlock`` extra fields are merged into the
+        ``input_image`` item itself (for example ``detail``), because the
+        Responses API uses a flat ``image_url`` string instead of the nested
+        Chat Completions ``image_url`` object.
+
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
@@ -80,10 +85,14 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             return None
 
         if base_result.get("type") == "image_url":
-            return {
+            result = {
                 "type": "input_image",
                 "image_url": base_result["image_url"]["url"],
             }
+            extra = block.model_extra or {}
+            if extra:
+                result.update(extra)
+            return result
 
         if base_result.get("type") == "file":
             return {"type": "input_file", **base_result["file"]}
@@ -197,6 +206,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
             msg = msgs[i]
             content_parts: list[dict] = []
             function_calls: list[dict] = []
+            reasoning_item_ids: set[str] = set()
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -282,6 +292,12 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         None,
                     )
                     if reasoning_item_id:
+                        # Summary and raw reasoning can occupy separate
+                        # blocks while sharing one upstream reasoning item.
+                        # Replay that complete item only once per message.
+                        if reasoning_item_id in reasoning_item_ids:
+                            continue
+                        reasoning_item_ids.add(reasoning_item_id)
                         if content_parts and block.thinking:
                             items.append(
                                 {
@@ -447,13 +463,17 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                     await self._format_tool_sequence(group),
                 )
             elif typ == "agent_message":
-                formatted_msgs.extend(
-                    await self._format_agent_message(
-                        group,
-                        is_first_agent_message,
-                    ),
+                (
+                    formatted_group,
+                    has_history,
+                ) = await self._format_agent_message_with_hints(
+                    group,
+                    is_first_agent_message,
+                    self._format_agent_message,
                 )
-                is_first_agent_message = False
+                formatted_msgs.extend(formatted_group)
+                if has_history:
+                    is_first_agent_message = False
 
         return formatted_msgs
 
@@ -475,6 +495,22 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
         return await OpenAIResponseFormatter(
             input_types=self.input_types,
         ).format(msgs)
+
+    async def _format_hint_message(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format hint messages with the OpenAI Responses formatter.
+
+        Args:
+            msgs (`list[Msg]`):
+                One message containing a single ``HintBlock``.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The Responses API user-message representation.
+        """
+        return await self._format_tool_sequence(msgs)
 
     async def _format_agent_message(
         self,

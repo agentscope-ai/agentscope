@@ -13,6 +13,7 @@ constructor arguments:
 - ``path="/path/to/db"`` — in-process, persisted to local disk
 - ``url="http://localhost:6333"`` — remote Qdrant server / cloud
 """
+import math
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -247,6 +248,7 @@ class QdrantStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -259,20 +261,25 @@ class QdrantStore(VectorStoreBase):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
         """
         from qdrant_client import models
 
+        conditions = [
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchValue(value=document_id),
+            ),
+        ]
+        base_filter = self._build_metadata_filter(metadata_filter)
+        if base_filter is not None:
+            conditions.extend(base_filter.must)
         await self.get_client().delete(
             collection_name=collection,
             points_selector=models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="document_id",
-                            match=models.MatchValue(value=document_id),
-                        ),
-                    ],
-                ),
+                filter=models.Filter(must=conditions),
             ),
         )
 
@@ -306,7 +313,21 @@ class QdrantStore(VectorStoreBase):
             `list[VectorSearchResult]`:
                 Results ordered by descending similarity score.
         """
-        response = await self.get_client().query_points(
+        from qdrant_client import models
+
+        client = self.get_client()
+        collection_info = await client.get_collection(collection)
+        vectors = collection_info.config.params.vectors
+        if isinstance(vectors, dict):
+            vectors = vectors.get("")
+        if not isinstance(vectors, models.VectorParams):
+            raise ValueError(
+                "QdrantStore.search requires an unnamed dense vector.",
+            )
+        # The constructor's metric only applies to newly created collections.
+        # Read the actual schema, including after an external recreation.
+        distance = vectors.distance
+        response = await client.query_points(
             collection_name=collection,
             query=query_vector,
             limit=top_k,
@@ -315,7 +336,11 @@ class QdrantStore(VectorStoreBase):
         )
         # ``Euclid`` / ``Manhattan`` are distances, so negate them to
         # keep ``score`` higher-is-better like ``Cosine`` / ``Dot``.
-        sign = -1 if self._distance in ("Euclid", "Manhattan") else 1
+        sign = (
+            -1
+            if distance in (models.Distance.EUCLID, models.Distance.MANHATTAN)
+            else 1
+        )
         return [
             VectorSearchResult(
                 score=sign * point.score,
@@ -477,6 +502,7 @@ class QdrantStore(VectorStoreBase):
         ``chunk.metadata.<key>`` written by :meth:`insert`.  Returns
         ``None`` when ``metadata_filter`` is empty so that callers
         skip the filter argument entirely.
+        A ``None`` value matches an explicitly null field, not a missing key.
 
         Args:
             metadata_filter (`dict[str, Any] | None`):
@@ -491,12 +517,31 @@ class QdrantStore(VectorStoreBase):
 
         from qdrant_client import models
 
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=f"chunk.metadata.{key}",
+        conditions = []
+        for key, value in metadata_filter.items():
+            field = f"chunk.metadata.{key}"
+            if value is None:
+                conditions.append(
+                    models.IsNullCondition(
+                        is_null=models.PayloadField(key=field),
+                    ),
+                )
+                continue
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    raise ValueError(
+                        "Metadata filter float values must be finite.",
+                    )
+                # MatchValue supports only strings, integers, and booleans.
+                condition = models.FieldCondition(
+                    key=field,
+                    range=models.Range(gte=value, lte=value),
+                )
+            else:
+                condition = models.FieldCondition(
+                    key=field,
                     match=models.MatchValue(value=value),
                 )
-                for key, value in metadata_filter.items()
-            ],
-        )
+            conditions.append(condition)
+
+        return models.Filter(must=conditions)

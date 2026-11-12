@@ -5,14 +5,18 @@ import hashlib
 import json
 import os
 import tempfile
+from datetime import datetime
+from itertools import product
 from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from utils import MockModel, AnyString
 
 from agentscope.model import ChatResponse, ChatUsage, StructuredResponse
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.exception import ContentBlockedError
 from agentscope.state import AgentState
 from agentscope.message import (
     UserMsg,
@@ -1513,6 +1517,79 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             any(msg.get_content_blocks("hint") for msg in agent.state.context),
         )
 
+    async def test_context_compression_resolves_current_time_placeholder(
+        self,
+    ) -> None:
+        """The compression prompt reaches the model with the injection time."""
+        model = RecordingStructuredMockModel(
+            context_size=100,
+            fail_structured_output_times=1,
+            force_compression_overflow=True,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+                compression_prompt="Now is {current_time}. Keep {braces}.",
+            ),
+            injection_config=InjectionConfig(
+                timezone="Asia/Shanghai",
+                time_format="%Y-%m-%d %H:%M",
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        # The first call fails under overflow, so the retry path runs too
+        with patch("agentscope.agent._agent.datetime") as mock_datetime:
+            mock_datetime.now.return_value = datetime(2026, 7, 1, 12, 0)
+            await agent.compress_context()
+
+        self.assertListEqual(
+            [
+                msgs[-1].get_text_content()
+                for msgs in model.recorded_structured_messages
+            ],
+            [
+                "Now is 2026-07-01 12:00 (Asia/Shanghai). Keep {braces}.",
+                "Now is 2026-07-01 12:00 (Asia/Shanghai). Keep {braces}.",
+            ],
+        )
+
     async def test_context_compression_overflow_retry_keeps_instructions(
         self,
     ) -> None:
@@ -2666,6 +2743,81 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_context_compression_preserves_current_reply_usage(
+        self,
+    ) -> None:
+        """Compression preserves usage from a fully compressed reply."""
+        model = MockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="hi",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.5,
+                reserve_ratio=0.4,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        agent.state.reply_id = "current-reply"
+        agent.state.context = [
+            AssistantMsg(
+                "Friday",
+                [TextBlock(text="x" * 1000)],
+                id="current-reply",
+                usage=Usage(
+                    input_tokens=80,
+                    output_tokens=40,
+                    cache_input_tokens=5,
+                    cache_creation_input_tokens=2,
+                ),
+            ),
+        ]
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+                usage=ChatUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    time=0.1,
+                    cache_input_tokens=1,
+                    cache_creation_input_tokens=1,
+                ),
+            ),
+        )
+
+        await agent.compress_context()
+
+        self.assertListEqual(
+            [_.model_dump() for _ in agent.state.context],
+            [
+                {
+                    "id": "current-reply",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "finished_reason": None,
+                    "structured_output": None,
+                    "error": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [],
+                    "metadata": {},
+                    "usage": {
+                        "input_tokens": 90,
+                        "output_tokens": 45,
+                        "cache_input_tokens": 6,
+                        "cache_creation_input_tokens": 3,
+                    },
+                },
+            ],
+        )
+
     async def test_summary_failure_truncates_context(self) -> None:
         """Summary failures fall back to lossy context truncation."""
         agent, _ = _make_failing_compression_agent()
@@ -2679,6 +2831,66 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         await agent.compress_context()
 
         self.assertEqual(agent.state, expected_state)
+
+    async def test_content_block_stops_compression(self) -> None:
+        """Stop errors survive every compression entry and failure path."""
+        cases = product(
+            ("requires_review", "partial_output"),
+            ((False, False), (True, False), (True, True)),
+            (False, True),
+            (False, True),
+        )
+        for flag, (overflow, retry), via_tool, truncate in cases:
+            with self.subTest(
+                flag=flag,
+                overflow=overflow,
+                retry=retry,
+                via_tool=via_tool,
+                truncate=truncate,
+            ):
+                agent, model = _make_failing_compression_agent()
+                agent.context_config.compression_fallback_to_truncation = (
+                    truncate
+                )
+                expected_state = agent.state.model_copy(deep=True)
+                error = ContentBlockedError("blocked", **{flag: True})
+                errors = (
+                    [RuntimeError("temporary failure"), error]
+                    if retry
+                    else [error]
+                )
+                with (
+                    patch.object(
+                        model,
+                        "count_tokens",
+                        new=AsyncMock(return_value=200 if overflow else 95),
+                    ),
+                    patch.object(
+                        agent,
+                        "_split_context_for_compression",
+                        new=AsyncMock(
+                            return_value=(
+                                agent.state.context[:1],
+                                agent.state.context[1:],
+                            ),
+                        ),
+                    ),
+                    patch.object(
+                        model,
+                        "_call_api_with_structured_output",
+                        new=AsyncMock(side_effect=errors),
+                    ) as call,
+                ):
+                    with self.assertRaises(ContentBlockedError) as caught:
+                        if via_tool:
+                            await agent._compress_context_tool()
+                        else:
+                            await agent.compress_context()
+
+                self.assertEqual(
+                    (caught.exception, call.await_count, agent.state),
+                    (error, len(errors), expected_state),
+                )
 
     async def test_summary_failure_raises_without_truncation_fallback(
         self,

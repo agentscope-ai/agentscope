@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
-from agentscope.model import ChatResponse, ChatUsage
+from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -18,6 +19,9 @@ from agentscope.permission import (
     PermissionContext,
 )
 from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    URLSource,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
@@ -100,7 +104,9 @@ class MockConcurrentTool(ToolBase):
         )
 
 
-class AgentBasicTest(IsolatedAsyncioTestCase):
+class AgentBasicTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The basic test of the agent class."""
 
     async def asyncSetUp(self) -> None:
@@ -222,6 +228,31 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(agent.context_config.context_buffer_ratio, 0.3)
 
+    async def test_deprecated_override_does_not_mutate_the_caller_config(
+        self,
+    ) -> None:
+        """Migrating the deprecated ratio must not write through a config
+        object that another agent shares."""
+        context_config = ContextConfig()
+        with self.assertWarns(DeprecationWarning):
+            overriding = Agent(
+                name="overriding",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=context_config,
+                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+            )
+        sharing = Agent(
+            name="sharing",
+            system_prompt="You are an agent.",
+            model=MockModel(),
+            context_config=context_config,
+        )
+
+        self.assertEqual(overriding.context_config.context_buffer_ratio, 0.5)
+        self.assertEqual(context_config.context_buffer_ratio, 0.2)
+        self.assertEqual(sharing.context_config.context_buffer_ratio, 0.2)
+
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
         only text in model response.
@@ -334,7 +365,6 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
-                "finished_reason": None,
                 "structured_output": None,
                 "error": None,
             },
@@ -976,6 +1006,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
             },
             {
                 **msg_base,
@@ -1093,10 +1124,24 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ChatResponse(
                     content=[ThinkingBlock(thinking="First thought")],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
                 ),
                 ChatResponse(
                     content=[ThinkingBlock(thinking="Second thought")],
                     is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=100,
+                        output_tokens=50,
+                        time=0.2,
+                        cache_input_tokens=7,
+                        cache_creation_input_tokens=3,
+                    ),
                 ),
             ],
         )
@@ -1110,6 +1155,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 **self._get_msg_base(),
                 "finished_reason": ReplyFinishedReason.EXCEED_MAX_ITERS,
+                "usage": {
+                    "input_tokens": 180,
+                    "output_tokens": 90,
+                    "cache_input_tokens": 12,
+                    "cache_creation_input_tokens": 5,
+                },
                 "content": [
                     {
                         "type": "text",
@@ -1120,6 +1171,85 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "are exceeded.",
                     },
                 ],
+            },
+        )
+
+    async def test_interrupted_reply_preserves_usage(self) -> None:
+        """An interrupted final message carries the model usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="Partial response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                    finished_reason=FinishedReason.INTERRUPTED,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(
+            UserMsg(name="user", content="Continue"),
+        )
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.INTERRUPTED,
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 40,
+                    "cache_input_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                },
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": (
+                            "I notice the interruption. How can I help you?"
+                        ),
+                    },
+                ],
+            },
+        )
+
+    async def test_reply_does_not_reuse_previous_usage(self) -> None:
+        """A reply with no new context does not reuse prior usage."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="First response")],
+                    is_last=True,
+                    usage=ChatUsage(
+                        input_tokens=80,
+                        output_tokens=40,
+                        time=0.1,
+                        cache_input_tokens=5,
+                        cache_creation_input_tokens=2,
+                    ),
+                ),
+                ChatResponse(content=[], is_last=True),
+            ],
+        )
+
+        await self.agent.reply(UserMsg(name="user", content="Start"))
+        msg = await self.agent.reply()
+
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                **self._get_msg_base(),
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "content": [],
             },
         )
 
@@ -2028,6 +2158,47 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_event_block_id_matches_data_block_id(self) -> None:
+        """Base64 and URL DataBlocks keep their id on the emitted event."""
+        agent = Agent(
+            name="test",
+            system_prompt="",
+            model=MockModel(),
+            toolkit=Toolkit(),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+        )
+        chunks = [
+            DataBlock(
+                id="b64-block",
+                source=Base64Source(
+                    data=base64.b64encode(b"hello").decode("ascii"),
+                    media_type="audio/wav",
+                ),
+            ),
+            DataBlock(
+                id="url-block",
+                source=URLSource(
+                    url="https://example.com/a.wav",
+                    media_type="audio/wav",
+                ),
+            ),
+        ]
+        # pylint: disable=protected-access
+        events = [
+            event
+            async for event in agent._convert_tool_chunk_to_event(
+                "tc-1",
+                chunks,
+            )
+        ]
+        self.assertListEqual(
+            [(type(e).__name__, e.block_id) for e in events],
+            [
+                ("ToolResultDataDeltaEvent", "b64-block"),
+                ("ToolResultDataDeltaEvent", "url-block"),
+            ],
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

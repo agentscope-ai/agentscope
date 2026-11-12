@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Literal
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
+from .._utils import (
+    UV_VERSION,
+    _GATEWAY_BASE_REQUIREMENTS,
+    DEFAULT_WORKSPACE_INSTRUCTIONS,
+)
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
@@ -377,10 +381,11 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             "apt-get update -qq "
             "&& apt-get install -y --no-install-recommends curl "
             "ca-certificates ripgrep "
+            "&& update-ca-certificates "
             "&& rm -rf /var/lib/apt/lists/*",
             # Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
             # suppresses shell rc edits.
-            "curl -LsSf https://astral.sh/uv/install.sh "
+            f"curl -LsSf https://astral.sh/uv/{UV_VERSION}/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
             # Gateway venv + base requirements + agentscope from PyPI.

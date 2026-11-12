@@ -149,6 +149,22 @@ reply queue. It retains only unfinished replies in a dictionary keyed by
 reply ID, including replies waiting for HITL. After displaying `ReplyEndEvent`,
 it releases that reply; the UI keeps its own historical display copy.
 
+A `RealtimeAgent` is driven the other way round: audio flows continuously, so
+the stream belongs to the transport rather than to a submission, and discrete
+input goes back through `send()`. That is a launcher of its own, over the same
+display:
+
+```python
+from agentscope.tui import launch_realtime_ui
+
+async with agent, transport:
+    await launch_realtime_ui(agent, transport)
+```
+
+It shows the transcripts of both sides, the tools and their approval cards,
+and drops the audio blocks, which the transport plays. The composer is
+disabled for a model that accepts no text turn mid-session.
+
 ## Live CSS editing
 
 Textual can reload external CSS while an app is running. Install its

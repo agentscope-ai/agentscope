@@ -3,9 +3,10 @@
 import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import AnyString
-from agentscope.tool import Glob
+from agentscope.tool import ExecResult, Glob, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
@@ -13,6 +14,7 @@ from agentscope.permission import (
 )
 
 
+# pylint: disable=too-many-public-methods
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
 
@@ -73,6 +75,45 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         # Read/Glob/Grep are read-only, return PASSTHROUGH
         self.assertEqual(decision.behavior, PermissionBehavior.PASSTHROUGH)
 
+    async def test_invalid_helper_output(self) -> None:
+        """Malformed helper output must not masquerade as no matches."""
+        backend = LocalBackend()
+        backend.is_dir = AsyncMock(return_value=True)
+        backend.exec_shell = AsyncMock()
+        tool = Glob(backend=backend)
+        for output in (
+            b"not-json",
+            b"null",
+            b"{}",
+            b'"path.py"',
+            b"[1]",
+            b"[null]",
+        ):
+            with self.subTest(output=output):
+                backend.exec_shell.return_value = ExecResult(0, output, b"")
+                chunk = await tool(pattern="*.py", path=self.temp_dir)
+                self.assertEqual(
+                    chunk.model_dump(
+                        exclude={
+                            "id": True,
+                            "content": {"__all__": {"id", "created_at"}},
+                        },
+                    ),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Glob helper returned invalid output: "
+                                "expected a JSON array of file paths.",
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "error",
+                        "is_last": True,
+                        "metadata": {},
+                    },
+                )
+
     async def test_simple_pattern(self) -> None:
         """Test simple glob pattern."""
         chunk = await self.glob_tool(
@@ -88,6 +129,24 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test2.py", content)
         self.assertNotIn("test.txt", content)
 
+    async def test_dash_prefixed_patterns(self) -> None:
+        """The helper must receive option-like patterns as literal values."""
+        for name, pattern in (
+            ("-report.txt", "-report*.txt"),
+            ("--help", "--help"),
+            ("-report=one.txt", "-report=*.txt"),
+        ):
+            with self.subTest(pattern=pattern):
+                target = os.path.join(self.temp_dir, name)
+                with open(target, "w", encoding="utf-8"):
+                    pass
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertEqual(chunk.state, "running")
+                self.assertEqual(chunk.content[0].text, target)
+
     async def test_recursive_pattern(self) -> None:
         """Test recursive glob pattern."""
         chunk = await self.glob_tool(
@@ -101,6 +160,142 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
+
+    async def test_current_directory_segments(self) -> None:
+        """Standalone dot segments do not change the matched files."""
+        for pattern, expected in (
+            ("./*.py", ["test1.py", "test2.py"]),
+            ("./**/*.py", ["subdir/test3.py", "test1.py", "test2.py"]),
+            ("subdir/./*.py", ["subdir/test3.py"]),
+            (r".\subdir\.\*.py", ["subdir/test3.py"]),
+        ):
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertListEqual(
+                    sorted(chunk.content[0].text.splitlines()),
+                    [
+                        os.path.join(self.temp_dir, *name.split("/"))
+                        for name in expected
+                    ],
+                )
+
+    async def test_dot_prefixed_names_are_preserved(self) -> None:
+        """Normalizing '.' must not strip dots from hidden names."""
+        directory = os.path.join(self.temp_dir, ".config")
+        os.makedirs(directory)
+        path = os.path.join(directory, ".env")
+        with open(path, "w", encoding="utf-8"):
+            pass
+
+        result = await self.glob_tool(
+            pattern="./.config/./.env",
+            path=self.temp_dir,
+        )
+
+        self.assertEqual(result.content[0].text, path)
+
+    async def test_default_head_limit_truncates_large_result(self) -> None:
+        """Test the default head limit returns the newest 250 files."""
+        expected_paths = []
+        for index in range(251):
+            file_path = os.path.join(self.temp_dir, f"match_{index}.log")
+            with open(file_path, "w", encoding="utf-8"):
+                pass
+            os.utime(file_path, (index, index))
+            expected_paths.append(file_path)
+
+        chunk = await self.glob_tool(
+            pattern="match_*.log",
+            path=self.temp_dir,
+        )
+
+        expected = "\n".join(reversed(expected_paths[1:]))
+        expected += "\n\n[Showing results with pagination = limit: 250]"
+        self.assertEqual(chunk.content[0].text, expected)
+
+    async def test_head_limit_zero_returns_all_results(self) -> None:
+        """Test zero disables the default head limit."""
+        expected_paths = []
+        for index in range(4):
+            file_path = os.path.join(self.temp_dir, f"unlimited_{index}.txt")
+            with open(file_path, "w", encoding="utf-8"):
+                pass
+            os.utime(file_path, (index, index))
+            expected_paths.append(file_path)
+
+        chunk = await self.glob_tool(
+            pattern="unlimited_*.txt",
+            path=self.temp_dir,
+            head_limit=0,
+        )
+        self.assertEqual(
+            chunk.content[0].text,
+            "\n".join(reversed(expected_paths)),
+        )
+
+    async def test_negative_head_limit_returns_error(self) -> None:
+        """Test a negative head limit returns an error."""
+        chunk = await self.glob_tool(
+            pattern="*.py",
+            path=self.temp_dir,
+            head_limit=-1,
+        )
+
+        self.assertEqual(chunk.state, "error")
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: head_limit must be non-negative.",
+        )
+
+    async def test_offset_paginates_results(self) -> None:
+        """Test that callers can retrieve later pages of results."""
+        expected_paths = []
+        for index in range(6):
+            file_path = os.path.join(self.temp_dir, f"paged_{index}.txt")
+            with open(file_path, "w", encoding="utf-8"):
+                pass
+            os.utime(file_path, (index, index))
+            expected_paths.append(file_path)
+
+        second_page = await self.glob_tool(
+            pattern="paged_*.txt",
+            path=self.temp_dir,
+            head_limit=2,
+            offset=2,
+        )
+        self.assertEqual(
+            second_page.content[0].text,
+            f"{expected_paths[3]}\n{expected_paths[2]}\n\n"
+            "[Showing results with pagination = limit: 2, offset: 2]",
+        )
+
+        last_page = await self.glob_tool(
+            pattern="paged_*.txt",
+            path=self.temp_dir,
+            head_limit=2,
+            offset=4,
+        )
+        self.assertEqual(
+            last_page.content[0].text,
+            "\n".join([expected_paths[1], expected_paths[0]]),
+        )
+
+    async def test_negative_offset_returns_error(self) -> None:
+        """Test a negative offset returns an error."""
+        chunk = await self.glob_tool(
+            pattern="*.py",
+            path=self.temp_dir,
+            offset=-1,
+        )
+
+        self.assertEqual(chunk.state, "error")
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: offset must be non-negative.",
+        )
 
     async def test_windows_style_separator_pattern(self) -> None:
         """Test glob patterns that use backslashes as path separators."""
@@ -140,7 +335,10 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(chunk.state, "running")
-        self.assertIn("No files found", chunk.content[0].text)
+        self.assertEqual(
+            chunk.content[0].text,
+            "No files found matching pattern: *.nonexistent",
+        )
 
     async def test_match_rule_path(self) -> None:
         """Test match_rule with path patterns."""

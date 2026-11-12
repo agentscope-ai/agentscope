@@ -8,11 +8,7 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import Field
 
 from .. import _events as me
-from .._base import (
-    ModelDisconnectedError,
-    RealtimeModelBase,
-    TruncationSupport,
-)
+from .._base import ModelDisconnectedError, RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ...credential import XAICredential
@@ -57,8 +53,12 @@ class XAIRealtimeModel(RealtimeModelBase):
         )
 
     type = "xai_realtime"
-    truncation = TruncationSupport.NONE
     supports_text_input = True
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """xAI always reports settled input transcription events."""
+        return True
 
     def __init__(
         self,
@@ -99,6 +99,11 @@ class XAIRealtimeModel(RealtimeModelBase):
     ) -> None:
         """Open the WebSocket and send the session config."""
         import websockets
+
+        # Stop the previous session and drop its terminal events.
+        await self.close()
+        while not self._queue.empty():
+            self._queue.get_nowait()
 
         if kwargs.get("turn_detection_disabled"):
             self.parameters = self.parameters.model_copy(
@@ -199,14 +204,6 @@ class XAIRealtimeModel(RealtimeModelBase):
         """Cancel the reply in flight, if any."""
         if self._response_id:
             await self._send({"type": "response.cancel"})
-
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """No-op: the protocol documents no truncate frame."""
 
     # ------------------------------------------------------------------
     # Wire
@@ -332,6 +329,9 @@ class XAIRealtimeModel(RealtimeModelBase):
                     item_id=item_id,
                     text=data.get("transcript", ""),
                 )
+
+            case "conversation.item.input_audio_transcription.failed":
+                return me.InputTranscriptionFailedEvent(item_id=item_id)
 
             case "input_audio_buffer.speech_started":
                 return me.SpeechStartedEvent(

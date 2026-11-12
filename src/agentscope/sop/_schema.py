@@ -43,7 +43,23 @@ class AgentLike(PipelineProtocol, Protocol):
         structured_schema: Type[BaseModel] | None = None,
         yield_final_msg: bool = False,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply to the given inputs and stream what happens."""
+        """Reply to the given inputs and stream what happens.
+
+        Args:
+            inputs:
+                What to reply to, or the answer a parked reply was
+                waiting for. ``None`` continues from what is already
+                in context.
+            structured_schema (`Type[BaseModel] | None`, optional):
+                What the reply must end in, if anything.
+            yield_final_msg (`bool`, defaults to `False`):
+                Whether to yield the finished reply as well as the
+                events that built it.
+
+        Yields:
+            `AgentEvent | Msg`:
+                What happens as it happens.
+        """
 
 
 class SOPStepBase(ABC):
@@ -102,6 +118,10 @@ class SOPStepBase(ABC):
                 This step's record in the run. Read it to pick up where
                 the last call stopped; write its phase, submission and
                 verdicts as the attempt goes.
+
+        Yields:
+            `AgentEvent | Msg`:
+                What the attempt does as it does it.
         """
 
     def record(
@@ -116,6 +136,17 @@ class SOPStepBase(ABC):
         A refusal clears the submission, so the next attempt starts from
         the work rather than from the judging. Whether there is a next
         attempt is the engine's call.
+
+        Args:
+            state (`SOPStepRunState`):
+                The step's record in the run, which this writes to.
+            passed (`bool`):
+                Whether the attempt is accepted.
+            message (`str`, defaults to `""`):
+                Why it was refused, handed to the executor verbatim
+                on the next attempt.
+            verifier (`str`, defaults to `""`):
+                Who decided.
         """
         state.verifications.append(
             VerificationResult(

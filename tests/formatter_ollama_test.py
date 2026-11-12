@@ -2,10 +2,14 @@
 """Comprehensive formatter unit tests for OllamaChatFormatter and
 OllamaMultiAgentFormatter, with exact ground-truth comparisons.
 """
+import base64
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
+    Msg,
     UserMsg,
     AssistantMsg,
     SystemMsg,
@@ -15,6 +19,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     Base64Source,
+    URLSource,
     ThinkingBlock,
     HintBlock,
 )
@@ -266,6 +271,137 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_parallel_tool_calls_share_one_message(
+        self,
+    ) -> None:
+        """Parallel tool calls stay on one assistant message. Ollama merges
+        consecutive same-role messages by appending only their content, so
+        a tool call on a second assistant message would be dropped."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Checking both cities."),
+                    ToolCallBlock(
+                        id="call_paris",
+                        name="get_weather",
+                        input='{"city": "Paris"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_london",
+                        name="get_weather",
+                        input='{"city": "London"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_paris",
+                        name="get_weather",
+                        output="Paris: 18C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_london",
+                        name="get_weather",
+                        output="London: 12C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Paris is warmer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Checking both cities.",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"city": "London"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_weather",
+                    "content": "Paris: 18C",
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_weather",
+                    "content": "London: 12C",
+                },
+                {"role": "assistant", "content": "Paris is warmer."},
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_content_between_parallel_tool_calls(
+        self,
+    ) -> None:
+        """Text and images between two tool calls of one turn join the
+        message that carries the turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="First the forecast."),
+                    ToolCallBlock(
+                        id="c1",
+                        name="forecast",
+                        input='{"city": "Paris"}',
+                    ),
+                    TextBlock(text="Then the map."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                    ToolCallBlock(
+                        id="c2",
+                        name="radar",
+                        input='{"city": "Paris"}',
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "First the forecast.\nThen the map.",
+                    "images": [self.image_b64],
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "forecast",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function": {
+                                "name": "radar",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_base64_image(self) -> None:
         """Base64 image is placed in the 'images' list as a raw base64
         string."""
@@ -295,6 +431,97 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_formatters_read_percent_encoded_file_urls(self) -> None:
+        """Local file URLs are decoded before their paths are opened."""
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "image #1.png"
+            image_path.write_bytes(base64.b64decode(self.image_b64))
+            msgs = [
+                UserMsg(
+                    name="user",
+                    content=[
+                        TextBlock(text="What is this?"),
+                        DataBlock(
+                            source=URLSource(
+                                url=image_path.as_uri(),
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            ]
+
+            chat_result = await OllamaChatFormatter().format(msgs)
+            multiagent_result = await OllamaMultiAgentFormatter().format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "What is this?",
+                    "images": [self.image_b64],
+                },
+            ],
+            chat_result,
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\nWhat is this?\n</history>"
+                    ),
+                    "images": [self.image_b64],
+                },
+            ],
+            multiagent_result,
+        )
+
+    async def test_formatters_preserve_local_file_uri_characters(self) -> None:
+        """Decode Unicode and literal percent escapes once, preserving '+'."""
+        with TemporaryDirectory() as directory:
+            for filename in ("caf\u00e9.png", "image%20.png", "image+1.png"):
+                path = Path(directory) / filename
+                path.write_bytes(base64.b64decode(self.image_b64))
+                # URI paths allow a literal '+'; form decoding would lose it.
+                url = path.as_uri().replace("%2B", "+")
+                source = URLSource(url=url, media_type="image/png")
+                self.assertEqual(str(source.url), url)
+                msgs = [
+                    UserMsg(
+                        name="user",
+                        content=[DataBlock(source=source)],
+                    ),
+                ]
+                for formatter, expected_content in (
+                    (OllamaChatFormatter(), ""),
+                    (
+                        OllamaMultiAgentFormatter(),
+                        "# Conversation History\n"
+                        "The content between <history></history> tags "
+                        "contains your conversation history\n"
+                        "<history>\nuser:\n</history>",
+                    ),
+                ):
+                    with self.subTest(
+                        filename=filename,
+                        formatter=type(formatter).__name__,
+                    ):
+                        result = await formatter.format(msgs)
+                        self.assertEqual(
+                            result,
+                            [
+                                {
+                                    "role": "user",
+                                    "content": expected_content,
+                                    "images": [self.image_b64],
+                                },
+                            ],
+                        )
 
     async def test_chat_formatter_base64_image_in_tool_result(
         self,
@@ -375,6 +602,97 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "screenshot", "arguments": {}}},
+                        {"function": {"name": "get_title", "arguments": {}}},
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "screenshot",
+                    "content": (
+                        "Screenshot taken.\n"
+                        "<system-reminder>A(n) image file is returned and "
+                        "will be presented to you with the identifier "
+                        f"[{_FIXED_ID}].</system-reminder>"
+                    ),
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_title",
+                    "content": "Example Domain",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "<system-reminder>The multimodal data "
+                        "and their identifiers are listed as follows:\n"
+                        f"- {_FIXED_ID} (image file): \n"
+                        "</system-reminder>"
+                    ),
+                    "images": [self.image_b64],
+                },
+                {
+                    "role": "assistant",
+                    "content": "The page is Example Domain.",
+                },
+            ],
+            res,
+        )
+
     # ------------------------------------------------------------------
     # OllamaMultiAgentFormatter tests
     # ------------------------------------------------------------------
@@ -430,6 +748,131 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
+
+    async def test_multiagent_formatter_image_only_message_kept(self) -> None:
+        """An agent message carrying only an image (no text) is preserved.
+
+        Regression test: the image-only turn used to be dropped because the
+        guard only considered text blocks.
+        """
+        fmt = OllamaMultiAgentFormatter()
+        msgs = [
+            Msg(
+                name="",
+                role="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_image_history_prompt(self) -> None:
+        """Emit the history prompt once, on the first textual history."""
+        fmt = OllamaMultiAgentFormatter(
+            conversation_history_prompt="Custom history instructions\n",
+        )
+        hint = AssistantMsg(
+            name="assistant",
+            content=[HintBlock(hint="Continue")],
+        )
+        hint_output = [{"role": "user", "content": "Continue"}]
+        tool = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="c1", name="inspect", input="{}"),
+                ToolResultBlock(
+                    id="c1",
+                    name="inspect",
+                    output="Done",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        tool_output: list[dict] = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "inspect", "arguments": {}}},
+                ],
+            },
+            {"role": "tool", "tool_name": "inspect", "content": "Done"},
+        ]
+        separators: list[tuple[Msg, list[dict]]] = [
+            (hint, hint_output),
+            (tool, tool_output),
+        ]
+        for name in ("", "viewer"):
+            for separator, expected_separator in separators:
+                with self.subTest(name=name, separator=separator.content):
+                    msgs = [
+                        UserMsg(
+                            name=name,
+                            content=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data=self.image_b64,
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        separator,
+                        UserMsg(name="user", content="Describe the image"),
+                        hint,
+                        UserMsg(name="user", content="More details"),
+                    ]
+                    first_content = (
+                        f"{fmt.conversation_history_prompt}"
+                        f"<history>\n{name}:\n</history>"
+                        if name
+                        else ""
+                    )
+                    later_prompt = (
+                        "" if name else fmt.conversation_history_prompt
+                    )
+                    self.assertListEqual(
+                        [
+                            {
+                                "role": "user",
+                                "content": first_content,
+                                "images": [self.image_b64],
+                            },
+                            *expected_separator,
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{later_prompt}<history>\n"
+                                    "user:\nDescribe the image\n</history>"
+                                ),
+                            },
+                            *hint_output,
+                            {
+                                "role": "user",
+                                "content": (
+                                    "<history>\nuser:\n"
+                                    "More details\n</history>"
+                                ),
+                            },
+                        ],
+                        await fmt.format(msgs),
+                    )
 
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
@@ -505,12 +948,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                                 "arguments": {"arg": "value1"},
                             },
                         },
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {
                             "function": {
                                 "name": "func_2",
