@@ -444,6 +444,7 @@ class OpenAIParseTest(unittest.TestCase):
                     "created_at": AnyString(),
                     "finished_at": None,
                 },
+                "non_blocking": False,
             },
         )
 
