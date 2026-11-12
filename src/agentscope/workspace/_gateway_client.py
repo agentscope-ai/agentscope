@@ -41,6 +41,7 @@ from ..permission import (
     PermissionDecision,
 )
 from ..tool import ToolBase, ToolChunk
+from ..tool._utils import _sanitize_mcp_tool_name
 from ._gateway_shim import (
     BODY_INLINE_LIMIT,
     SANDBOX_TMP_DIR,
@@ -99,7 +100,12 @@ class GatewayMCPTool(ToolBase):
         self.mcp_name = mcp_name
         self._agent_id = agent_id
         self._session_id = session_id
-        self.name = f"mcp__{mcp_name}__{tool.name}"
+        # LLM providers enforce ^[a-zA-Z0-9_-]+$ on tool names, and the
+        # upstream name comes from the MCP server, so it may contain
+        # dots or colons. Sanitize it the way MCPTool does — ``_tool``
+        # keeps the original for the gateway URL.
+        sanitized_tool = _sanitize_mcp_tool_name(tool.name)
+        self.name = f"mcp__{mcp_name}__{sanitized_tool}"
         self.description = tool.description or ""
 
         schema = dict(tool.input_schema) if tool.input_schema else {}

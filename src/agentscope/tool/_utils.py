@@ -1,12 +1,36 @@
 # -*- coding: utf-8 -*-
 """The tool module utils."""
 import inspect
+import re
 import typing
 from functools import partial
 from typing import Any, Dict, Callable
 
 from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
+
+#: Characters LLM providers accept in a tool name, inverted.
+_PROVIDER_UNSAFE_TOOL_NAME = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _sanitize_mcp_tool_name(name: str) -> str:
+    """Make an upstream MCP tool name acceptable to LLM providers.
+
+    Provider tool names must match ``^[a-zA-Z0-9_-]+$``, but an MCP
+    server may declare dots, colons and the like. Illegal characters
+    become ``x`` rather than ``_`` so the sanitized name cannot collide
+    with the ``__`` that separates server and tool in
+    ``mcp__<server>__<tool>``.
+
+    Args:
+        name (`str`):
+            The tool name as the MCP server declares it.
+
+    Returns:
+        `str`:
+            The name safe to compose into a provider-facing tool name.
+    """
+    return _PROVIDER_UNSAFE_TOOL_NAME.sub("x", name)
 
 
 def _get_callable_name(tool_func: Callable) -> str:
