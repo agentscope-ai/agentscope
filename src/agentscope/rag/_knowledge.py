@@ -236,6 +236,9 @@ class KnowledgeBase:
         Raises:
             `ValueError`:
                 If ``top_k`` is not positive.
+            `RuntimeError`:
+                If the embedding model returns a number of vectors that
+                does not match the number of queries.
         """
         if top_k < 1:
             raise ValueError("top_k must be positive.")
@@ -250,6 +253,15 @@ class KnowledgeBase:
 
         await self.ensure_collection()
         response = await self._embedding_model(queries)
+
+        # One vector per query: a short response would otherwise drop the
+        # trailing queries from the search fan-out without telling anyone,
+        # so the caller would read a partial answer as a complete one.
+        if len(response.embeddings) != len(queries):
+            raise RuntimeError(
+                f"Embedding model returned {len(response.embeddings)} "
+                f"vectors for {len(queries)} queries.",
+            )
 
         results_per_query = await asyncio.gather(
             *(
