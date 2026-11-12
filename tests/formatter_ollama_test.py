@@ -271,6 +271,137 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_parallel_tool_calls_share_one_message(
+        self,
+    ) -> None:
+        """Parallel tool calls stay on one assistant message. Ollama merges
+        consecutive same-role messages by appending only their content, so
+        a tool call on a second assistant message would be dropped."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Checking both cities."),
+                    ToolCallBlock(
+                        id="call_paris",
+                        name="get_weather",
+                        input='{"city": "Paris"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_london",
+                        name="get_weather",
+                        input='{"city": "London"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_paris",
+                        name="get_weather",
+                        output="Paris: 18C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_london",
+                        name="get_weather",
+                        output="London: 12C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Paris is warmer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Checking both cities.",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"city": "London"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_weather",
+                    "content": "Paris: 18C",
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_weather",
+                    "content": "London: 12C",
+                },
+                {"role": "assistant", "content": "Paris is warmer."},
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_content_between_parallel_tool_calls(
+        self,
+    ) -> None:
+        """Text and images between two tool calls of one turn join the
+        message that carries the turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="First the forecast."),
+                    ToolCallBlock(
+                        id="c1",
+                        name="forecast",
+                        input='{"city": "Paris"}',
+                    ),
+                    TextBlock(text="Then the map."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                    ToolCallBlock(
+                        id="c2",
+                        name="radar",
+                        input='{"city": "Paris"}',
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "First the forecast.\nThen the map.",
+                    "images": [self.image_b64],
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "forecast",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function": {
+                                "name": "radar",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_base64_image(self) -> None:
         """Base64 image is placed in the 'images' list as a raw base64
         string."""
@@ -526,12 +657,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                     "content": "",
                     "tool_calls": [
                         {"function": {"name": "screenshot", "arguments": {}}},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {"function": {"name": "get_title", "arguments": {}}},
                     ],
                 },
@@ -823,12 +948,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                                 "arguments": {"arg": "value1"},
                             },
                         },
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {
                             "function": {
                                 "name": "func_2",

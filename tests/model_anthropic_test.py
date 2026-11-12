@@ -24,6 +24,8 @@ from agentscope.message import (
     AssistantMsg,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
     ThinkingBlock,
 )
 from agentscope.model import AnthropicChatModel, ChatUsage
@@ -270,6 +272,77 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                     ),
                 ],
             ),
+        )
+
+    async def test_tool_result_error_flag_on_wire(self) -> None:
+        """The SDK sends the error flag only for failed tool results."""
+        captured = []
+        backend = (
+            httpx2
+            if issubclass(DefaultAsyncHttpxClient, httpx2.AsyncClient)
+            else httpx
+        )
+
+        def handle(request: Any) -> Any:
+            captured.append(json.loads(request.content))
+            return backend.Response(
+                200,
+                json={
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "offline",
+                    "content": [{"type": "text", "text": "ok"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        async with DefaultAsyncHttpxClient(
+            transport=backend.MockTransport(handle),
+        ) as client:
+            model = AnthropicChatModel(
+                credential=AnthropicCredential(api_key="offline-test"),
+                model="offline",
+                stream=False,
+                client_kwargs={"http_client": client},
+            )
+            for state in (ToolResultState.ERROR, ToolResultState.SUCCESS):
+                await model(
+                    [
+                        AssistantMsg(
+                            name="assistant",
+                            content=[
+                                ToolCallBlock(
+                                    id="call_1",
+                                    name="validate",
+                                    input="{}",
+                                ),
+                                ToolResultBlock(
+                                    id="call_1",
+                                    name="validate",
+                                    output="failed",
+                                    state=state,
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+
+        expected_result = {
+            "type": "tool_result",
+            "tool_use_id": "call_1",
+            "content": [{"type": "text", "text": "failed"}],
+        }
+        self.assertEqual(
+            [body["messages"][-1] for body in captured],
+            [
+                {
+                    "role": "user",
+                    "content": [{**expected_result, "is_error": True}],
+                },
+                {"role": "user", "content": [expected_result]},
+            ],
         )
 
     async def test_thinking_response(self) -> None:
