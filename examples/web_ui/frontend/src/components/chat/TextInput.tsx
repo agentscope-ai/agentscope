@@ -90,6 +90,8 @@ interface TextInputProps {
 	 * appending another turn to the queue.
 	 */
 	phase?: ReplyPhase;
+	/** Allow sending while a reply is parked awaiting structured input. */
+	acceptsInput?: boolean;
 	/** Number of accepted user turns that have not started a reply yet. */
 	queuedCount?: number;
 	onInterrupt?: () => void;
@@ -167,6 +169,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			phase = 'idle',
+			acceptsInput = false,
 			queuedCount = 0,
 			onInterrupt,
 			voiceState = 'idle',
@@ -198,8 +201,11 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
 		const measureRef = useRef<HTMLSpanElement>(null);
+		const ghostColumnRef = useRef<HTMLDivElement>(null);
 		/** ``true`` — textarea takes the full width, buttons drop to their own row. */
 		const [isStacked, setIsStacked] = useState(false);
+		/** Width of the column the ghost measures into; changes re-run both measurements. */
+		const [composerWidth, setComposerWidth] = useState(0);
 		const asrContextRef = useRef({ key: asrResetKey, mounted: true });
 
 		useEffect(() => {
@@ -321,7 +327,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			textarea.style.height = 'auto';
 			textarea.style.height = `${textarea.scrollHeight}px`;
 			// Stacking widens the textarea, so the line count has to be redone.
-		}, [value, isStacked]);
+		}, [value, isStacked, composerWidth]);
 
 		// Measured on the ghost, not the textarea: stacking widens the textarea, so
 		// measuring it would flip-flop (wraps → stack → fits → unstack → wraps).
@@ -329,7 +335,21 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			const ghost = measureRef.current;
 			if (!ghost) return;
 			setIsStacked(ghost.scrollHeight > LINE_HEIGHT_PX);
-		}, [value]);
+		}, [value, composerWidth]);
+
+		// Both measurements above are keyed on the draft, so a width change without an
+		// edit leaves the layout stale — the draft can wrap at one width and not the
+		// other. Track the measured column's width and re-run them when it moves.
+		useLayoutEffect(() => {
+			const column = ghostColumnRef.current;
+			if (!column) return;
+			const observer = new ResizeObserver((entries) => {
+				const entry = entries[0];
+				if (entry) setComposerWidth(entry.contentRect.width);
+			});
+			observer.observe(column);
+			return () => observer.disconnect();
+		}, []);
 
 		// Calculate autocomplete suggestion using useMemo
 		const suggestion = useMemo(() => {
@@ -360,7 +380,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const handleSend = async () => {
-			if (!hasContent || disabled || hasProcessing || submitting || speechInputBusy) return;
+			if (
+				!hasContent ||
+				disabled ||
+				hasProcessing ||
+				submitting ||
+				speechInputBusy ||
+				(acceptsInput && files.length > 0)
+			)
+				return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -439,9 +467,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			if (hasContent || replyActive || submitting) {
 				return {
 					icon: submitting ? Loader2 : ArrowUp,
-					tooltip: replyActive ? t('textInput.queue') : t('textInput.send'),
+					tooltip:
+						replyActive && !acceptsInput ? t('textInput.queue') : t('textInput.send'),
 					disabled:
-						disabled || !hasContent || hasProcessing || submitting || speechInputBusy,
+						disabled ||
+						!hasContent ||
+						hasProcessing ||
+						submitting ||
+						speechInputBusy ||
+						(acceptsInput && files.length > 0),
 					variant: 'default',
 					onClick: handleSend,
 				};
@@ -569,7 +603,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							aria-hidden
 							className="pointer-events-none invisible absolute inset-x-0 top-0 flex h-0 items-start overflow-hidden"
 						>
-							<div className="min-w-0 flex-1">
+							<div ref={ghostColumnRef} className="min-w-0 flex-1">
 								{/* Padding-x and line-height decide where text wraps, so they
 								    match the textarea; padding-y is left off on purpose. */}
 								<span

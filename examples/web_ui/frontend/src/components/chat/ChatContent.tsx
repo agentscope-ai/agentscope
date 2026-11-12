@@ -14,9 +14,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import { ClientToolsMenu } from '@/components/chat/ClientToolsMenu';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
+import { ManualClientToolCard } from '@/components/chat/ManualClientToolCard';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
 import { DiffStats } from '@/components/chat/tool-renderers/_shared';
@@ -37,6 +39,10 @@ import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
+import {
+	getClientExternalToolRegistration,
+	type ClientExternalToolResult,
+} from '@/lib/client-external-tools';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 import { cn } from '@/lib/utils';
 
@@ -93,6 +99,11 @@ interface ChatContentProps {
 		confirm: boolean,
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
+	) => Promise<void>;
+	onClientExternalToolResult: (
+		toolCall: ToolCallBlock,
+		result: ClientExternalToolResult,
+		replyId: string,
 	) => Promise<void>;
 	onExternalExecutionResult: (event: ExternalExecutionResultEvent) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
@@ -156,6 +167,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	disabled,
 	onSend,
 	onUserConfirm,
+	onClientExternalToolResult,
 	onExternalExecutionResult,
 	autoComplete,
 	className,
@@ -226,6 +238,34 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	const pendingHitlCalls = useMemo(() => getPendingHitlCalls(msgs), [msgs]);
 	const toConfirmedToolCalls = pendingHitlCalls.filter((call) => call.kind === 'confirmation');
 	const externalToolCalls = pendingHitlCalls.filter((call) => call.kind === 'external_execution');
+
+	const pendingExternalTool = externalToolCalls[0];
+	const pendingExternalToolRegistration = pendingExternalTool
+		? getClientExternalToolRegistration(pendingExternalTool.toolCall.name)
+		: undefined;
+	const PendingExternalToolComponent = pendingExternalToolRegistration?.PendingComponent;
+	const isManualClientTool =
+		pendingExternalTool?.toolCall.name.startsWith('client__') === true &&
+		!PendingExternalToolComponent;
+	const acceptsInput =
+		Boolean(pendingExternalToolRegistration?.composerResult) &&
+		(!pendingExternalToolRegistration?.canCompose ||
+			Boolean(
+				pendingExternalTool &&
+				pendingExternalToolRegistration.canCompose(pendingExternalTool.toolCall),
+			));
+
+	const handleSend = async (content: ContentBlock[]) => {
+		const pending = pendingExternalTool;
+		if (!pending || !acceptsInput) {
+			await onSend(content);
+			return;
+		}
+
+		const result = pendingExternalToolRegistration?.composerResult?.(content, pending.toolCall);
+		if (result === null || result === undefined) return;
+		await onClientExternalToolResult(pending.toolCall, result, pending.replyId);
+	};
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
@@ -363,13 +403,43 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									)
 								}
 							/>
-						) : externalToolCalls.length > 0 ? (
-							<ExternalExecutionCard
-								key={`${externalToolCalls[0].replyId}:${externalToolCalls[0].toolCall.id}`}
-								replyId={externalToolCalls[0].replyId}
-								toolCall={externalToolCalls[0].toolCall}
-								onResult={onExternalExecutionResult}
-							/>
+						) : pendingExternalTool ? (
+							PendingExternalToolComponent ? (
+								<PendingExternalToolComponent
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									toolCall={pendingExternalTool.toolCall}
+									onSubmit={(result) =>
+										onClientExternalToolResult(
+											pendingExternalTool.toolCall,
+											result,
+											pendingExternalTool.replyId,
+										)
+									}
+									onCancel={onInterrupt}
+									cancelling={phase === 'interrupting'}
+								/>
+							) : isManualClientTool ? (
+								<ManualClientToolCard
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									toolCall={pendingExternalTool.toolCall}
+									onSubmit={(result) =>
+										onClientExternalToolResult(
+											pendingExternalTool.toolCall,
+											result,
+											pendingExternalTool.replyId,
+										)
+									}
+									onCancel={onInterrupt}
+									cancelling={phase === 'interrupting'}
+								/>
+							) : (
+								<ExternalExecutionCard
+									key={`${pendingExternalTool.replyId}:${pendingExternalTool.toolCall.id}`}
+									replyId={pendingExternalTool.replyId}
+									toolCall={pendingExternalTool.toolCall}
+									onResult={onExternalExecutionResult}
+								/>
+							)
 						) : (
 							footerSlot
 						)}
@@ -392,12 +462,13 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					<TextInput
 						key={JSON.stringify([agentId, sessionId])}
 						className="min-w-full max-w-full w-full rounded-[32px] bg-muted p-1"
-						onSend={onSend}
+						onSend={handleSend}
 						disabled={disabled}
 						autoComplete={autoComplete}
-						allowedInputTypes={allowedInputTypes}
+						allowedInputTypes={acceptsInput ? [] : allowedInputTypes}
 						fileProcessor={fileProcessor}
 						phase={phase}
+						acceptsInput={acceptsInput}
 						queuedCount={queuedCount}
 						onInterrupt={onInterrupt}
 						voiceState={voiceState}
@@ -417,39 +488,42 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									value={cwd}
 									onChange={onCwdChange}
 								/>
-								{git && (
-									<Button
-										className="font-mono"
-										variant="secondary"
-										size="sm"
-										onClick={() => void onRefreshGit?.()}
-										title={t('workdir.gitTooltip', {
-											staged: git.staged,
-											unstaged: git.unstaged,
-											untracked: git.untracked,
-										})}
-									>
-										<GitBranch />
-										{/* A detached HEAD has no branch to name, so
-										    fall back to the commit it sits on. The
-										    server sends no git at all when it has
-										    neither. */}
-										{git.branch ?? git.head?.slice(0, 7)}
-										{git.ahead !== null && git.ahead > 0 && (
-											<span className="text-xs">↑{git.ahead}</span>
-										)}
-										{git.behind !== null && git.behind > 0 && (
-											<span className="text-xs">↓{git.behind}</span>
-										)}
-										{/* Renders nothing when both are zero, so a
-										    clean tree shows just the branch. */}
-										<DiffStats
-											className="text-xs font-mono"
-											insertions={git.insertions}
-											deletions={git.deletions}
-										/>
-									</Button>
-								)}
+								<div className="flex items-center gap-1.5">
+									<ClientToolsMenu agentId={agentId} sessionId={sessionId} />
+									{git && (
+										<Button
+											className="font-mono"
+											variant="secondary"
+											size="sm"
+											onClick={() => void onRefreshGit?.()}
+											title={t('workdir.gitTooltip', {
+												staged: git.staged,
+												unstaged: git.unstaged,
+												untracked: git.untracked,
+											})}
+										>
+											<GitBranch />
+											{/* A detached HEAD has no branch to name, so
+											    fall back to the commit it sits on. The
+											    server sends no git at all when it has
+											    neither. */}
+											{git.branch ?? git.head?.slice(0, 7)}
+											{git.ahead !== null && git.ahead > 0 && (
+												<span className="text-xs">↑{git.ahead}</span>
+											)}
+											{git.behind !== null && git.behind > 0 && (
+												<span className="text-xs">↓{git.behind}</span>
+											)}
+											{/* Renders nothing when both are zero, so a
+											    clean tree shows just the branch. */}
+											<DiffStats
+												className="text-xs font-mono"
+												insertions={git.insertions}
+												deletions={git.deletions}
+											/>
+										</Button>
+									)}
+								</div>
 							</div>
 						}
 					/>
