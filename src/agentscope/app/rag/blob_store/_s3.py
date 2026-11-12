@@ -258,12 +258,13 @@ class S3BlobStore(BlobStoreBase):
 
         One ``HEAD`` — the same call :meth:`exists` makes, so a caller
         that needs both can ask for the size and treat a number as
-        proof of existence.
+        proof of existence. Like :meth:`open`, use the URI's bucket so
+        documents in a legacy bucket remain downloadable after migration.
         """
-        key = self._key_from_uri(uri, self._bucket)
+        bucket, key = self._parse_uri(uri)
         async with self._client() as s3:
             try:
-                head = await s3.head_object(Bucket=self._bucket, Key=key)
+                head = await s3.head_object(Bucket=bucket, Key=key)
             except Exception:  # noqa: BLE001 — see ``exists``
                 return None
         return head.get("ContentLength")
