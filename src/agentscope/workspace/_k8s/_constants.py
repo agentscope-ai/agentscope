@@ -7,6 +7,7 @@ be derived: image, port, apt deps, workdir/gateway_home, and the
 K8s-name sanitiser.
 """
 
+import hashlib
 import re
 
 #: Default base image. Debian-slim with Python 3.11 — provides
@@ -38,5 +39,17 @@ def _k8s_safe_name(workspace_id: str, prefix: str = "as-ws-") -> str:
     Rules: lowercase alphanumeric + hyphens, max 63 characters,
     must not end with a hyphen.
     """
-    name = prefix + _K8S_UNSAFE_RE.sub("-", workspace_id.lower())
+    lowered = workspace_id.lower()
+    sanitized = _K8S_UNSAFE_RE.sub("-", lowered)
+    name = prefix + sanitized
+    # Replacing unsafe characters and truncating are lossy: distinct ids
+    # (long ids sharing a prefix, or ids differing only in characters
+    # replaced by ``-``) would otherwise collapse onto the same Pod name.
+    # When information is lost, append a digest of the original id so
+    # every workspace keeps its own Pod.
+    if sanitized != lowered or len(name) > 63:
+        suffix = hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()[:8]
+        max_head = 63 - len(suffix) - 1
+        head = name[:max_head].rstrip("-")
+        name = f"{head}-{suffix}"
     return name[:63].rstrip("-")
