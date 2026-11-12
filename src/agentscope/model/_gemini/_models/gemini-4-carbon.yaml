@@ -1,0 +1,36 @@
+name: gemini-4-carbon
+label: Gemini 4 Carbon
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - audio/mp3
+  - audio/wav
+  - video/mp4
+  - application/pdf
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+# Input, thinking, and output share this window.
+context_size: 1048576
+# Long decode requires separate continuation support.
+output_size: 65536
+
+parameter_overrides:
+  thinking_enable:
+    title: Thought Summaries
+    description: Show reasoning summaries; this does not disable reasoning.
+  thinking_level:
+    default: medium
+  thinking_budget:
+    hidden: true
+  temperature:
+    hidden: true
+  top_p:
+    hidden: true

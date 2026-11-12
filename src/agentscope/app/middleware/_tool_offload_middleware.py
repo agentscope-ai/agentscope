@@ -6,7 +6,10 @@ When a tool times out, this middleware:
 - Lets the underlying asyncio task keep running via
   :class:`BackgroundTaskManager` (the task is **never cancelled**).
 - Yields a synthetic placeholder :class:`ToolResponse` so the agent
-  loop unblocks immediately.
+  loop unblocks immediately. The placeholder carries structured
+  metadata (``background_task_id`` / ``tool_name`` / ``tool_state`` /
+  ``offloaded_at``) so downstream consumers can distinguish it from a
+  real tool success without parsing the placeholder text.
 - On task completion, pushes the real result as a
   :class:`HintBlock` to the session's inbox via the message bus and
   enqueues a wakeup. From there the result follows the same path as a
@@ -228,7 +231,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # ----------------------------------------------------------------
         # Wrap next_handler in a Task, draining output into a Queue
         # ----------------------------------------------------------------
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue | None = asyncio.Queue()
 
         async def _drain_to_queue() -> ToolResponse | None:
             """Drain output and return the terminal tool outcome."""
@@ -237,16 +240,20 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 async for item in next_handler(**input_kwargs):
                     if isinstance(item, ToolResponse):
                         response = item
-                    await queue.put(item)
+                    if queue is not None:
+                        queue.put_nowait(item)
+                    del item
             except Exception as exc:  # pylint: disable=broad-except
-                await queue.put(exc)
+                if queue is not None:
+                    queue.put_nowait(exc)
                 response = ToolResponse(
                     id=tool_call.id,
                     state=ToolResultState.ERROR,
                     content=[TextBlock(text=str(exc))],
                 )
             finally:
-                await queue.put(_QUEUE_SENTINEL)
+                if queue is not None:
+                    queue.put_nowait(_QUEUE_SENTINEL)
             return response
 
         execution_started_at = time.time()
@@ -293,6 +300,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 yield item
             drain_task.cancel()
             return
+
+        # The deliverer awaits the final response directly. Drop the queue
+        # and foreground references before yielding: nobody consumes further
+        # stream events, and a bounded queue here would deadlock the producer.
+        # No await separates this transition from the producer's queue check.
+        queue = None
+        pre_collected.clear()
+        item = None
 
         # ----------------------------------------------------------------
         # Timeout path: spawn deliverer, register drain_task, yield synthetic
@@ -449,13 +464,23 @@ any tool, which ends the current reasoning loop — just do nothing and end \
 this run.
 </system-reminder>"""
 
+        # Identify background placeholders without parsing their text.
+        offload_metadata = {
+            "background_task_id": task_id,
+            "tool_name": tool_name,
+            "tool_state": "running",
+            "offloaded_at": time.time(),
+        }
+
         yield ToolChunk(
             content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
+            metadata=dict(offload_metadata),
         )
 
         yield ToolResponse(
             content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
             id=tool_call.id,
+            metadata=dict(offload_metadata),
         )

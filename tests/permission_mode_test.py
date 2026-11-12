@@ -458,6 +458,36 @@ class PermissionEngineAcceptEditsModeTest(IsolatedAsyncioTestCase):
 
             shutil.rmtree(parent, ignore_errors=True)
 
+    async def test_accept_edits_within_filesystem_root(self) -> None:
+        """A configured working directory that is a filesystem root
+        (``/`` or ``D:\\``) must cover the paths below it.
+
+        The containment test used to build ``root + os.sep`` — ``"//"``
+        on POSIX and ``"D:\\\\"`` on Windows — so no path under a root
+        ever matched and every edit there asked for permission.
+        """
+        root = os.path.abspath(os.sep)
+        context = PermissionContext(
+            mode=PermissionMode.ACCEPT_EDITS,
+            working_directories={
+                root: AdditionalWorkingDirectory(path=root, source="test"),
+            },
+        )
+        engine = PermissionEngine(context)
+
+        decision = await engine.check_permission(
+            Write(),
+            {
+                "file_path": os.path.join(
+                    root,
+                    "tmp",
+                    "agentscope-root-test.txt",
+                ),
+            },
+        )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
     async def test_accept_edits_outside_working_directory(self) -> None:
         """Edit outside a working directory falls to the default ASK."""
         decision = await self.engine.check_permission(
