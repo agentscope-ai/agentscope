@@ -11,7 +11,14 @@ from pydantic import Field
 from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
 from .._bus_ops import deliver_to_inbox
-from ..storage import AgentData, AgentRecord, SessionConfig, TeamMember
+from ..storage import (
+    AgentData,
+    AgentRecord,
+    AgentChatConfig,
+    SessionConfig,
+    TeamMember,
+    TeamOrigin,
+)
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
@@ -403,12 +410,10 @@ optional):
                 data=AgentData(
                     name=name,
                     system_prompt=system_prompt,
-                    context_config=template.context_config.model_copy(
-                        deep=True,
-                    ),
-                    react_config=template.react_config.model_copy(
-                        deep=True,
-                    ),
+                    chat_config=AgentChatConfig(
+                        context_config=template.context_config,
+                        react_config=template.react_config,
+                    ).model_copy(deep=True),
                 ),
             )
             await self._storage.upsert_agent(self._user_id, worker_agent)
@@ -448,6 +453,7 @@ optional):
                     ),
                 ),
                 state=worker_state,
+                origin=TeamOrigin(),
             )
             await self._storage.set_session_team_id(
                 self._user_id,

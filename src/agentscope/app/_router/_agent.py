@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 
 from ...agent import ContextConfig, ReActConfig
+from ...agent._config import _validate_context_config_ratios
 from ..._utils._common import _flatten_json_schema
 from ..access import ResourceKind
 from ..deps import (
@@ -103,21 +104,21 @@ async def get_agent_schema_v2() -> AgentSchemaV2Response:
 
     - ``id``: server-assigned, marked :class:`SkipJsonSchema` on
       :attr:`AgentData.id`.
-    - ``context_config.summary_schema``: internal structured-output
-      spec for the compression model, dropped below since it is not
-      user-editable and there is no equivalent hook on the Pydantic
-      side.
+    - ``chat_config.context_config.summary_schema``: internal
+      structured-output spec for the compression model, dropped below
+      since it is not user-editable and there is no equivalent hook on
+      the Pydantic side.
 
     ``$ref`` inlining is delegated to
     :func:`~agentscope._utils._common._flatten_json_schema` so the
     frontend can render every property from the response body alone.
 
-    The frontend derives its section grouping (identity / context /
-    react / invite) directly from this schema — top-level scalar
-    properties are the "identity" section, and top-level nested-object
-    properties each become their own section. Adding a new
-    user-editable field to :class:`AgentData` is thus enough to have it
-    appear in the create / edit form without a router change.
+    The frontend derives its section grouping directly from this
+    schema — top-level scalar properties are the "identity" section,
+    and every nested object below a mode block (``chat_config``)
+    becomes its own section. Adding a new user-editable field to
+    :class:`AgentData` is thus enough to have it appear in the create /
+    edit form without a router change.
 
     Returns:
         `AgentSchemaV2Response`:
@@ -127,7 +128,11 @@ async def get_agent_schema_v2() -> AgentSchemaV2Response:
     # ``summary_schema`` is Pydantic's structured-output spec fed to the
     # compression model — internal, not user-editable. No pydantic-side
     # hook covers this deep nested field, so drop it after inlining.
-    context_config = schema.get("properties", {}).get("context_config", {})
+    chat_config = schema.get("properties", {}).get("chat_config", {})
+    context_config = chat_config.get("properties", {}).get(
+        "context_config",
+        {},
+    )
     context_config.get("properties", {}).pop("summary_schema", None)
     return AgentSchemaV2Response(schema=schema)
 
@@ -190,23 +195,25 @@ async def create_agent(
     Raises:
         `HTTPException`: 422 if the request body passes
             :class:`CreateAgentRequest` validation but the resulting
-            :class:`AgentData` fails its cross-field invariants (e.g.
-            ``invite_config.invitable=True`` without a non-empty
-            ``invite_description``). Symmetrical with
-            :func:`update_agent`.
+            :class:`AgentData` fails its cross-field invariants or its
+            context ratios are invalid for the default Agent runtime.
+            Symmetrical with :func:`update_agent`.
     """
     try:
-        data = AgentData(
-            name=body.name,
-            system_prompt=body.system_prompt,
-            context_config=body.context_config,
-            react_config=body.react_config,
-            invite_config=body.invite_config,
+        data = AgentData.model_validate(body.model_dump(exclude_none=True))
+        # Validate writes only, so old invalid records remain repairable.
+        _validate_context_config_ratios(
+            data.chat_config.context_config,
+            inject_runtime_state=True,
         )
-    except ValidationError as exc:
+    except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                exc.errors(include_context=False)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            ),
         ) from exc
     record = AgentRecord(user_id=user_id, data=data)
     agent_id = await storage.upsert_agent(user_id, record)
@@ -242,7 +249,8 @@ async def update_agent(
 
     Raises:
         `HTTPException`: 404 if the agent is not visible to the caller;
-            403 if visible but only readable.
+            403 if visible but only readable; 422 if the merged settings
+            violate configuration constraints.
     """
     owner_id, existing = await access.resolve_for_edit(
         user_id,
@@ -250,20 +258,38 @@ async def update_agent(
         agent_id,
     )
 
-    updates = body.model_dump(exclude_none=True)
+    updates = body.model_dump(exclude_none=True, exclude_unset=True)
+    current_data = existing.data.model_dump()
+    chat_updates = updates.pop("chat_config", None)
+    if chat_updates is not None:
+        updates["chat_config"] = {
+            **current_data["chat_config"],
+            **chat_updates,
+        }
     # ``model_copy(update=...)`` skips validators; re-run
     # ``AgentData.model_validate`` on the merged shape so the
     # ``invite_config`` sub-model's ``invitable ⇒ non-empty description``
     # invariant enforced by ``@model_validator(mode="after")`` produces
-    # an HTTP 422 instead of a stored-but-invalid record.
+    # an HTTP 422 instead of a stored-but-invalid record. Nested updates
+    # replace only the supplied sub-configs. A body still using the
+    # pre-``chat_config`` field names is folded in there too, on top of
+    # the stored block rather than over it.
     try:
         updated_data = AgentData.model_validate(
-            {**existing.data.model_dump(), **updates},
+            {**current_data, **updates},
         )
-    except ValidationError as exc:
+        _validate_context_config_ratios(
+            updated_data.chat_config.context_config,
+            inject_runtime_state=True,
+        )
+    except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                exc.errors(include_context=False)
+                if isinstance(exc, ValidationError)
+                else str(exc)
+            ),
         ) from exc
     updated_agent = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},

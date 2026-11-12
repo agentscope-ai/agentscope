@@ -8,12 +8,18 @@ Tests cover both non-streaming and streaming modes, verifying that:
   1 final ChatResponse (is_last=True) with the full accumulated content.
 """
 import base64
+import copy
 import io
+import json
+import struct
 import wave
+from functools import partial
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
+
+import httpx
 
 from utils import AnyString
 
@@ -34,6 +40,22 @@ A = AnyString()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _wav() -> bytes:
+    """Return a valid silent WAV instead of a header-shaped byte fixture."""
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(24000)
+        audio.writeframes(b"\x00\x00" * 24)
+    return output.getvalue()
+
+
+def _audio(format_name: str) -> dict:
+    """Build a complete audio request accepted by the provider."""
+    return {"voice": "alloy", "format": format_name}
 
 
 def _make_model(stream: bool = False) -> Any:
@@ -173,6 +195,36 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
 
+    async def test_thinking_enable_nullable(self) -> None:
+        """False requests no reasoning, even with a stored effort value."""
+        self.assertIsNone(OpenAIChatModel.Parameters().thinking_enable)
+        mock_create = AsyncMock(return_value=_mock_completion(text="Hi"))
+        self.mock_client.chat.completions.create = mock_create
+
+        for params, disables_thinking in (
+            ({}, False),
+            ({"thinking_enable": None}, False),
+            ({"thinking_enable": False}, True),
+            ({"thinking_enable": True}, False),
+        ):
+            for effort in (None, "none", "high"):
+                with self.subTest(params=params, effort=effort):
+                    self.model.parameters = OpenAIChatModel.Parameters(
+                        **params,
+                        reasoning_effort=effort,
+                    )
+                    await self.model([])
+
+                    expected = {
+                        "model": "gpt-4o",
+                        "messages": [],
+                        "stream": False,
+                    }
+                    expected_effort = "none" if disables_thinking else effort
+                    if expected_effort is not None:
+                        expected["reasoning_effort"] = expected_effort
+                    self.assertEqual(mock_create.call_args.kwargs, expected)
+
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
@@ -196,6 +248,32 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "resp-1")
+
+    async def test_refusal_only_fills_missing_content(self) -> None:
+        """Prefer content when compatible providers also supply refusal."""
+        for content in ("Cannot help.", "Primary answer.", None, ""):
+            with self.subTest(content=content):
+                response = _mock_completion(text=content)
+                response.choices[0].message.refusal = "Cannot help."
+                self.mock_client.chat.completions.create = AsyncMock(
+                    return_value=response,
+                )
+
+                result = await self.model([])
+
+                self.assertEqual(
+                    (result.is_last, result.content),
+                    (
+                        True,
+                        [
+                            TextBlock.model_construct(
+                                id=A,
+                                created_at=A,
+                                text=content or "Cannot help.",
+                            ),
+                        ],
+                    ),
+                )
 
     async def test_default_thinking_enable_not_forwarded(
         self,
@@ -333,6 +411,97 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_audio_response_with_voice_is_a_playable_wav(self) -> None:
+        """``voice`` forces ``pcm16``, and the result must still be a WAV.
+
+        ``voice`` is the only way to make the request carry
+        ``format: pcm16``, so it is the only way to reach the forced wire
+        format. The streaming path already re-wraps those bytes in a WAV
+        header; the non-streaming path must produce the same playable block
+        rather than headerless PCM.
+        """
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="gpt-4o-audio-preview",
+            stream=False,
+            context_size=128_000,
+            parameters=OpenAIChatModel.Parameters(voice="alloy"),
+        )
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        pcm = b"\x01\x02" * 480
+        expected_wav = io.BytesIO()
+        with wave.open(expected_wav, "wb") as wav_writer:
+            wav_writer.setnchannels(1)
+            wav_writer.setsampwidth(2)
+            wav_writer.setframerate(24000)
+            wav_writer.writeframes(pcm)
+        expected_payload = expected_wav.getvalue()
+        expected_audio_data = base64.b64encode(expected_payload).decode()
+
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=_mock_completion(
+                text=None,
+                audio={
+                    "data": base64.b64encode(pcm).decode(),
+                    "transcript": "Hello from audio.",
+                },
+            ),
+        )
+
+        result = await model([])
+
+        # The trigger: asking for audio pins the wire format to raw PCM.
+        sent = mock_client.chat.completions.create.call_args.kwargs
+        self.assertEqual(sent["audio"]["format"], "pcm16")
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Hello from audio.",
+                    ),
+                    DataBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        source=Base64Source.model_construct(
+                            type="base64",
+                            media_type="audio/wav",
+                            data=expected_audio_data,
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        # A well-formed file, not just something a live-stream player will
+        # tolerate: the stdlib ``wave`` module reads it and the samples
+        # round-trip unchanged.
+        blocks = [b for b in result.content if isinstance(b, DataBlock)]
+        source = blocks[0].source
+        self.assertIsInstance(source, Base64Source)
+        payload = base64.b64decode(source.data)
+        self.assertEqual(payload[:4], b"RIFF")
+        self.assertEqual(
+            struct.unpack("<I", payload[4:8])[0],
+            36 + len(pcm),
+        )
+        self.assertEqual(
+            struct.unpack("<I", payload[40:44])[0],
+            len(pcm),
+        )
+        with wave.open(io.BytesIO(payload), "rb") as wav:
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.getsampwidth(), 2)
+            self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm) // 2)
+            self.assertEqual(wav.readframes(wav.getnframes()), pcm)
+
     async def test_thinking_response(
         self,
     ) -> None:
@@ -365,6 +534,126 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
+
+
+class TestOpenAIChatAudioFormat(IsolatedAsyncioTestCase):
+    """The parser and transport agree on the effective non-stream format."""
+
+    async def test_effective_audio_format_and_override_precedence(
+        self,
+    ) -> None:
+        """Instance and per-call extra_body overrides follow SDK precedence."""
+        cases = [
+            ("default_pcm", None, {}, "pcm16"),
+            ("direct_wav", None, {"audio": _audio("wav")}, "wav"),
+            ("instance_wav", {"audio": _audio("wav")}, {}, "wav"),
+            ("instance_mp3", {"audio": _audio("mp3")}, {}, "mp3"),
+            (
+                "extra_beats_direct",
+                {"audio": _audio("wav")},
+                {"audio": _audio("pcm16")},
+                "wav",
+            ),
+            (
+                "per_call_extra",
+                {"audio": _audio("mp3")},
+                {"extra_body": {"audio": _audio("wav")}},
+                "wav",
+            ),
+            (
+                "unrelated_extra",
+                {"offline_option": True},
+                {"audio": _audio("wav")},
+                "wav",
+            ),
+        ]
+        original_wav = _wav()
+        for name, extra_body, generate_kwargs, expected_format in cases:
+            with self.subTest(case=name):
+                before = copy.deepcopy((extra_body, generate_kwargs))
+                captured = []
+
+                def handle(
+                    request: httpx.Request,
+                    recorded: list,
+                ) -> httpx.Response:
+                    data = json.loads(request.content)
+                    recorded.append(data)
+                    wire_format = data["audio"]["format"]
+                    payload = {
+                        "wav": original_wav,
+                        "pcm16": b"\x00\x00" * 24,
+                        "mp3": b"ID3-offline-fixture",
+                    }[wire_format]
+                    return httpx.Response(
+                        200,
+                        json={
+                            "id": "chatcmpl-offline",
+                            "object": "chat.completion",
+                            "created": 1,
+                            "model": "gpt-audio",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": None,
+                                        "audio": {
+                                            "id": "audio_1",
+                                            "data": base64.b64encode(
+                                                payload,
+                                            ).decode(),
+                                            "transcript": "hello",
+                                            "expires_at": 9999999999,
+                                        },
+                                    },
+                                    "finish_reason": "stop",
+                                },
+                            ],
+                            "usage": {
+                                "prompt_tokens": 1,
+                                "completion_tokens": 1,
+                                "total_tokens": 2,
+                            },
+                        },
+                    )
+
+                async with httpx.AsyncClient(
+                    transport=httpx.MockTransport(
+                        partial(handle, recorded=captured),
+                    ),
+                ) as client:
+                    model = OpenAIChatModel(
+                        credential=OpenAICredential(api_key="offline-test"),
+                        model="gpt-audio",
+                        stream=False,
+                        parameters=OpenAIChatModel.Parameters(voice="alloy"),
+                        extra_body=extra_body,
+                        client_kwargs={"http_client": client},
+                    )
+                    response = await model([], **generate_kwargs)
+                self.assertEqual(
+                    captured[0]["audio"]["format"],
+                    expected_format,
+                )
+                source = next(
+                    block.source
+                    for block in response.content
+                    if block.type == "data"
+                )
+                payload = base64.b64decode(source.data)
+                if expected_format == "mp3":
+                    self.assertEqual(source.media_type, "audio/mp3")
+                    self.assertEqual(payload, b"ID3-offline-fixture")
+                else:
+                    self.assertEqual(source.media_type, "audio/wav")
+                    self.assertEqual(payload, original_wav)
+                    with wave.open(io.BytesIO(payload), "rb") as audio:
+                        self.assertEqual(
+                            audio.readframes(24),
+                            b"\x00\x00" * 24,
+                        )
+                self.assertEqual((extra_body, generate_kwargs), before)
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +729,40 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(responses[-1].id, "resp-1")
+
+    async def test_stream_refusal_only_fills_missing_content(self) -> None:
+        """Do not duplicate refusal text in deltas or the final response."""
+        for content in ("Cannot help.", "Primary answer.", None, ""):
+            with self.subTest(content=content):
+                chunk = _make_stream_chunk(delta_text=content)
+                chunk.choices[0].delta.refusal = "Cannot help."
+                self.mock_client.chat.completions.create = AsyncMock(
+                    return_value=_MockAsyncStream([chunk]),
+                )
+
+                responses = [
+                    response async for response in await self.model([])
+                ]
+
+                self.assertEqual(
+                    [
+                        (response.is_last, response.content)
+                        for response in responses
+                    ],
+                    [
+                        (
+                            is_last,
+                            [
+                                TextBlock.model_construct(
+                                    id=A,
+                                    created_at=A,
+                                    text=content or "Cannot help.",
+                                ),
+                            ],
+                        )
+                        for is_last in (False, True)
+                    ],
+                )
 
     async def test_stream_thinking_and_text(
         self,
@@ -703,10 +1026,19 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
             b for b in final.content if isinstance(b, DataBlock)
         )
         wav_bytes = base64.b64decode(final_audio.source.data)
+        self.assertEqual(
+            struct.unpack("<I", wav_bytes[4:8])[0],
+            36 + len(pcm_full),
+        )
+        self.assertEqual(
+            struct.unpack("<I", wav_bytes[40:44])[0],
+            len(pcm_full),
+        )
         with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
             self.assertEqual(wav.getnchannels(), 1)
             self.assertEqual(wav.getsampwidth(), 2)
             self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.getnframes(), len(pcm_full) // 2)
             frames = wav.readframes(wav.getnframes())
         self.assertEqual(frames, pcm_full)
 

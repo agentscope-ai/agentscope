@@ -145,6 +145,42 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "1 record"):
             await self.store.insert("kb-1", [_record("doc-1", 0)])
 
+    async def test_elasticsearch_delete_filter(self) -> None:
+        """Elasticsearch uses a conjunction of exact-match filters."""
+        await self.store.delete(
+            "shared",
+            "doc",
+            metadata_filter={"tenant": "alpha", "project": 2},
+        )
+        self.client.delete_by_query.assert_awaited_once_with(
+            index="shared",
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"document_id": "doc"}},
+                        {"term": {"metadata.tenant": "alpha"}},
+                        {"term": {"metadata.project": 2}},
+                    ],
+                },
+            },
+            conflicts="proceed",
+            refresh=True,
+        )
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                self.client.delete_by_query.reset_mock()
+                await self.store.delete(
+                    "shared",
+                    "doc",
+                    metadata_filter=scope,
+                )
+                self.client.delete_by_query.assert_awaited_once_with(
+                    index="shared",
+                    query={"term": {"document_id": "doc"}},
+                    conflicts="proceed",
+                    refresh=True,
+                )
+
     async def test_delete_by_document_id(self) -> None:
         await self.store.delete("kb-1", "doc-1")
 
@@ -325,6 +361,32 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self.store.list_chunks("kb-1", "doc-1")
         self.client.close_point_in_time.assert_awaited_once_with(id="pit-1")
+
+    async def test_list_chunks_closes_latest_pit_on_empty_page(self) -> None:
+        for rotated in (False, True):
+            with self.subTest(rotated=rotated):
+                self.client.close_point_in_time.reset_mock()
+                self.client.open_point_in_time.return_value = {"id": "pit-1"}
+                response = {"hits": {"hits": []}}
+                if rotated:
+                    response["pit_id"] = "pit-2"
+                self.client.search.return_value = response
+                self.assertEqual(await self.store.list_chunks("kb", "doc"), [])
+                self.client.close_point_in_time.assert_awaited_once_with(
+                    id="pit-2" if rotated else "pit-1",
+                )
+
+    async def test_list_chunks_closes_latest_pit_on_invalid_chunk(
+        self,
+    ) -> None:
+        self.client.open_point_in_time.return_value = {"id": "pit-1"}
+        self.client.search.return_value = {
+            "pit_id": "pit-2",
+            "hits": {"hits": [{"_source": {"chunk": {"chunk_index": 0}}}]},
+        }
+        with self.assertRaises(ValueError):
+            await self.store.list_chunks("kb", "doc")
+        self.client.close_point_in_time.assert_awaited_once_with(id="pit-2")
 
     async def test_list_chunks_zero_limit_short_circuits(self) -> None:
         self.assertEqual(

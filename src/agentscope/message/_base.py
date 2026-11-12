@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 import base64
-from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _generate_timestamp
 from ._block import (
     TextBlock,
     ThinkingBlock,
@@ -92,7 +91,7 @@ class Msg(BaseModel):
 
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=_generate_timestamp)
     """The creation time of the message"""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
@@ -153,10 +152,14 @@ class Msg(BaseModel):
         typs = [block_type] if isinstance(block_type, str) else block_type
         return any(b.type in typs for b in self.content)
 
-    def get_text_content(self, separator: str = "\n") -> str | None:
-        """Get the concatenated text from all TextBlocks."""
+    def get_text_content(self, separator: str = "\n") -> str:
+        """Join all top-level TextBlocks, returning "" if none are present.
+
+        Use ``has_content_blocks("text")`` to distinguish missing text
+        blocks from text blocks containing empty strings.
+        """
         gathered = [b.text for b in self.content if b.type == "text"]
-        return separator.join(gathered) if gathered else None
+        return separator.join(gathered)
 
     @overload
     def get_content_blocks(
@@ -241,7 +244,7 @@ class Msg(BaseModel):
                 return block
         return None
 
-    def append_event(  # pylint: disable=too-many-branches
+    def append_event(  # pylint: disable=too-many-branches,too-many-statements
         self,
         event: AgentEvent,
     ) -> Self:
@@ -251,6 +254,7 @@ class Msg(BaseModel):
         content blocks are appended/updated by block-level events,
         ``finished_at`` is stamped by ``REPLY_END``, and ``usage`` is
         initialized then accumulated across each ``MODEL_CALL_END``.
+        Custom events are skipped because they do not update message content.
         Events whose ``reply_id`` does not match ``self.id`` are skipped with
         a warning. Block-level delta/end events whose target block cannot be
         found are also skipped with a warning.
@@ -260,6 +264,9 @@ class Msg(BaseModel):
                 The event to apply.
         """
         from ..event import EventType  # local import to avoid circular dep
+
+        if event.type == EventType.CUSTOM:
+            return self
 
         if event.reply_id != self.id:
             logger.warning(
@@ -283,22 +290,16 @@ class Msg(BaseModel):
                 self.error = event.error
 
             case EventType.MODEL_CALL_END:
-                if self.usage is None:
-                    self.usage = Usage(
+                self.append_usage(
+                    Usage(
                         input_tokens=event.input_tokens,
                         output_tokens=event.output_tokens,
                         cache_input_tokens=event.cache_input_tokens,
                         cache_creation_input_tokens=(
                             event.cache_creation_input_tokens
                         ),
-                    )
-                else:
-                    self.usage.input_tokens += event.input_tokens
-                    self.usage.output_tokens += event.output_tokens
-                    self.usage.cache_input_tokens += event.cache_input_tokens
-                    self.usage.cache_creation_input_tokens += (
-                        event.cache_creation_input_tokens
-                    )
+                    ),
+                )
 
             case EventType.TEXT_BLOCK_START:
                 self.content.append(TextBlock(id=event.block_id, text=""))
@@ -313,6 +314,8 @@ class Msg(BaseModel):
                 elif event.type == EventType.TEXT_BLOCK_DELTA:
                     block.text += event.delta
                 else:
+                    if event.text is not None:
+                        block.text = event.text
                     block.finished_at = event.created_at
 
             case EventType.DATA_BLOCK_START:
@@ -323,6 +326,7 @@ class Msg(BaseModel):
                             data="",
                             media_type=event.media_type,
                         ),
+                        name=event.name,
                     ),
                 )
 
@@ -332,6 +336,13 @@ class Msg(BaseModel):
                     logger.warning(
                         "DataBlock %s not found, skipping.",
                         event.block_id,
+                    )
+                elif event.type == EventType.DATA_BLOCK_DELTA and event.url:
+                    # A URL is the whole content, so it replaces the empty
+                    # base64 source the start event created.
+                    block.source = URLSource(
+                        url=event.url,
+                        media_type=event.media_type,
                     )
                 elif event.type == EventType.DATA_BLOCK_DELTA and event.data:
                     # Each delta is an independently base64-encoded chunk
@@ -445,9 +456,33 @@ class Msg(BaseModel):
                             media_type=event.media_type,
                         )
                     )
-                    block.output.append(
-                        DataBlock(id=event.block_id, source=src),
-                    )
+                    # Merge same-id Base64 chunks like
+                    # ToolResponse.append_chunk.
+                    merge_target: DataBlock | None = None
+                    for output_block in block.output:
+                        if (
+                            isinstance(output_block, DataBlock)
+                            and output_block.id == event.block_id
+                            and isinstance(output_block.source, Base64Source)
+                        ):
+                            merge_target = output_block
+                            break
+                    if merge_target is not None and isinstance(
+                        src,
+                        Base64Source,
+                    ):
+                        existing = base64.b64decode(merge_target.source.data)
+                        incoming = base64.b64decode(src.data)
+                        merge_target.source.data = base64.b64encode(
+                            existing + incoming,
+                        ).decode("ascii")
+                        merge_target.source.media_type = (
+                            src.media_type or merge_target.source.media_type
+                        )
+                    else:
+                        block.output.append(
+                            DataBlock(id=event.block_id, source=src),
+                        )
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
@@ -513,6 +548,27 @@ class Msg(BaseModel):
 
         return self
 
+    def append_usage(self, usage: Usage) -> Self:
+        """Accumulate the token usage of one model call into this message.
+
+        The message keeps a copy of ``usage``, so the object handed over by
+        the caller is never adopted and keeps its own value.
+
+        Args:
+            usage (`Usage`):
+                The token usage to be accumulated.
+        """
+        if self.usage is None:
+            self.usage = usage.model_copy()
+        else:
+            self.usage.input_tokens += usage.input_tokens
+            self.usage.output_tokens += usage.output_tokens
+            self.usage.cache_input_tokens += usage.cache_input_tokens
+            self.usage.cache_creation_input_tokens += (
+                usage.cache_creation_input_tokens
+            )
+        return self
+
 
 def UserMsg(
     name: str,
@@ -552,7 +608,7 @@ def UserMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="user"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(
@@ -615,7 +671,7 @@ def AssistantMsg(
         content=_to_blocks(content),
         role="assistant",
         metadata=metadata or {},
-        created_at=created_at or datetime.now().isoformat(),
+        created_at=created_at or _generate_timestamp(),
         finished_at=finished_at,
         finished_reason=finished_reason,
         structured_output=structured_output,
@@ -661,7 +717,7 @@ def SystemMsg(
         `Msg`:
             A :class:`Msg` instance with ``role="system"``.
     """
-    created_at = created_at or datetime.now().isoformat()
+    created_at = created_at or _generate_timestamp()
     if finished_at is None:
         finished_at = created_at
     return Msg(

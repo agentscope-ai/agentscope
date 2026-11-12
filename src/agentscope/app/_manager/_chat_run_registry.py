@@ -20,6 +20,9 @@ from typing import Coroutine, Self
 from ..._logging import logger
 
 
+CHAT_RUN_SHUTDOWN = "agentscope:shutdown"
+
+
 class ChatRunRegistry:
     """In-process index of active chat-run asyncio tasks, keyed by
     session id.
@@ -48,7 +51,7 @@ class ChatRunRegistry:
         Args:
             coro (`Coroutine`):
                 A coroutine — typically ``chat_service.run(...)`` — to
-                run as a background task.
+                run as a background task. Closed if the spawn is rejected.
             session_id (`str`):
                 The session this run belongs to. Used as the registry
                 key for later cancel lookup.
@@ -71,6 +74,7 @@ class ChatRunRegistry:
         """
         existing = self._tasks.get(session_id)
         if existing is not None and not existing.done():
+            coro.close()
             raise RuntimeError(
                 f"Session {session_id!r} already has an active chat run "
                 "in this process.",
@@ -128,7 +132,9 @@ class ChatRunRegistry:
         )
         tasks = list(self._tasks.values())
         for task in tasks:
-            task.cancel()
+            # Preserve an explicit Stop that is already being delivered.
+            if not task.cancelling():
+                task.cancel(CHAT_RUN_SHUTDOWN)
         # Wait for every cancel to land; swallow CancelledError per task.
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()

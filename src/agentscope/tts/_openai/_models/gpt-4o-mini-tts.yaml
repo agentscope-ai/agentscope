@@ -1,6 +1,7 @@
 name: gpt-4o-mini-tts
 label: GPT-4o Mini TTS
 status: active
+voice_cloning: true
 
 input_types:
   - text/plain
@@ -26,5 +27,7 @@ voices:
   - sage
   - shimmer
   - verse
+  - marin
+  - cedar
 
 parameter_overrides: {}

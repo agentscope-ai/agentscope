@@ -12,13 +12,18 @@ import time
 from datetime import datetime
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
+from fastapi import HTTPException
 from pydantic import BaseModel
 
+from agentscope.app._router._channel import update_channel
+from agentscope.app._router._schema import UpdateChannelRequest
 from agentscope.app._service import ChannelService
 from agentscope.app.channel import (
     ChannelBase,
     ChannelClients,
+    ChannelError,
     ChannelEvent,
     ChannelHeartbeat,
     ChannelStatus,
@@ -106,6 +111,17 @@ class _Storage:
         """Return the single record this stub serves."""
         self.calls += 1
         return self.record
+
+    async def upsert_channel(
+        self,
+        record: ChannelRecord,
+        platform_bot_id: str,  # pylint: disable=unused-argument
+    ) -> str:
+        """Round-trip the record through the storage serialization format."""
+        self.record = ChannelRecord.model_validate_json(
+            record.model_dump_json(),
+        )
+        return record.id
 
 
 def _record(bot_id: str = "bot-1", enabled: bool = True) -> ChannelRecord:
@@ -275,12 +291,89 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             await self._deliver(clients)
 
 
+class ChannelUpdateTest(IsolatedAsyncioTestCase):
+    """Channel updates validate before writing or notifying listeners."""
+
+    def setUp(self) -> None:
+        """Reuse the fake channel and storage without starting an app."""
+        self.record = _record()
+        self.record.name = "my bot"
+        self.storage = _Storage(self.record)
+        bus = InMemoryMessageBus()
+        self.registry = ChannelTypeRegistry([_FakeChannel])
+        self.service = ChannelService(self.storage, bus, self.registry)
+        self.write = self.enterContext(
+            patch.object(
+                self.storage,
+                "upsert_channel",
+                wraps=self.storage.upsert_channel,
+            ),
+        )
+        self.publish = self.enterContext(patch.object(bus, "publish"))
+
+    async def test_null_required_fields_leave_storage_unchanged(self) -> None:
+        """Reject the whole patch, including otherwise valid changes."""
+        before = self.record.model_dump()
+        for field in ("routing", "session", "platform_config", "enabled"):
+            with self.subTest(field=field):
+                with self.assertRaises(ChannelError) as caught:
+                    await self.service.update(
+                        self.record.id,
+                        {field: None, "name": "changed"},
+                    )
+                self.assertEqual(caught.exception.status_code, 422)
+                self.write.assert_not_awaited()
+                self.publish.assert_not_awaited()
+                stored = await self.storage.get_channel(self.record.id)
+                self.assertEqual(stored.model_dump(), before)
+
+    async def test_valid_updates_round_trip(self) -> None:
+        """Clearing a name and changing enabled preserve all other fields."""
+        patches: list[dict] = [{"name": None}, {"enabled": False}]
+        for updates in patches:
+            with self.subTest(updates=updates):
+                before = self.storage.record.model_dump()
+                updated = await self.service.update(self.record.id, updates)
+                expected = {
+                    **before,
+                    **updates,
+                    "updated_at": updated.updated_at,
+                }
+                self.assertEqual(updated.model_dump(), expected)
+                stored = await self.storage.get_channel(self.record.id)
+                self.assertEqual(stored.model_dump(), expected)
+                self.write.assert_awaited_with(updated, "bot-1")
+                self.publish.assert_awaited_with(
+                    MessageBusKeys.channel_lifecycle(),
+                    {"channel_id": self.record.id},
+                )
+
+    async def test_router_maps_invalid_update_to_422(self) -> None:
+        """The route translates service validation errors to HTTP errors."""
+        with self.assertRaises(HTTPException) as caught:
+            await update_channel(
+                self.record.id,
+                UpdateChannelRequest(routing=None),
+                storage=self.storage,
+                service=self.service,
+                registry=self.registry,
+                user_id=self.record.user_id,
+            )
+        self.assertEqual(caught.exception.status_code, 422)
+        self.write.assert_not_awaited()
+        self.publish.assert_not_awaited()
+
+
 class ChannelStatusTest(IsolatedAsyncioTestCase):
     """Status is read from the heartbeat, not from local instances."""
 
-    def _service(self, bus: InMemoryMessageBus) -> ChannelService:
+    def _service(
+        self,
+        bus: InMemoryMessageBus,
+        enabled: bool = True,
+    ) -> ChannelService:
         return ChannelService(
-            storage=_Storage(_record()),
+            storage=_Storage(_record(enabled=enabled)),
             message_bus=bus,
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         )
@@ -303,11 +396,25 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
             ttl_secs=LIVENESS_TTL_SECS,
         )
 
-    async def test_no_heartbeat_reads_as_stopped(self) -> None:
-        """Nothing is holding the channel, so nothing reports it."""
+    async def test_an_enabled_channel_with_no_report_is_connecting(
+        self,
+    ) -> None:
+        """A channel just created has not been picked up yet. Calling
+        that stopped sends the operator looking for something to start
+        that is already starting."""
         bus = InMemoryMessageBus()
         self.assertEqual(
             await self._service(bus).get_status("chan-1"),
+            ChannelStatus(state="connecting"),
+        )
+
+    async def test_a_disabled_channel_with_no_report_is_stopped(
+        self,
+    ) -> None:
+        """Nothing is holding it, and nothing is meant to."""
+        bus = InMemoryMessageBus()
+        self.assertEqual(
+            await self._service(bus, enabled=False).get_status("chan-1"),
             ChannelStatus(state="stopped"),
         )
 
@@ -339,8 +446,11 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
             ChannelStatus(state="connecting"),
         )
 
-    async def test_only_stale_reports_read_as_stopped(self) -> None:
-        """Every holder went away; nothing fresh is left to believe."""
+    async def test_only_stale_reports_fall_back_to_the_enabled_flag(
+        self,
+    ) -> None:
+        """Every holder went away; nothing fresh is left to believe, so
+        this reads like never having been reported at all."""
         bus = InMemoryMessageBus()
         await self._beat(
             bus,
@@ -351,6 +461,10 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             await self._service(bus).get_status("chan-1"),
+            ChannelStatus(state="connecting"),
+        )
+        self.assertEqual(
+            await self._service(bus, enabled=False).get_status("chan-1"),
             ChannelStatus(state="stopped"),
         )
 

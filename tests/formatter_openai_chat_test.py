@@ -3,6 +3,9 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -284,6 +287,85 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
     # OpenAIChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are nested inside image_url payload."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": self.image_url,
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_audio_extra_params(self) -> None:
+        """DataBlock extra params are nested inside input_audio payload."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Transcribe this audio."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZSBhdWRpbyBkYXRh",
+                            media_type="audio/wav",
+                        ),
+                        extra_audio_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Transcribe this audio."},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "ZmFrZSBhdWRpbyBkYXRh",
+                                "format": "wav",
+                                "extra_audio_param": "value",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = OpenAIChatFormatter()
@@ -347,6 +429,111 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                 },
             ],
             res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_image(self) -> None:
+        """Local file:// image paths with spaces and '#' are decoded."""
+        image_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{expected_b64}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.png"
+            path.write_bytes(image_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            TextBlock(text="What's in this image?"),
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_percent_encoded_local_audio(self) -> None:
+        """Local file:// audio paths with spaces and '#' are decoded."""
+        audio_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.wav"
+            path.write_bytes(audio_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="audio/wav",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertEqual(
+            res[0]["content"][0],
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": expected_b64,
+                    "format": "wav",
+                },
+            },
+        )
+
+    async def test_chat_formatter_percent_encoded_local_file(self) -> None:
+        """Local file:// PDF paths with spaces and '#' are decoded."""
+        file_bytes = b"spaced-name-bytes"
+        expected_b64 = base64.b64encode(file_bytes).decode("utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "my file #1.pdf"
+            path.write_bytes(file_bytes)
+            fmt = OpenAIChatFormatter()
+            res = await fmt.format(
+                [
+                    UserMsg(
+                        name="user",
+                        content=[
+                            DataBlock(
+                                source=URLSource(
+                                    url=path.as_uri(),
+                                    media_type="application/pdf",
+                                ),
+                                name="my file #1.pdf",
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        self.assertEqual(
+            res[0]["content"][0]["file"]["file_data"],
+            f"data:application/pdf;base64,{expected_b64}",
         )
 
     async def test_chat_formatter_base64_pdf(self) -> None:
@@ -475,13 +662,82 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
-    @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
-        return_value=_FIXED_ID,
-    )
+    async def test_chat_formatter_sanitizes_message_name(self) -> None:
+        """Message names must match the API pattern ``^[^\\s<|\\\\/>]+$``:
+        free-text agent and user names are made valid instead of being
+        forwarded verbatim, which the API rejects with a 400 error."""
+        msgs = [
+            UserMsg(name="John Doe", content="Hi"),
+            AssistantMsg(
+                name="Research Assistant",
+                content=[
+                    TextBlock(text="Let me check."),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="search",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="search",
+                        output="result",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Done."),
+                ],
+            ),
+            AssistantMsg(name="a<b|c\\d/e>f", content="ok"),
+            AssistantMsg(name="", content="anonymous"),
+        ]
+        gt = [
+            {
+                "role": "user",
+                "name": "John_Doe",
+                "content": [{"type": "text", "text": "Hi"}],
+            },
+            {
+                "role": "assistant",
+                "name": "Research_Assistant",
+                "content": [{"type": "text", "text": "Let me check."}],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "result",
+                "name": "search",
+            },
+            {
+                "role": "assistant",
+                "name": "Research_Assistant",
+                "content": [{"type": "text", "text": "Done."}],
+            },
+            {
+                "role": "assistant",
+                "name": "a_b_c_d_e_f",
+                "content": [{"type": "text", "text": "ok"}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "anonymous"}],
+            },
+        ]
+        res = await OpenAIChatFormatter().format(msgs)
+        self.assertListEqual(gt, res)
+
+        # Tool sequences in multi-agent conversations reuse the chat
+        # formatter, so their names are made valid as well.
+        res = await OpenAIMultiAgentFormatter().format(msgs[1:2])
+        self.assertListEqual(gt[1:4], res)
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
-        _mock_uuid: object,
     ) -> None:
         """URL images in tool results are promoted to a follow-up user
         message."""
@@ -501,6 +757,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(text="Here is the map."),
                             DataBlock(
+                                id=_FIXED_ID,
                                 source=URLSource(
                                     url=self.image_url,
                                     media_type="image/png",
@@ -583,6 +840,45 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_tool_result_image_id_is_deterministic(
+        self,
+    ) -> None:
+        """Formatting the same unchanged Msg history twice must produce the
+        same multimodal identifier both times (issue #2161): the id is
+        derived from the DataBlock's own stable id, not freshly generated
+        on every call."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_img",
+                        name="get_map",
+                        input='{"city": "Tokyo"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_img",
+                        name="get_map",
+                        output=[
+                            TextBlock(text="Here is the map."),
+                            DataBlock(
+                                source=URLSource(
+                                    url=self.image_url,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Here is the map of Tokyo."),
+                ],
+            ),
+        ]
+        first = await fmt.format(msgs)
+        second = await fmt.format(msgs)
+        self.assertListEqual(first, second)
 
     # -------------------------------------------------------------------
     # OpenAIMultiAgentFormatter tests
@@ -866,6 +1162,134 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "image_url",
                             "image_url": {"url": self.image_data_uri},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
+        self,
+    ) -> None:
+        """Media promoted from a tool result must not split the tool
+        messages that answer one assistant turn's tool calls."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        input="{}",
+                    ),
+                    ToolCallBlock(
+                        id="call_title",
+                        name="get_title",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_shot",
+                        name="screenshot",
+                        output=[
+                            TextBlock(text="Screenshot taken."),
+                            DataBlock(
+                                id=_FIXED_ID,
+                                source=URLSource(
+                                    url="https://example.com/shot.png",
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_title",
+                        name="get_title",
+                        output=[TextBlock(text="Example Domain")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="The page is Example Domain."),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        shot_output = (
+            "Screenshot taken.\n"
+            "<system-reminder>A(n) image file is returned and will be "
+            "presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_shot",
+                            "type": "function",
+                            "function": {
+                                "name": "screenshot",
+                                "arguments": "{}",
+                            },
+                        },
+                        {
+                            "id": "call_title",
+                            "type": "function",
+                            "function": {
+                                "name": "get_title",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_shot",
+                    "content": shot_output,
+                    "name": "screenshot",
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_title",
+                    "content": "Example Domain",
+                    "name": "get_title",
+                },
+                {
+                    "role": "user",
+                    "name": "system-reminder",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>The multimodal data "
+                            "and their identifiers are listed as follows:",
+                        },
+                        {
+                            "type": "text",
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/shot.png",
+                            },
+                        },
+                        {"type": "text", "text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "name": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "The page is Example Domain.",
                         },
                     ],
                 },

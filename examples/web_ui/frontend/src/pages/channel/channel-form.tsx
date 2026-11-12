@@ -23,13 +23,19 @@ import {
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useTranslation } from '@/i18n/useI18n';
 import { BindingsEditor } from '@/pages/channel/bindings-editor';
+import { CredentialBindingPanel } from '@/pages/channel/credential-binding-panel';
 
 export interface ChannelFormValue {
 	channelType: string;
 	name: string;
+	/** How the credentials are being supplied on a create. */
+	credentialMode: 'form' | 'binding';
+	/** Set once an interactive binding has been approved. */
+	credentialBindingId: string;
 	credentials: Record<string, string>;
 	platformConfig: Record<string, unknown>;
 	bindings: ChannelBinding[];
@@ -42,6 +48,8 @@ export function defaultChannelForm(agentId = ''): ChannelFormValue {
 	return {
 		channelType: 'feishu',
 		name: '',
+		credentialMode: 'form',
+		credentialBindingId: '',
 		credentials: {},
 		platformConfig: {},
 		bindings: [
@@ -62,6 +70,8 @@ export function channelFormFromRecord(record: ChannelRecord): ChannelFormValue {
 	return {
 		channelType: record.channel_type,
 		name: record.name ?? '',
+		credentialMode: 'form',
+		credentialBindingId: '',
 		credentials: {},
 		platformConfig: record.platform_config ?? {},
 		bindings: record.routing.bindings,
@@ -82,10 +92,16 @@ function sessionSettings(v: ChannelFormValue) {
 }
 
 export function toCreateRequest(v: ChannelFormValue): CreateChannelRequest {
+	// A completed binding replaces the fields; the server takes the
+	// credentials from it so they never travel through the browser.
+	const credentials =
+		v.credentialMode === 'binding'
+			? { credential_binding_id: v.credentialBindingId }
+			: { credentials: v.credentials };
 	return {
 		channel_type: v.channelType,
 		name: v.name.trim() || null,
-		credentials: v.credentials,
+		...credentials,
 		platform_config: v.platformConfig,
 		routing: { bindings: v.bindings },
 		enabled: true,
@@ -118,10 +134,32 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 	const set = <K extends keyof ChannelFormValue>(key: K, v: ChannelFormValue[K]) =>
 		onChange({ ...value, [key]: v });
 
+	// Read by the platform-change effect, which must not re-run just
+	// because some unrelated field moved.
+	const valueRef = React.useRef(value);
+	React.useEffect(() => {
+		valueRef.current = value;
+	});
+
 	const typeSchema = React.useMemo(
 		() => channelTypes.find((ct) => ct.channel_type === value.channelType),
 		[channelTypes, value.channelType],
 	);
+
+	const bindingSupported = Boolean(typeSchema?.supports_credential_binding);
+
+	// Switching platform invalidates whatever was collected for the old
+	// one, and decides which path is even on offer.
+	React.useEffect(() => {
+		if (mode !== 'create') return;
+		onChange({
+			...valueRef.current,
+			credentialMode: bindingSupported ? 'binding' : 'form',
+			credentialBindingId: '',
+			credentials: {},
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [value.channelType, bindingSupported]);
 
 	const credentialFields = React.useMemo(() => {
 		const schema = typeSchema?.credentials_schema as
@@ -163,15 +201,25 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 	}, [t, typeSchema]);
 
 	const selectedModelCard = React.useMemo(() => {
-		if (!value.chatModelConfig) return null;
-		const items = groups[value.chatModelConfig.type];
+		const config = value.chatModelConfig;
+		if (!config) return null;
+		const items = groups[config.type];
 		if (!items) return null;
 		for (const { models } of items) {
-			const card = models.find((m) => m.name === value.chatModelConfig!.model);
+			const card = models.find(
+				(m) =>
+					m.name === config.model &&
+					(!config.model_class || m.model_class === config.model_class),
+			);
 			if (card) return card;
 		}
 		return null;
-	}, [groups, value.chatModelConfig?.type, value.chatModelConfig?.model]);
+	}, [
+		groups,
+		value.chatModelConfig?.type,
+		value.chatModelConfig?.model,
+		value.chatModelConfig?.model_class,
+	]);
 
 	return (
 		<FieldGroup className="[&>[data-orientation=horizontal]>:last-child]:w-48">
@@ -197,7 +245,37 @@ export function ChannelForm({ value, onChange, agents, channelTypes, mode }: Pro
 				/>
 			</Field>
 
+			{mode === 'create' && bindingSupported && (
+				<Tabs
+					value={value.credentialMode}
+					onValueChange={(m) =>
+						onChange({
+							...value,
+							credentialMode: m as ChannelFormValue['credentialMode'],
+							credentialBindingId: '',
+						})
+					}
+				>
+					<TabsList className="w-full">
+						<TabsTrigger value="binding">
+							{t('channel.credentialBinding.tab')}
+						</TabsTrigger>
+						<TabsTrigger value="form">
+							{t('channel.credentialBinding.manualTab')}
+						</TabsTrigger>
+					</TabsList>
+				</Tabs>
+			)}
+
+			{mode === 'create' && value.credentialMode === 'binding' && bindingSupported && (
+				<CredentialBindingPanel
+					channelType={value.channelType}
+					onAuthorized={(bindingId) => set('credentialBindingId', bindingId)}
+				/>
+			)}
+
 			{mode === 'create' &&
+				value.credentialMode === 'form' &&
 				credentialFields.map((field) => (
 					<Field key={field.key}>
 						<FieldLabel>
@@ -331,5 +409,7 @@ export function isChannelFormValid(v: ChannelFormValue, mode: 'create' | 'edit')
 	if (v.bindings.length === 0) return false;
 	if (v.bindings.some((b) => !b.agent_id)) return false;
 	if (mode === 'create' && !v.channelType) return false;
+	// An unfinished binding has no credentials to create the channel with.
+	if (mode === 'create' && v.credentialMode === 'binding' && !v.credentialBindingId) return false;
 	return true;
 }

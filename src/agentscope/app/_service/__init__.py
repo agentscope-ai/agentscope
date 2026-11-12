@@ -8,18 +8,29 @@ from ._access import (
     ResourceAccessService,
 )
 from ._channel import ChannelService
+from ._credential_binding import (
+    CredentialBindingError,
+    CredentialBindingService,
+)
 from ._chat import ChatService
+from ._asr_model import get_asr_model
 from ._embedding import get_embedding_model
 from ._index_sweeper import IndexSweeper
 from ._index_task_consumer import IndexTaskConsumer
 from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._mcp_render import MCPRenderError, render_mcp
-from ._model import get_model
-from ._tts_model import get_tts_model
+from ._model import get_model, get_realtime_model
+from ._tts_model import (
+    get_tts_model,
+    validate_tts_model_config,
+    validate_voice_profile_model,
+)
 from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
+from ._realtime import RealtimeService
+from ._sop import SessionSOPStep, SOPService
 from ._toolkit import get_toolkit
 from ._download_token import sign_download_token, verify_download_token
 from ._workspace import GitStatus, WorkspaceService, WorkspaceStatus
@@ -27,6 +38,8 @@ from ._workspace import GitStatus, WorkspaceService, WorkspaceStatus
 __all__ = [
     "AgentView",
     "ChannelService",
+    "CredentialBindingService",
+    "CredentialBindingError",
     "ChatService",
     "CredentialView",
     "GitStatus",
@@ -38,6 +51,9 @@ __all__ = [
     "KnowledgeBaseView",
     "MCPRenderError",
     "ResourceAccessService",
+    "RealtimeService",
+    "SessionSOPStep",
+    "SOPService",
     "SessionService",
     "SessionStatus",
     "SessionProjection",
@@ -47,8 +63,12 @@ __all__ = [
     "verify_download_token",
     "WorkspaceStatus",
     "get_embedding_model",
+    "get_asr_model",
     "get_model",
+    "get_realtime_model",
     "get_tts_model",
+    "validate_tts_model_config",
+    "validate_voice_profile_model",
     "get_toolkit",
     "render_mcp",
 ]

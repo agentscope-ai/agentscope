@@ -364,6 +364,15 @@ class IndexWorker:
             )
             return
 
+        if record.status == "ready":
+            # The lease prevents concurrent work, not late duplicates.
+            # Re-indexing requires resetting the status to pending.
+            logger.debug(
+                "Skipping %s — already indexed; ignoring duplicate task.",
+                document_id,
+            )
+            return
+
         kb_record = await self._manager.get_knowledge_base(
             user_id,
             knowledge_base_id,
@@ -381,6 +390,8 @@ class IndexWorker:
         media_type = (
             data.content_type or mimetypes.guess_type(data.filename)[0]
         )
+        if media_type:
+            media_type = media_type.split(";", 1)[0].strip().lower()
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",

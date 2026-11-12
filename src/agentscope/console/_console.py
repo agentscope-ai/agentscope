@@ -5,6 +5,7 @@ import signal
 
 from ._renderer import ConsoleRenderer, Verbosity
 from ..agent import Agent
+from ..pipeline import PipelineProtocol
 from ..event import (
     ConfirmResult,
     RequireUserConfirmEvent,
@@ -15,7 +16,7 @@ from ..message import Msg, UserMsg
 
 
 async def _run_reply(
-    agent: Agent,
+    agent: Agent | PipelineProtocol,
     renderer: ConsoleRenderer,
     inputs: Msg | UserConfirmResultEvent | UserInterruptEvent,
 ) -> RequireUserConfirmEvent | None:
@@ -35,10 +36,16 @@ async def _run_reply(
 
     async def consume() -> None:
         nonlocal pending
-        async for event in agent.reply_stream(inputs):
-            renderer.render(event)
-            if isinstance(event, RequireUserConfirmEvent):
-                pending = event
+        try:
+            async for event in agent.reply_stream(inputs):
+                renderer.render(event)
+                if isinstance(event, RequireUserConfirmEvent):
+                    pending = event
+        except BaseException:
+            # Failed streams may omit REPLY_END for several participants.
+            pending = None
+            renderer.reset()
+            raise
 
     task = asyncio.ensure_future(consume())
     loop = asyncio.get_running_loop()
@@ -52,8 +59,11 @@ async def _run_reply(
     try:
         await task
     except asyncio.CancelledError:
-        # Raised when the agent re-raises after the interruption
-        pass
+        # Only a caller cancelling this task bumps its ``cancelling()``
+        # counter, while a SIGINT cancels ``task`` alone and leaves it at 0.
+        caller = asyncio.current_task()
+        if caller is not None and caller.cancelling():
+            raise
     finally:
         if sigint_hooked:
             loop.remove_signal_handler(signal.SIGINT)
@@ -93,7 +103,7 @@ async def _confirm(
 
 
 async def launch_console(
-    agent: Agent,
+    agent: Agent | PipelineProtocol,
     user_name: str = "user",
     verbosity: Verbosity = "default",
     max_tool_result_lines: int | None = 20,
@@ -114,8 +124,8 @@ async def launch_console(
         await launch_console(agent)
 
     Args:
-        agent (`Agent`):
-            The agent to interact with.
+        agent (`Agent | PipelineProtocol`):
+            The agent or pipeline to interact with.
         user_name (`str`, defaults to `"user"`):
             The name attached to the user's input messages, also used
             as the input prompt.

@@ -65,8 +65,14 @@ class MilvusLiteStore(VectorStoreBase):
                 Extra keyword arguments forwarded to
                 :class:`pymilvus.MilvusClient`.
             batch_size (`int`, defaults to ``256``):
-                Batch size used by inserts and document listing.
+                Positive batch size used by inserts and document listing.
+
+        Raises:
+            ValueError: If ``batch_size`` is not positive.
         """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+
         self._uri = uri
         self._metric_type = metric_type
         self._index_type = index_type
@@ -188,6 +194,31 @@ class MilvusLiteStore(VectorStoreBase):
             collection_name=name,
         )
 
+    async def _ensure_loaded(
+        self,
+        client: "MilvusClient",
+        collection: str,
+    ) -> None:
+        """Make sure a collection is loaded before reading from it.
+
+        Milvus may leave a collection in the ``released`` state — for
+        example after the server (or, for Milvus Lite, the host process)
+        restarts. Searching or querying a released collection fails with
+        ``MilvusException: Collection ... is in state 'released'; call
+        load() before search/get/query``. ``load_collection`` is
+        idempotent, so calling it before every read is safe.
+
+        Args:
+            client (`MilvusClient`):
+                The client bound to this store.
+            collection (`str`):
+                The collection that is about to be read.
+        """
+        await asyncio.to_thread(
+            client.load_collection,
+            collection_name=collection,
+        )
+
     # ------------------------------------------------------------------
     # Data operations
     # ------------------------------------------------------------------
@@ -260,12 +291,27 @@ class MilvusLiteStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
-        """Delete all records belonging to one source document."""
+        """Delete all records belonging to one source document.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document ID whose records should be removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
+        """
+        clauses = [self._build_document_filter(document_id)]
+        meta_expr = self._build_metadata_filter(metadata_filter)
+        if meta_expr:
+            clauses.append(meta_expr)
         await asyncio.to_thread(
             self.get_client().delete,
             collection_name=collection,
-            filter=self._build_document_filter(document_id),
+            filter=" and ".join(clauses),
         )
 
     # ------------------------------------------------------------------
@@ -300,8 +346,11 @@ class MilvusLiteStore(VectorStoreBase):
                 cosine / inner product metrics, or ascending distance
                 semantics for L2 as exposed by Milvus.
         """
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
+
         response = await asyncio.to_thread(
-            self.get_client().search,
+            client.search,
             collection_name=collection,
             data=[query_vector],
             anns_field="vector",
@@ -349,6 +398,7 @@ class MilvusLiteStore(VectorStoreBase):
                 One summary per distinct ``document_id``.
         """
         client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
             self._query_all_rows,
             client,
@@ -482,8 +532,10 @@ class MilvusLiteStore(VectorStoreBase):
         # deterministic entity IDs may hold duplicates from indexing
         # retries, and truncating at `limit` raw rows could then drop a
         # low index while returning a duplicate of a higher one.
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
-            self.get_client().query,
+            client.query,
             collection_name=collection,
             filter=" and ".join(clauses),
             output_fields=["chunk"],
@@ -523,14 +575,17 @@ class MilvusLiteStore(VectorStoreBase):
 
         Since milvus-lite >= 3.1.0 the ``distance`` field for COSINE
         already carries the cosine similarity (1.0 for identical
-        vectors), so no conversion is needed.
+        vectors).  For the ``L2`` distance metric the raw value is
+        lower-is-better, so it is negated to keep ``score`` meaning
+        "higher is more relevant" like the similarity metrics.
         """
-        # pylint: disable=unused-argument
         if "distance" in hit:
-            return float(hit["distance"])
-        if "score" in hit:
-            return float(hit["score"])
-        return 0.0
+            score = float(hit["distance"])
+        elif "score" in hit:
+            score = float(hit["score"])
+        else:
+            return 0.0
+        return -score if metric_type == "L2" else score
 
     @staticmethod
     def _is_local_db_uri(uri: str) -> bool:

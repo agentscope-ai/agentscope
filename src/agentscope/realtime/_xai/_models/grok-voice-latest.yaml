@@ -1,0 +1,20 @@
+type: realtime_model
+name: grok-voice-latest
+label: Grok Voice (Latest)
+status: active
+
+input_types:
+  - audio/pcm
+  - text/plain
+output_types:
+  - audio/pcm
+  - text/plain
+
+# PCM is accepted at 8-48 kHz; 24 kHz is the documented default on both
+# directions.
+input_sample_rate: 24000
+output_sample_rate: 24000
+
+supports_tools: true
+
+# The API documents no turn, token or session-duration ceiling.

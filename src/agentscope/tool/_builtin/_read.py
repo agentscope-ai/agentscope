@@ -166,7 +166,9 @@ Usage:
         super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
         self.model_input_types = (
-            model_input_types or _DEFAULT_MODEL_INPUT_TYPES
+            _DEFAULT_MODEL_INPUT_TYPES.copy()
+            if model_input_types is None
+            else model_input_types
         )
         """The media types the model accepts as input, see ``__init__``."""
         self._backend = backend or LocalBackend()
@@ -311,7 +313,15 @@ Usage:
         ext = os.path.splitext(self._backend.basename(file_path))[1].lower()
 
         if ext == ".pdf":
-            return await self._read_pdf(file_path, pages)
+            # PDF decoding and page serialization can fail after opening.
+            try:
+                return await self._read_pdf(file_path, pages)
+            except Exception as e:
+                return ToolChunk(
+                    content=[TextBlock(text=f"Error reading PDF: {str(e)}")],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
         if ext in _IMAGE_EXTENSIONS:
             return await self._read_image_file(file_path, ext)
 
@@ -497,27 +507,65 @@ Usage:
     ) -> ToolChunk:
         """Read a text file and return with line numbers."""
         try:
+            if offset < 1:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Error: offset must be at least 1, "
+                            f"got: {offset}.",
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
+            if limit < 1 or limit > 2000:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Error: limit must be between 1 and 2000, "
+                            f"got: {limit}.",
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
             # Read file content via backend
             lines = None
             if _agent_state is not None:
-                cache = await _agent_state.tool_context.get_cache(file_path)
+                # Take the mtime from the backend that reads the file, so
+                # the cache also works for sandbox-only paths.
+                mtime = await self._backend.stat_mtime(file_path)
+                cache = await _agent_state.tool_context.get_cache(
+                    file_path,
+                    mtime=mtime,
+                )
                 if cache is not None:
                     lines = cache.lines
 
+            lossy = False
             if lines is None:
                 raw = await self._backend.read_file(file_path)
-                content_str = raw.decode("utf-8", errors="replace")
+                try:
+                    content_str = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    content_str = raw.decode("utf-8", errors="replace")
+                    lossy = True
                 # Normalize CRLF/CR so cached lines end in "\n" regardless
                 # of the platform the file was written on (Windows text
                 # files use "\r\n").
                 content_str = _normalize_newlines(content_str)
                 lines = content_str.splitlines(keepends=True)
 
-                # Cache file if state is provided
-                if _agent_state is not None:
+                # Edit rebuilds the whole file from the cache and Write takes
+                # it as proof the file was seen, so a lossy decode must not
+                # populate it.
+                if _agent_state is not None and not lossy:
                     await _agent_state.tool_context.cache_file(
                         file_path=file_path,
                         lines=lines,
+                        mtime=mtime,
                     )
 
             # Apply offset and limit (offset is 1-based)
@@ -544,6 +592,12 @@ Usage:
 
             # Join all lines
             result = "\n".join(formatted_lines)
+            if lossy:
+                result += (
+                    "\n\nNote: This file is not valid UTF-8. Invalid bytes "
+                    "are shown as U+FFFD, and the file cannot be modified "
+                    "with the Edit tool."
+                )
 
             return ToolChunk(
                 content=[TextBlock(text=result)],

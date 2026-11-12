@@ -332,6 +332,47 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """Responses API forwards image detail at input_image top level."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                        custom_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Inspect this image.",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": self.image_url,
+                            "detail": "high",
+                            "custom_param": "value",
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_base64_pdf(self) -> None:
         """Base64-encoded PDF becomes an ``input_file`` item."""
         fmt = OpenAIResponseFormatter()
@@ -429,6 +470,125 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_replays_raw_reasoning_item(self) -> None:
+        """Split thinking blocks replay one complete item before tool calls."""
+        reasoning_item_raw = {
+            "type": "reasoning",
+            "id": "rs_encrypted",
+            "summary": [
+                {"type": "summary_text", "text": "summary"},
+            ],
+            "content": [
+                {"type": "reasoning_text", "text": "reasoning"},
+            ],
+            "encrypted_content": "encrypted_payload",
+            "status": "completed",
+        }
+        thinking = ThinkingBlock(
+            thinking="summary",
+            reasoning_item_id="rs_encrypted",
+            reasoning_item_raw=reasoning_item_raw,
+        )
+        fmt = OpenAIResponseFormatter()
+
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        thinking,
+                        TextBlock(text="reply"),
+                        thinking.model_copy(
+                            update={
+                                "id": "raw-block",
+                                "thinking": "reasoning",
+                            },
+                        ),
+                        ToolCallBlock(id="call_1", name="lookup", input="{}"),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="lookup",
+                            output=[TextBlock(text="result")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [
+                reasoning_item_raw,
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "reply"},
+                    ],
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "result",
+                },
+            ],
+        )
+        self.assertIsNot(res[0], reasoning_item_raw)
+        self.assertIsNot(res[0]["summary"], reasoning_item_raw["summary"])
+        self.assertIsNot(res[0]["content"], reasoning_item_raw["content"])
+
+    async def test_chat_formatter_invalid_raw_reasoning_uses_fallback(
+        self,
+    ) -> None:
+        """Malformed raw items cannot bypass the reconstructed fallback."""
+        fmt = OpenAIResponseFormatter()
+        invalid_raw_items = [
+            None,
+            [],
+            {
+                "type": "message",
+                "id": "rs_expected",
+            },
+            {
+                "type": "reasoning",
+                "id": "rs_other",
+                "summary": [],
+            },
+        ]
+
+        for reasoning_item_raw in invalid_raw_items:
+            with self.subTest(reasoning_item_raw=reasoning_item_raw):
+                thinking = ThinkingBlock(
+                    thinking="summary",
+                    reasoning_item_id="rs_expected",
+                    reasoning_item_raw=reasoning_item_raw,
+                )
+                res = await fmt.format(
+                    [AssistantMsg(name="assistant", content=[thinking])],
+                )
+                self.assertListEqual(
+                    res,
+                    [
+                        {
+                            "type": "reasoning",
+                            "id": "rs_expected",
+                            "summary": [
+                                {
+                                    "type": "summary_text",
+                                    "text": "summary",
+                                },
+                            ],
+                            "content": [],
+                        },
+                    ],
+                )
 
     async def test_chat_formatter_empty_thinking_echoed_with_reasoning_item_id(
         self,

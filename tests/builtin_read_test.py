@@ -4,16 +4,19 @@ import base64
 import io
 import os
 import tempfile
+import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 from utils import AnyString
 
-from agentscope.tool import ToolChunk, Read
+from agentscope.tool import ToolChunk, Read, LocalBackend
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
     PermissionRule,
 )
 from agentscope.message import TextBlock
+from agentscope.state import AgentState, ToolContext
 
 
 # pylint: disable=too-many-public-methods
@@ -176,9 +179,153 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         self.assertIn("Line 3", content)
         self.assertNotIn("Line 4", content)
 
+    async def test_invalid_pagination_skips_reading_and_cache(self) -> None:
+        """Reject invalid pagination before reading or accessing the cache."""
+        state = AgentState()
+        backend = LocalBackend()
+        read_tool = Read(backend=backend)
+        with (
+            patch.object(
+                backend,
+                "read_file",
+                new_callable=AsyncMock,
+                return_value=b"Line 1\nLine 2\n",
+            ) as read_file,
+            patch.object(
+                backend,
+                "stat_mtime",
+                new_callable=AsyncMock,
+                return_value=1.0,
+            ) as stat_mtime,
+            patch.object(
+                ToolContext,
+                "get_cache",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as get_cache,
+            patch.object(
+                ToolContext,
+                "cache_file",
+                new_callable=AsyncMock,
+            ) as cache_file,
+        ):
+            for parameter, value in [
+                ("offset", 0),
+                ("offset", -1),
+                ("offset", -3),
+                ("limit", 0),
+                ("limit", -1),
+                ("limit", 2001),
+            ]:
+                with self.subTest(parameter=parameter, value=value):
+                    invoke = (
+                        read_tool.call if parameter == "offset" else read_tool
+                    )
+                    chunk = await invoke(
+                        file_path=self.temp_file.name,
+                        _agent_state=state,
+                        **{parameter: value},
+                    )
+
+                    expected_text = (
+                        f"Error: offset must be at least 1, got: {value}."
+                        if parameter == "offset"
+                        else "Error: limit must be between 1 and 2000, "
+                        f"got: {value}."
+                    )
+                    self.assertDictEqual(
+                        chunk.model_dump(mode="json"),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "id": AnyString(),
+                                    "text": expected_text,
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                            "id": AnyString(),
+                        },
+                    )
+                    read_file.assert_not_called()
+                    stat_mtime.assert_not_called()
+                    get_cache.assert_not_called()
+                    cache_file.assert_not_called()
+
+    async def test_read_pagination_boundaries(self) -> None:
+        """Valid pagination preserves exact line numbers and content."""
+        all_lines = "\n".join(f"{i:6d}\tLine {i}" for i in range(1, 11))
+        for offset, limit, expected in [
+            (1, 1, "     1\tLine 1"),
+            (10, 1, "    10\tLine 10"),
+            (1, 2000, all_lines),
+            (10, 2000, "    10\tLine 10"),
+            (11, 1, ""),
+        ]:
+            with self.subTest(offset=offset, limit=limit):
+                chunk = await self.read_tool(
+                    file_path=self.temp_file.name,
+                    offset=offset,
+                    limit=limit,
+                )
+
+                self.assertDictEqual(
+                    chunk.model_dump(mode="json"),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "id": AnyString(),
+                                "text": expected,
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "running",
+                        "is_last": True,
+                        "metadata": {},
+                        "id": AnyString(),
+                    },
+                )
+
+    async def test_read_empty_file_with_valid_pagination(self) -> None:
+        """An empty file remains a successful empty result."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
+            pass
+        self.addCleanup(os.unlink, f.name)
+
+        chunk = await self.read_tool(file_path=f.name, offset=1, limit=1)
+
+        self.assertDictEqual(
+            chunk.model_dump(mode="json"),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
     async def test_read_nonexistent_file(self) -> None:
         """Test reading a non-existent file."""
-        chunk = await self.read_tool(file_path="/nonexistent/file.txt")
+        missing_path = os.path.join(
+            os.path.abspath(tempfile.gettempdir()),
+            f"agentscope-no-such-file-{uuid.uuid4().hex}.txt",
+        )
+        chunk = await self.read_tool(file_path=missing_path)
 
         self.assertEqual(chunk.state, "error")
         self.assertIn("does not exist", chunk.content[0].text)
@@ -290,6 +437,26 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_default_model_input_types_are_isolated(self) -> None:
+        """Changing one default tool must not affect other instances."""
+        existing = Read()
+        self.read_tool.model_input_types.append("image/bmp")
+        self.addCleanup(self.read_tool.model_input_types.remove, "image/bmp")
+
+        defaults = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        self.assertDictEqual(
+            {
+                "configured": self.read_tool.model_input_types,
+                "existing": existing.model_input_types,
+                "later": Read().model_input_types,
+            },
+            {
+                "configured": defaults + ["image/bmp"],
+                "existing": defaults,
+                "later": defaults,
+            },
+        )
+
     async def test_read_image_unsupported_type(self) -> None:
         """Test images outside ``model_input_types`` return an error."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".bmp") as f:
@@ -317,6 +484,18 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": AnyString(),
             },
+        )
+
+        # An explicit empty list means the model accepts no native media.
+        tool = Read(model_input_types=[])
+        self.assertListEqual(tool.model_input_types, [])
+        self.assertNotIn("read images", tool.description)
+        chunk = await tool(file_path=f.name)
+        self.assertEqual(chunk.state, "error")
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: Unsupported image type image/bmp, only none are "
+            "supported.",
         )
 
         # Model card style input types (non-image entries ignored) and glob
@@ -404,6 +583,55 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
             },
         )
+
+    async def test_read_pdf_deferred_errors(self) -> None:
+        """Late extraction and PDF-writing errors become final error chunks."""
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.add_blank_page(width=72, height=72)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as fp:
+            writer.write(fp)
+        self.addCleanup(os.unlink, fp.name)
+
+        # Malformed streams may be tolerated by different pypdf versions.
+        # Inject failures at the actual deferred operations instead.
+        for method, message, native_pdf in (
+            ("PageObject.extract_text", "cannot extract text", False),
+            ("PdfWriter.add_page", "cannot copy page", True),
+            ("PdfWriter.write", "cannot write PDF", True),
+        ):
+            with self.subTest(method=method):
+                tool = Read(
+                    model_input_types=["application/pdf"]
+                    if native_pdf
+                    else [],
+                )
+                with patch(
+                    f"pypdf.{method}",
+                    side_effect=ValueError(message),
+                ) as failure:
+                    chunk = await tool(file_path=fp.name, pages="1")
+                failure.assert_called_once()
+                self.assertDictEqual(
+                    chunk.model_dump(mode="json"),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Error reading PDF: {message}",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "error",
+                        "is_last": True,
+                        "metadata": {},
+                        "id": AnyString(),
+                    },
+                )
 
     async def test_read_pdf_with_pages_param(self) -> None:
         """Test reading a page range and a single page from a PDF."""

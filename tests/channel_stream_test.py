@@ -10,11 +10,13 @@ these cover.
 """
 import asyncio
 from contextlib import aclosing
+from typing import AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.app._bus_ops import publish_session_event
 from agentscope.app.channel._stream import open_reply_stream
-from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.event import (
     ReplyEndEvent,
     ReplyStartEvent,
@@ -102,6 +104,32 @@ class _SeamBus(InMemoryMessageBus):
         return await super().log_read(key, **kwargs)
 
 
+class _BrokenSubscriptionBus(InMemoryMessageBus):
+    """A bus whose live subscription fails on demand."""
+
+    def __init__(self, fail_before_ready: bool = False) -> None:
+        super().__init__()
+        self.fail_before_ready = fail_before_ready
+        self.fail = asyncio.Event()
+        self.events: list[dict] = []
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Raise before or after reporting that the subscription is live."""
+        if self.fail_before_ready:
+            raise RuntimeError("subscription failed")
+        if callable(on_ready):
+            on_ready()
+        for event in self.events:
+            yield event
+        await self.fail.wait()
+        raise RuntimeError("subscription failed")
+
+
 class EventStreamTest(IsolatedAsyncioTestCase):
     """The stream is gap-free and always terminates."""
 
@@ -119,6 +147,26 @@ class EventStreamTest(IsolatedAsyncioTestCase):
             ["REPLY_START", "REPLY_END"],
         )
 
+    async def test_replay_starts_after_persisted_checkpoint(self) -> None:
+        """Retained events from the prior run are not redelivered."""
+        bus = InMemoryMessageBus()
+        await _publish(bus, "s-1", _start())
+        await _publish(bus, "s-1", _end())
+        entries = await bus.log_read(MessageBusKeys.session_events("s-1"))
+        await bus.registry_set(
+            MessageBusKeys.session_event_checkpoint("s-1"),
+            MessageBusKeys.SESSION_EVENT_CURSOR_FIELD,
+            entries[-1][0],
+        )
+
+        async def _run() -> None:
+            await asyncio.sleep(0.01)
+            await _publish(bus, "s-1", _start())
+            await _publish(bus, "s-1", _end())
+
+        drained, _ = await asyncio.gather(_drain(bus, "s-1"), _run())
+        self.assertListEqual(drained, ["REPLY_START", "REPLY_END"])
+
     async def test_delivers_events_published_while_streaming(self) -> None:
         """The common case: delivery starts first, events arrive after."""
         bus = InMemoryMessageBus()
@@ -130,6 +178,71 @@ class EventStreamTest(IsolatedAsyncioTestCase):
 
         drained, _ = await asyncio.gather(_drain(bus, "s-1"), _run())
         self.assertListEqual(drained, ["REPLY_START", "REPLY_END"])
+
+    async def test_subscription_failure_before_ready_is_propagated(
+        self,
+    ) -> None:
+        """Opening fails immediately if the subscription never comes up."""
+        bus = _BrokenSubscriptionBus(fail_before_ready=True)
+
+        with self.assertRaisesRegex(RuntimeError, "subscription failed"):
+            await open_reply_stream(bus, "s-1")
+
+    async def test_subscription_failure_while_reading_is_propagated(
+        self,
+    ) -> None:
+        """A lost live subscription does not leave the reader waiting."""
+        bus = _BrokenSubscriptionBus()
+        stream = await open_reply_stream(bus, "s-1")
+
+        async with aclosing(stream):
+            next_event = asyncio.create_task(anext(stream))
+            bus.fail.set()
+            with self.assertRaisesRegex(RuntimeError, "subscription failed"):
+                await asyncio.wait_for(next_event, timeout=0.5)
+
+    async def test_buffered_reply_survives_immediate_disconnect(self) -> None:
+        """Deliver the complete reply buffered before a disconnect."""
+        bus = _BrokenSubscriptionBus()
+        bus.events = [
+            _start().model_dump(mode="json"),
+            _end().model_dump(mode="json"),
+        ]
+        bus.fail.set()
+
+        stream = await open_reply_stream(bus, "s-1")
+        async with aclosing(stream):
+            self.assertEqual([event async for event in stream], bus.events)
+
+    async def test_setup_timeout_does_not_wait_for_bus_cleanup(self) -> None:
+        """Opening times out while subscription cleanup is pending."""
+        bus = InMemoryMessageBus()
+        release = asyncio.Event()
+        closed = asyncio.Event()
+
+        async def subscription() -> AsyncGenerator[dict, None]:
+            try:
+                await asyncio.Event().wait()
+                yield {}
+            finally:
+                await release.wait()
+                closed.set()
+
+        with (
+            patch.object(bus, "subscribe", return_value=subscription()),
+            patch("agentscope.app.channel._stream._SUBSCRIBE_TIMEOUT_SECS", 0),
+        ):
+            opening = asyncio.create_task(open_reply_stream(bus, "s-1"))
+            try:
+                done, _ = await asyncio.wait({opening}, timeout=1)
+                self.assertIn(opening, done)
+                with self.assertRaisesRegex(TimeoutError, "bus subscription"):
+                    await opening
+                self.assertFalse(closed.is_set())
+            finally:
+                release.set()
+                await asyncio.gather(opening, return_exceptions=True)
+                await asyncio.wait_for(closed.wait(), timeout=1)
 
     async def test_seam_events_are_not_delivered_twice(self) -> None:
         """An event landing between subscribe and replay reaches the

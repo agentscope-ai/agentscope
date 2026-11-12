@@ -9,6 +9,7 @@ from ._base import CredentialBase
 if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
+    from ..realtime import RealtimeModelBase
     from ..tts import TTSModelBase
 
 
@@ -47,3 +48,12 @@ class GeminiCredential(CredentialBase):
         from ..tts import GeminiTTSModel
 
         return [GeminiTTSModel]
+
+    @classmethod
+    def get_realtime_model_classes(
+        cls,
+    ) -> list[Type["RealtimeModelBase"]]:
+        """Return the Gemini realtime model classes."""
+        from ..realtime import GeminiRealtimeModel
+
+        return [GeminiRealtimeModel]

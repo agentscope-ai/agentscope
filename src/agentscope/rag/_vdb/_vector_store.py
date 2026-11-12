@@ -60,8 +60,10 @@ class VectorSearchResult(BaseModel):
     """
 
     score: float
-    """Similarity score.  Higher = more similar for cosine /
-    dot-product; lower = more similar for L2 distance."""
+    """Relevance score, always higher-is-better.  Backends whose
+    metric is a distance (lower-is-better) negate it before returning,
+    so the value is comparable within one store but not across stores
+    using different metrics."""
 
     document_id: str
     """The ID of the source document the matched chunk belongs to —
@@ -205,6 +207,7 @@ class VectorStoreBase(ABC):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
         """Delete all records belonging to one source document.
 
@@ -219,6 +222,11 @@ class VectorStoreBase(ABC):
             document_id (`str`):
                 The source document ID whose records should be
                 removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records whose chunk metadata matches
+                every ``key == value`` pair in addition to the document ID.
+                ``None`` or an empty dict deletes all records of the
+                document. Backends must not ignore a non-empty filter.
         """
 
     # ------------------------------------------------------------------
@@ -253,7 +261,10 @@ class VectorStoreBase(ABC):
 
         Returns:
             `list[VectorSearchResult]`:
-                Results ordered by descending similarity score.
+                Results ordered by descending
+                :attr:`VectorSearchResult.score`.  Implementations must
+                normalize a distance metric into that higher-is-better
+                score, e.g. by negating it.
         """
 
     # ------------------------------------------------------------------

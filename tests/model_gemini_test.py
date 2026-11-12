@@ -5,16 +5,30 @@
 Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
+import base64
+import copy
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Annotated, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+from google.genai.types import HttpOptions, ThinkingConfig
+from pydantic import BaseModel, Field
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.formatter import GeminiChatFormatter
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ThinkingBlock,
+)
+from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
@@ -120,6 +134,313 @@ class _MockAsyncStream:
 
 
 # ---------------------------------------------------------------------------
+# Gemini 4 configuration tests
+# ---------------------------------------------------------------------------
+
+
+class TestGemini4Argon(IsolatedAsyncioTestCase):
+    """Verify Gemini 4 requests and configuration without network access."""
+
+    model_name = "gemini-4-argon"
+    model_label = "Gemini 4 Argon"
+
+    def setUp(self) -> None:
+        with patch("google.genai.Client"):
+            self.model = GeminiChatModel(
+                credential=GeminiCredential(api_key="test"),
+                model=self.model_name,
+                stream=False,
+            )
+
+    async def test_request_parameters(self) -> None:
+        """Check defaults, levels, summaries, and per-call overrides."""
+        cases: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = [
+            ({}, {}, {}),
+            (
+                {"thinking_enable": False},
+                {},
+                {"thinking_config": {"include_thoughts": False}},
+            ),
+        ]
+        for level in ("low", "medium", "high"):
+            cases.append(
+                (
+                    {"thinking_level": level, "thinking_enable": True},
+                    {},
+                    {
+                        "thinking_config": {
+                            "thinking_level": level.upper(),
+                            "include_thoughts": True,
+                        },
+                    },
+                ),
+            )
+        cases.append(
+            (
+                {"thinking_budget": 1024, "max_tokens": 100_000},
+                {
+                    "thinking_config": ThinkingConfig(thinking_level="LOW"),
+                    "max_output_tokens": 65_536,
+                    "temperature": 0.2,
+                    "top_p": 0.3,
+                    "top_k": 20,
+                },
+                {
+                    "thinking_config": {"thinking_level": "LOW"},
+                    "max_output_tokens": 65_536,
+                },
+            ),
+        )
+        cases.extend(
+            [
+                (
+                    {"thinking_budget": 1024, "max_tokens": 100_000},
+                    {"thinkingConfig": None, "maxOutputTokens": None},
+                    {"thinking_config": None, "max_output_tokens": None},
+                ),
+                (
+                    {"thinking_level": "high", "max_tokens": 100_000},
+                    {
+                        "thinkingConfig": {"thinkingLevel": "LOW"},
+                        "maxOutputTokens": 65_536,
+                        "topP": 0.3,
+                        "topK": 20,
+                    },
+                    {
+                        "thinking_config": {"thinking_level": "LOW"},
+                        "max_output_tokens": 65_536,
+                    },
+                ),
+            ],
+        )
+        for stream in (False, True):
+            for parameters, overrides, expected in cases:
+                with self.subTest(stream=stream, parameters=parameters):
+                    self.model.stream = stream
+                    self.model.parameters = GeminiChatModel.Parameters(
+                        **parameters,
+                    )
+                    api = AsyncMock(return_value=_mock_completion([]))
+                    stream_api = AsyncMock(return_value=_MockAsyncStream([]))
+                    self.model.client.aio.models.generate_content = api
+                    self.model.client.aio.models.generate_content_stream = (
+                        stream_api
+                    )
+                    response = await self.model([], **overrides)
+                    if stream:
+                        async for _ in response:
+                            pass
+                    expected_calls = [
+                        call(
+                            model=self.model_name,
+                            contents=[],
+                            config=expected,
+                        ),
+                    ]
+                    self.assertEqual(
+                        api.await_args_list,
+                        [] if stream else expected_calls,
+                    )
+                    self.assertEqual(
+                        stream_api.await_args_list,
+                        expected_calls if stream else [],
+                    )
+
+    async def test_ignored_sampling_parameters_warn(self) -> None:
+        """Warn for non-null sampling values from either config source."""
+        cases = [
+            (
+                {"temperature": 0.2, "top_p": 0.3},
+                {},
+                ["temperature", "top_p"],
+            ),
+            (
+                {},
+                {"temperature": 0, "topP": 0.3, "topK": 20},
+                ["temperature", "top_p", "top_k"],
+            ),
+            (
+                {"temperature": 0.2, "top_p": 0.3},
+                {"temperature": None, "topP": None, "topK": None},
+                [],
+            ),
+        ]
+        for parameters, overrides, ignored in cases:
+            with self.subTest(parameters=parameters, overrides=overrides):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    **parameters,
+                )
+                api = AsyncMock(return_value=_mock_completion([]))
+                self.model.client.aio.models.generate_content = api
+                with patch(
+                    "agentscope.model._gemini._model.logger.warning",
+                ) as warning:
+                    await self.model([], **overrides)
+                self.assertEqual(
+                    warning.call_args_list,
+                    [
+                        call(
+                            "Gemini 4 Argon and Carbon ignore %s; "
+                            "the parameter will not be sent.",
+                            key,
+                        )
+                        for key in ignored
+                    ],
+                )
+                self.assertEqual(
+                    api.await_args_list,
+                    [call(model=self.model_name, contents=[], config={})],
+                )
+
+    async def test_invalid_config_never_reaches_api(self) -> None:
+        """Reject unsupported budgets, reasoning levels, and long decode."""
+        cases: list[tuple[dict[str, Any], dict[str, Any], str]] = [
+            ({"thinking_budget": 1024}, {}, "thinking_budget"),
+            ({}, {"thinking_config": {"thinking_budget": 0}}, "budget"),
+            ({}, {"thinking_config": {"thinkingBudget": 100}}, "budget"),
+            ({}, {"thinkingConfig": {"thinkingBudget": 100}}, "budget"),
+            (
+                {},
+                {"thinking_config": {"thinking_level": "MINIMAL"}},
+                "thinking_level",
+            ),
+            ({"max_tokens": 65_537}, {}, "65536"),
+            ({}, {"max_output_tokens": 65_537}, "65536"),
+            ({}, {"maxOutputTokens": 65_537}, "65536"),
+            (
+                {},
+                {"thinkingConfig": {"thinkingLevel": "MINIMAL"}},
+                "thinking_level",
+            ),
+        ]
+        for alias, name in (
+            ("thinkingConfig", "thinking_config"),
+            ("maxOutputTokens", "max_output_tokens"),
+            ("topP", "top_p"),
+            ("topK", "top_k"),
+        ):
+            cases.append(({}, {alias: None, name: None}, name))
+        for alias, name, value in (
+            ("thinkingBudget", "thinking_budget", 1024),
+            ("thinkingLevel", "thinking_level", "LOW"),
+            ("includeThoughts", "include_thoughts", True),
+        ):
+            cases.append(
+                ({}, {"thinking_config": {alias: value, name: value}}, name),
+            )
+        self.model.formatter = MagicMock()
+        self.model.formatter.format = AsyncMock(return_value=[])
+        for stream in (False, True):
+            self.model.stream = stream
+            for parameters, kwargs, message in cases:
+                with self.subTest(
+                    stream=stream,
+                    parameters=parameters,
+                    **kwargs,
+                ):
+                    self.model.parameters = GeminiChatModel.Parameters(
+                        **parameters,
+                    )
+                    self.model.client.reset_mock()
+                    with self.assertRaisesRegex(ValueError, message):
+                        await self.model([], **kwargs)
+                    self.assertEqual(self.model.client.mock_calls, [])
+                    self.assertEqual(self.model.formatter.mock_calls, [])
+
+    def test_timeout_does_not_mutate_shared_client_options(self) -> None:
+        """Keep model defaults local for dict and SDK HTTP options."""
+        cases: list[tuple[dict[str, Any] | HttpOptions, int]] = [
+            ({"timeout": None}, 900_000),
+            (HttpOptions(), 900_000),
+            ({"timeout": 1234}, 1234),
+            ({"timeout": 0}, 0),
+            (HttpOptions(timeout=0), 0),
+        ]
+        for options, expected_timeout in cases:
+            with self.subTest(options=options):
+                shared = {"http_options": options}
+                before = copy.deepcopy(shared)
+                with patch("google.genai.Client") as client:
+                    model = GeminiChatModel(
+                        credential=GeminiCredential(api_key="test"),
+                        model=f"models/{self.model_name}",
+                        client_kwargs=shared,
+                    )
+                    self.assertEqual(
+                        client.call_args.kwargs,
+                        {
+                            "api_key": "test",
+                            "http_options": HttpOptions(
+                                timeout=expected_timeout,
+                            ),
+                        },
+                    )
+                    self.assertEqual(shared, before)
+                    self.assertIsNot(model.client_kwargs, shared)
+                    GeminiChatModel(
+                        credential=GeminiCredential(api_key="test"),
+                        model="gemini-2.5-flash",
+                        client_kwargs=shared,
+                    )
+                    self.assertEqual(
+                        client.call_args.kwargs,
+                        {"api_key": "test", **before},
+                    )
+                    self.assertEqual(shared, before)
+
+    def test_model_card_parameters(self) -> None:
+        """Expose supported controls and hide legacy reasoning settings."""
+        cards = {card.name: card for card in GeminiChatModel.list_models()}
+        card = cards[self.model_name]
+        properties = card.parameter_schema["properties"]
+        self.assertEqual(
+            {
+                "name": card.name,
+                "label": card.label,
+                "context_size": card.context_size,
+                "output_size": card.output_size,
+                "parameters": sorted(properties),
+                "max_tokens": properties["max_tokens"]["maximum"],
+                "thinking_level": properties["thinking_level"]["default"],
+                "summary_title": properties["thinking_enable"]["title"],
+            },
+            {
+                "name": self.model_name,
+                "label": self.model_label,
+                "context_size": 1_048_576,
+                "output_size": 65_536,
+                "parameters": [
+                    "max_tokens",
+                    "thinking_enable",
+                    "thinking_level",
+                ],
+                "max_tokens": 65_536,
+                "thinking_level": "medium",
+                "summary_title": "Thought Summaries",
+            },
+        )
+        self.assertEqual(
+            {
+                name: "thinking_level" in item.parameter_schema["properties"]
+                for name, item in cards.items()
+                if name not in ("gemini-4-argon", "gemini-4-carbon")
+            },
+            {
+                name: False
+                for name in cards
+                if name not in ("gemini-4-argon", "gemini-4-carbon")
+            },
+        )
+
+
+class TestGemini4Carbon(TestGemini4Argon):
+    """Run the shared Gemini 4 contract against Carbon as well."""
+
+    model_name = "gemini-4-carbon"
+    model_label = "Gemini 4 Carbon"
+
+
+# ---------------------------------------------------------------------------
 # Non-streaming tests
 # ---------------------------------------------------------------------------
 
@@ -133,6 +454,16 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         # instance so generate_content() hits it instead of the network.
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_thinking_level_rejected_for_legacy_models(self) -> None:
+        """Keep the Gemini 4 reasoning control scoped to supported IDs."""
+        self.model.parameters.thinking_level = "low"
+        for name in ("gemini-2.5-flash", "gemini-4-carbon-unknown"):
+            with self.subTest(model=name):
+                self.model.model = name
+                with self.assertRaisesRegex(ValueError, "thinking_level"):
+                    await self.model([])
+                self.assertEqual(self.mock_client.mock_calls, [])
 
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
@@ -150,6 +481,120 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
             ),
         )
+
+    async def test_call_config_overrides_parameter_defaults(self) -> None:
+        """Per-call config overrides model-level defaults."""
+        self.model.parameters.max_tokens = 1024
+        self.model.parameters.temperature = 0.2
+        self.model.parameters.top_p = 0.3
+        self.model.parameters.thinking_enable = True
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        default_config = {
+            "max_output_tokens": 1024,
+            "temperature": 0.2,
+            "top_p": 0.3,
+            "thinking_config": {
+                "include_thoughts": True,
+                "thinking_budget": 1024,
+            },
+        }
+        cases = {
+            "max_output_tokens": 2048,
+            "temperature": 0.8,
+            "top_p": 0.9,
+            "thinking_config": {
+                "include_thoughts": True,
+                "thinking_budget": 8192,
+            },
+        }
+
+        for key, value in cases.items():
+            with self.subTest(key=key):
+                await self.model([], **{key: value})
+
+                call_args = (
+                    self.mock_client.aio.models.generate_content.call_args
+                )
+                sent_config = call_args.kwargs["config"]
+                self.assertEqual(
+                    sent_config,
+                    {**default_config, key: value},
+                )
+
+    async def test_thinking_config_omitted_by_default(self) -> None:
+        """Default parameters send no ``thinking_config`` so the model's
+        default behavior applies (e.g. Pro models think by default and
+        reject ``thinking_budget: 0``)."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+        self.model.parameters = GeminiChatModel.Parameters()
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(sent_config, {})
+
+    async def test_thinking_config_false_forwarded(self) -> None:
+        """``thinking_enable=False`` sends the disable configuration."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+        self.model.parameters = GeminiChatModel.Parameters(
+            thinking_enable=False,
+        )
+
+        await self.model([])
+
+        sent_config = (
+            self.mock_client.aio.models.generate_content.call_args.kwargs[
+                "config"
+            ]
+        )
+        self.assertEqual(
+            sent_config,
+            {
+                "thinking_config": {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                },
+            },
+        )
+
+    async def test_thinking_config_true_forwarded(self) -> None:
+        """Enabled thinking uses the default or explicitly provided budget."""
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        for budget, expected_budget in [(None, 1024), (8192, 8192)]:
+            with self.subTest(thinking_budget=budget):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    thinking_enable=True,
+                    thinking_budget=budget,
+                )
+
+                await self.model([])
+
+                call_args = (
+                    self.mock_client.aio.models.generate_content.call_args
+                )
+                self.assertEqual(
+                    call_args.kwargs["config"],
+                    {
+                        "thinking_config": {
+                            "include_thoughts": True,
+                            "thinking_budget": expected_budget,
+                        },
+                    },
+                )
 
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
@@ -253,6 +698,49 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
+
+    async def test_usage_normalizes_optional_cache_count(self) -> None:
+        """SDK cache counts remain integer-valued in raw model usage."""
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        for cache_count, expected in [(None, 0), (0, 0), (5, 5)]:
+            with self.subTest(cache_count=cache_count):
+                resp = _mock_completion([_make_part(text="hello")])
+                resp.usage_metadata = GenerateContentResponseUsageMetadata(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                    cached_content_token_count=cache_count,
+                )
+                self.mock_client.aio.models.generate_content = AsyncMock(
+                    return_value=resp,
+                )
+
+                result = await self.model([])
+
+                self.assertEqual(
+                    dict(result.usage),
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "time": result.usage.time,
+                        "cache_creation_input_tokens": 0,
+                        "cache_input_tokens": expected,
+                        "type": "chat",
+                        "metadata": None,
+                    },
+                )
+                self.assertIs(type(result.usage.cache_input_tokens), int)
+                usage = Usage(**dict(result.usage))
+                self.assertEqual(
+                    usage.model_dump(),
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_input_tokens": expected,
+                        "cache_creation_input_tokens": 0,
+                    },
+                )
 
     async def test_usage_classifies_tool_use_tokens_as_input(self) -> None:
         """Usage classifies tool-use tokens as input, not output."""
@@ -381,6 +869,54 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_usage_normalizes_optional_cache_count(self) -> None:
+        """Delta and final usage normalize optional SDK cache counts."""
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        for cache_count, expected in [(None, 0), (0, 0), (5, 5)]:
+            with self.subTest(cache_count=cache_count):
+                chunk = _make_stream_chunk([_make_part(text="hello")])
+                chunk.usage_metadata = GenerateContentResponseUsageMetadata(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                    cached_content_token_count=cache_count,
+                )
+                self.mock_client.aio.models.generate_content_stream = (
+                    AsyncMock(
+                        return_value=_MockAsyncStream([chunk]),
+                    )
+                )
+
+                gen = await self.model([])
+                responses = [r async for r in gen]
+
+                self.assertEqual(len(responses), 2)
+                for response in responses:
+                    self.assertEqual(
+                        dict(response.usage),
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "time": response.usage.time,
+                            "cache_creation_input_tokens": 0,
+                            "cache_input_tokens": expected,
+                            "type": "chat",
+                            "metadata": None,
+                        },
+                    )
+                    self.assertIs(type(response.usage.cache_input_tokens), int)
+                    usage = Usage(**dict(response.usage))
+                    self.assertEqual(
+                        usage.model_dump(),
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "cache_input_tokens": expected,
+                            "cache_creation_input_tokens": 0,
+                        },
+                    )
 
     async def test_stream_usage_classifies_tool_use_tokens(self) -> None:
         """Streaming usage classifies tool-use tokens as input."""
@@ -548,6 +1084,184 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 json.dumps({"q": "b"}, ensure_ascii=False),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# Thought signature round-trip tests
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiThoughtSignatures(IsolatedAsyncioTestCase):
+    """Keep signatures in marked IDs without changing message schemas."""
+
+    async def test_tool_call_round_trip(self) -> None:
+        """Preserve parallel and sequential calls across JSON storage."""
+        for streaming in (False, True):
+            for provider_id in (None, "call-original", "Y2FsbA=="):
+                with self.subTest(stream=streaming, id=provider_id):
+                    with patch("google.genai.Client") as client_class:
+                        model = _make_model(stream=streaming)
+                    client = client_class.return_value
+                    history = [
+                        Msg(
+                            name="user",
+                            role="user",
+                            content=[TextBlock(text="Weather?")],
+                        ),
+                    ]
+                    expected_history = [
+                        {"role": "user", "parts": [{"text": "Weather?"}]},
+                    ]
+
+                    # Only the first of the parallel calls has a signature.
+                    # The next step gets a different signature in this turn.
+                    for step, signature in enumerate(
+                        (bytes(range(256)), b"next-step-signature"),
+                    ):
+                        call_id = "gemini_ts:" + base64.b64encode(
+                            signature,
+                        ).decode("ascii")
+                        parts = [
+                            _make_part(
+                                function_call={
+                                    "id": provider_id,
+                                    "name": "get_weather",
+                                    "args": {"city": "Tokyo"},
+                                },
+                                thought_signature=signature,
+                            ),
+                        ]
+                        if step == 0:
+                            parts.append(
+                                _make_part(
+                                    function_call={
+                                        "id": provider_id,
+                                        "name": "get_weather",
+                                        "args": {"city": "Paris"},
+                                    },
+                                ),
+                            )
+                        if streaming:
+                            generate = AsyncMock(
+                                return_value=_MockAsyncStream(
+                                    [_make_stream_chunk([p]) for p in parts],
+                                ),
+                            )
+                            client.aio.models.generate_content_stream = (
+                                generate
+                            )
+                            responses = [r async for r in await model(history)]
+                            result = responses[-1]
+                        else:
+                            generate = AsyncMock(
+                                return_value=_mock_completion(parts),
+                            )
+                            client.aio.models.generate_content = generate
+                            result = await model(history)
+
+                        self.assertEqual(
+                            generate.await_args.kwargs["contents"],
+                            expected_history,
+                        )
+                        expected_blocks = [
+                            ToolCallBlock.model_construct(
+                                id=call_id,
+                                created_at=A,
+                                name="get_weather",
+                                input=json.dumps({"city": "Tokyo"}),
+                            ),
+                        ]
+                        if step == 0:
+                            expected_blocks.append(
+                                ToolCallBlock.model_construct(
+                                    id=provider_id or A,
+                                    created_at=A,
+                                    name="get_weather",
+                                    input=json.dumps({"city": "Paris"}),
+                                ),
+                            )
+                        self.assertEqual(result.content, expected_blocks)
+                        self.assertEqual(
+                            len({b.id for b in result.content}),
+                            len(result.content),
+                        )
+                        message = AssistantMsg(
+                            name="assistant",
+                            content=[
+                                *result.content,
+                                *[
+                                    ToolResultBlock(
+                                        id=b.id,
+                                        name=b.name,
+                                        output="sunny",
+                                    )
+                                    for b in result.content
+                                ],
+                            ],
+                        )
+                        history.append(
+                            Msg.model_validate_json(message.model_dump_json()),
+                        )
+                        expected_parts = []
+                        expected_results = []
+                        for block, part in zip(result.content, parts):
+                            expected_part = {
+                                "function_call": {
+                                    "id": block.id,
+                                    "name": "get_weather",
+                                    "args": part.function_call.args,
+                                },
+                            }
+                            if part.thought_signature:
+                                expected_part["thought_signature"] = signature
+                            expected_parts.append(expected_part)
+                            expected_results.append(
+                                {
+                                    "function_response": {
+                                        "id": block.id,
+                                        "name": "get_weather",
+                                        "response": {"output": "sunny"},
+                                    },
+                                },
+                            )
+                        expected_history.extend(
+                            [
+                                {"role": "model", "parts": expected_parts},
+                                {"role": "user", "parts": expected_results},
+                            ],
+                        )
+                        self.assertEqual(
+                            await GeminiChatFormatter().format(history),
+                            expected_history,
+                        )
+
+    async def test_unmarked_ids_are_not_decoded(self) -> None:
+        """Do not infer signatures from plain or legacy Base64 IDs."""
+        for call_id in ("call-1", "Y2FsbA==", "bGVnYWN5LXNpZ25hdHVyZQ=="):
+            with self.subTest(id=call_id):
+                message = AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(id=call_id, name="search", input="{}"),
+                    ],
+                )
+                self.assertEqual(
+                    await GeminiChatFormatter().format([message]),
+                    [
+                        {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "function_call": {
+                                        "id": call_id,
+                                        "name": "search",
+                                        "args": {},
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -763,6 +1477,91 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             {"type": "object"},
         )
 
+    def test_sanitize_inlines_nullable_type_array(self) -> None:
+        """JSON Schema type arrays with null are inlined for Gemini."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": ["string", "null"],
+                            "description": "Optional name",
+                        },
+                    },
+                },
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Optional name",
+                    },
+                },
+            },
+        )
+
+    def test_sanitize_converts_nullable_union_type_array_to_anyof(
+        self,
+    ) -> None:
+        """Nullable type arrays with multiple non-null types use anyOf."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": ["string", "integer", "null"],
+                    "description": "String or integer identifier",
+                },
+            ),
+            {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "integer"},
+                ],
+                "description": "String or integer identifier",
+            },
+        )
+
+    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+        self,
+    ) -> None:
+        """Existing anyOf constraints are not overwritten silently."""
+        with self.assertRaisesRegex(
+            ValueError,
+            "multi-type nullable type array and anyOf",
+        ):
+            _sanitize_schema_for_gemini(
+                {
+                    "type": ["string", "integer", "null"],
+                    "anyOf": [
+                        {"enum": ["auto"]},
+                        {"enum": [0]},
+                        {"type": "null"},
+                    ],
+                },
+            )
+
+    def test_sanitize_inlines_annotated_null_anyof(self) -> None:
+        """Annotated null schemas in anyOf are treated as null branches."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "description": "Optional name",
+                    "anyOf": [
+                        {"type": "string"},
+                        {
+                            "type": "null",
+                            "description": "No value",
+                        },
+                    ],
+                },
+            ),
+            {
+                "type": "string",
+                "description": "Optional name",
+            },
+        )
+
     def test_sanitize_pydantic_optional_list_dict(self) -> None:
         """End-to-end: Pydantic Optional[list[dict]] schema is cleaned."""
         result = _sanitize_schema_for_gemini(
@@ -850,6 +1649,60 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_escaped_definition_names(self) -> None:
+        """JSON Pointer escapes are decoded once and in the correct order."""
+        for keyword in ("$defs", "definitions"):
+            for name, token in (
+                ("a/b", "a~1b"),
+                ("a~b", "a~0b"),
+                ("a~1b", "a~01b"),
+            ):
+                with self.subTest(keyword=keyword, name=name):
+                    ref = {
+                        "$ref": f"#/{keyword}/{token}",
+                        "description": "Value",
+                    }
+                    schema = {
+                        keyword: {name: {"type": "string"}},
+                        "properties": {"value": ref},
+                    }
+                    original = json.dumps(schema, sort_keys=True)
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {
+                            "properties": {
+                                "value": {
+                                    "type": "string",
+                                    "description": "Value",
+                                },
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        json.dumps(schema, sort_keys=True),
+                        original,
+                    )
+
+    def test_flatten_escaped_recursive_definition(self) -> None:
+        """Escaped names use the same decoded key for cycle detection."""
+        result = _flatten_json_schema(
+            {
+                "$defs": {
+                    "Node/Child": {
+                        "type": "object",
+                        "properties": {
+                            "next": {"$ref": "#/$defs/Node~1Child"},
+                        },
+                    },
+                },
+                "properties": {"root": {"$ref": "#/$defs/Node~1Child"}},
+            },
+        )
+        self.assertEqual(
+            result["properties"]["root"]["properties"]["next"],
+            {"type": "object", "description": "(circular: Node/Child)"},
+        )
+
     def test_flatten_circular_ref_returns_placeholder(self) -> None:
         """Circular $ref produces a placeholder without infinite recursion."""
         self.assertEqual(
@@ -878,6 +1731,241 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 },
             },
         )
+
+    def test_flatten_removes_local_discriminators(self) -> None:
+        """Flattened unions retain constraints without dangling mappings."""
+
+        class Ring(BaseModel):
+            """One branch of the discriminated union."""
+
+            kind: Literal["ring"]
+            radius: float
+
+        class Disc(BaseModel):
+            """The other branch of the discriminated union."""
+
+            kind: Literal["disc"]
+            diameter: float
+
+        class ShapeTool(BaseModel):
+            """Tool schema containing a discriminated union."""
+
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        class Drawing(BaseModel):
+            """A branch containing another discriminated union."""
+
+            kind: Literal["drawing"]
+            shape: Annotated[Ring | Disc, Field(discriminator="kind")]
+
+        class DrawingTool(BaseModel):
+            """Tool schema containing nested discriminated unions."""
+
+            drawing: Annotated[Drawing | Ring, Field(discriminator="kind")]
+
+        ring = {
+            "description": "One branch of the discriminated union.",
+            "properties": {
+                "kind": {"const": "ring", "title": "Kind", "type": "string"},
+                "radius": {"title": "Radius", "type": "number"},
+            },
+            "required": ["kind", "radius"],
+            "title": "Ring",
+            "type": "object",
+        }
+        disc = {
+            "description": "The other branch of the discriminated union.",
+            "properties": {
+                "kind": {"const": "disc", "title": "Kind", "type": "string"},
+                "diameter": {"title": "Diameter", "type": "number"},
+            },
+            "required": ["kind", "diameter"],
+            "title": "Disc",
+            "type": "object",
+        }
+        shape = {
+            "oneOf": [ring, disc],
+            "title": "Shape",
+        }
+        for model, expected in (
+            (
+                ShapeTool,
+                {
+                    "description": (
+                        "Tool schema containing a discriminated union."
+                    ),
+                    "properties": {"shape": shape},
+                    "required": ["shape"],
+                    "title": "ShapeTool",
+                    "type": "object",
+                },
+            ),
+            (
+                DrawingTool,
+                {
+                    "description": (
+                        "Tool schema containing nested discriminated unions."
+                    ),
+                    "properties": {
+                        "drawing": {
+                            "oneOf": [
+                                {
+                                    "description": (
+                                        "A branch containing another "
+                                        "discriminated union."
+                                    ),
+                                    "properties": {
+                                        "kind": {
+                                            "const": "drawing",
+                                            "title": "Kind",
+                                            "type": "string",
+                                        },
+                                        "shape": shape,
+                                    },
+                                    "required": ["kind", "shape"],
+                                    "title": "Drawing",
+                                    "type": "object",
+                                },
+                                ring,
+                            ],
+                            "title": "Drawing",
+                        },
+                    },
+                    "required": ["drawing"],
+                    "title": "DrawingTool",
+                    "type": "object",
+                },
+            ),
+        ):
+            with self.subTest(model=model.__name__):
+                schema = model.model_json_schema()
+                original = copy.deepcopy(schema)
+                self.assertEqual(_flatten_json_schema(schema), expected)
+                self.assertEqual(schema, original)
+
+    def test_flatten_removes_local_discriminators_from_anyof(self) -> None:
+        """Local mappings are removed for both definition dialects."""
+        branch = {
+            "type": "object",
+            "properties": {"kind": {"type": "string", "enum": ["ring"]}},
+            "required": ["kind"],
+        }
+        for keyword in ("$defs", "definitions"):
+            with self.subTest(keyword=keyword):
+                ref = f"#/{keyword}/Ring"
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            keyword: {"Ring": branch},
+                            "anyOf": [{"$ref": ref}],
+                            "discriminator": {
+                                "propertyName": "kind",
+                                "mapping": {
+                                    "ring": ref,
+                                    "remote": "https://example.com/schema",
+                                },
+                            },
+                        },
+                    ),
+                    {"anyOf": [branch]},
+                )
+
+    def test_flatten_keeps_other_discriminators(self) -> None:
+        """Mappings unrelated to removed definitions stay unchanged."""
+        for discriminator in (
+            {"propertyName": "kind"},
+            {"propertyName": "kind", "mapping": {}},
+            {
+                "propertyName": "kind",
+                "mapping": {
+                    "missing": "#/$defs/Ghost",
+                    "legacy": "#/definitions/Ghost",
+                    "remote": "https://example.com/schema",
+                    "implicit": "Ring",
+                },
+            },
+        ):
+            with self.subTest(discriminator=discriminator):
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            "$defs": {"Ring": {"type": "object"}},
+                            "discriminator": discriminator,
+                        },
+                    ),
+                    {"discriminator": discriminator},
+                )
+
+        discriminator = {
+            "propertyName": "kind",
+            "mapping": {"ring": "#/$defs/Ring"},
+        }
+        self.assertEqual(
+            _flatten_json_schema({"discriminator": discriminator}),
+            {"discriminator": discriminator},
+        )
+
+    def test_flatten_keeps_property_names(self) -> None:
+        """Schema keywords used as property names are preserved."""
+        for keyword in (
+            "properties",
+            "patternProperties",
+            "dependentSchemas",
+            "dependencies",
+        ):
+            with self.subTest(keyword=keyword):
+                self.assertEqual(
+                    _flatten_json_schema(
+                        {
+                            "$defs": {"Name": {"type": "string"}},
+                            keyword: {
+                                "definitions": {"$ref": "#/$defs/Name"},
+                                "$defs": {"$ref": "#/$defs/Name"},
+                                "$ref": {"$ref": "#/$defs/Name"},
+                            },
+                        },
+                    ),
+                    {
+                        keyword: {
+                            "definitions": {"type": "string"},
+                            "$defs": {"type": "string"},
+                            "$ref": {"type": "string"},
+                        },
+                    },
+                )
+
+    def test_flatten_keeps_instance_values(self) -> None:
+        """Instance data stays intact, including next to a schema $ref."""
+        data = {
+            "definitions": {"x": 1},
+            "$defs": {"x": 2},
+        }
+        for keyword, value in (
+            ("default", data),
+            ("const", data),
+            ("enum", [{"$ref": "#/$defs/Value"}]),
+            ("examples", [{"nested": data}]),
+        ):
+            for with_ref in (False, True):
+                with self.subTest(keyword=keyword, with_ref=with_ref):
+                    prop = {keyword: value}
+                    if with_ref:
+                        prop["$ref"] = "#/$defs/Value"
+                    else:
+                        prop["type"] = "object"
+                    self.assertEqual(
+                        _flatten_json_schema(
+                            {
+                                "$defs": {"Value": {"type": "object"}},
+                                "properties": {"value": prop},
+                            },
+                        ),
+                        {
+                            "properties": {
+                                "value": {"type": "object", keyword: value},
+                            },
+                        },
+                    )
 
     def test_flatten_legacy_definitions_ref(self) -> None:
         """Legacy 'definitions' keyword is resolved like '$defs'."""

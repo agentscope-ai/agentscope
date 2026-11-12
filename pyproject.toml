@@ -21,13 +21,15 @@ requires-python = ">=3.11"
 dependencies = [
     "aioitertools",
     "anthropic",
-    "dashscope",
+    "certifi>=2026.10.19",
+    "dashscope>=1.20.0",
     "docstring_parser",
     "filetype",
     "json5",
-    "json_repair",
-    "mcp<2.0.0",
+    "json_repair[schema]>=0.63.4",
+    "mcp>=2.0.0",
     "httpx",
+    "httpx2>=2.5.0",
     "numpy",
     "openai",
     "python-datauri",
@@ -51,20 +53,23 @@ dependencies = [
 
 [project.optional-dependencies]
 # ------------ Model APIs ------------
-model-gemini = ["google-genai"]
+model-gemini = ["google-genai>=2.30.1"]
 model-ollama = ["ollama>=0.5.4"]
 model-xai = ["xai-sdk"]
+classifier-jev = ["typesafe-sdk>=0.7"]
 models = [
     "agentscope[model-gemini]",
     "agentscope[model-ollama]",
     "agentscope[model-xai]",
 ]
+classifiers = ["agentscope[classifier-jev]"]
 # ------------ Service ------------
 service = [
     "fastapi",
     "uvicorn",
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
+    "aiortc>=1.14",
 ]
 # ------------ Storage backends ------------
 storage-redis = ["redis"]
@@ -99,8 +104,25 @@ workspace = [
 # ------------ Tools ------------
 # Ships the ``rg`` binary for the builtin Grep tool on LocalWorkspace
 # (remote sandboxes install ripgrep inside the sandbox instead).
+# 15.x ships wheels only for macOS-arm64 and manylinux_2_39 x86_64, so
+# everything else (Windows, glibc<2.39, musl, aarch64) falls back to the
+# Rust sdist and fails without a toolchain (#2504). 14.0 lacks those
+# wheels too, hence the lower bound. Lift once upstream restores them.
 tools = [
-    "ripgrep",
+    "ripgrep>=14.1,<15",
+]
+# ------------ Realtime voice ------------
+realtime = [
+    "websockets>=14",
+]
+realtime-local = ["sounddevice"]
+# ------------ Terminal UI ------------
+tui = [
+    "textual>=8.2,<9",
+]
+# ------------ A2A ------------
+a2a = [
+    "a2a-sdk>=1.1.1",
 ]
 # ------------ Vector stores ------------
 vdb-qdrant = ["qdrant-client"]
@@ -153,13 +175,17 @@ reme = ["agentscope[memory-reme]"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
+    "agentscope[classifiers]",
     "agentscope[service]",
+    "agentscope[realtime]",
     "agentscope[storage-redis]",
     "agentscope[storage-sql]",
     "agentscope[storage-s3]",
     "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[tui]",
+    "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[vdb-qdrant]",
     "agentscope[vdb-milvus]",
@@ -178,7 +204,8 @@ dev = [
     "pytest-forked",
     "myst_parser",
     "matplotlib",
-    "fakeredis",
+    # ``[lua]`` pulls in lupa so EVAL-based code paths are testable.
+    "fakeredis[lua]",
     # SQL backend tests — SQLite via aiosqlite so no server is needed.
     "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3
@@ -191,7 +218,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/agentscope-ai/agentscope"
-Documentation = "https://doc.agentscope.io/"
+Documentation = "https://docs.agentscope.io/"
 Repository = "https://github.com/agentscope-ai/agentscope"
 
 [tool.setuptools]

@@ -2,12 +2,14 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
+import json
 import inspect
 import re
 import warnings
 
 from asyncio import Queue
 from copy import deepcopy
+from contextlib import aclosing
 from fnmatch import fnmatch
 from datetime import datetime
 from typing import (
@@ -22,7 +24,13 @@ from typing import (
 import jsonschema
 from pydantic import BaseModel
 
-from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    InjectionConfig,
+    _validate_context_config_ratios,
+)
 from ..state import AgentState
 from ..state._state import ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
@@ -34,6 +42,7 @@ from .._utils._common import (
 )
 from ..event import (
     AgentEvent,
+    CustomEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
@@ -63,7 +72,11 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import (
+    AgentOrientedException,
+    ContentBlockedError,
+    ContentBlockedPhase,
+)
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -93,6 +106,7 @@ from ..tool import (
     ToolChunk,
     ToolChoice,
     ToolResponse,
+    FunctionTool,
 )
 from ..permission import (
     PermissionBehavior,
@@ -102,6 +116,9 @@ from ..permission import (
 )
 from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
+
+# The name of the tool that the agent uses to compress its own context
+_COMPRESSION_TOOL_NAME = "CompressContext"
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -172,6 +189,18 @@ class Agent:
         self.context_config = context_config or ContextConfig()
         self.react_config = react_config or ReActConfig()
         self.injection_config = injection_config or InjectionConfig()
+        if self.injection_config.context_buffer_ratio is not None:
+            warnings.warn(
+                "The 'context_buffer_ratio' of the injection config is "
+                "deprecated, set it in the context config instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Other agents may share the caller's config.
+            self.context_config = self.context_config.model_copy(deep=True)
+            self.context_config.context_buffer_ratio = (
+                self.injection_config.context_buffer_ratio
+            )
         self._validate_configs()
 
         # The permission engine
@@ -184,6 +213,18 @@ class Agent:
         # The Tool-related logics
         # ====================================================================
         self.toolkit = toolkit or Toolkit()
+        # Built here rather than in ``_prepare_model_input``, so that the
+        # registration can tell this agent's tool from a tool of the same
+        # name, e.g. another agent sharing the toolkit
+        self._compression_tool = FunctionTool(
+            self._compress_context_tool,
+            name=_COMPRESSION_TOOL_NAME,
+            is_concurrency_safe=False,
+            permission=PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"{_COMPRESSION_TOOL_NAME} is always allowed.",
+            ),
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -225,29 +266,10 @@ class Agent:
                 If the reserved/buffer ratios don't leave room ahead of the
                 context compression threshold.
         """
-        if (
-            self.context_config.reserve_ratio
-            >= self.context_config.trigger_ratio
-        ):
-            raise ValueError(
-                "The 'reserve_ratio' of the context config must be smaller "
-                "than its 'trigger_ratio', got "
-                f"{self.context_config.reserve_ratio} and "
-                f"{self.context_config.trigger_ratio}.",
-            )
-
-        if (
-            self.injection_config.inject_runtime_state
-            and self.injection_config.context_buffer_ratio
-            >= self.context_config.trigger_ratio
-        ):
-            raise ValueError(
-                "The 'context_buffer_ratio' of the injection config must be "
-                "smaller than the 'trigger_ratio' of the context config, so "
-                "that the context length is injected before the compression, "
-                f"got {self.injection_config.context_buffer_ratio} and "
-                f"{self.context_config.trigger_ratio}.",
-            )
+        _validate_context_config_ratios(
+            self.context_config,
+            self.injection_config.inject_runtime_state,
+        )
 
     # =======================================================================
     # Agent public methods
@@ -289,13 +311,13 @@ class Agent:
             agent won't re-send the requiring events for the unconfirmed
             or unexecuted tool calls.
         """
-        async for chunk in self._reply(
-            inputs=inputs,
-            structured_schema=structured_schema,
-        ):
-            if isinstance(chunk, Msg) and not yield_final_msg:
-                continue
-            yield chunk
+        async with aclosing(
+            self._reply(inputs=inputs, structured_schema=structured_schema),
+        ) as stream:
+            async for chunk in stream:
+                if isinstance(chunk, Msg) and not yield_final_msg:
+                    continue
+                yield chunk
 
     async def reply(
         self,
@@ -407,6 +429,58 @@ class Agent:
 
             await execute_chain()
 
+    async def _compress_context_tool(self) -> ToolChunk:
+        """Compress the older context into a continuation summary, while
+        preserving the recent context needed for the upcoming work.
+
+        Call it between tasks, where the completed work can be preserved
+        accurately in a summary, rather than in the middle of a task. Keep
+        the current context when the exact earlier details are still needed.
+        The context is replaced only after the summary is generated
+        successfully, and is left as-is when it's not long enough to be
+        worth compressing.
+
+        Returns:
+            `ToolChunk`:
+                Whether the context was compressed.
+        """
+        # The agent decides when to compress, so lower the trigger to the
+        # ratio where the compression is recommended. A context below that
+        # ratio is left untouched.
+        context_config = self.context_config.model_copy(
+            update={
+                "trigger_ratio": self.context_config.trigger_ratio
+                - self.context_config.context_buffer_ratio,
+            },
+        )
+
+        n_msgs = len(self.state.context)
+        try:
+            await self.compress_context(context_config=context_config)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if isinstance(e, ContentBlockedError) and (
+                e.partial_output or e.requires_review
+            ):
+                raise
+            return ToolChunk(
+                content=[TextBlock(text=f"Context compression failed: {e}")],
+                state=ToolResultState.ERROR,
+            )
+
+        if len(self.state.context) == n_msgs:
+            text = (
+                "The context is not long enough to compress, so it remains "
+                "unchanged."
+            )
+        else:
+            text = "Context compressed successfully."
+
+        return ToolChunk(
+            content=[TextBlock(text=text)],
+            state=ToolResultState.SUCCESS,
+        )
+
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
@@ -510,12 +584,20 @@ class Agent:
                 ),
             )
 
+        # Same time text as the runtime injection; keeps other braces intact
+        timezone = self.injection_config.timezone
+        now = datetime.now(_resolve_timezone(timezone))
+        compression_prompt = cfg.compression_prompt.replace(
+            "{current_time}",
+            f"{now.strftime(self.injection_config.time_format)} ({timezone})",
+        )
+
         messages = (
             msgs_system
             + msgs_to_compress
             + instruction_msgs
             + [
-                UserMsg(name="user", content=cfg.compression_prompt),
+                UserMsg(name="user", content=compression_prompt),
             ]
         )
 
@@ -556,6 +638,10 @@ class Agent:
             )
 
         except Exception as error:
+            if isinstance(error, ContentBlockedError) and (
+                error.partial_output or error.requires_review
+            ):
+                raise
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -570,7 +656,7 @@ class Agent:
                         + [
                             UserMsg(
                                 name="user",
-                                content=cfg.compression_prompt,
+                                content=compression_prompt,
                             ),
                         ]
                     )
@@ -594,9 +680,16 @@ class Agent:
                         structured_model=cfg.summary_schema,
                     )
                 except Exception as retry_error:
+                    if isinstance(retry_error, ContentBlockedError) and (
+                        retry_error.partial_output
+                        or retry_error.requires_review
+                    ):
+                        raise
                     error = retry_error
 
             if res is None:
+                if not cfg.compression_fallback_to_truncation:
+                    raise error
                 logger.warning(
                     "[AGENT %s]: Summary generation failed: %s. "
                     "Falling back to context truncation.",
@@ -653,9 +746,45 @@ class Agent:
             # Clear the read tool cache
             await self._clear_unreserved_read_cache(msgs_to_reserve)
 
+            # The current reply msg may be fully compressed, so keep its usage
+            current_reply_usage = self._get_reply_usage()
+
             # Update the context and summary
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
+
+            if (
+                current_reply_usage is not None
+                and self._get_reply_usage() is None
+            ):
+                self.state.append_context(self.name, [])
+                reply = self.state.get_reply_message(self.name)
+                assert reply is not None
+                reply.usage = current_reply_usage
+
+            # The compression call is not covered by the model call events,
+            # so record its cost in the context to keep it in the token
+            # accounting
+            if res is not None and res.usage is not None:
+                if not self.state.context:
+                    # The whole context is compressed, so carry the cost by an
+                    # empty message, which is skipped by the formatters
+                    self.state.append_context(self.name, [])
+
+                usage_message = (
+                    self.state.get_reply_message(self.name)
+                    or self.state.context[-1]
+                )
+                usage_message.append_usage(
+                    Usage(
+                        input_tokens=res.usage.input_tokens,
+                        output_tokens=res.usage.output_tokens,
+                        cache_input_tokens=res.usage.cache_input_tokens or 0,
+                        cache_creation_input_tokens=(
+                            res.usage.cache_creation_input_tokens or 0
+                        ),
+                    ),
+                )
 
             logger.info(
                 "[AGENT %s]: The context compression finished.",
@@ -809,11 +938,14 @@ class Agent:
                 structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(
-                        inputs=inputs,
-                        structured_schema=structured_schema,
-                    ):
-                        yield item
+                    async with aclosing(
+                        self._reply_impl(
+                            inputs=inputs,
+                            structured_schema=structured_schema,
+                        ),
+                    ) as stream:
+                        async for item in stream:
+                            yield item
                 else:
                     mw = self._reply_middlewares[index]
                     input_kwargs = {
@@ -824,28 +956,34 @@ class Agent:
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(
-                            index + 1,
-                            **{**input_kwargs, **kwargs},
-                        ):
-                            yield item
+                        async with aclosing(
+                            execute_chain(
+                                index + 1,
+                                **{**input_kwargs, **kwargs},
+                            ),
+                        ) as stream:
+                            async for item in stream:
+                                yield item
 
-                    async for item in mw.on_reply(
-                        agent=self,
-                        input_kwargs=input_kwargs,
-                        next_handler=next_handler,
-                    ):
-                        yield item
+                    async with aclosing(
+                        mw.on_reply(
+                            agent=self,
+                            input_kwargs=input_kwargs,
+                            next_handler=next_handler,
+                        ),
+                    ) as stream:
+                        async for item in stream:
+                            yield item
 
             agen = execute_chain()
 
         self._receive_reply_end = False
-        async for item in agen:
-            # Set before the yield: the suspended `_reply_impl` checks the
-            # flag once resumed by the next pull
-            if isinstance(item, ReplyEndEvent):
-                self._receive_reply_end = True
-            yield item
+        async with aclosing(agen):
+            async for item in agen:
+                # Set before yielding so the suspended loop can observe it.
+                if isinstance(item, ReplyEndEvent):
+                    self._receive_reply_end = True
+                yield item
 
     async def _close_unfinished_tool_calls(
         self,
@@ -855,11 +993,8 @@ class Agent:
     ]:
         """Close the unfinished tool calls on interruption, so the next
         input will be handled normally."""
-        if not self.state.context:
-            return
-
-        last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != self.name:
+        last_msg = self.state.get_reply_message(self.name)
+        if last_msg is None:
             return
 
         # Searching for tool calls that requires user confirmation or external
@@ -975,6 +1110,10 @@ class Agent:
             #  - if incoming event and agent is waiting for an event
             #  - if event is None and agent is not waiting for an event
             # ===================================================================
+            if event is not None:
+                # Receive cancellation redirected by the service before a
+                # continuation can apply a decision or execute a tool.
+                await asyncio.sleep(0)
             is_awaiting = await self._check_incoming_event(event)
 
             # ===================================================================
@@ -985,6 +1124,9 @@ class Agent:
             if is_awaiting:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
+                # Count the round if this event completed its last tool call.
+                if not self.state.get_unfinished_tool_calls(self.name):
+                    self.state.cur_iter += 1
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
@@ -1000,6 +1142,10 @@ class Agent:
                     reply_id=self.state.reply_id,
                     name=self.name,
                 )
+                # A consumer may re-arm cancellation while registering or
+                # publishing REPLY_START. Receive it inside this cleanup scope
+                # even when subsequent model/tool awaits complete inline.
+                await asyncio.sleep(0)
 
             # Update the structured output tool for new requirements or
             #  from the previous reply
@@ -1088,14 +1234,8 @@ class Agent:
                             yield evt
 
                         if interrupted:
-                            end_event = ReplyEndEvent(
-                                session_id=self.state.session_id,
-                                reply_id=self.state.reply_id,
-                                finished_reason=(
-                                    ReplyFinishedReason.INTERRUPTED
-                                ),
-                            )
-                            return
+                            # Handled by the CancelledError branch below
+                            raise asyncio.CancelledError()
 
                     case Acting(tool_calls=tool_calls):
                         made_progress = True
@@ -1141,14 +1281,8 @@ class Agent:
                                     break_execution_for_interruption = True
 
                             if break_execution_for_interruption:
-                                end_event = ReplyEndEvent(
-                                    session_id=self.state.session_id,
-                                    reply_id=self.state.reply_id,
-                                    finished_reason=(
-                                        ReplyFinishedReason.INTERRUPTED
-                                    ),
-                                )
-                                return
+                                # Handled by the CancelledError branch below
+                                raise asyncio.CancelledError()
 
                             if break_execution_for_hitl:
                                 break
@@ -1191,8 +1325,68 @@ class Agent:
                         id=self.state.reply_id,
                         name=self.name,
                         content=self.react_config.interruption_message,
+                        usage=self._get_reply_usage(),
                         finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
+
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Detect the same tool call, i.e. the same tool name and arguments,
+        failing in the trailing consecutive tool results.
+
+        Returns:
+            `tuple[str, int] | None`:
+                The tool name and the number of consecutive failures when it
+                reaches ``injection_config.tool_retries_limit``, or ``None``
+                when there is no such streak.
+        """
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        # The agent is only stuck when the latest tool call fails
+        results = last_msg.get_content_blocks("tool_result")
+        if not results or results[-1].state != ToolResultState.ERROR:
+            return None
+
+        # The trailing results that failed on the same tool, latest first
+        tool_name = results[-1].name
+        streak = []
+        for result in reversed(results):
+            if (
+                result.state != ToolResultState.ERROR
+                or result.name != tool_name
+            ):
+                break
+            streak.append(result.id)
+
+        limit = self.injection_config.tool_retries_limit
+        if len(streak) < limit:
+            return None
+
+        # The same tool isn't enough, the arguments must repeat as well. They
+        # live in the tool call blocks, normalized so that the same arguments
+        # in a different key order still match, while invalid JSON, e.g.
+        # truncated by the model, is compared as-is.
+        inputs = {
+            _.id: _.input for _ in last_msg.get_content_blocks("tool_call")
+        }
+        arguments = []
+        for block_id in streak:
+            raw = inputs.get(block_id, "")
+            try:
+                arguments.append(json.dumps(json.loads(raw), sort_keys=True))
+            except (TypeError, ValueError):
+                arguments.append(raw.strip())
+
+        count = 0
+        for value in arguments:
+            if value != arguments[0]:
+                break
+            count += 1
+
+        if count < limit:
+            return None
+        return tool_name, count
 
     async def _inject_runtime_state(
         self,
@@ -1226,9 +1420,15 @@ class Agent:
           they have been compressed away) nor a previous tasks injection.
         - **Context**: injected at the first iteration of a reply when the
           current input tokens are within
-          ``injection_config.context_buffer_ratio`` of the compression
+          ``context_config.context_buffer_ratio`` of the compression
           threshold, letting the agent perceive that a compression is near.
-          This dimension is evaluated independently of the two above.
+          With the compression tool enabled and no task in progress, the
+          agent is also told that it can compress right now. This dimension
+          is evaluated independently of the two above.
+        - **Tool error**: injected when the same tool call, i.e. the same tool
+          name and arguments, has failed in the last
+          ``injection_config.tool_retries_limit`` consecutive tool results, so
+          that the agent stops retrying a call that keeps failing.
 
         The user defined ``injection_config.extra_fields`` are attached to
         every injection, but never trigger one by themselves.
@@ -1382,9 +1582,9 @@ class Agent:
         # =====================================================================
         # Step 4: Context Length
         # =====================================================================
-        # The context length is checked independently of the dimensions above,
-        # and only at the beginning of a reply, where the context has just
-        # grown by the new input
+        # The context length is checked independently of the dimensions
+        # above, and only at the beginning of a reply, where the context has
+        # just grown by the new input
         if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
@@ -1393,21 +1593,48 @@ class Agent:
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
             )
-
             if input_tokens > (
-                max(
-                    0.0,
+                (
                     self.context_config.trigger_ratio
-                    - self.injection_config.context_buffer_ratio,
+                    - self.context_config.context_buffer_ratio
                 )
                 * self.model.context_size
             ):
                 # To trigger memory compress
-                injections["context-length"] = (
+                hint = (
                     f"Your current context contains {input_tokens} "
                     f"tokens. When reaching {trigger_tokens} tokens, "
                     f"your context will be compressed."
                 )
+
+                # No task in progress means a boundary where the agent can
+                # compress by itself, preserving the completed work in a
+                # summary it writes
+                if (
+                    self.context_config.compression_tool_enabled
+                    and task_status["in_progress"] == 0
+                ):
+                    hint += (
+                        " No task is in progress, so judge by yourself "
+                        "whether the context should be compressed now by "
+                        f"calling `{_COMPRESSION_TOOL_NAME}`."
+                    )
+
+                injections["context-length"] = hint
+
+        # =====================================================================
+        # Step 5: Check Repeated Tool Errors
+        # =====================================================================
+        # The agent keeps retrying the same failing call, so remind it to try
+        # something else
+        repeated_error = self._get_repeated_tool_error()
+        if repeated_error is not None:
+            tool_name, count = repeated_error
+            template = self.injection_config.tool_retries_hint
+            injections["tool-error"] = template.replace(
+                "{tool_name}",
+                tool_name,
+            ).replace("{count}", str(count))
 
         if injections:
             # The user defined fields, which don't trigger an injection by
@@ -1629,27 +1856,12 @@ class Agent:
             )
             and not has_only_thinking_blocks
         ):
-            last_ctx = self._get_last_msg()
-            final_usage = (
-                Usage(
-                    input_tokens=last_ctx.usage.input_tokens,
-                    output_tokens=last_ctx.usage.output_tokens,
-                    cache_input_tokens=(
-                        last_ctx.usage.cache_input_tokens or 0
-                    ),
-                    cache_creation_input_tokens=(
-                        last_ctx.usage.cache_creation_input_tokens or 0
-                    ),
-                )
-                if last_ctx is not None and last_ctx.usage is not None
-                else None
-            )
             yield AssistantMsg(
                 id=self.state.reply_id,
                 name=self.name,
                 # Text only response message
                 content=list(completed_response.content),
-                usage=final_usage,
+                usage=self._get_reply_usage(),
                 # The INTERRUPTED case is excluded by the branch condition
                 finished_reason=ReplyFinishedReason.COMPLETED,
             )
@@ -1762,7 +1974,8 @@ class Agent:
                 The events generated during the handling of the incoming event.
         """
         # Return directly if no event
-        if event is None or len(self.state.context) == 0:
+        last_msg = self.state.get_reply_message(self.name)
+        if event is None or last_msg is None:
             return
 
         if isinstance(event, UserConfirmResultEvent):
@@ -1772,7 +1985,6 @@ class Agent:
             }
 
             # Update the state with the confirmed tool calls
-            last_msg = self.state.context[-1]
             for tool_call in last_msg.get_content_blocks("tool_call"):
                 if len(confirmed_tool_calls) == 0:
                     break
@@ -1815,6 +2027,13 @@ class Agent:
         elif isinstance(event, ExternalExecutionResultEvent):
             # Directly append the execution results into context
             for tool_result in event.execution_results:
+                # Whoever executed this promised a shape; a result that
+                # breaks it is their bug to fix, and the reply stays
+                # parked so they can send it again.
+                tool = await self.toolkit.get_tool(tool_result.name)
+                if tool is not None:
+                    await tool.check_external_result(tool_result)
+
                 async for evt in self._convert_tool_chunk_to_event(
                     tool_result.id,
                     tool_result.output,
@@ -1949,7 +2168,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls sequentially and yield the events.
@@ -1968,7 +2188,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
         """
         break_execution = False
@@ -1999,7 +2220,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute the given tool calls concurrently and yield the events.
@@ -2019,11 +2241,7 @@ class Agent:
         tasks are cancelled explicitly (to avoid orphan tasks), any events
         already queued by the workers (including interruption chunks emitted
         by ``toolkit.call_tool`` when it catches ``CancelledError``) are
-        flushed to the caller, and the generator returns normally. The
-        caller is expected to detect the interruption via the flushed
-        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
-        event-based propagation used by
-        :meth:`_execute_sequential_tool_calls`.
+        flushed to the caller before re-raising ``CancelledError``.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -2035,10 +2253,14 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the execution of the tool calls.
 
         Raises:
+            `asyncio.CancelledError`:
+                Re-raised after cancelling workers and draining queued events
+                when the caller task is cancelled.
             `ExceptionGroup`:
                 Raised after all tool calls finish when one or more of them
                 raised an exception. Each individual exception is included in
@@ -2105,13 +2327,9 @@ class Agent:
                 if event is sentinel:
                     continue
                 yield event
-            # Consume the cancel so this generator returns normally. The
-            # caller relies on the flushed ``ToolResultEndEvent(state=
-            # INTERRUPTED)`` events, not on the exception, to detect the
-            # interruption — mirroring the event-based propagation used by
-            # :meth:`_execute_sequential_tool_calls`.
-            asyncio.current_task().uncancel()
-            return
+            # Calls cancelled before reaching the toolkit emit no interrupted
+            # result, so propagate to let the reply loop close them
+            raise
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task
@@ -2245,7 +2463,8 @@ class Agent:
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
         | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
+        | ToolResultEndEvent
+        | CustomEvent,
         None,
     ]:
         """Execute a single tool call with permission checking and context
@@ -2277,7 +2496,8 @@ class Agent:
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
-            | ToolResultEndEvent`:
+            | ToolResultEndEvent \
+            | CustomEvent`:
                 The events generated during the tool call execution.
         """
         # ===================================================================
@@ -2305,7 +2525,7 @@ class Agent:
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
-                    f"{e.message}",
+                    f"{e.message} (at {e.json_path})",
                 ) from e
 
         # The exceptions that
@@ -2511,6 +2731,16 @@ class Agent:
 
                 else:
                     # Intermediate ToolChunk — convert to streaming events
+                    progress = chunk.metadata.get("mcp_progress")
+                    if progress is not None:
+                        yield CustomEvent(
+                            name="mcp_progress",
+                            value={
+                                **progress,
+                                "reply_id": self.state.reply_id,
+                                "tool_call_id": tool_call.id,
+                            },
+                        )
                     async for evt in self._convert_tool_chunk_to_event(
                         tool_call.id,
                         chunk.content,
@@ -2727,6 +2957,23 @@ class Agent:
         if msg_index < 0:
             return [], deepcopy(self.state.context)
 
+        # Compression can also be requested from inside the acting loop. In
+        # that case the current tool call has been written to context but its
+        # result has not. Never move an unfinished call into the summary: the
+        # result will be appended after the tool returns and must remain paired
+        # with its call in the retained context.
+        unfinished_tool_call_ids = {
+            block.id
+            for block in self.state.get_unfinished_tool_calls(self.name)
+        }
+        for index, msg in enumerate(self.state.context[: msg_index + 1]):
+            if any(
+                block.id in unfinished_tool_call_ids
+                for block in msg.get_content_blocks("tool_call")
+            ):
+                msg_index = index
+                break
+
         # The msgs that won't exceed the reserved token limit
         msgs_to_compress = self.state.context[:msg_index]
         msgs_to_reserve = self.state.context[msg_index + 1 :]
@@ -2752,6 +2999,15 @@ class Agent:
                 break
             block_index -= 1
 
+        unfinished_block_indexes = [
+            index
+            for index, block in enumerate(boundary_msg_content)
+            if isinstance(block, ToolCallBlock)
+            and block.id in unfinished_tool_call_ids
+        ]
+        if unfinished_block_indexes:
+            block_index = min(block_index, min(unfinished_block_indexes) - 1)
+
         # Adjust the block_index to avoid splitting tool call and result pairs.
         # Moving the boundary can bring another tool call into the compressed
         # part while leaving its result reserved, so repeat until it is stable.
@@ -2776,7 +3032,24 @@ class Agent:
 
             # Move unmatched results into the compressed part and recheck,
             # because this move can split another tool call/result pair.
-            block_index = max(remain_result_ids.values())
+            new_block_index = max(remain_result_ids.values())
+
+            if unfinished_block_indexes and new_block_index >= min(
+                unfinished_block_indexes,
+            ):
+                # The move would compress an unfinished tool call, so reserve
+                # the calls of the unmatched results instead
+                block_index = (
+                    min(
+                        index
+                        for index, block in enumerate(boundary_msg_content)
+                        if isinstance(block, ToolCallBlock)
+                        and block.id in remain_result_ids
+                    )
+                    - 1
+                )
+            else:
+                block_index = new_block_index
 
         # Split the boundary msg content
         boundary_msg_to_compress.content = boundary_msg_content[
@@ -2915,8 +3188,13 @@ class Agent:
                 min(len(truncated_text), reserved_tokens),
             )
 
-            reserved_text = truncated_text[:reserved_tokens]
-            offload_text = truncated_text[reserved_tokens:]
+            reserved_text = await self._fit_text_prefix_to_token_limit(
+                reserved_blocks=reserved_blocks,
+                text=truncated_text,
+                upper_bound=reserved_tokens,
+                text_block_id=boundary_block.id,
+            )
+            offload_text = truncated_text[len(reserved_text) :]
 
             if reserved_text:
                 if (
@@ -2958,15 +3236,73 @@ class Agent:
             name=tool_result.name,
             output=reserved_blocks,
             state=tool_result.state,
+            metadata=deepcopy(tool_result.metadata),
+            created_at=tool_result.created_at,
+            finished_at=tool_result.finished_at,
         )
         offload_tool_result = ToolResultBlock(
             id=tool_result.id,
             name=tool_result.name,
             output=offload_blocks,
             state=tool_result.state,
+            metadata=deepcopy(tool_result.metadata),
+            created_at=tool_result.created_at,
+            finished_at=tool_result.finished_at,
         )
 
         return reserved_tool_result, offload_tool_result
+
+    async def _fit_text_prefix_to_token_limit(
+        self,
+        *,
+        reserved_blocks: list,
+        text: str,
+        upper_bound: int,
+        text_block_id: str,
+    ) -> str:
+        """Return the longest prefix of ``text`` that stays within the limit.
+
+        The proportional estimate uses the block's average token density,
+        which breaks when the prefix has a different script mix: a Chinese
+        prefix of an ASCII-first block is denser and used to exceed the
+        limit. Recount the candidate with the same counter and binary-search
+        the prefix length, only when the proportional estimate overshoots.
+        """
+        limit = self.context_config.tool_result_limit
+
+        def candidate(length: int) -> list:
+            prefix = text[:length]
+            if reserved_blocks and reserved_blocks[-1].type == "text":
+                merged = reserved_blocks[-1].model_copy(deep=True)
+                merged.text += prefix
+                return [*reserved_blocks[:-1], merged]
+            return [
+                *reserved_blocks,
+                TextBlock(text=prefix, id=text_block_id),
+            ]
+
+        async def fits(length: int) -> bool:
+            return (
+                await self.model.count_tokens(
+                    [AssistantMsg(self.name, content=candidate(length))],
+                    None,
+                )
+                <= limit
+            )
+
+        if await fits(upper_bound):
+            return text[:upper_bound]
+
+        low, high = 0, upper_bound
+        best = 0
+        while low <= high:
+            middle = (low + high) // 2
+            if await fits(middle):
+                best = middle
+                low = middle + 1
+            else:
+                high = middle - 1
+        return text[:best]
 
     # ======================================================================
     # Agent internal utility methods
@@ -3015,6 +3351,14 @@ class Agent:
             )
         # The conversation context
         messages.extend(self.state.context)
+
+        # Equip the compression tool, whose registration is kept across
+        # replies so that its schema is stable for prompt caching
+        if self.context_config.compression_tool_enabled and (
+            await self.toolkit.get_tool(_COMPRESSION_TOOL_NAME)
+            is not self._compression_tool
+        ):
+            await self.toolkit.add_tool(self._compression_tool)
 
         # Get the tools schemas
         tools = await self.toolkit.get_tool_schemas(
@@ -3070,7 +3414,7 @@ class Agent:
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
+                        result = await model(
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
@@ -3118,9 +3462,27 @@ class Agent:
                                     next_handler=next_handler,
                                 )
 
-                        return await execute_chain()
+                        result = await execute_chain()
+
+                    if inspect.isasyncgen(result):
+                        return self._observe_model_stream(result, model)
+                    return result
                 except Exception as e:
                     last_exception = e
+                    if isinstance(e, ContentBlockedError):
+                        # Custom models or middleware may consume a stream
+                        # before returning. Honor any reported output rather
+                        # than replaying a partially delivered response.
+                        if e.partial_output or e.requires_review:
+                            raise
+                        if e.phase != ContentBlockedPhase.OUTPUT:
+                            message = (
+                                f"Model {model.model} blocked content for "
+                                f"agent {self.name}; skipping retries with "
+                                f"the same payload."
+                            )
+                            logger.warning(message)
+                            break
                     # Only log a "Retrying" message when there's actually a
                     # next attempt left for this model. When ``max_retries=0``
                     # or the last retry has been used, the outer loop either
@@ -3144,11 +3506,41 @@ class Agent:
                         )
 
         if last_exception:
+            if isinstance(last_exception, ContentBlockedError):
+                raise last_exception
             raise last_exception from None
 
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    async def _observe_model_stream(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+        model: ChatModelBase,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Observe a returned model stream without replaying model calls.
+
+        Yield chunks unchanged. Log and re-raise content-block errors that
+        occur during consumption. At this point
+        the agent's model-selection loop has returned, so this wrapper does
+        not retry or switch fallback models, even before the first chunk.
+        Always close the delegated stream when iteration exits, including
+        on error or explicit closure of this wrapper.
+        """
+        try:
+            async for chunk in stream:
+                yield chunk
+        except ContentBlockedError:
+            message = (
+                f"Model {model.model} blocked content for agent {self.name} "
+                f"during stream consumption; Agent-level retries and "
+                f"fallback model switching are not attempted."
+            )
+            logger.warning(message)
+            raise
+        finally:
+            await stream.aclose()
 
     def _update_tool_call_state(
         self,
@@ -3165,10 +3557,8 @@ class Agent:
             state (`ToolCallState`):
                 The new state of the tool call.
         """
-        if len(self.state.context) == 0:
-            return
-        last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" or last_msg.name != self.name:
+        last_msg = self.state.get_reply_message(self.name)
+        if last_msg is None:
             return
         for block in last_msg.get_content_blocks():
             if isinstance(block, ToolCallBlock) and block.id == tool_call_id:
@@ -3224,26 +3614,25 @@ class Agent:
 
         self.state.append_context(self.name, persisted_blocks)
 
-        tail = self.state.context[-1]
         if msg_usage is not None:
-            if tail.usage is None:
-                tail.usage = msg_usage
-            else:
-                tail.usage.input_tokens += msg_usage.input_tokens
-                tail.usage.output_tokens += msg_usage.output_tokens
-                tail.usage.cache_input_tokens += msg_usage.cache_input_tokens
-                tail.usage.cache_creation_input_tokens += (
-                    msg_usage.cache_creation_input_tokens
-                )
+            reply = self.state.get_reply_message(self.name)
+            assert reply is not None
+            reply.append_usage(msg_usage)
 
     def _get_last_msg(self) -> Msg | None:
-        """Get the last message in the context that belongs to this agent."""
-        if len(self.state.context) == 0:
+        """Get the current reply without assuming it is the context tail."""
+        return self.state.get_reply_message(self.name)
+
+    def _get_reply_usage(self) -> Usage | None:
+        """Get a copy of the accumulated usage for the current reply."""
+        last_msg = self._get_last_msg()
+        if (
+            last_msg is None
+            or last_msg.id != self.state.reply_id
+            or last_msg.usage is None
+        ):
             return None
-        last_msg = self.state.context[-1]
-        if last_msg.role == "assistant" and last_msg.name == self.name:
-            return last_msg
-        return None
+        return last_msg.usage.model_copy()
 
     def _next_action(
         self,
@@ -3317,6 +3706,7 @@ class Agent:
                     id=self.state.reply_id,
                     name=self.name,
                     content="The required structured output is generated.",
+                    usage=self._get_reply_usage(),
                     finished_reason=ReplyFinishedReason.COMPLETED,
                     structured_output=deepcopy(
                         self.state.reply_context.structured_output,
@@ -3325,7 +3715,7 @@ class Agent:
             )
 
         elif required and not satisfied:
-            # Maybe the model needs futher reasoning-acting to
+            # Maybe the model needs further reasoning-acting to
             # generate the structured output
             tool_choice = None
             suffix = (
@@ -3363,6 +3753,7 @@ class Agent:
                         name=self.name,
                         content="The maximum reasoning-acting iterations "
                         "are exceeded.",
+                        usage=self._get_reply_usage(),
                         finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
                     ),
                 )
@@ -3404,17 +3795,69 @@ class Agent:
 
         # The last reasoning produced a text-only final message
         if final_msg is not None:
+            # In the normal flow, ``cur_iter == max_iters + 1`` here means
+            # this text came from the one forced finalization call.
+            exceeded_max_iters = (
+                self.state.cur_iter > self.react_config.max_iters
+            )
+            finished_reason = (
+                ReplyFinishedReason.EXCEED_MAX_ITERS
+                if exceeded_max_iters
+                else ReplyFinishedReason.COMPLETED
+            )
+            exit_events: list[AgentEvent] = []
+
+            if exceeded_max_iters:
+                logger.warning(
+                    "Agent %s exceeds the max iteration numbers %d. "
+                    "Stop the react loop.",
+                    self.name,
+                    self.react_config.max_iters,
+                )
+                final_msg.finished_reason = finished_reason
+                # Deprecated but still emitted for backward compatibility;
+                # suppressed since the warning targets consumers
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    exit_events.append(
+                        ExceedMaxItersEvent(
+                            reply_id=self.state.reply_id,
+                            name=self.name,
+                        ),
+                    )
+
+            exit_events.append(
+                ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    finished_reason=finished_reason,
+                ),
+            )
             return Exit(
-                exit_events=[
-                    ReplyEndEvent(
-                        session_id=self.state.session_id,
-                        reply_id=self.state.reply_id,
-                        finished_reason=ReplyFinishedReason.COMPLETED,
-                    ),
-                ],
+                exit_events=exit_events,
                 exit_msg=final_msg,
             )
 
+        # At equality, the regular iteration budget is exhausted, but the
+        # one forced finalization call has not run yet.
+        if self.state.cur_iter == self.react_config.max_iters:
+            return Reasoning(
+                hint=HintBlock(
+                    hint=(
+                        f"<system-reminder>You have reached the maximum of "
+                        f"{self.react_config.max_iters} reasoning-acting "
+                        f"iterations. Summarize the work and findings so far "
+                        f"and return the final answer as text. Do not call "
+                        f"any tools.</system-reminder>"
+                    ),
+                    source='{"label": "System", "sublabel": '
+                    '"Max Iterations Reached"}',
+                ),
+                tool_choice=ToolChoice(mode="none"),
+            )
+
+        # Equality returned above, so reaching this check means the forced
+        # finalization call also failed to produce a final message.
         if self.state.cur_iter >= self.react_config.max_iters:
             logger.warning(
                 "Agent %s exceeds the max iteration numbers %d. "
@@ -3445,6 +3888,7 @@ class Agent:
                     name=self.name,
                     content="The maximum reasoning-acting iterations are "
                     "exceeded.",
+                    usage=self._get_reply_usage(),
                     finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
                 ),
             )
@@ -3608,6 +4052,8 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        # Keep the block id so replay groups one payload.
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
@@ -3615,6 +4061,7 @@ class Agent:
                     yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
+                        block_id=block.id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )
