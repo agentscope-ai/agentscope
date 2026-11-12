@@ -127,7 +127,7 @@ export function ClientToolEditorDialog({
 								maxLength={56}
 								aria-invalid={error?.field === 'name'}
 								className="border-0 font-mono focus-visible:ring-0"
-								placeholder="collect_feedback"
+								placeholder={t('clientTools.editor.toolNamePlaceholder')}
 								onChange={(event) => setField('name', event.target.value)}
 							/>
 						</div>
