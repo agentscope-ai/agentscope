@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The tool response class."""
-import base64
 import binascii
 from typing import List, Literal, Self
 
@@ -10,19 +9,18 @@ from .._utils._common import _generate_id
 from ..message import DataBlock, TextBlock, Base64Source, ToolResultState
 
 
-def _merge_base64_chunks(existing: str, incoming: str) -> str:
-    """Merge independently encoded base64 chunks without corrupting padding."""
+def _merge_base64_chunks(source: Base64Source, incoming: str) -> None:
+    """Merge an independently encoded base64 chunk into ``source.data``.
+
+    The merge itself lives in ``_utils/_base64.py`` so this path and
+    ``Msg.append_event`` cannot drift apart.
+    """
     try:
-        merged = base64.b64decode(
-            existing,
-            validate=True,
-        ) + base64.b64decode(incoming, validate=True)
+        source.append_base64_chunk(incoming, validate=True)
     except (binascii.Error, ValueError):
         # Keep compatibility with callers/tests that used placeholder strings
         # instead of valid base64 payloads.
-        return existing + incoming
-
-    return base64.b64encode(merged).decode("ascii")
+        source.data += incoming
 
 
 class ToolChunk(BaseModel):
@@ -93,8 +91,8 @@ class ToolResponse(BaseModel):
                 streams[block.id] = target
             else:
                 assert isinstance(target.source, Base64Source)
-                target.source.data = _merge_base64_chunks(
-                    target.source.data,
+                _merge_base64_chunks(
+                    target.source,
                     block.source.data,
                 )
                 target.name = block.name or target.name

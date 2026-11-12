@@ -3,14 +3,17 @@
 """Toolkit test case."""
 import base64
 import json
+import time
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 
 from pydantic import BaseModel, Field
 from utils import AnyString, MockModel
 
+from agentscope._utils._base64 import _is_base64_shape
 from agentscope.agent import Agent
 from agentscope.event import ToolResultStartEvent
 from agentscope.mcp import HttpMCPConfig, MCPClient
@@ -593,6 +596,147 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                         for block in expected["content"]
                     ],
                 )
+
+    def test_tool_response_avoids_redecoding_accumulated_base64(self) -> None:
+        """Only an incoming chunk or one Base64 quantum is decoded."""
+        encoded = base64.b64encode(b"ab").decode("ascii")
+        decoded_lengths = []
+        original_decode = base64.b64decode
+        response = ToolResponse()
+
+        def track_decode(value: str, *args: Any, **kwargs: Any) -> bytes:
+            decoded_lengths.append(len(value))
+            return original_decode(value, *args, **kwargs)
+
+        with patch("base64.b64decode", side_effect=track_decode):
+            for _ in range(4):
+                response.append_chunk(
+                    ToolChunk(
+                        content=[
+                            DataBlock(
+                                id="streamed-data",
+                                source=Base64Source(
+                                    data=encoded,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+
+        self.assertLessEqual(
+            max(decoded_lengths, default=0),
+            len(encoded),
+        )
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        self.assertEqual(base64.b64decode(merged.source.data), b"ab" * 4)
+
+    def test_tool_response_does_not_rescan_accumulated_base64(self) -> None:
+        """A chunk must not re-validate the Base64 accumulated so far."""
+        chunk = base64.b64encode(b"x" * 1024).decode("ascii")
+        scanned: list[int] = []
+        original_shape = _is_base64_shape
+        response = ToolResponse()
+
+        def track_shape(value: str) -> bool:
+            scanned.append(len(value))
+            return original_shape(value)
+
+        with patch(
+            "agentscope._utils._base64._is_base64_shape",
+            side_effect=track_shape,
+        ):
+            for _ in range(32):
+                response.append_chunk(
+                    ToolChunk(
+                        content=[
+                            DataBlock(
+                                id="rescan",
+                                source=Base64Source(
+                                    data=chunk,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+
+        # One full validation is allowed (e.g. when a stream resumes from an
+        # existing value); re-validating every chunk would scan 16x the
+        # payload across 32 chunks.
+        self.assertLessEqual(sum(scanned), len(chunk) * 2)
+
+    def test_tool_response_chunks_scale_with_chunk_count(self) -> None:
+        """Streaming many chunks stays bounded by the copy, not a rescan."""
+        chunk = base64.b64encode(b"x" * 4096).decode("ascii")
+        response = ToolResponse()
+
+        started = time.perf_counter()
+        for _ in range(300):
+            response.append_chunk(
+                ToolChunk(
+                    content=[
+                        DataBlock(
+                            id="scaling",
+                            source=Base64Source(
+                                data=chunk,
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            )
+        elapsed = time.perf_counter() - started
+
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        self.assertEqual(len(base64.b64decode(merged.source.data)), 300 * 4096)
+        # Re-validating the whole payload per chunk takes this to multiple
+        # seconds; a linear implementation stays well below the bound.
+        self.assertLess(elapsed, 2.0, f"300 chunks took {elapsed:.2f}s")
+
+    def test_tool_response_revalidates_after_external_replacement(
+        self,
+    ) -> None:
+        """A value written from outside must be validated again."""
+        response = ToolResponse()
+        # b"abc" encodes to an unpadded value, so a stale "unpadded" flag
+        # would concatenate the next chunk into an undecodable string.
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="replaced",
+                        source=Base64Source(
+                            data=base64.b64encode(b"abc").decode("ascii"),
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        merged.source.data = base64.b64encode(b"ab").decode("ascii")
+
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="replaced",
+                        source=Base64Source(
+                            data=base64.b64encode(b"def").decode("ascii"),
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        self.assertEqual(base64.b64decode(merged.source.data), b"abdef")
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):

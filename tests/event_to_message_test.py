@@ -23,12 +23,15 @@ Coverage
 * Missing block  → warning, no crash
 """
 import base64
+import time
 from typing import Any
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString
 
+from agentscope._utils._base64 import _is_base64_shape
 from agentscope.event import (
     ConfirmResult,
     CustomEvent,
@@ -58,6 +61,8 @@ from agentscope.event import (
 )
 from agentscope.message import (
     AssistantMsg,
+    Base64Source,
+    DataBlock,
     Msg,
     ToolCallBlock,
     ToolResultBlock,
@@ -1014,6 +1019,187 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 self.assertIs(self.msg.append_event(event), self.msg)
                 self.assertDictEqual(self.msg.model_dump(), original_dump)
 
+    async def test_data_deltas_avoid_redecoding_accumulated_base64(
+        self,
+    ) -> None:
+        """Only an incoming delta or one Base64 quantum is decoded."""
+        encoded = base64.b64encode(b"ab").decode("ascii")
+        decoded_lengths = []
+        original_decode = base64.b64decode
+        block_id = "streamed-data"
+
+        def track_decode(value: str, *args: Any, **kwargs: Any) -> bytes:
+            decoded_lengths.append(len(value))
+            return original_decode(value, *args, **kwargs)
+
+        self.msg.append_event(
+            DataBlockStartEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                media_type="image/png",
+            ),
+        )
+        with patch("base64.b64decode", side_effect=track_decode):
+            for _ in range(4):
+                self.msg.append_event(
+                    DataBlockDeltaEvent(
+                        reply_id=_REPLY_ID,
+                        block_id=block_id,
+                        data=encoded,
+                        media_type="image/png",
+                    ),
+                )
+
+        self.assertLessEqual(
+            max(decoded_lengths, default=0),
+            len(encoded),
+        )
+        block = self.msg.content[-1]
+        self.assertIsInstance(block, DataBlock)
+        self.assertEqual(base64.b64decode(block.source.data), b"ab" * 4)
+
+    async def test_data_deltas_do_not_rescan_accumulated_base64(
+        self,
+    ) -> None:
+        """A delta must not re-validate the Base64 accumulated so far."""
+        chunk = base64.b64encode(b"x" * 1024).decode("ascii")
+        block_id = "rescan"
+        scanned: list[int] = []
+        original_shape = _is_base64_shape
+
+        def track_shape(value: str) -> bool:
+            scanned.append(len(value))
+            return original_shape(value)
+
+        self.msg.append_event(
+            DataBlockStartEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                media_type="image/png",
+            ),
+        )
+        with patch(
+            "agentscope._utils._base64._is_base64_shape",
+            side_effect=track_shape,
+        ):
+            for _ in range(32):
+                self.msg.append_event(
+                    DataBlockDeltaEvent(
+                        reply_id=_REPLY_ID,
+                        block_id=block_id,
+                        data=chunk,
+                        media_type="image/png",
+                    ),
+                )
+
+        # One full validation is allowed (e.g. when a stream resumes from an
+        # existing value); re-validating every delta would scan 16x the
+        # payload across 32 deltas.
+        self.assertLessEqual(sum(scanned), len(chunk) * 2)
+
+    async def test_data_deltas_scale_with_chunk_count(self) -> None:
+        """Streaming many deltas stays bounded by the copy, not a rescan."""
+        chunk = base64.b64encode(b"x" * 4096).decode("ascii")
+        block_id = "scaling"
+
+        self.msg.append_event(
+            DataBlockStartEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                media_type="image/png",
+            ),
+        )
+
+        started = time.perf_counter()
+        for _ in range(300):
+            self.msg.append_event(
+                DataBlockDeltaEvent(
+                    reply_id=_REPLY_ID,
+                    block_id=block_id,
+                    data=chunk,
+                    media_type="image/png",
+                ),
+            )
+        elapsed = time.perf_counter() - started
+
+        block = self.msg.content[-1]
+        self.assertIsInstance(block, DataBlock)
+        self.assertEqual(
+            len(base64.b64decode(block.source.data)),
+            300 * 4096,
+        )
+        # Re-validating the whole payload per delta takes this to multiple
+        # seconds; a linear implementation stays well below the bound.
+        self.assertLess(elapsed, 2.0, f"300 deltas took {elapsed:.2f}s")
+
+    async def test_data_delta_revalidates_after_external_replacement(
+        self,
+    ) -> None:
+        """A value written from outside must be validated again."""
+        block_id = "replaced"
+        self.msg.append_event(
+            DataBlockStartEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                media_type="image/png",
+            ),
+        )
+        # b"abc" encodes to an unpadded value, so a stale "unpadded" flag
+        # would concatenate the next delta into an undecodable string.
+        self.msg.append_event(
+            DataBlockDeltaEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                data=base64.b64encode(b"abc").decode("ascii"),
+                media_type="image/png",
+            ),
+        )
+        block = self.msg.content[-1]
+        self.assertIsInstance(block, DataBlock)
+        block.source.data = base64.b64encode(b"ab").decode("ascii")
+
+        self.msg.append_event(
+            DataBlockDeltaEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                data=base64.b64encode(b"def").decode("ascii"),
+                media_type="image/png",
+            ),
+        )
+
+        block = self.msg.content[-1]
+        self.assertIsInstance(block, DataBlock)
+        self.assertEqual(base64.b64decode(block.source.data), b"abdef")
+
+    async def test_streamed_data_keeps_block_equality(self) -> None:
+        """How a block was built must not leak into model equality."""
+        block_id = "equality"
+        self.msg.append_event(
+            DataBlockStartEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                media_type="image/png",
+            ),
+        )
+        self.msg.append_event(
+            DataBlockDeltaEvent(
+                reply_id=_REPLY_ID,
+                block_id=block_id,
+                data=base64.b64encode(b"ab").decode("ascii"),
+                media_type="image/png",
+            ),
+        )
+
+        streamed = self.msg.content[-1]
+        self.assertIsInstance(streamed, DataBlock)
+        expected = streamed.model_copy(deep=True)
+        expected.source = Base64Source(
+            data=streamed.source.data,
+            media_type="image/png",
+        )
+
+        self.assertEqual(streamed, expected)
+
     async def test_wrong_reply_id_is_skipped(self) -> None:
         """An event whose reply_id does not match msg.id must be ignored."""
         original_dump = self.msg.model_dump()
@@ -1135,6 +1321,47 @@ class ToolResultDataDeltaMergeTest(TestCase):
                     "finished_at": None,
                 },
             ],
+        )
+
+    def test_same_block_id_deltas_avoid_redecoding_base64(self) -> None:
+        """Each delta decodes only itself, never the accumulated value."""
+        encoded = base64.b64encode(b"ab").decode("ascii")
+        decoded_lengths = []
+        original_decode = base64.b64decode
+
+        def track_decode(value: str, *args: Any, **kwargs: Any) -> bytes:
+            decoded_lengths.append(len(value))
+            return original_decode(value, *args, **kwargs)
+
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="audio",
+            ),
+        )
+        with patch("base64.b64decode", side_effect=track_decode):
+            for _ in range(4):
+                msg.append_event(
+                    ToolResultDataDeltaEvent(
+                        reply_id=msg.id,
+                        tool_call_id="tc-1",
+                        block_id="audio-1",
+                        media_type="audio/wav",
+                        data=encoded,
+                    ),
+                )
+
+        self.assertLessEqual(
+            max(decoded_lengths, default=0),
+            len(encoded),
+        )
+        tool_blocks = [b for b in msg.content if b.type == "tool_result"]
+        self.assertEqual(len(tool_blocks), 1)
+        self.assertEqual(
+            base64.b64decode(tool_blocks[0].output[0].source.data),
+            b"ab" * 4,
         )
 
     def test_different_block_ids_stay_separate(self) -> None:
