@@ -97,7 +97,7 @@ async def main() -> None:
             ),
         )
         for message in agent.state.context:
-            for block in message.get_content_blocks():
+            for block in message.content:
                 if (
                     isinstance(block, ToolCallBlock)
                     and block.name == "run_code"
