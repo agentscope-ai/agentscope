@@ -85,6 +85,7 @@ class OpenAICardsTest(unittest.TestCase):
                 "gpt-realtime-2": "OpenAIRealtimeModel",
                 "gpt-realtime-2.1": "OpenAIRealtimeModel",
                 "gpt-realtime-2.1-mini": "OpenAIRealtimeModel",
+                "gpt-live-1": "OpenAILiveModel",
             },
         )
 
@@ -443,6 +444,7 @@ class OpenAIParseTest(unittest.TestCase):
                     "created_at": AnyString(),
                     "finished_at": None,
                 },
+                "non_blocking": False,
             },
         )
 

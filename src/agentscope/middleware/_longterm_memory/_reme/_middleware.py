@@ -174,6 +174,7 @@ class ReMeMiddleware(MiddlewareBase):
 
         top_k: int = Field(
             default=5,
+            ge=1,
             title="Top K",
             description=(
                 "Max number of memories retrieved per search, and the "

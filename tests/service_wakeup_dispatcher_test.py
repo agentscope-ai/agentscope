@@ -90,7 +90,10 @@ class _FakeStorage:
                     ],
                 ),
             ]
-        return SimpleNamespace(state=AgentState(context=context))
+        state = AgentState(context=context)
+        if context:
+            state.reply_id = context[0].id
+        return SimpleNamespace(state=state)
 
     async def get_agent(self, _user_id: str, _agent_id: str) -> object:
         """Return the agent name used by canonical HITL detection."""

@@ -2,13 +2,15 @@
 """Lifecycle owner for one browser WebRTC realtime session."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 
 from aiortc import RTCPeerConnection
 
 from ..._logging import logger
 from ...agent import RealtimeAgent
 from ...event import (
+    AgentEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -24,6 +26,12 @@ from ._webrtc_audio_transport import WebRTCAudioTransport
 _CHECKPOINT_LOCK_TTL_SECS = (
     MessageBusKeys.SESSION_EVENT_CHECKPOINT_LOCK_TTL_SECS
 )
+
+
+def _stream_id_key(entry_id: str) -> tuple[int, int]:
+    """Return the sortable numeric components of a message-bus stream ID."""
+    major, minor = entry_id.split("-", maxsplit=1)
+    return int(major), int(minor)
 
 
 class WebRTCSession:
@@ -42,6 +50,33 @@ class WebRTCSession:
         session_id: str,
         on_closed: Callable[["WebRTCSession"], None],
     ) -> None:
+        """Initialize one negotiated browser voice-session owner.
+
+        The instance owns the peer connection, audio transport, Agent
+        lifecycle, session lock, event publication, and state persistence.
+        Calling :meth:`start` begins those activities in a background task.
+
+        Args:
+            peer_connection (`RTCPeerConnection`):
+                Negotiated WebRTC connection to close with the session.
+            transport (`WebRTCAudioTransport`):
+                Audio and control-frame bridge for the peer connection.
+            agent_factory (`Callable[[], Awaitable[RealtimeAgent]]`):
+                Builds the Agent after the session lock is acquired.
+            storage (`StorageBase`):
+                Persists messages and the final Agent state.
+            message_bus (`MessageBus`):
+                Provides the session lock and publishes replayable events.
+            user_id (`str`):
+                Owner of the persisted session.
+            agent_id (`str`):
+                Agent associated with the persisted session.
+            session_id (`str`):
+                Session used for locking, events, and persistence.
+            on_closed (`Callable[[WebRTCSession], None]`):
+                Callback that removes this runner from the connection
+                registry after all resources close.
+        """
         self.peer_connection = peer_connection
         self.transport = transport
         self._agent_factory = agent_factory
@@ -150,7 +185,14 @@ class WebRTCSession:
         return True
 
     async def _run(self) -> None:
-        """Hold the session lock while forwarding events to the SSE log."""
+        """Own the locked realtime runtime until its transport ends.
+
+        After acquiring the distributed session lock, this task creates and
+        connects the Agent, forwards non-PCM events to the replayable SSE
+        stream, persists event-bound checkpoints, and saves the latest state
+        before releasing the lock. It always closes the transport and peer
+        connection and invokes ``on_closed`` during cleanup.
+        """
         if self._close_task is not None:
             return
         try:
@@ -166,11 +208,8 @@ class WebRTCSession:
                         for message in self.agent.state.context
                     }
                     async with self.transport:
-                        async with self.agent:
-                            self._startup_complete = True
-                            async for event in self.agent.reply_stream(
-                                self.transport,
-                            ):
+                        async with aclosing(self._agent_events()) as events:
+                            async for event in events:
                                 if isinstance(event, DataBlockStartEvent) and (
                                     event.media_type.startswith("audio/pcm")
                                 ):
@@ -209,9 +248,13 @@ class WebRTCSession:
                                     self._open_user_replies.discard(
                                         event.reply_id,
                                     )
-                                if (
-                                    checkpoint is not None
-                                    and not self._open_user_replies
+                                if checkpoint is not None and (
+                                    not self._open_user_replies
+                                    or getattr(
+                                        self.agent,
+                                        "allows_open_user_reply_checkpoint",
+                                        False,
+                                    )
                                 ):
                                     try:
                                         await self._checkpoint_state(
@@ -273,6 +316,23 @@ class WebRTCSession:
             finally:
                 await self._close_resources()
 
+    async def _agent_events(self) -> AsyncGenerator[AgentEvent, None]:
+        """Include terminal events emitted when the voice agent closes."""
+        assert self.agent is not None
+        try:
+            async with self.agent:
+                self._startup_complete = True
+                async for event in self.agent.reply_stream(self.transport):
+                    yield event
+        except Exception:
+            # Publish cleanup events before the runner reports the error.
+            # GeneratorExit and cancellation must not yield during close.
+            for event in self.agent.drain_events():
+                yield event
+            raise
+        for event in self.agent.drain_events():
+            yield event
+
     async def _checkpoint_state(
         self,
         entry_id: str | None,
@@ -283,6 +343,13 @@ class WebRTCSession:
             MessageBusKeys.session_event_checkpoint_lock(self.session_id),
             ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
         ):
+            if (
+                entry_id is not None
+                and self._checkpoint_entry_id is not None
+                and _stream_id_key(entry_id)
+                <= _stream_id_key(self._checkpoint_entry_id)
+            ):
+                return
             await self._persist_state(state)
             if entry_id is not None:
                 await self._set_checkpoint_cursor(entry_id)
@@ -326,9 +393,12 @@ class WebRTCSession:
         )
         removed_ids = self._persisted_messages.keys() - current_messages.keys()
         for message_id in sorted(removed_ids):
-            await self.storage.delete_message(
-                self.user_id,
-                self.session_id,
-                message_id,
-            )
+            # Completed Live segments leave the bounded runtime window but
+            # remain readable in history. Drop their cache entries as well.
+            if not message_id.startswith(("live:user:", "live:assistant:")):
+                await self.storage.delete_message(
+                    self.user_id,
+                    self.session_id,
+                    message_id,
+                )
             self._persisted_messages.pop(message_id, None)

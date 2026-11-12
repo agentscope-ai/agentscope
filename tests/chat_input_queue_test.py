@@ -564,6 +564,7 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                             ],
                         ),
                     )
+                    session.state.reply_id = session.state.context[0].id
                     storage.get_session = AsyncMock(return_value=session)
                     policy = SimpleNamespace(
                         list_accessible=AsyncMock(
@@ -648,6 +649,7 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                     context=[AssistantMsg(name=name, content=blocks)],
                 ),
             )
+            session.state.reply_id = session.state.context[0].id
             self.assertEqual(
                 await queue._is_session_parked(session, "u", "a"),
                 expected,

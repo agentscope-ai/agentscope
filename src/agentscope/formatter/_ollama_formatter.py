@@ -137,6 +137,9 @@ class OllamaChatFormatter(_OllamaFormatterBase):
             images = []
             # Hold the promoted media until this turn's tool messages are out.
             pending_media: list[dict] = []
+            # The message carrying this turn's tool calls, which later
+            # parallel tool calls join.
+            tool_call_msg: dict[str, Any] | None = None
 
             for block in msg.get_content_blocks():
                 if pending_media and not isinstance(block, ToolResultBlock):
@@ -194,14 +197,26 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     pass
 
                 elif isinstance(block, ToolCallBlock):
-                    messages.append(
-                        self._format_tool_call_message(
-                            msg.role,
-                            content_parts,
-                            images,
-                            block,
-                        ),
+                    formatted_call = self._format_tool_call_message(
+                        msg.role,
+                        content_parts,
+                        images,
+                        block,
                     )
+                    if (
+                        tool_call_msg is not None
+                        and messages[-1] is tool_call_msg
+                    ):
+                        # A parallel tool call. Ollama would merge a second
+                        # assistant message into this one by appending only
+                        # its content, dropping the call, so it joins here.
+                        self._merge_tool_call_message(
+                            tool_call_msg,
+                            formatted_call,
+                        )
+                    else:
+                        tool_call_msg = formatted_call
+                        messages.append(tool_call_msg)
                     content_parts = []
                     images = []
 
@@ -337,6 +352,37 @@ class OllamaChatFormatter(_OllamaFormatterBase):
         if images:
             tool_call_msg["images"] = images
         return tool_call_msg
+
+    @staticmethod
+    def _merge_tool_call_message(
+        tool_call_msg: dict[str, Any],
+        formatted_call: dict[str, Any],
+    ) -> None:
+        """Merge the message of a parallel tool call into the message that
+        carries the earlier tool calls of the same turn.
+
+        Args:
+            tool_call_msg (`dict[str, Any]`):
+                The tool call message to extend in place.
+            formatted_call (`dict[str, Any]`):
+                The message built by :meth:`_format_tool_call_message` for
+                the next tool call, with the text and images that came
+                between the two calls.
+        """
+        if formatted_call["content"]:
+            tool_call_msg["content"] = "\n".join(
+                part
+                for part in (
+                    tool_call_msg["content"],
+                    formatted_call["content"],
+                )
+                if part
+            )
+        if formatted_call.get("images"):
+            tool_call_msg.setdefault("images", []).extend(
+                formatted_call["images"],
+            )
+        tool_call_msg["tool_calls"].extend(formatted_call["tool_calls"])
 
 
 class OllamaMultiAgentFormatter(_OllamaFormatterBase):

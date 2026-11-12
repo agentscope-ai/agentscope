@@ -1,7 +1,9 @@
-import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
+import {
+	type ExternalExecutionResultEvent,
+	ReplyFinishedReason,
+} from '@agentscope-ai/agentscope/event';
 import {
 	type ContentBlock,
-	getContentBlocks,
 	type Msg,
 	type TextBlock,
 	type ToolCallBlock,
@@ -13,6 +15,7 @@ import type { GitStatus } from '@/api';
 import type { ChatQueueItem } from '@/api/chat';
 import { ASMessageBubble, SteeringMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
+import { ExternalExecutionCard } from '@/components/chat/ExternalExecutionCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { QueuedMessages } from '@/components/chat/QueuedMessages.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
@@ -34,6 +37,7 @@ import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import type { RealtimeASRConfig } from '@/lib/browserRealtimeASRTransport';
 import type { RealtimeConnectionState } from '@/lib/browserWebRTCTransport';
+import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 import { cn } from '@/lib/utils';
 
 /** How long a load may run before it is worth showing a spinner. */
@@ -90,6 +94,7 @@ interface ChatContentProps {
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => Promise<void>;
+	onExternalExecutionResult: (event: ExternalExecutionResultEvent) => Promise<void>;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
 	/** Called when the user clicks the stop button. */
@@ -151,6 +156,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	disabled,
 	onSend,
 	onUserConfirm,
+	onExternalExecutionResult,
 	autoComplete,
 	className,
 	onInterrupt,
@@ -217,14 +223,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		return () => clearTimeout(timer);
 	}, [loading]);
 
-	const toConfirmedToolCalls = useMemo(() => {
-		if (msgs.length === 0) return [];
-
-		const lastMsg = msgs[msgs.length - 1];
-		return getContentBlocks(lastMsg, 'tool_call')
-			.filter((tc) => tc.state === 'asking')
-			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
-	}, [msgs]);
+	const pendingHitlCalls = useMemo(() => getPendingHitlCalls(msgs), [msgs]);
+	const toConfirmedToolCalls = pendingHitlCalls.filter((call) => call.kind === 'confirmation');
+	const externalToolCalls = pendingHitlCalls.filter((call) => call.kind === 'external_execution');
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
@@ -342,7 +343,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			{loading ? null : (
 				<div className="relative min-w-full max-w-full w-full">
 					<FlipCard
-						visible={toConfirmedToolCalls.length > 0 || footerSlot !== null}
+						visible={
+							toConfirmedToolCalls.length > 0 ||
+							externalToolCalls.length > 0 ||
+							footerSlot !== null
+						}
 						className="absolute bottom-full left-0 right-0 mb-2 z-50"
 					>
 						{toConfirmedToolCalls.length > 0 ? (
@@ -357,6 +362,13 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 										rules,
 									)
 								}
+							/>
+						) : externalToolCalls.length > 0 ? (
+							<ExternalExecutionCard
+								key={`${externalToolCalls[0].replyId}:${externalToolCalls[0].toolCall.id}`}
+								replyId={externalToolCalls[0].replyId}
+								toolCall={externalToolCalls[0].toolCall}
+								onResult={onExternalExecutionResult}
 							/>
 						) : (
 							footerSlot
