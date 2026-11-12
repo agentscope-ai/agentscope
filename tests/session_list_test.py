@@ -380,7 +380,9 @@ class SessionListMigrationTest(IsolatedAsyncioTestCase):
 
     async def test_upgrade_and_downgrade(self) -> None:
         """Upgrade populated tables and verify the ordered query plan."""
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory(
+            prefix="agentscope-session-%sql-",
+        ) as directory:
             url = URL.create(
                 "sqlite+aiosqlite",
                 database=str(Path(directory) / "test.db"),
@@ -390,7 +392,9 @@ class SessionListMigrationTest(IsolatedAsyncioTestCase):
                 "script_location",
                 str(Path(_storage.__file__).parent / "_alembic"),
             )
-            config.set_main_option("sqlalchemy.url", url)
+            # ConfigParser treats URL percent escapes as interpolation.
+            config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+            self.assertEqual(config.get_main_option("sqlalchemy.url"), url)
             await asyncio.to_thread(
                 command.upgrade,
                 config,
