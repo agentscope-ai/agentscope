@@ -97,13 +97,13 @@ class CodeModeToolkit(Toolkit):
             raise NotImplementedError(
                 f"{type(backend).__name__} does not support Code Mode.",
             )
-        self.catalog = catalog
-        self.backend = backend
-        self.cwd = cwd
-        self.python = python_executable or (
+        self.catalog: Toolkit = catalog
+        self.backend: BackendBase = backend
+        self.cwd: str = cwd
+        self.python: str = python_executable or (
             sys.executable if isinstance(backend, LocalBackend) else "python3"
         )
-        self.config = config or CodeModeConfig()
+        self.config: CodeModeConfig = config or CodeModeConfig()
         # Explicit SDK opt-in; app callers always use the permission engine.
         self.auto_approve = auto_approve
         self.allowed_tools: frozenset[str] | None = None
