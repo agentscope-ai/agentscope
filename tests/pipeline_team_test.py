@@ -40,7 +40,7 @@ class AskTool(ToolBase):
     is_concurrency_safe: bool = True
     is_read_only: bool = False
 
-    async def check_permissions(
+    async def check_permissions(  # pylint: disable=unused-argument
         self,
         tool_input: dict[str, Any],
         context: PermissionContext,
@@ -70,7 +70,7 @@ class SlowTool(ToolBase):
         super().__init__()
         self.started = asyncio.Event()
 
-    async def check_permissions(
+    async def check_permissions(  # pylint: disable=unused-argument
         self,
         tool_input: dict[str, Any],
         context: PermissionContext,
@@ -820,8 +820,8 @@ class TeamPipelineTest(IsolatedAsyncioTestCase):
                         "finished_at": None,
                         "id": "call-1",
                         "name": "TeamAssign",
-                        "input": "{'member': 'researcher', "
-                        "'prompt': 'Find A'}",
+                        "input": '{"member": "researcher", '
+                        '"prompt": "Find A"}',
                         "state": "finished",
                         "suggested_rules": [],
                     },

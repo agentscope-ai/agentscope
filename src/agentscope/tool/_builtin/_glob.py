@@ -276,7 +276,15 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
                 is_last=True,
             )
 
-        base_dir = path if path else await self._backend.getcwd()
+        base_dir = path or "."
+        if base_dir == ".":
+            base_dir = await self._backend.getcwd()
+        elif not self._backend.isabs(base_dir):
+            # Preserve '..' so the filesystem can resolve symlinks first.
+            base_dir = self._backend.join_path(
+                await self._backend.getcwd(),
+                base_dir,
+            )
 
         # The base must be an existing directory; a regular file would
         # otherwise be accepted here and fail later with a confusing
@@ -324,10 +332,24 @@ Use head_limit to cap the number of results returned."""  # ignore: E501
 
         try:
             matches = json.loads(
-                result.stdout.decode("utf-8", errors="replace"),
+                result.stdout.decode("utf-8"),
             )
-        except (json.JSONDecodeError, ValueError):
-            matches = []
+        except ValueError:
+            matches = None
+
+        if not isinstance(matches, list) or not all(
+            isinstance(path, str) for path in matches
+        ):
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Glob helper returned invalid output: "
+                        "expected a JSON array of file paths.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         if len(matches) == 0:
             return ToolChunk(

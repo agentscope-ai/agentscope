@@ -27,6 +27,9 @@ from pydantic import ValidationError
 
 from agentscope.app import _bus_ops
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
+from agentscope.app._client_external_tool import (
+    ClientExternalToolDefinition,
+)
 from agentscope.app._service import ChatService
 from agentscope.app._bus_ops import (
     ChatQueueBusyError,
@@ -50,7 +53,12 @@ from agentscope.app._router._schema import (
     UpdateChatQueueItemRequest,
 )
 from agentscope.state import AgentState
-from agentscope.message import AssistantMsg, ToolCallBlock, UserMsg
+from agentscope.message import (
+    AssistantMsg,
+    ToolCallBlock,
+    ToolResultBlock,
+    UserMsg,
+)
 
 
 class _FakeStorage:
@@ -90,7 +98,10 @@ class _FakeStorage:
                     ],
                 ),
             ]
-        return SimpleNamespace(state=AgentState(context=context))
+        state = AgentState(context=context)
+        if context:
+            state.reply_id = context[0].id
+        return SimpleNamespace(state=state)
 
     async def get_agent(self, _user_id: str, _agent_id: str) -> object:
         """Return the agent name used by canonical HITL detection."""
@@ -309,18 +320,24 @@ class _FakeChatService:
         session_id: str,
         agent_id: str,
         input_msg: Any = None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
     ) -> None:
         """Record the call and signal a waiter."""
-        self.calls.append(
-            {
-                "user_id": user_id,
-                "session_id": session_id,
-                "agent_id": agent_id,
-                "input_msg": input_msg,
-            },
-        )
+        call: dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "input_msg": input_msg,
+        }
+        if client_external_tools is not None:
+            call["client_external_tools"] = client_external_tools
+        if client_builtin_tools is not None:
+            call["client_builtin_tools"] = client_builtin_tools
+        self.calls.append(call)
         self.notify.set()
 
 
@@ -338,6 +355,9 @@ class _BlockingChatService(_FakeChatService):
         session_id: str,
         agent_id: str,
         input_msg: Any = None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        client_builtin_tools: list[str] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
     ) -> None:
@@ -346,8 +366,10 @@ class _BlockingChatService(_FakeChatService):
             session_id,
             agent_id,
             input_msg,
-            queue_item_id,
-            input_persisted,
+            queue_item_id=queue_item_id,
+            input_persisted=input_persisted,
+            client_external_tools=client_external_tools,
+            client_builtin_tools=client_builtin_tools,
         )
         if len(self.calls) == 1:
             await self.release_first.wait()
@@ -987,6 +1009,145 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
         self.assertIsInstance(call["input_msg"], UserConfirmResultEvent)
         self.assertEqual(call["input_msg"].reply_id, "r1")
 
+    async def test_resume_preserves_client_external_tools(self) -> None:
+        """Queued resume triggers retain active-client tool schemas."""
+        from agentscope.event import UserConfirmResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        event = UserConfirmResultEvent.model_construct(
+            reply_id="r1",
+            confirm_results=[],
+        )
+        definition = ClientExternalToolDefinition(
+            name="client__choose_option",
+            description="Ask the user to choose.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                },
+            },
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                    "client_external_tools": [
+                        definition.model_dump(mode="json"),
+                    ],
+                    "client_builtin_tools": ["AskUser"],
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(
+            chat.calls[0]["client_external_tools"],
+            [definition],
+        )
+        self.assertEqual(chat.calls[0]["client_builtin_tools"], ["AskUser"])
+
+    async def test_invalid_client_tools_do_not_drop_resume(self) -> None:
+        """Invalid optional tools cannot strand an external result."""
+        from agentscope.event import ExternalExecutionResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        event = ExternalExecutionResultEvent(
+            reply_id="r1",
+            execution_results=[
+                ToolResultBlock(
+                    id="tool-call-1",
+                    name="client__choose_option",
+                    output="Minimal change",
+                ),
+            ],
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                    "client_external_tools": [{"name": "invalid"}],
+                    "client_builtin_tools": ["unknown"],
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(
+            chat.calls,
+            [
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "input_msg": event,
+                },
+            ],
+        )
+
+    async def test_invalid_client_tools_do_not_drop_message(self) -> None:
+        """Invalid optional tools cannot discard a valid user message."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        message = UserMsg(name="user", content="Keep this message.")
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBusKeys.wakeup_queue(),
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_MESSAGE,
+                    "input": message.model_dump(mode="json"),
+                    "client_external_tools": [{"name": "invalid"}],
+                },
+            )
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(
+            chat.calls,
+            [
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "input_msg": message,
+                },
+            ],
+        )
+
     async def test_resume_running_session_requeues_until_free(self) -> None:
         """A ``resume`` whose target is still running is NOT dropped: it
         is re-queued (with backoff) and dispatched once the session lock
@@ -1017,6 +1178,7 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
                     "agent_id": "wa1",
                     "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
                     "input": event.model_dump(mode="json"),
+                    "client_builtin_tools": ["AskUser"],
                 },
             )
             await bus.publish(MessageBusKeys.wakeup_signal(), {})
@@ -1031,6 +1193,7 @@ class TestWakeupDispatcherDispatch(  # pylint: disable=too-many-public-methods
 
         self.assertEqual(len(chat.calls), 1)
         self.assertEqual(chat.calls[0]["session_id"], "w1")
+        self.assertEqual(chat.calls[0]["client_builtin_tools"], ["AskUser"])
         self.assertIsInstance(
             chat.calls[0]["input_msg"],
             UserConfirmResultEvent,
@@ -1828,6 +1991,220 @@ class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
 
         self.assertIsNone(dispatcher._task)
         self.assertTrue(loop_task.cancelled() or loop_task.done())
+
+    async def test_subscription_failure_before_ready_fails_startup(
+        self,
+    ) -> None:
+        """A subscription that fails before ``on_ready`` raises from
+        ``__aenter__`` instead of hanging it."""
+
+        class _FailingBus(_FakeBus):
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                raise ConnectionError("subscription failed before on_ready")
+                yield {}  # pylint: disable=unreachable
+
+        bus = _FailingBus()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        with self.assertRaisesRegex(ConnectionError, "before on_ready"):
+            # pylint: disable=unnecessary-dunder-call
+            await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+        self.assertEqual(
+            bus._channel(MessageBusKeys.wakeup_signal()).qsize(),
+            0,
+        )
+
+    async def test_subscription_ending_before_ready_fails_startup(
+        self,
+    ) -> None:
+        """A subscription that ends without error before ``on_ready`` is
+        a startup failure too, not a successful start."""
+
+        class _EmptyBus(_FakeBus):
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                return
+                yield {}  # pylint: disable=unreachable
+
+        dispatcher = WakeupDispatcher(
+            message_bus=_EmptyBus(),
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "before it was ready"):
+            # pylint: disable=unnecessary-dunder-call
+            await asyncio.wait_for(dispatcher.__aenter__(), timeout=1)
+
+        self.assertIsNone(dispatcher._task)
+
+    async def test_cancelled_startup_cancels_loop(self) -> None:
+        """Cancelling ``__aenter__`` before the subscription is live
+        cancels the loop task instead of leaving it behind."""
+
+        class _StalledBus(_FakeBus):
+            def __init__(self) -> None:
+                super().__init__()
+                self.subscribing = asyncio.Event()
+
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                self.subscribing.set()
+                await asyncio.Event().wait()
+                yield {}
+
+        bus = _StalledBus()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        # pylint: disable=unnecessary-dunder-call
+        startup = asyncio.create_task(dispatcher.__aenter__())
+        await asyncio.wait_for(bus.subscribing.wait(), timeout=1)
+        loop_task = dispatcher._task
+        self.assertIsNotNone(loop_task)
+
+        startup.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await startup
+
+        self.assertTrue(loop_task.cancelled())
+        self.assertIsNone(dispatcher._task)
+        self.assertIsNone(dispatcher._fallback_task)
+
+    async def test_cancelled_ready_startup_cleans_up_retries(self) -> None:
+        """Cancellation after readiness also cleans up dispatched retries."""
+        bus = _FakeBus()
+        dispatcher = WakeupDispatcher(
+            bus,
+            _FakeStorage(),
+            _FakeChatService(),
+            ChatRunRegistry(),
+        )
+        bus._locks.add(MessageBusKeys.session_lock("s"))
+        await enqueue_run_trigger(
+            bus,
+            user_id="u",
+            session_id="s",
+            agent_id="a",
+            signal=False,
+        )
+        started: list[asyncio.Task] = []
+
+        async def subscribe(
+            _key: str,
+            *,
+            on_ready: Callable[[], None] | None = None,
+        ) -> AsyncGenerator[dict, None]:
+            if on_ready is not None:
+                on_ready()
+            yield {}
+            # Dispatch can spawn retries before the readiness wait returns.
+            started.extend(dispatcher._retry_tasks)
+            startup.cancel()
+            await asyncio.Event().wait()
+
+        with patch.object(bus, "subscribe", subscribe), patch(
+            "agentscope.app._manager._wakeup_dispatcher."
+            "_RESUME_RETRY_BACKOFF_SECS",
+            60,
+        ):
+            # pylint: disable=unnecessary-dunder-call
+            startup = asyncio.create_task(dispatcher.__aenter__())
+            try:
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(startup, timeout=1)
+                self.assertEqual(
+                    (
+                        [task.done() for task in started],
+                        dispatcher._task,
+                        dispatcher._fallback_task,
+                        dispatcher._retry_tasks,
+                        dispatcher._chat_queue._closed,
+                    ),
+                    ([True], None, None, set(), True),
+                )
+            finally:
+                await dispatcher.__aexit__(None, None, None)
+
+    async def test_startup_returns_only_after_subscription_is_live(
+        self,
+    ) -> None:
+        """``__aenter__`` waits for ``on_ready`` and publishes the startup
+        signal only after the subscription is live."""
+
+        class _GatedBus(_FakeBus):
+            def __init__(self) -> None:
+                super().__init__()
+                self.order: list[str] = []
+                self.subscribing = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def publish(self, key: str, payload: dict) -> None:
+                self.order.append("publish")
+                await super().publish(key, payload)
+
+            async def subscribe(
+                self,
+                key: str,
+                *,
+                on_ready: Callable[[], None] | None = None,
+            ) -> AsyncGenerator[dict, None]:
+                self.subscribing.set()
+                await self.release.wait()
+                self.order.append("ready")
+                async for signal in super().subscribe(
+                    key,
+                    on_ready=on_ready,
+                ):
+                    yield signal
+
+        bus = _GatedBus()
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=_FakeChatService(),
+            chat_run_registry=ChatRunRegistry(),
+        )
+
+        # pylint: disable=unnecessary-dunder-call
+        startup = asyncio.create_task(dispatcher.__aenter__())
+        await asyncio.wait_for(bus.subscribing.wait(), timeout=1)
+        await _yield_a_few_times()
+        self.assertFalse(startup.done())
+        self.assertEqual(bus.order, [])
+
+        bus.release.set()
+        self.assertIs(await asyncio.wait_for(startup, timeout=1), dispatcher)
+        self.assertEqual(bus.order[:2], ["ready", "publish"])
+        self.assertFalse(dispatcher._task.done())
+
+        await dispatcher.__aexit__(None, None, None)
 
     async def test_chat_service_strongly_retains_queue_nudge(self) -> None:
         """Detached nudge tasks stay referenced until completion."""

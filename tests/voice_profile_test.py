@@ -49,6 +49,7 @@ from agentscope.app.storage._model._voice_profile import (
 )
 from agentscope.tts import (
     DashScopeCosyVoiceTTSModel,
+    GeminiTTSModel,
     TTSModelCard,
     VoiceCloningError,
     VoiceCloningClientBase,
@@ -57,6 +58,7 @@ from agentscope.credential import (
     CredentialBase,
     CredentialFactory,
     DashScopeCredential,
+    GeminiCredential,
     OpenAICredential,
 )
 
@@ -632,6 +634,80 @@ class TestVoiceProfileTenantIsolation(IsolatedAsyncioTestCase):
             "user-a",
             "profile-a",
         )
+
+
+class TestGeminiTTSRuntime(IsolatedAsyncioTestCase):
+    """New Gemini TTS models work through the application service."""
+
+    async def test_gemini_style_validation_matches_construction(self) -> None:
+        """Reject unsupported style before saving; valid configs still run."""
+        access = AsyncMock()
+        storage = AsyncMock()
+        access.resolve_credential.return_value = CredentialRecord(
+            id="credential-a",
+            user_id="user-a",
+            data={"type": "gemini_credential", "api_key": "test"},
+        )
+        for name, style, valid, streaming in (
+            ("gemini-2.5-flash-preview-tts", "warm", False, False),
+            ("gemini-2.5-pro-preview-tts", "warm", False, False),
+            ("gemini-2.5-flash-preview-tts", None, True, True),
+            ("gemini-2.5-pro-preview-tts", "", True, True),
+            ("gemini-3.8-flash-tts", "warm", True, True),
+            ("gemini-3.8-flash-lite-tts", "warm", True, True),
+        ):
+            with self.subTest(model=name, style=style):
+                parameters = {"voice": "Kore"}
+                if style is not None:
+                    parameters["style"] = style
+                config = TTSModelConfig(
+                    type="gemini_credential",
+                    credential_id="credential-a",
+                    model=name,
+                    parameters=parameters,
+                )
+                if not valid:
+                    with self.assertRaises(HTTPException) as error:
+                        await validate_tts_model_config(
+                            "user-a",
+                            config,
+                            access,
+                            storage,
+                        )
+                    self.assertEqual(
+                        (error.exception.status_code, error.exception.detail),
+                        (
+                            400,
+                            "Invalid TTS parameters for the selected model.",
+                        ),
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Structured style requires",
+                    ):
+                        GeminiTTSModel(
+                            credential=GeminiCredential(api_key="test"),
+                            model=name,
+                            parameters=GeminiTTSModel.Parameters(**parameters),
+                        )
+                    continue
+                await validate_tts_model_config(
+                    "user-a",
+                    config,
+                    access,
+                    storage,
+                )
+                model = await get_tts_model(
+                    "user-a",
+                    config,
+                    access,
+                    storage,
+                )
+                self.assertIsInstance(model, GeminiTTSModel)
+                self.assertEqual(
+                    (model.model, model.stream, model.parameters.model_dump()),
+                    (name, streaming, {"voice": "Kore", "style": style or ""}),
+                )
 
 
 class TestVoiceProfileRuntime(IsolatedAsyncioTestCase):

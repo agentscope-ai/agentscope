@@ -90,6 +90,8 @@ interface TextInputProps {
 	 * appending another turn to the queue.
 	 */
 	phase?: ReplyPhase;
+	/** Allow sending while a reply is parked awaiting structured input. */
+	acceptsInput?: boolean;
 	/** Number of accepted user turns that have not started a reply yet. */
 	queuedCount?: number;
 	onInterrupt?: () => void;
@@ -167,6 +169,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			phase = 'idle',
+			acceptsInput = false,
 			queuedCount = 0,
 			onInterrupt,
 			voiceState = 'idle',
@@ -360,7 +363,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		const handleSend = async () => {
-			if (!hasContent || disabled || hasProcessing || submitting || speechInputBusy) return;
+			if (
+				!hasContent ||
+				disabled ||
+				hasProcessing ||
+				submitting ||
+				speechInputBusy ||
+				(acceptsInput && files.length > 0)
+			)
+				return;
 
 			const blocks: ContentBlock[] = [];
 
@@ -439,9 +450,15 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			if (hasContent || replyActive || submitting) {
 				return {
 					icon: submitting ? Loader2 : ArrowUp,
-					tooltip: replyActive ? t('textInput.queue') : t('textInput.send'),
+					tooltip:
+						replyActive && !acceptsInput ? t('textInput.queue') : t('textInput.send'),
 					disabled:
-						disabled || !hasContent || hasProcessing || submitting || speechInputBusy,
+						disabled ||
+						!hasContent ||
+						hasProcessing ||
+						submitting ||
+						speechInputBusy ||
+						(acceptsInput && files.length > 0),
 					variant: 'default',
 					onClick: handleSend,
 				};

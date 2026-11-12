@@ -46,6 +46,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    "referencing",
     "pypdf",
     # The IANA timezone database, which is absent on Windows and slim images
     "tzdata",
@@ -53,7 +54,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # ------------ Model APIs ------------
-model-gemini = ["google-genai"]
+model-gemini = ["google-genai>=2.30.1"]
 model-ollama = ["ollama>=0.5.4"]
 model-xai = ["xai-sdk"]
 classifier-jev = ["typesafe-sdk>=0.7"]
@@ -113,7 +114,7 @@ tools = [
 ]
 # ------------ Realtime voice ------------
 realtime = [
-    "websockets>=13",
+    "websockets>=14",
 ]
 realtime-local = ["sounddevice"]
 # ------------ Terminal UI ------------

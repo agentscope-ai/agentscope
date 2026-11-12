@@ -31,6 +31,9 @@ class ControlFrameType(StrEnum):
     USER_CONFIRM = "user_confirm"
     """The outcome of a tool permission prompt."""
 
+    EXTERNAL_EXECUTION_RESULT = "external_execution_result"
+    """The result returned by an external tool executor."""
+
     INTERRUPT = "interrupt"
     """The user pressed stop, as opposed to speaking over the reply."""
 
