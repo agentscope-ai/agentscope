@@ -192,6 +192,56 @@ class RecursiveTokenChunkerTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_overlap_when_entering_character_fallback(self) -> None:
+        """Preserve context when natural splits enter forced windows."""
+        for text, overlap, expected_texts in (
+            (
+                "abc|defghijklmnop",
+                1,
+                ["abc|", "abc|defg", "defghijk", "hijklmno", "lmnop"],
+            ),
+            (
+                "甲乙|defghijklmnop",
+                1,
+                ["甲乙|", "乙|defg", "defghijk", "hijklmno", "lmnop"],
+            ),
+            (
+                "abc|defghijklmnop",
+                0,
+                ["abc|", "defghijk", "lmnop"],
+            ),
+        ):
+            with self.subTest(text=text, overlap=overlap):
+                chunker = _make_chunker(2, overlap, ["|", ""])
+                sections = [
+                    Section(
+                        content=TextBlock(text=text),
+                        source="mixed.txt",
+                        metadata={"page": 1},
+                    ),
+                ]
+
+                chunks = await chunker.chunk(sections)
+
+                self.assertEqual(
+                    _dump_chunks(chunks),
+                    [
+                        _text_chunk(
+                            piece,
+                            "mixed.txt",
+                            index,
+                            len(expected_texts),
+                            {"page": 1},
+                        )
+                        for index, piece in enumerate(expected_texts)
+                    ],
+                )
+                for chunk in chunks:
+                    self.assertLessEqual(
+                        len(chunk.content.text.encode("utf-8")),
+                        8,
+                    )
+
     async def test_blank_sections_are_dropped(self) -> None:
         """Blank sections must never reach embedding or affect indices."""
         chunker = _make_chunker(chunk_size=2, overlap=0)

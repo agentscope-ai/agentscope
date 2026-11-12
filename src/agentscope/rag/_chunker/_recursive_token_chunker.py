@@ -209,9 +209,11 @@ class RecursiveTokenChunker(ChunkerBase):
             if not self._fits_budget(split):
                 if current:
                     chunks.append(current)
-                forced = self._force_split(
-                    self._with_overlap(current, split),
+                overlap = self._suffix_by_bytes(
+                    current,
+                    self.overlap * 4,
                 )
+                forced = self._force_split(f"{overlap}{split}")
                 chunks.extend(forced[:-1])
                 current = forced[-1]
                 continue
