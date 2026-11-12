@@ -9,6 +9,7 @@ from ..pipeline import PipelineProtocol
 from ..event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
+    ReplyEndEvent,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     UserConfirmResultEvent,
@@ -37,6 +38,9 @@ async def _run_reply(
         | UserInterruptEvent
         | ExternalExecutionResultEvent
     ),
+    pending_requests: list[
+        RequireUserConfirmEvent | RequireExternalExecutionEvent
+    ],
 ) -> RequireUserConfirmEvent | RequireExternalExecutionEvent | None:
     """Consume one ``reply_stream`` call, rendering every event.
 
@@ -45,17 +49,22 @@ async def _run_reply(
     as long as ``react_config.interruption_raise_cancelled_error`` keeps
     its default ``False``.
 
+    ``pending_requests`` retains unhandled requests across stream calls.
+    Requests are removed when their reply ends or is interrupted.
+
     Returns:
         `RequireUserConfirmEvent | RequireExternalExecutionEvent | None`:
-            The pending outside-interaction request if the reply parked,
+            The next queued outside-interaction request if the reply parked,
             otherwise `None`.
     """
-    pending: RequireUserConfirmEvent | RequireExternalExecutionEvent | None = (
-        None
-    )
+    if isinstance(inputs, UserInterruptEvent):
+        pending_requests[:] = [
+            request
+            for request in pending_requests
+            if request.reply_id != inputs.reply_id
+        ]
 
     async def consume() -> None:
-        nonlocal pending
         try:
             async for event in agent.reply_stream(inputs):
                 renderer.render(event)
@@ -66,10 +75,16 @@ async def _run_reply(
                         RequireExternalExecutionEvent,
                     ),
                 ):
-                    pending = event
+                    pending_requests.append(event)
+                elif isinstance(event, ReplyEndEvent):
+                    pending_requests[:] = [
+                        request
+                        for request in pending_requests
+                        if request.reply_id != event.reply_id
+                    ]
         except BaseException:
             # Failed streams may omit REPLY_END for several participants.
-            pending = None
+            pending_requests.clear()
             renderer.reset()
             raise
 
@@ -94,7 +109,7 @@ async def _run_reply(
         if sigint_hooked:
             loop.remove_signal_handler(signal.SIGINT)
 
-    return pending
+    return pending_requests.pop(0) if pending_requests else None
 
 
 async def _confirm(
@@ -289,8 +304,16 @@ async def launch_console(
             | UserInterruptEvent
             | ExternalExecutionResultEvent
         ) = UserMsg(name=user_name, content=query)
+        pending_requests: list[
+            RequireUserConfirmEvent | RequireExternalExecutionEvent
+        ] = []
         while True:
-            pending = await _run_reply(agent, renderer, inputs)
+            pending = await _run_reply(
+                agent,
+                renderer,
+                inputs,
+                pending_requests,
+            )
             if pending is None:
                 break
             try:

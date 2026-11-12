@@ -74,6 +74,9 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         """Create a real renderer with captured terminal output."""
         self.renderer = ConsoleRenderer(console=Console(file=StringIO()))
+        self.pending_requests: list[
+            RequireUserConfirmEvent | RequireExternalExecutionEvent
+        ] = []
 
     async def test_run_reply_propagates_caller_cancellation(self) -> None:
         """Cancelling the console task must remain visible to its caller."""
@@ -83,6 +86,7 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
                 cast(Agent, agent),
                 self.renderer,
                 UserMsg(name="user", content="hello"),
+                self.pending_requests,
             ),
         )
         await agent.started.wait()
@@ -91,6 +95,7 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
 
         with self.assertRaises(asyncio.CancelledError):
             await task
+        self.assertEqual(self.pending_requests, [])
         self.assertIsNone(self.renderer.last_msg)
         self.assertEqual(self.renderer._active_msgs, {})
 
@@ -117,12 +122,14 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
                     cast(Agent, agent),
                     self.renderer,
                     UserMsg(name="user", content="hello"),
+                    self.pending_requests,
                 ),
             )
             await agent.started.wait()
             signal_callbacks[0]()
 
             self.assertIsNone(await task)
+        self.assertEqual(self.pending_requests, [])
         self.assertIsNone(self.renderer.last_msg)
         self.assertEqual(self.renderer._active_msgs, {})
 
@@ -151,6 +158,10 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
                         block_id="t1",
                         delta="partial response",
                     ),
+                    RequireExternalExecutionEvent(
+                        reply_id=f"member-{index}",
+                        tool_calls=[],
+                    ),
                     failure,
                 ],
             )
@@ -159,8 +170,10 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
                     cast(Agent, agent),
                     self.renderer,
                     UserMsg(name="user", content="hello"),
+                    self.pending_requests,
                 )
             self.assertIs(caught.exception, failure)
+            self.assertEqual(self.pending_requests, [])
             self.assertIsNone(self.renderer.last_msg)
             self.assertEqual(self.renderer._active_msgs, {})
 
@@ -172,6 +185,7 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
             cast(Agent, agent),
             self.renderer,
             UserMsg(name="user", content="retry"),
+            self.pending_requests,
         )
         self.assertEqual(self.renderer._active_msgs, {})
         self.assertEqual(self.renderer.last_msg.id, "next")
@@ -197,6 +211,7 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
             cast(Agent, agent),
             self.renderer,
             UserMsg(name="user", content="hello"),
+            self.pending_requests,
         )
 
         self.assertIs(result, pending)
@@ -205,6 +220,42 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
             self.renderer._active_msgs,
             {"external": self.renderer.last_msg},
         )
+
+    async def test_ended_reply_preserves_other_queued_requests(self) -> None:
+        """Reply completion removes only that reply's pending requests."""
+        first = RequireExternalExecutionEvent(reply_id="first", tool_calls=[])
+        stale = RequireExternalExecutionEvent(reply_id="first", tool_calls=[])
+        second = RequireUserConfirmEvent(reply_id="second", tool_calls=[])
+        agent = _EventAgent(
+            [
+                ReplyStartEvent(session_id="s", reply_id="first", name="A"),
+                ReplyStartEvent(session_id="s", reply_id="second", name="B"),
+                first,
+                stale,
+                second,
+            ],
+        )
+        self.assertIs(
+            await _run_reply(
+                cast(Agent, agent),
+                self.renderer,
+                UserMsg(name="user", content="hello"),
+                self.pending_requests,
+            ),
+            first,
+        )
+        self.assertEqual(self.pending_requests, [stale, second])
+        agent.events = [ReplyEndEvent(session_id="s", reply_id="first")]
+        self.assertIs(
+            await _run_reply(
+                cast(Agent, agent),
+                self.renderer,
+                UserMsg(name="user", content="continue"),
+                self.pending_requests,
+            ),
+            second,
+        )
+        self.assertEqual(self.pending_requests, [])
 
     async def test_hitl_keeps_pending_replies_across_streams(self) -> None:
         """A normal HITL pause retains both leader and member content."""
@@ -239,6 +290,7 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
             cast(Agent, agent),
             self.renderer,
             UserMsg(name="user", content="hello"),
+            self.pending_requests,
         )
         self.assertIs(result, pending)
         member_msg = self.renderer.last_msg
@@ -269,6 +321,7 @@ class ConsoleCancellationTest(IsolatedAsyncioTestCase):
                     reply_id="member",
                     confirm_results=[],
                 ),
+                self.pending_requests,
             )
         warning.assert_not_called()
         self.assertIsNone(result)
