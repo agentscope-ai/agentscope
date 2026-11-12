@@ -2,8 +2,8 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
-import json
 import inspect
+import json
 import re
 import warnings
 
@@ -22,7 +22,7 @@ from typing import (
 )
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._config import (
     ContextConfig,
@@ -31,8 +31,7 @@ from ._config import (
     InjectionConfig,
     _validate_context_config_ratios,
 )
-from ..state import AgentState
-from ..state._state import ReplyContext
+from ..state import AgentState, ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
@@ -101,6 +100,8 @@ from ..message import (
     HintBlock,
 )
 from ..tool import (
+    AskUser,
+    AskUserParams,
     Toolkit,
     ToolBase,
     ToolChunk,
@@ -2522,10 +2523,23 @@ class Agent:
             # TODO: Maybe some logic to mix the validation error in runtime
             try:
                 jsonschema.validate(parsed_input, tool.input_schema)
+                if isinstance(tool, AskUser):
+                    # JSON Schema omits the model's uniqueness validators.
+                    AskUserParams.model_validate(parsed_input)
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message} (at {e.json_path})",
+                ) from e
+            except ValidationError as e:
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    f"{e}",
+                ) from e
+            except Exception as e:
+                raise AgentOrientedException(
+                    f"Input schema evaluation failed for tool "
+                    f"'{tool_call.name}': {e}",
                 ) from e
 
         # The exceptions that
@@ -2630,6 +2644,12 @@ class Agent:
             )
             # Send requiring external execution event if it's an external tool
             if tool.is_external_tool:
+                # External clients should receive the same repaired and
+                # schema-validated JSON that permission checks consumed.
+                tool_call.input = json.dumps(
+                    parsed_input,
+                    ensure_ascii=False,
+                )
                 # Update the state to "submitted" BEFORE yielding
                 # because the outer loop will break immediately after
                 # receiving this event, preventing any code after yield
