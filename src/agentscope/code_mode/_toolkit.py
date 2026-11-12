@@ -45,6 +45,9 @@ asyncio.gather; await every task before exiting. Failed or denied calls raise
 exceptions. Cancelling an awaited call cancels its host task and waits for
 cleanup; completed effects are not rolled back. Nested calls requiring
 confirmation or external execution fail without executing the action.
+Host cleanup has a separate wait limit. Calls still running after that limit
+remain tracked; further scripts in the same session are blocked until they
+finish. Their side effects may still occur after run_code returns.
 Use run_code even when other instructions name a native tool directly.
 For SOP submissions, await all earlier calls and make SubmitHandover or
 SubmitVerdict the last native tool call in the script.

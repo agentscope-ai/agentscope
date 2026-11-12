@@ -8,6 +8,7 @@ class CodeModeConfig(BaseModel):
     """Execution limits; resource sampling is not an OS security boundary."""
 
     timeout: float = Field(default=120, gt=0, allow_inf_nan=False)
+    tool_cleanup_timeout: float = Field(default=2, gt=0, allow_inf_nan=False)
     max_calls: int = Field(default=1000, gt=0)
     max_message_bytes: int = Field(default=16 * 1024 * 1024, ge=4096)
     max_output_bytes: int = Field(default=65536, ge=256)

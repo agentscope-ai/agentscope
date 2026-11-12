@@ -8,6 +8,7 @@ from functools import partial
 from typing import Any, TYPE_CHECKING
 
 from ._process import WorkerProcess
+from .._logging import logger
 from ..message import (
     Base64Source,
     DataBlock,
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
     from ._toolkit import CodeModeToolkit
 
 _TRUNCATED = "\n[Code output truncated]"
+# Strong references survive toolkit reconstruction in this host process.
+# Live tasks cannot be serialized into AgentState or moved between hosts.
+_CLEANING_TASKS: dict[str, set[asyncio.Task]] = {}
 
 
 def _source_key(source: Base64Source | URLSource) -> str:
@@ -42,6 +46,8 @@ class Script:
     ) -> None:
         self.toolkit = toolkit
         self.state = state
+        self.session_id = state.session_id
+        self.cleanup_pending: list[str] = []
         self.output: list[TextBlock | DataBlock] = []
         self.calls: list[dict] = []
         self.pending: set[asyncio.Task] = set()
@@ -255,14 +261,51 @@ class Script:
         task: asyncio.Task,
     ) -> None:
         """Confirm cancellation only after execution and cleanup finish."""
-        await asyncio.gather(task, return_exceptions=True)
+        # Cancelling the acknowledgement must not cancel the tool again
+        # while it is already unwinding its own cleanup.
+        await asyncio.wait({task})
         await worker.send({"id": call_id, "cancel_ack": True})
 
     def task_done(self, task: asyncio.Task) -> None:
         """Release completed tasks and consume errors as final gather did."""
         self.pending.discard(task)
+        tracked = _CLEANING_TASKS.get(self.session_id)
+        if tracked is not None:
+            tracked.discard(task)
+            if not tracked:
+                del _CLEANING_TASKS[self.session_id]
         if not task.cancelled():
             task.exception()
+
+    async def cleanup(self) -> None:
+        """Bound waiting without abandoning ownership of unfinished tasks."""
+        tasks = set(self.pending)
+        if not tasks:
+            return
+        _CLEANING_TASKS.setdefault(self.session_id, set()).update(tasks)
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        try:
+            # wait_for/gather may wait indefinitely for cancellation.
+            await asyncio.wait(
+                tasks,
+                timeout=self.toolkit.config.tool_cleanup_timeout,
+            )
+        finally:
+            self.cleanup_pending = sorted(
+                task.get_name() for task in tasks if not task.done()
+            )
+            for task in tasks:
+                if task.done():
+                    self.task_done(task)
+            if self.cleanup_pending:
+                logger.warning(
+                    "Code Mode session %s still has host calls cleaning up: "
+                    "%s. Further scripts are blocked until they finish.",
+                    self.session_id,
+                    self.cleanup_pending,
+                )
 
     def request_done(self, call_id: int, task: asyncio.Task) -> None:
         """Release task results while retaining bounded late-cancel IDs."""
@@ -281,7 +324,10 @@ class Script:
                 count += 1
                 if count > self.toolkit.config.max_calls:
                     raise RuntimeError("Code Mode host-call limit exceeded")
-                task = asyncio.create_task(self.respond(worker, packet))
+                task = asyncio.create_task(
+                    self.respond(worker, packet),
+                    name=f"RPC {packet['id']}: {packet.get('name', '')}",
+                )
                 self.pending.add(task)
                 self.requests[packet["id"]] = task
                 task.add_done_callback(
@@ -320,6 +366,14 @@ class Script:
         error = None
         deadline = asyncio.timeout(self.toolkit.config.timeout)
         try:
+            if any(
+                not task.done()
+                for task in _CLEANING_TASKS.get(self.session_id, ())
+            ):
+                raise RuntimeError(
+                    "Previous Code Mode host calls are still cleaning up; "
+                    "wait for them to finish before running another script.",
+                )
             async with deadline:
                 definitions = await self.definitions()
                 async with WorkerProcess(
@@ -339,6 +393,8 @@ class Script:
                         receiver = asyncio.create_task(self.receive(worker))
                         watchdog = asyncio.create_task(worker.watch())
                         self.pending.update((receiver, watchdog))
+                        receiver.add_done_callback(self.task_done)
+                        watchdog.add_done_callback(self.task_done)
                         done, _ = await asyncio.wait(
                             (receiver, watchdog),
                             return_when=asyncio.FIRST_COMPLETED,
@@ -347,18 +403,21 @@ class Script:
                             await watchdog
                         await receiver
                     finally:
-                        for task in self.pending:
-                            task.cancel()
-                        await asyncio.gather(
-                            *self.pending,
-                            return_exceptions=True,
-                        )
+                        await self.cleanup()
         except TimeoutError:
             error = "Code Mode execution timed out"
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"[:2048]
             if deadline.expired():
                 error = f"Code Mode execution timed out; cleanup: {error}"
+        if self.cleanup_pending:
+            cleanup_error = (
+                "Host tool cleanup did not finish within the wait limit; "
+                f"still tracked: {', '.join(self.cleanup_pending)}. "
+                "Further scripts in this session are blocked until these "
+                "calls finish; their side effects may still occur."
+            )
+            error = f"{error}; {cleanup_error}" if error else cleanup_error
         if error is None and self.required_tool is not None:
             if not any(
                 call["name"] == self.required_tool
@@ -378,9 +437,14 @@ class Script:
             state=status,
             metadata={
                 "code_mode": {
-                    "calls": self.calls,
+                    "calls": [dict(call) for call in self.calls],
                     "truncated": self.truncated,
                     "error": error,
+                    **(
+                        {"cleanup_pending": self.cleanup_pending}
+                        if self.cleanup_pending
+                        else {}
+                    ),
                 },
             },
         )

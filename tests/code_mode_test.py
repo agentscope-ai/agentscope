@@ -28,7 +28,7 @@ from agentscope.event import (
 )
 from agentscope.code_mode import CodeModeConfig, CodeModeToolkit
 from agentscope.code_mode._process import WorkerProcess
-from agentscope.code_mode._script import Script
+from agentscope.code_mode._script import Script, _CLEANING_TASKS
 from agentscope.code_mode._toolkit import python_name
 from agentscope.message import (
     Base64Source,
@@ -1281,6 +1281,7 @@ class CodeModeTest(IsolatedAsyncioTestCase):
             try:
                 await asyncio.sleep(60)
             finally:
+                await asyncio.sleep(0.01)
                 cancelled.set()
 
         await self.native.add_tool(FunctionTool(wait, is_read_only=True))
@@ -1291,6 +1292,153 @@ class CodeModeTest(IsolatedAsyncioTestCase):
             await task
         self.assertTrue(cancelled.is_set())
         self.assertFalse(nested_tool_call.get())
+
+    async def test_host_cleanup_is_bounded_and_survives_agent_rebuild(
+        self,
+    ) -> None:
+        """Uncooperative calls stay tracked without blocking script exit."""
+        for ending in ("timeout", "cancel", "success", "rpc_timeout"):
+            with self.subTest(ending=ending):
+                entered = asyncio.Event()
+                release = asyncio.Event()
+                cancelled = asyncio.Event()
+
+                async def stubborn() -> None:
+                    # pylint: disable=cell-var-from-loop
+                    entered.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        cancelled.set()
+                        while not release.is_set():
+                            try:
+                                await release.wait()
+                            except asyncio.CancelledError:
+                                continue
+                        raise RuntimeError("late cleanup failure")
+
+                async def ready() -> None:
+                    # pylint: disable=cell-var-from-loop
+                    await entered.wait()
+
+                await self.native.add_tool(
+                    [
+                        FunctionTool(stubborn, is_read_only=True),
+                        FunctionTool(ready, is_read_only=True),
+                    ],
+                )
+                self.toolkit.config.timeout = 2
+                self.toolkit.config.tool_cleanup_timeout = 0.03
+                code = "await tools.stubborn()"
+                if ending == "success":
+                    code = (
+                        "import asyncio\n"
+                        "task = asyncio.create_task(tools.stubborn())\n"
+                        "await tools.ready()"
+                    )
+                elif ending == "rpc_timeout":
+                    code = (
+                        "import asyncio\n"
+                        "await asyncio.wait_for(tools.stubborn(), 0.01)"
+                    )
+                workers = []
+
+                def worker_factory(*args: Any, **kwargs: Any) -> WorkerProcess:
+                    # pylint: disable=cell-var-from-loop
+                    worker = WorkerProcess(*args, **kwargs)
+                    workers.append(worker)
+                    return worker
+
+                with patch(
+                    "agentscope.code_mode._script.WorkerProcess",
+                    side_effect=worker_factory,
+                ):
+                    execution = asyncio.create_task(self.run_code(code))
+                    try:
+                        await asyncio.wait_for(entered.wait(), 5)
+                        if ending == "cancel":
+                            execution.cancel()
+                        done, _ = await asyncio.wait({execution}, timeout=5)
+                        self.assertEqual(done, {execution})
+                        if ending == "cancel":
+                            with self.assertRaises(asyncio.CancelledError):
+                                await execution
+                        else:
+                            result = execution.result()
+                            details = result.metadata["code_mode"]
+                            self.assertEqual(
+                                (
+                                    result.state,
+                                    bool(details["cleanup_pending"]),
+                                    "Host tool cleanup" in details["error"],
+                                    "execution timed out" in details["error"],
+                                ),
+                                (
+                                    ToolResultState.ERROR,
+                                    True,
+                                    True,
+                                    ending in ("timeout", "rpc_timeout"),
+                                ),
+                            )
+                        self.assertTrue(cancelled.is_set())
+                        self.assertIsNotNone(workers[0].process.returncode)
+                        session_id = self.agent.state.session_id
+                        tracked = set(_CLEANING_TASKS[session_id])
+                        self.assertTrue(any(not t.done() for t in tracked))
+                        rebuilt = Agent(
+                            name="rebuilt",
+                            system_prompt="Test cleanup tracking.",
+                            model=self.model,
+                            state=AgentState.model_validate_json(
+                                self.agent.state.model_dump_json(),
+                            ),
+                            toolkit=CodeModeToolkit(
+                                self.native,
+                                backend=LocalBackend(),
+                                cwd=self.directory.name,
+                                auto_approve=True,
+                            ),
+                        )
+                        blocked = await rebuilt.invoke_tool(
+                            "run_code",
+                            {"code": "await tools.echo(value=99)"},
+                        )
+                        self.assertEqual(
+                            (blocked.state, self.effects, len(workers)),
+                            (ToolResultState.ERROR, [], 1),
+                        )
+                        self.assertIn("still cleaning up", self.text(blocked))
+                    finally:
+                        release.set()
+                        if not execution.done():
+                            execution.cancel()
+                        await asyncio.gather(
+                            execution,
+                            *_CLEANING_TASKS.get(
+                                self.agent.state.session_id,
+                                (),
+                            ),
+                            return_exceptions=True,
+                        )
+                self.assertNotIn(session_id, _CLEANING_TASKS)
+                if ending != "cancel":
+                    # Late cleanup must not rewrite an already returned log.
+                    self.assertEqual(
+                        [
+                            call
+                            for call in details["calls"]
+                            if call["name"] == "stubborn"
+                        ],
+                        [{"name": "stubborn", "state": "calling"}],
+                    )
+                resumed = await rebuilt.invoke_tool(
+                    "run_code",
+                    {"code": "text('resumed')"},
+                )
+                self.assertEqual(
+                    (resumed.state, self.text(resumed)),
+                    (ToolResultState.SUCCESS, "resumed"),
+                )
 
     async def test_cancel_after_streamed_error_propagates(self) -> None:
         """An earlier error chunk must not hide cancellation of the task."""
@@ -2171,7 +2319,7 @@ class CodeModeTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.effects, [6])
 
     async def test_unfinished_rpc_is_cancelled_when_script_exits(self) -> None:
-        """Fire-and-forget native work cannot outlive its script."""
+        """Cooperative fire-and-forget work stops before script exit."""
         entered = asyncio.Event()
         stopped = asyncio.Event()
 
