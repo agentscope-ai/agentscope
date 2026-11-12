@@ -322,6 +322,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 		moveQueued,
 		reorderQueued,
 		onUserConfirm,
+		onClientExternalToolResult,
 		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl,
@@ -1103,6 +1104,7 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 									disabled={selectedModel === null || voiceBusy}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onClientExternalToolResult={onClientExternalToolResult}
 									onExternalExecutionResult={onExternalExecutionResult}
 									onInterrupt={interrupt}
 									onUpdateQueued={updateQueued}
