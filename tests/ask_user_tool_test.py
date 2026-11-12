@@ -1,13 +1,23 @@
 # -*- coding: utf-8 -*-
 """Unittests for the AskUser tool."""
+import json
 from unittest import IsolatedAsyncioTestCase
 
 import jsonschema
 from pydantic import ValidationError
+from utils import MockModel
 
-from agentscope.message import ToolResultBlock, ToolResultState
+from agentscope.agent import Agent, InjectionConfig
+from agentscope.event import RequireExternalExecutionEvent
+from agentscope.message import (
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+    UserMsg,
+)
+from agentscope.model import ChatResponse
 from agentscope.permission import PermissionBehavior, PermissionContext
-from agentscope.tool import AskUser, AskUserMetadata, AskUserParams
+from agentscope.tool import AskUser, AskUserMetadata, AskUserParams, Toolkit
 
 
 class AskUserTest(IsolatedAsyncioTestCase):
@@ -98,6 +108,107 @@ class AskUserTest(IsolatedAsyncioTestCase):
         }
         with self.assertRaises(ValidationError):
             AskUserParams.model_validate(payload)
+
+    async def test_runtime_rejects_duplicates_before_external_execution(
+        self,
+    ) -> None:
+        """Invalid calls return errors so the model can ask valid questions."""
+        question = {
+            "question": "Which?",
+            "header": "Pick",
+            "options": [
+                {"label": "A", "description": "First"},
+                {"label": "B", "description": "Second"},
+            ],
+        }
+        valid_payload = {"questions": [question]}
+        cases = [
+            (
+                {
+                    "questions": [
+                        {
+                            **question,
+                            "options": [
+                                {"label": "A", "description": "First"},
+                                {"label": "A", "description": "Second"},
+                            ],
+                        },
+                    ],
+                },
+                "option labels must be unique within a question",
+            ),
+            (
+                {"questions": [question, {**question, "header": "Again"}]},
+                "question texts must be unique across the batch",
+            ),
+        ]
+        for invalid_payload, error in cases:
+            with self.subTest(error=error):
+                # Schema validation alone cannot express these constraints.
+                jsonschema.validate(invalid_payload, self.tool.input_schema)
+                model = MockModel(context_size=10000)
+                model.set_responses(
+                    [
+                        ChatResponse(
+                            content=[
+                                ToolCallBlock(
+                                    id=call_id,
+                                    name="AskUser",
+                                    input=json.dumps(payload),
+                                ),
+                            ],
+                            is_last=True,
+                        )
+                        for call_id, payload in (
+                            ("invalid", invalid_payload),
+                            ("corrected", valid_payload),
+                        )
+                    ],
+                )
+                agent = Agent(
+                    name="Assistant",
+                    system_prompt="Help the user.",
+                    model=model,
+                    toolkit=Toolkit(tools=[self.tool]),
+                    injection_config=InjectionConfig(
+                        inject_runtime_state=False,
+                    ),
+                )
+                requests = [
+                    event
+                    async for event in agent.reply_stream(
+                        UserMsg(name="user", content="Ask me."),
+                    )
+                    if isinstance(event, RequireExternalExecutionEvent)
+                ]
+                self.assertEqual(
+                    [
+                        (call.id, call.name, json.loads(call.input))
+                        for request in requests
+                        for call in request.tool_calls
+                    ],
+                    [("corrected", "AskUser", valid_payload)],
+                )
+                results = [
+                    block
+                    for message in agent.state.context
+                    for block in message.content
+                    if isinstance(block, ToolResultBlock)
+                ]
+                self.assertEqual(
+                    [(block.id, block.name, block.state) for block in results],
+                    [("invalid", "AskUser", ToolResultState.ERROR)],
+                )
+                self.assertIn(error, results[0].output)
+                self.assertEqual(
+                    [
+                        call.id
+                        for call in agent.state.get_unfinished_tool_calls(
+                            agent.name,
+                        )
+                    ],
+                    ["corrected"],
+                )
 
     async def test_a_result_that_breaks_its_promise_is_refused(self) -> None:
         """The shape is the caller's to keep; prose alone is not enough."""

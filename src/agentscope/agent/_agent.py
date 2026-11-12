@@ -22,7 +22,7 @@ from typing import (
 )
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._config import (
     ContextConfig,
@@ -100,6 +100,8 @@ from ..message import (
     HintBlock,
 )
 from ..tool import (
+    AskUser,
+    AskUserParams,
     Toolkit,
     ToolBase,
     ToolChunk,
@@ -2521,10 +2523,18 @@ class Agent:
             # TODO: Maybe some logic to mix the validation error in runtime
             try:
                 jsonschema.validate(parsed_input, tool.input_schema)
+                if isinstance(tool, AskUser):
+                    # JSON Schema omits the model's uniqueness validators.
+                    AskUserParams.model_validate(parsed_input)
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message} (at {e.json_path})",
+                ) from e
+            except ValidationError as e:
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    f"{e}",
                 ) from e
             except Exception as e:
                 raise AgentOrientedException(
