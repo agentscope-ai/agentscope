@@ -16,6 +16,11 @@ from ...event import (
     UserInterruptEvent,
 )
 from ...message import Msg
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
+    parse_client_tool_capabilities,
+)
 from ..message_bus import MessageBusKeys
 from ._chat_run_registry import CHAT_RUN_SHUTDOWN
 from .._bus_ops import (
@@ -65,8 +70,14 @@ class ChatInputQueue:
         self._retry_tasks: set[asyncio.Task] = set()
         self._closed = False
 
-    async def close(self) -> None:
-        """Cancel retained timers and release recovery leadership."""
+    async def close(self, *, release_leadership: bool = True) -> None:
+        """Cancel retained timers and optionally release recovery leadership.
+
+        Args:
+            release_leadership (`bool`):
+                Whether to contact the bus to release the recovery lease.
+                Failed startup skips this and lets any lease expire.
+        """
         self._closed = True
         tasks = list(self._retry_tasks)
         for task in tasks:
@@ -74,7 +85,8 @@ class ChatInputQueue:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._retry_tasks.clear()
         self._recovery_task = None
-        await self._release_recovery_leadership()
+        if release_leadership:
+            await self._release_recovery_leadership()
 
     def schedule_recovery(self) -> None:
         """Retain at most one non-blocking recovery sweep per process."""
@@ -295,6 +307,9 @@ class ChatInputQueue:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     ) -> None:
         """Serialize a resume with chat-input claim and parked-state checks.
 
@@ -308,6 +323,10 @@ class ChatInputQueue:
             input_msg:
                 Typed HITL/external-result/interrupt event, or ``None`` for
                 a compatible control continuation.
+            client_external_tools:
+                Client tool definitions preserved across resume retries.
+            client_builtin_tools:
+                Native tool names supported by the resuming client.
         """
         dispatch_lock = self._bus.acquire_lock_bounded(
             MessageBusKeys.chat_input_dispatch_lock(session_id),
@@ -325,6 +344,8 @@ class ChatInputQueue:
                 agent_id=agent_id,
                 kind=MessageBusKeys.WAKEUP_KIND_RESUME,
                 inputs=input_msg,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
             )
             return
         try:
@@ -333,6 +354,8 @@ class ChatInputQueue:
                 session_id=session_id,
                 agent_id=agent_id,
                 input_msg=input_msg,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
             )
         finally:
             await dispatch_lock.__aexit__(None, None, None)
@@ -485,6 +508,13 @@ class ChatInputQueue:
                 continue
 
             queue_item_id = payload.get("id")
+            (
+                client_external_tools,
+                client_builtin_tools,
+            ) = parse_client_tool_capabilities(
+                payload.get("client_external_tools"),
+                payload.get("client_builtin_tools"),
+            )
             if not isinstance(queue_item_id, str) or not queue_item_id:
                 queue_item_id = messages[0].id
             message_ids = [msg.id for msg in messages]
@@ -560,6 +590,8 @@ class ChatInputQueue:
                     input_msg=queued_input,
                     queue_item_id=queue_item_id,
                     input_persisted=True,
+                    client_external_tools=client_external_tools or None,
+                    client_builtin_tools=client_builtin_tools or None,
                 )
                 claim_state = _MESSAGE_COMPLETED
                 await self._acknowledge_completed(session_id, payload)

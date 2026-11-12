@@ -21,5 +21,7 @@ context_size: 1048576
 output_size: 65536
 
 parameter_overrides:
+  thinking_level:
+    hidden: true
   max_tokens:
     maximum: 65536

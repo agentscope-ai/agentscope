@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from ..._utils._common import _generate_id
 from ..access import ResourceKind
@@ -42,6 +43,7 @@ from .._service import (
     validate_tts_model_config,
 )
 from ..storage import (
+    ASRModelConfig,
     ChatModelConfig,
     RealtimeModelConfig,
     SessionKnowledgeConfig,
@@ -132,7 +134,13 @@ session_router = APIRouter(
 async def _ensure_credential_exists(
     access: ResourceAccessService,
     user_id: str,
-    config: ChatModelConfig | RealtimeModelConfig | TTSModelConfig | None,
+    config: (
+        ASRModelConfig
+        | ChatModelConfig
+        | RealtimeModelConfig
+        | TTSModelConfig
+        | None
+    ),
 ) -> None:
     """Validate that the credential referenced by ``config`` is visible to
     the given user (own or shared). No-op when ``config`` is ``None``.
@@ -140,8 +148,9 @@ async def _ensure_credential_exists(
     Args:
         access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
-        config (`ChatModelConfig | RealtimeModelConfig | TTSModelConfig | \
-            None`): Model config to validate. Pass ``None`` to skip the check.
+        config (`ASRModelConfig | ChatModelConfig | RealtimeModelConfig | \
+            TTSModelConfig | None`): Model config to validate. Pass ``None`` \
+            to skip the check.
 
     Raises:
         `HTTPException`: 404 if the credential does not exist or is not
@@ -337,6 +346,7 @@ async def create_session(
         access,
         storage,
     )
+    await _ensure_credential_exists(access, user_id, body.asr_model_config)
     await _ensure_credential_exists(
         access,
         user_id,
@@ -368,6 +378,7 @@ async def create_session(
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
+            asr_model_config=body.asr_model_config,
             realtime_model_config=body.realtime_model_config,
             knowledge_config=body.knowledge_config,
             # A caller that named the session owns that name; anything
@@ -532,6 +543,7 @@ async def update_session(
         access,
         storage,
     )
+    await _ensure_credential_exists(access, user_id, body.asr_model_config)
     await _ensure_credential_exists(
         access,
         user_id,
@@ -578,12 +590,20 @@ async def update_session(
             "auto": False,
         }
 
+    try:
+        updated_config = SessionConfig.model_validate(
+            {**existing.config.model_dump(mode="json"), **config_updates},
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
+
     return await storage.upsert_session(
         user_id=user_id,
         agent_id=agent_id,
-        config=SessionConfig.model_validate(
-            {**existing.config.model_dump(mode="json"), **config_updates},
-        ),
+        config=updated_config,
         state=updated_state,
         session_id=session_id,
     )

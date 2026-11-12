@@ -299,6 +299,7 @@ class XAIParseTest(unittest.TestCase):
                         "created_at": AnyString(),
                         "finished_at": None,
                     },
+                    "non_blocking": False,
                 },
                 {
                     "item_id": "resp_001",
@@ -312,6 +313,7 @@ class XAIParseTest(unittest.TestCase):
                         "created_at": AnyString(),
                         "finished_at": None,
                     },
+                    "non_blocking": False,
                 },
             ],
         )

@@ -24,8 +24,10 @@ from .._bus_ops import (
     abandon_inbox_consumer,
     deliver_to_inbox,
     enqueue_run_trigger,
+    finish_active_chat_reply,
     has_pending_inbox_or_release,
     publish_session_event,
+    register_active_chat_reply,
     register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
@@ -45,6 +47,7 @@ from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
+    SteeringMiddleware,
     SOPStepSubmitMiddleware,
     StateChangeMiddleware,
     ToolOffloadMiddleware,
@@ -58,6 +61,10 @@ from .._types import (
     AgentToolFactory,
     EventProjector,
     SubAgentTemplate,
+)
+from .._client_external_tool import (
+    ClientBuiltinToolName,
+    ClientExternalToolDefinition,
 )
 from ._access import ResourceAccessService
 from ._model import get_model
@@ -168,6 +175,7 @@ class ChatService:
         custom_agent_cls: type[Agent] | None = None,
         extra_projectors: list[EventProjector] | None = None,
         channel_clients: "ChannelClients | None" = None,
+        tool_offload_timeout_secs: float | None = 10.0,
     ) -> None:
         """Initialize chat service.
 
@@ -243,6 +251,9 @@ class ChatService:
         self._access = resource_access_service
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
+        # ``None`` keeps slow tools inside the same reply instead of offloading
+        # them after the default 10 s cut-off (see #3330).
+        self._tool_offload_timeout_secs = tool_offload_timeout_secs
         # Probed once (the service is built once per lifespan) so legacy
         # three-argument factories keep working without the per-turn cost.
         self._middlewares_take_workspace = False
@@ -294,7 +305,10 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None = None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
         sop_dispatch: str | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         queue_item_id: str | None = None,
         input_persisted: bool = False,
     ) -> None:
@@ -336,6 +350,10 @@ class ChatService:
                 - ``UserInterruptEvent``: abort a parked reply — the
                   agent closes pending tool calls with interrupted
                   results and ends the reply (Case B, no reasoning).
+            client_external_tools:
+                External tools supported by the active client for this run.
+            client_builtin_tools:
+                Native external tools enabled by this client for this run.
             sop_dispatch (`str | None`, optional):
                 ``"<run id>:<step index>"`` when a SOP run dispatched
                 this turn, which gives it a submit tool.
@@ -350,7 +368,9 @@ class ChatService:
                 session_id,
                 agent_id,
                 input_msg,
-                sop_dispatch,
+                client_external_tools=client_external_tools,
+                client_builtin_tools=client_builtin_tools,
+                sop_dispatch=sop_dispatch,
                 input_persisted=input_persisted,
             )
         except Exception as e:
@@ -898,7 +918,10 @@ class ChatService:
         | ExternalExecutionResultEvent
         | UserInterruptEvent
         | None,
+        client_external_tools: list[ClientExternalToolDefinition]
+        | None = None,
         sop_dispatch: str | None = None,
+        client_builtin_tools: list[ClientBuiltinToolName] | None = None,
         input_persisted: bool = False,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
@@ -1086,18 +1109,23 @@ class ChatService:
                 # in-process retrigger plumbing is needed here.
                 # -------------------------------------------------------------
                 middlewares: list = [
+                    SteeringMiddleware(self._message_bus),
                     InboxMiddleware(self._message_bus),
                     StateChangeMiddleware(
                         message_bus=self._message_bus,
                         session_id=session_id,
                     ),
-                    ToolOffloadMiddleware(
-                        bg_manager=self._background_task_manager,
-                        message_bus=self._message_bus,
-                        user_id=user_id,
-                        agent_id=agent_id,
-                    ),
                 ]
+                if self._tool_offload_timeout_secs is not None:
+                    middlewares.append(
+                        ToolOffloadMiddleware(
+                            bg_manager=self._background_task_manager,
+                            message_bus=self._message_bus,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            timeout_secs=self._tool_offload_timeout_secs,
+                        ),
+                    )
                 # Equip the member middleware for loop control
                 if isinstance(team_ctx, _WorkerContext):
                     middlewares.append(
@@ -1221,6 +1249,8 @@ class ChatService:
                     sub_agent_templates=self._sub_agent_templates,
                     team_role=team_ctx.role if team_ctx else None,
                     channel_tools=channel_tools,
+                    client_external_tools=client_external_tools,
+                    client_builtin_tools=client_builtin_tools,
                     sop_dispatch=sop_dispatch,
                 )
 
@@ -1343,6 +1373,7 @@ class ChatService:
                     input_msg=input_msg,
                 )
             reply_msg: Msg | None = None
+            active_reply_id: str | None = None
             reply_msgs: list[Msg] = []
             checkpoint_cursor: str | None = None
             released = False
@@ -1401,6 +1432,23 @@ class ChatService:
                                 elif reply_msg is not None:
                                     reply_msg.append_event(event)
                                 try:
+                                    if isinstance(event, ReplyStartEvent):
+                                        if (
+                                            active_reply_id is not None
+                                            and active_reply_id
+                                            != event.reply_id
+                                        ):
+                                            await finish_active_chat_reply(
+                                                self._message_bus,
+                                                session_id,
+                                                active_reply_id,
+                                            )
+                                        active_reply_id = event.reply_id
+                                        await register_active_chat_reply(
+                                            self._message_bus,
+                                            session_id,
+                                            event.reply_id,
+                                        )
                                     checkpoint_cursor = (
                                         await publish_session_event(
                                             self._message_bus,
@@ -1429,6 +1477,7 @@ class ChatService:
                         else:
                             # Case B: continuation (UserConfirmResult
                             #  / ExternalExecResult)
+                            continuation_reply_id = agent.state.reply_id
                             reply_msg = await self._storage.get_message(
                                 user_id,
                                 session_id,
@@ -1447,44 +1496,69 @@ class ChatService:
                             elif input_msg:
                                 reply_msg.append_event(input_msg)
 
-                            # Broadcast the applied decision so
-                            # observers that didn't make it (other tabs,
-                            # the channel card) close it.
-                            if isinstance(
-                                input_msg,
-                                (
-                                    UserConfirmResultEvent,
-                                    ExternalExecutionResultEvent,
-                                ),
-                            ):
+                            try:
+                                if (
+                                    active_reply_id is not None
+                                    and active_reply_id
+                                    != continuation_reply_id
+                                ):
+                                    await finish_active_chat_reply(
+                                        self._message_bus,
+                                        session_id,
+                                        active_reply_id,
+                                    )
+                                active_reply_id = continuation_reply_id
+                                await register_active_chat_reply(
+                                    self._message_bus,
+                                    session_id,
+                                    continuation_reply_id,
+                                )
+                                # Broadcast the applied decision so
+                                # observers that didn't make it (other tabs,
+                                # the channel card) close it.
+                                if isinstance(
+                                    input_msg,
+                                    (
+                                        UserConfirmResultEvent,
+                                        ExternalExecutionResultEvent,
+                                    ),
+                                ):
+                                    checkpoint_cursor = (
+                                        await publish_session_event(
+                                            self._message_bus,
+                                            session_id,
+                                            input_msg.model_dump(mode="json"),
+                                        )
+                                    )
+
+                                # Emit a synthetic REPLY_START so SSE clients
+                                # can detect the continuation.
+                                #
+                                # IMPORTANT: The frontend SSE handler must
+                                # NOT clear its accumulated message buffer
+                                # upon receiving REPLY_START with the current
+                                # reply_id. This signals a continuation (e.g.
+                                # after an approval flow), not a fresh reply.
+                                continuation_start = ReplyStartEvent(
+                                    session_id=session_id,
+                                    reply_id=continuation_reply_id,
+                                    name=agent_record.data.name,
+                                )
                                 checkpoint_cursor = (
                                     await publish_session_event(
                                         self._message_bus,
                                         session_id,
-                                        input_msg.model_dump(mode="json"),
+                                        continuation_start.model_dump(
+                                            mode="json",
+                                        ),
                                     )
                                 )
-
-                            # Emit a synthetic REPLY_START so SSE subscribers
-                            # (frontend, channel gateway) can detect the
-                            # continuation without requiring special handling.
-                            #
-                            # IMPORTANT: The frontend SSE handler must
-                            # NOT clear its accumulated message buffer
-                            # upon receiving a
-                            # REPLY_START with the same reply_id as the current
-                            # message. This event signals a continuation (e.g.
-                            # after an approval flow), not a fresh reply.
-                            continuation_start = ReplyStartEvent(
-                                session_id=session_id,
-                                reply_id=agent.state.reply_id,
-                                name=agent_record.data.name,
-                            )
-                            checkpoint_cursor = await publish_session_event(
-                                self._message_bus,
-                                session_id,
-                                continuation_start.model_dump(mode="json"),
-                            )
+                            except asyncio.CancelledError:
+                                # Resume the Agent so it closes pending tools
+                                # and emits the interrupted terminal event.
+                                current = asyncio.current_task()
+                                if current is not None:
+                                    current.cancel()
 
                             async for event in agent.reply_stream(
                                 inputs=input_msg,
@@ -1657,30 +1731,38 @@ class ChatService:
                                     before_id=checkpoint_cursor,
                                 )
                     finally:
-                        # A worker whose turn died never reached
-                        # ``TeamSay``. Sent from inside the shielded
-                        # write so an interrupt cannot drop it, and from
-                        # a ``finally`` so a storage failure cannot
-                        # either — the leader has to learn about the
-                        # dead turn even when recording it went wrong.
-                        # COMPLETED / EXCEED_MAX_ITERS stay silent:
-                        # those only escape the member middleware after
-                        # a successful report.
-                        for msg in reply_msgs:
-                            if msg.finished_reason in (
-                                ReplyFinishedReason.ERROR,
-                                ReplyFinishedReason.INTERRUPTED,
-                            ):
-                                await self._notify_leader_of_failure(
-                                    user_id,
-                                    team_ctx,
-                                    worker_name,
-                                    msg.finished_reason,
-                                    msg.error.message
-                                    if msg.error
-                                    else "The turn stopped before it "
-                                    "finished.",
+                        try:
+                            if active_reply_id is not None:
+                                await finish_active_chat_reply(
+                                    self._message_bus,
+                                    session_id,
+                                    active_reply_id,
                                 )
+                        finally:
+                            # A worker whose turn died never reached
+                            # ``TeamSay``. Sent from inside the shielded
+                            # write so an interrupt cannot drop it, and from
+                            # a ``finally`` so a storage failure cannot
+                            # either — the leader has to learn about the
+                            # dead turn even when recording it went wrong.
+                            # COMPLETED / EXCEED_MAX_ITERS stay silent:
+                            # those only escape the member middleware after
+                            # a successful report.
+                            for msg in reply_msgs:
+                                if msg.finished_reason in (
+                                    ReplyFinishedReason.ERROR,
+                                    ReplyFinishedReason.INTERRUPTED,
+                                ):
+                                    await self._notify_leader_of_failure(
+                                        user_id,
+                                        team_ctx,
+                                        worker_name,
+                                        msg.finished_reason,
+                                        msg.error.message
+                                        if msg.error
+                                        else "The turn stopped before it "
+                                        "finished.",
+                                    )
 
                 persist_task = asyncio.create_task(_persist())
                 try:

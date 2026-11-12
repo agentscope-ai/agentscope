@@ -192,6 +192,35 @@ class ContextConfig(BaseModel):
     hint without path information."""
 
 
+def _validate_context_config_ratios(
+    context_config: ContextConfig,
+    inject_runtime_state: bool,
+) -> None:
+    """Validate that context compression thresholds leave room to operate."""
+    if context_config.reserve_ratio >= context_config.trigger_ratio:
+        raise ValueError(
+            "The 'reserve_ratio' of the context config must be smaller "
+            "than its 'trigger_ratio', got "
+            f"{context_config.reserve_ratio} and "
+            f"{context_config.trigger_ratio}.",
+        )
+
+    # The buffer is only consumed by runtime-state injection and the
+    # compression tool, so it is checked only when one of them is enabled.
+    if (
+        (inject_runtime_state or context_config.compression_tool_enabled)
+        and context_config.context_buffer_ratio >= context_config.trigger_ratio
+    ):
+        raise ValueError(
+            "The 'context_buffer_ratio' of the context config must be "
+            "smaller than its 'trigger_ratio', so that the context "
+            "length is injected and the compression tool takes effect "
+            "before the hard compression, got "
+            f"{context_config.context_buffer_ratio} and "
+            f"{context_config.trigger_ratio}.",
+        )
+
+
 class InjectionConfig(BaseModel):
     """The state injection related configuration in AgentScope."""
 

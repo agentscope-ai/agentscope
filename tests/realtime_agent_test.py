@@ -3,11 +3,11 @@
 transport — no network, no sound card."""
 # pylint: disable=protected-access, unused-argument
 import asyncio
-from itertools import count
+from itertools import count, product
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Sequence
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from utils import AnyString, MockModel
 
 from agentscope.agent import (
@@ -16,13 +16,14 @@ from agentscope.agent import (
     RealtimeAgent,
     TurnAggregator,
 )
-from agentscope.credential import DashScopeCredential
+from agentscope.credential import DashScopeCredential, GeminiCredential
 from agentscope.event import (
     DataBlockDeltaEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
+    TextBlockStartEvent,
 )
 from agentscope.message import AssistantMsg, Msg, Usage, UserMsg
 from agentscope.model import ChatResponse
@@ -30,6 +31,7 @@ from agentscope.realtime import (
     AudioFrame,
     ControlFrame,
     ControlFrameType,
+    GeminiRealtimeModel,
     ModelDisconnectedError,
     PlayoutPosition,
     RealtimeModelBase,
@@ -270,6 +272,26 @@ class QueueSessionModel(ScriptedModel):
                 yield event
         finally:
             self.iterator_finished[index].set()
+
+
+class CrashingSessionModel(ScriptedModel):
+    """The first sessions' event streams raise, like a websocket that
+    dies mid-frame; later sessions behave and play their script."""
+
+    def __init__(
+        self,
+        scripts: list[list[Any]],
+        crash_sessions: int = 1,
+    ) -> None:
+        super().__init__(scripts)
+        self.crash_sessions = crash_sessions
+
+    async def events(self) -> AsyncIterator[me.ModelEvent]:
+        """Crash the stream for the first sessions, then play the script."""
+        if self.sessions <= self.crash_sessions:
+            raise RuntimeError("provider event stream exploded")
+        async for event in super().events():
+            yield event
 
 
 class FakeTransport(TransportBase):
@@ -859,6 +881,45 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 ("assistant", "Once "),
                 ("user", "Hello"),
                 ("assistant", "Hi there."),
+            ],
+        )
+
+    async def test_crashed_downlink_pump_is_replaced_on_reconnect(
+        self,
+    ) -> None:
+        """A downlink pump that dies from a provider stream error must be
+        replaced: after the crash the next audio reconnects, and the new
+        session's events must be pumped instead of silently dropped."""
+        model = CrashingSessionModel([[], REPLY_R2])
+        agent = RealtimeAgent("Friday", "be brief", model)
+
+        async with agent:
+            # The first session's event stream raises and kills the pump.
+            for _ in range(500):
+                if agent._connected:
+                    await asyncio.sleep(0.01)
+                    continue
+                if agent._downlink is None or agent._downlink.done():
+                    break
+                await asyncio.sleep(0.01)
+            self.assertFalse(agent._connected)  # pylint: disable=W0212
+            # The crashed task is no longer the live pump.
+            self.assertTrue(
+                agent._downlink is None or agent._downlink.done(),
+            )  # pylint: disable=W0212
+
+            summary = await self._collect(agent, FakeTransport(frames=2))
+
+            # The pump must be live again: not the finished, crashed task.
+            self.assertIsNotNone(agent._downlink)  # pylint: disable=W0212
+            self.assertFalse(agent._downlink.done())  # pylint: disable=W0212
+
+        self.assertEqual(model.sessions, 2)
+        self.assertListEqual(
+            summary,
+            [
+                ("user", "Hello"),
+                ("reply_end", "completed"),
             ],
         )
 
@@ -1565,6 +1626,251 @@ class RealtimeAgentTranscriptionTest(IsolatedAsyncioTestCase):
             [("u2", "new")],
         )
 
+    async def test_transport_end_retires_unbound_local_turns(self) -> None:
+        """A transcript after reconnect lands on the new turn, not the
+        dead one ended by the transport teardown."""
+        model = ScriptedModel([[]], input_audio_transcription=True)
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            vad=EndOnSecondFrameVAD(),
+        )
+
+        async with agent:
+            # Run 1: the only audio frame starts a local (unbound) user
+            # turn; the transport then dies before any transcript for it
+            # can settle.
+            transport = FakeTransport(frames=1)
+            run1: list[tuple[Any, ...]] = []
+            async with transport:
+                async for event in agent.reply_stream(transport):
+                    if isinstance(event, ReplyStartEvent):
+                        run1.append(("start", event.reply_id))
+                    elif isinstance(event, ReplyEndEvent):
+                        run1.append(("end", event.reply_id))
+            self.assertEqual(
+                [kind for kind, *_ in run1],
+                ["start", "end"],
+                "the dead transport must hand back the turn's end",
+            )
+            dead_id = run1[0][1]
+
+            # Run 2: a fresh transport on the same model session. The
+            # user starts speaking again — a new local turn opens.
+            await agent._forward_audio(b"", SpeechTransition.STARTED)
+            run2_start = self._drain(agent)
+            self.assertEqual(run2_start, [("start", run2_start[0][1])])
+            new_id = run2_start[0][1]
+            self.assertNotEqual(new_id, dead_id)
+
+            # The provider settles the new turn's transcript. It must
+            # land on the new turn — not be captured by the dead one.
+            await agent._on_model_event(
+                me.InputTranscriptionEvent(item_id="u9", text="hello"),
+            )
+            settled = self._drain(agent)
+
+        self.assertEqual(
+            settled,
+            [("text", new_id, "hello"), ("end", new_id)],
+            "the transcript must attach to the new turn",
+        )
+        self.assertEqual(
+            [
+                (message.id, message.get_text_content())
+                for message in agent.state.context
+                if message.role == "user"
+            ],
+            [(new_id, "hello")],
+            "context must hold the transcript under the new turn's id",
+        )
+
+    async def test_early_stream_exit_cleans_up_local_turns(self) -> None:
+        """Closing or cancelling retires only unfinished local turns."""
+        for exit_mode in ["close", "cancel"]:
+            for committed in [False, True]:
+                with self.subTest(exit_mode=exit_mode, committed=committed):
+                    agent = self._make_agent()
+                    async with agent:
+                        await agent._forward_audio(
+                            b"",
+                            SpeechTransition.STARTED,
+                        )
+                        old_turn = agent._user_turn
+                        old_id = old_turn.reply_id
+                        if committed:
+                            await agent._forward_audio(
+                                b"",
+                                SpeechTransition.ENDED,
+                            )
+                        tasks_before = asyncio.all_tasks()
+                        stream = agent.reply_stream(GatedTransport([]))
+                        first = await anext(stream)
+                        self.assertEqual(
+                            (first.type, first.reply_id),
+                            ("REPLY_START", old_id),
+                        )
+                        if exit_mode == "close":
+                            await stream.aclose()
+                        else:
+                            consumer = asyncio.create_task(anext(stream))
+                            await asyncio.sleep(0)
+                            consumer.cancel()
+                            with self.assertRaises(asyncio.CancelledError):
+                                await consumer
+                        await asyncio.sleep(0)
+                        self.assertEqual(
+                            {
+                                "transport": agent._transport,
+                                "old_open": old_turn.open,
+                                "pending": list(agent._pending_user_turns),
+                                "events": self._drain(agent),
+                                "tasks": asyncio.all_tasks() - tasks_before,
+                            },
+                            {
+                                "transport": None,
+                                "old_open": False,
+                                "pending": [old_id] if committed else [],
+                                "events": [("end", old_id)],
+                                "tasks": set(),
+                            },
+                        )
+                        await agent._forward_audio(
+                            b"",
+                            SpeechTransition.STARTED,
+                        )
+                        new_id = self._drain(agent)[0][1]
+                        self.assertNotEqual(new_id, old_id)
+                        resumed = agent.reply_stream(GatedTransport([]))
+                        if committed:
+                            await agent._on_model_event(
+                                me.InputTranscriptionEvent(
+                                    item_id="u1",
+                                    text="first",
+                                ),
+                            )
+                            self.assertEqual(
+                                self._drain(agent),
+                                [("text", old_id, "first")],
+                            )
+                            self.assertTrue(agent._user_turn.open)
+                        await agent._on_model_event(
+                            me.InputTranscriptionEvent(
+                                item_id="u2",
+                                text="second",
+                            ),
+                        )
+                        try:
+                            events = []
+                            for _ in range(4):
+                                event = await asyncio.wait_for(
+                                    anext(resumed),
+                                    timeout=1,
+                                )
+                                events.append((event.type, event.reply_id))
+                        finally:
+                            await resumed.aclose()
+                        self.assertEqual(
+                            {
+                                "events": events,
+                                "context": [
+                                    (msg.id, msg.get_text_content())
+                                    for msg in agent.state.context
+                                ],
+                            },
+                            {
+                                "events": [
+                                    ("TEXT_BLOCK_START", new_id),
+                                    ("TEXT_BLOCK_DELTA", new_id),
+                                    ("TEXT_BLOCK_END", new_id),
+                                    ("REPLY_END", new_id),
+                                ],
+                                "context": (
+                                    [(old_id, "first")] if committed else []
+                                )
+                                + [(new_id, "second")],
+                            },
+                        )
+
+    async def test_transport_end_keeps_committed_local_turns(self) -> None:
+        """A late local transcription must not settle the resumed turn."""
+        for old_event, old_context in [
+            (me.InputTranscriptionEvent(item_id="u1", text="first"), True),
+            (me.InputTranscriptionFailedEvent(item_id="u1"), False),
+            (me.InputTranscriptionEvent(item_id="u1", text=""), False),
+        ]:
+            with self.subTest(event=old_event):
+                agent = self._make_agent()
+                async with agent:
+                    await agent._forward_audio(b"", SpeechTransition.STARTED)
+                    old_id = self._drain(agent)[0][1]
+                    await agent._forward_audio(b"", SpeechTransition.ENDED)
+                    self.assertIn("commit_turn", agent.model.calls)
+
+                    ended = [
+                        (event.type, event.reply_id)
+                        async for event in agent.reply_stream(FakeTransport(0))
+                    ]
+                    self.assertEqual(ended, [("REPLY_END", old_id)])
+
+                    await agent._forward_audio(b"", SpeechTransition.STARTED)
+                    new_id = self._drain(agent)[0][1]
+                    await agent._on_model_event(old_event)
+                    self.assertEqual(
+                        {
+                            "events": self._drain(agent),
+                            "pending": [
+                                (turn.reply_id, turn.item_id, turn.open)
+                                for turn in agent._pending_user_turns.values()
+                            ],
+                            "context": [
+                                (msg.id, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                        },
+                        {
+                            "events": (
+                                [("text", old_id, "first")]
+                                if old_context
+                                else []
+                            ),
+                            "pending": [(new_id, "", True)],
+                            "context": (
+                                [(old_id, "first")] if old_context else []
+                            ),
+                        },
+                    )
+                    await agent._on_model_event(
+                        me.InputTranscriptionEvent(
+                            item_id="u2",
+                            text="second",
+                        ),
+                    )
+                    self.assertEqual(
+                        {
+                            "events": self._drain(agent),
+                            "pending": list(agent._pending_user_turns),
+                            "current": agent._user_turn,
+                            "context": [
+                                (msg.id, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                        },
+                        {
+                            "events": [
+                                ("text", new_id, "second"),
+                                ("end", new_id),
+                            ],
+                            "pending": [],
+                            "current": None,
+                            "context": (
+                                [(old_id, "first")] if old_context else []
+                            )
+                            + [(new_id, "second")],
+                        },
+                    )
+
     async def test_transcription_after_transport_end_keeps_turn(self) -> None:
         """A late transcript stays in the user reply already closed."""
         model = ScriptedModel(
@@ -1793,10 +2099,12 @@ class BlockingTool(StreamTool):
 
     def __init__(self) -> None:
         super().__init__()
+        self.started = asyncio.Event()
         self.release = asyncio.Event()
 
     async def __call__(self, q: str, **kwargs: Any) -> Any:
         """Hold the tool result until a barge-in has completed."""
+        self.started.set()
         await self.release.wait()
         yield ToolResponse(content=[TextBlock(text=f"{q}-final")])
 
@@ -1851,10 +2159,15 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
         self,
         tool: ToolBase,
         confirm: bool | None = None,
+        non_blocking: bool = False,
     ) -> tuple[list[tuple[Any, ...]], ScriptedModel]:
         """Run one tool-calling reply; answer a permission prompt with
         *confirm* if one appears. Returns the tool-related events."""
-        model = ScriptedModel([_tool_script(tool.name)])
+        script = _tool_script(tool.name)
+        if non_blocking:
+            script[1].non_blocking = True
+            script.pop()
+        model = ScriptedModel([script])
         agent = RealtimeAgent(
             "Friday",
             "be brief",
@@ -1916,6 +2229,31 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                                 ),
                             )
         return events, model
+
+    async def test_non_blocking_permissions_and_errors(self) -> None:
+        """Immediate scheduling preserves permission and error reporting."""
+        for tool, confirm, output in (
+            (AskTool(), True, "x-final"),
+            (AskTool(), False, 'Tool "ask_tool" denied by user.'),
+            (BrokenTool(), None, "boom"),
+        ):
+            with self.subTest(tool=tool.name, confirm=confirm):
+                expected, _ = await self._run_tool_scenario(tool, confirm)
+                actual, model = await self._run_tool_scenario(
+                    tool,
+                    confirm,
+                    non_blocking=True,
+                )
+                self.assertEqual(actual, expected)
+                self.assertEqual(
+                    [call for call in model.calls if call != "push_audio"],
+                    [
+                        "connect(session=1,td_off=False)",
+                        f"tool_result(c1,{output!r})",
+                        "cancel",
+                        "close",
+                    ],
+                )
 
     async def test_streamed_tool_result_is_not_duplicated(self) -> None:
         """Chunks are shown as they come; the provider gets only the
@@ -2049,6 +2387,1854 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+
+class GeminiThinkingAgentTest(IsolatedAsyncioTestCase):
+    """Drive the shared agent with actual Gemini background frames."""
+
+    async def test_partial_transcriptions_discarded_on_session_end(
+        self,
+    ) -> None:
+        """Session loss removes all fragments before any end checkpoint."""
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                model = QueueSessionModel()
+                model.parameters.input_audio_transcription = True
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    aggregator=TurnAggregator(min_chars=4),
+                )
+                try:
+                    await agent.connect()
+                    await agent._on_model_event(
+                        me.InputTranscriptionEvent(
+                            item_id="kept",
+                            text="complete",
+                        ),
+                    )
+                    while not agent._out.empty():
+                        agent._out.get_nowait()
+                    for item_id in ("u1", "u2"):
+                        await agent._on_model_event(
+                            me.InputTranscriptionDeltaEvent(
+                                item_id=item_id,
+                                delta="a",
+                            ),
+                        )
+                    await agent._on_model_event(
+                        me.TranscriptDeltaEvent(item_id="r1", delta="Draft"),
+                    )
+                    if failure:
+                        model.event_queues[0].put_nowait(
+                            me.ModelErrorEvent(code="closed", message="lost"),
+                        )
+                    model.event_queues[0].put_nowait(None)
+                    await asyncio.wait_for(
+                        model.iterator_finished[0].wait(),
+                        timeout=1,
+                    )
+                    checkpoints = []
+                    while not agent._out.empty():
+                        queued = agent._out.get_nowait()
+                        if queued.checkpoint is not None:
+                            checkpoints.append(
+                                (
+                                    queued.event.reply_id,
+                                    [
+                                        (msg.id, msg.get_text_content())
+                                        for msg in queued.checkpoint.context
+                                    ],
+                                ),
+                            )
+                    history = [("kept", "complete"), ("r1", "Draft")]
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.id, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "pending": list(agent._pending_user_turns),
+                            "checkpoints": checkpoints,
+                        },
+                        {
+                            "context": history,
+                            "pending": [],
+                            "checkpoints": [
+                                (item_id, history)
+                                for item_id in ("u1", "u2", "r1")
+                            ],
+                        },
+                    )
+                    await agent.connect()
+                    self.assertEqual(
+                        model.instructions,
+                        "\n\n## Conversation so far\nuser: complete",
+                    )
+                finally:
+                    await agent.close()
+
+    async def test_close_discards_partial_transcription_after_detach(
+        self,
+    ) -> None:
+        """Permanent close retires input only after its reader has stopped."""
+        for finalized in (False, True):
+            with self.subTest(finalized=finalized):
+                model = QueueSessionModel()
+                model.parameters.input_audio_transcription = True
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    aggregator=TurnAggregator(min_chars=4),
+                )
+                try:
+                    await agent.connect()
+                    await asyncio.wait_for(
+                        model.iterator_started[0].wait(),
+                        timeout=1,
+                    )
+                    await agent._on_model_event(
+                        me.SpeechStartedEvent(item_id="u1"),
+                    )
+                    await agent._on_model_event(
+                        me.InputTranscriptionDeltaEvent(
+                            item_id="u1",
+                            delta="a",
+                        ),
+                    )
+                    _ = [
+                        event
+                        async for event in agent.reply_stream(
+                            FakeTransport(0),
+                        )
+                    ]
+                    self.assertEqual(
+                        (
+                            list(agent._pending_user_turns),
+                            model.iterator_finished[0].is_set(),
+                        ),
+                        (["u1"], False),
+                    )
+                    if finalized:
+                        await agent._on_model_event(
+                            me.InputTranscriptionEvent(
+                                item_id="u1",
+                                text="accepted",
+                            ),
+                        )
+                    await agent.close()
+                    await agent.close()
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.id, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "pending": agent._pending_user_turns,
+                            "current": agent._user_turn,
+                            "reader_stopped": (
+                                model.iterator_finished[0].is_set()
+                            ),
+                        },
+                        {
+                            "context": (
+                                [("u1", "accepted")] if finalized else []
+                            ),
+                            "pending": {},
+                            "current": None,
+                            "reader_stopped": True,
+                        },
+                    )
+                finally:
+                    await agent.close()
+
+    async def test_partial_transcription_settlement(self) -> None:
+        """Only accepted final text survives failure, filtering or reset."""
+        for outcome, detached in product(
+            ("failed", "filtered", "accepted"),
+            (False, True),
+        ):
+            with self.subTest(outcome=outcome, detached=detached):
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    ScriptedModel([], input_audio_transcription=True),
+                    aggregator=TurnAggregator(min_chars=4),
+                )
+                await agent._on_model_event(
+                    me.InputTranscriptionDeltaEvent(item_id="u1", delta="a"),
+                )
+                # Transport detachment preserves the turn for a late final.
+                if detached:
+                    agent._retire_unbound_user_turns()
+                early = []
+                while not agent._out.empty():
+                    queued = agent._out.get_nowait()
+                    if queued.checkpoint is not None:
+                        early.append(queued.checkpoint.context)
+                self.assertEqual(early, [[]] if detached else [])
+                self.assertEqual(
+                    [
+                        (msg.id, msg.get_text_content())
+                        for msg in agent.state.context
+                    ],
+                    [("u1", "a")],
+                )
+                if outcome == "failed":
+                    event = me.InputTranscriptionFailedEvent(item_id="u1")
+                else:
+                    event = me.InputTranscriptionEvent(
+                        item_id="u1",
+                        text="accepted" if outcome == "accepted" else "a",
+                    )
+                await agent._on_model_event(event)
+                agent._reset_user_turns()
+                history = [("u1", "accepted")] if outcome == "accepted" else []
+                snapshots = []
+                while not agent._out.empty():
+                    queued = agent._out.get_nowait()
+                    if queued.checkpoint is not None:
+                        snapshots.append(
+                            [
+                                (msg.id, msg.get_text_content())
+                                for msg in queued.checkpoint.context
+                            ],
+                        )
+                self.assertEqual(
+                    (
+                        [
+                            (msg.id, msg.get_text_content())
+                            for msg in agent.state.context
+                        ],
+                        list(agent._pending_user_turns),
+                        snapshots,
+                    ),
+                    (history, [], [] if detached else [history]),
+                )
+
+    async def test_partial_transcription_cannot_absorb_accepted_turn(
+        self,
+    ) -> None:
+        """Merging into an unfinished predecessor would lose accepted text."""
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            ScriptedModel([], input_audio_transcription=True),
+        )
+        with patch(
+            "agentscope.agent._realtime._aggregator.time.monotonic",
+            return_value=100,
+        ):
+            for event in (
+                me.InputTranscriptionEvent(item_id="kept", text="previous"),
+                me.InputTranscriptionDeltaEvent(item_id="u1", delta="a"),
+                me.InputTranscriptionDeltaEvent(item_id="u2", delta="b"),
+                me.InputTranscriptionEvent(item_id="u2", text="accepted"),
+            ):
+                await agent._on_model_event(event)
+        self.assertTrue(agent.aggregator.merges_with_previous())
+        agent._reset_user_turns()
+        self.assertEqual(
+            [(msg.id, msg.get_text_content()) for msg in agent.state.context],
+            [("kept", "previous"), ("u2", "accepted")],
+        )
+
+    async def test_unbound_partial_transcription_discarded_on_detach(
+        self,
+    ) -> None:
+        """Retiring an unmatchable turn must also remove its placeholder."""
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            ScriptedModel([], input_audio_transcription=True),
+        )
+        await agent._on_model_event(
+            me.InputTranscriptionDeltaEvent(item_id="", delta="a"),
+        )
+        agent._retire_unbound_user_turns()
+        self.assertEqual(
+            (agent.state.context, agent._pending_user_turns),
+            ([], {}),
+        )
+
+    async def test_tool_result_precedes_followup(self) -> None:
+        """Early IDLE cannot close the reply before a result's continuation."""
+        for delivery in ("after_send", "during_send", "silent", "interrupted"):
+            with self.subTest(delivery=delivery):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                tool = BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                )
+
+                async def feed(
+                    content: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver a server frame through the real adapter."""
+                    for event in current_model._parse(content):
+                        await current_agent._on_model_event(event)
+
+                final_content: dict = {"interactionStatus": "IDLE"}
+                if delivery not in ("silent", "interrupted"):
+                    final_content["outputTranscription"] = {"text": "Sunny."}
+                final_frame = {"serverContent": final_content}
+
+                async def send_result(
+                    _payload: dict,
+                    mode: str = delivery,
+                    deliver: Any = feed,
+                ) -> None:
+                    """Allow provider completion before send returns."""
+                    if mode == "during_send":
+                        await deliver(
+                            {
+                                "serverContent": {
+                                    "interactionStatus": "IDLE",
+                                    "outputTranscription": {"text": "Sunny."},
+                                },
+                            },
+                        )
+
+                model._send = AsyncMock(side_effect=send_result)
+                await feed(
+                    {
+                        "serverContent": {
+                            "outputTranscription": {"text": "Checking."},
+                        },
+                    },
+                )
+                reply_id = agent._reply_id
+                await feed(
+                    {
+                        "toolCall": {
+                            "functionCalls": [
+                                {
+                                    "id": "c1",
+                                    "name": tool.name,
+                                    "args": {"q": "x"},
+                                },
+                            ],
+                        },
+                    },
+                )
+                tasks = list(agent._tasks)
+                try:
+                    await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    if delivery == "interrupted":
+                        agent._connected = True
+                        await agent.interrupt()
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    if delivery != "during_send":
+                        self.assertEqual(
+                            agent._reply_id,
+                            "" if delivery == "interrupted" else reply_id,
+                        )
+                        await feed(final_frame)
+                    lifecycle = []
+                    while not agent._out.empty():
+                        event = agent._out.get_nowait().event
+                        if isinstance(event, (ReplyStartEvent, ReplyEndEvent)):
+                            lifecycle.append((event.type, event.reply_id))
+                    self.assertEqual(
+                        lifecycle,
+                        [
+                            ("REPLY_START", reply_id),
+                            ("REPLY_END", reply_id),
+                        ],
+                    )
+                    self.assertEqual(
+                        [
+                            (
+                                msg.id,
+                                [
+                                    block.text
+                                    for block in msg.content
+                                    if isinstance(block, TextBlock)
+                                ],
+                            )
+                            for msg in agent.state.context
+                        ],
+                        [
+                            (
+                                reply_id,
+                                ["Checking."]
+                                + (
+                                    []
+                                    if delivery in ("silent", "interrupted")
+                                    else ["Sunny."]
+                                ),
+                            ),
+                        ],
+                    )
+                    self.assertEqual(agent._background_tools, {})
+                    self.assertEqual(
+                        (
+                            model._awaiting_tool_reply,
+                            model._pending_tool_calls,
+                        ),
+                        (False, set()),
+                    )
+                finally:
+                    tool.release.set()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_fragment_placeholders_preserve_pause_merging(self) -> None:
+        """Reserved input must honor the same aggregation as final input."""
+        for with_delta in (False, True):
+            for separator in ("none", "empty", "spoken", "tool"):
+                with self.subTest(delta=with_delta, separator=separator):
+                    agent = RealtimeAgent("Friday", "", ScriptedModel([]))
+                    with patch(
+                        "agentscope.agent._realtime."
+                        "_aggregator.time.monotonic",
+                        return_value=100.0,
+                    ):
+                        agent._on_transcription(
+                            me.InputTranscriptionEvent(
+                                item_id="u1",
+                                text="北京",
+                            ),
+                        )
+                        if separator != "none":
+                            content = (
+                                [
+                                    ToolCallBlock(
+                                        id="c1",
+                                        name="tool",
+                                        input="{}",
+                                    ),
+                                ]
+                                if separator == "tool"
+                                else [
+                                    TextBlock(
+                                        text="好的"
+                                        if separator == "spoken"
+                                        else "",
+                                    ),
+                                ]
+                            )
+                            agent.state.context.append(
+                                Msg(
+                                    id="between",
+                                    name="Friday",
+                                    role="assistant",
+                                    content=content,
+                                ),
+                            )
+                        if with_delta:
+                            agent._on_transcription_delta(
+                                me.InputTranscriptionDeltaEvent(
+                                    item_id="u2",
+                                    delta="天",
+                                ),
+                            )
+                            agent.state.context.append(
+                                Msg(
+                                    id="answer",
+                                    name="Friday",
+                                    role="assistant",
+                                    content=[TextBlock(text="晴天")],
+                                ),
+                            )
+                            agent._on_transcription_delta(
+                                me.InputTranscriptionDeltaEvent(
+                                    item_id="u2",
+                                    delta="气",
+                                    response_id="answer",
+                                ),
+                            )
+                        agent._on_transcription(
+                            me.InputTranscriptionEvent(
+                                item_id="u2",
+                                text="天气",
+                            ),
+                        )
+                    self.assertTrue(agent.aggregator.merges_with_previous())
+                    expected = [("u1", "user", "北京天气")]
+                    if separator in ("spoken", "tool"):
+                        expected = [
+                            ("u1", "user", "北京"),
+                            (
+                                "between",
+                                "assistant",
+                                "好的" if separator == "spoken" else "",
+                            ),
+                            ("u2", "user", "天气"),
+                        ]
+                    if with_delta:
+                        expected.append(("answer", "assistant", "晴天"))
+                    self.assertEqual(
+                        [
+                            (msg.id, msg.role, msg.get_text_content())
+                            for msg in agent.state.context
+                        ],
+                        expected,
+                    )
+
+    async def test_idle_waits_for_running_and_queued_tools(self) -> None:
+        """Model completion must not discard work or precede its results."""
+        model = ScriptedModel([])
+        tool = BlockingTool()
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            model,
+            toolkit=Toolkit(tools=[tool]),
+        )
+        for call_id in ("c1", "c2"):
+            await agent._on_model_event(
+                me.ToolCallEvent(
+                    item_id="r1",
+                    non_blocking=True,
+                    tool_call=ToolCallBlock(
+                        id=call_id,
+                        name=tool.name,
+                        input='{"q":"x"}',
+                    ),
+                ),
+            )
+        tasks = list(agent._tasks)
+        try:
+            await asyncio.wait_for(tool.started.wait(), timeout=1)
+            await agent._on_model_event(me.ResponseDoneEvent(item_id="r1"))
+            tool.release.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+            self.assertEqual(agent._reply_id, "r1")
+            await agent._on_model_event(me.ResponseCreatedEvent(item_id="r2"))
+            await agent._on_model_event(me.ResponseDoneEvent(item_id="r2"))
+            events = []
+            while not agent._out.empty():
+                event = agent._out.get_nowait().event
+                if isinstance(event, (ToolResultEndEvent, ReplyEndEvent)):
+                    events.append(
+                        (event.type, getattr(event, "tool_call_id", "")),
+                    )
+            self.assertEqual(
+                (model.calls, events),
+                (
+                    ["tool_result(c1,'x-final')", "tool_result(c2,'x-final')"],
+                    [
+                        ("TOOL_RESULT_END", "c1"),
+                        ("TOOL_RESULT_END", "c2"),
+                        ("REPLY_END", ""),
+                    ],
+                ),
+            )
+        finally:
+            tool.release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_transcription_keeps_one_turn_before_answer(self) -> None:
+        """Fragments around thinking remain one user message before output."""
+        for split in (False, True):
+            with self.subTest(split=split):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                agent = RealtimeAgent("Friday", "", model)
+                frames: list[dict] = []
+                if split:
+                    frames.append({"inputTranscription": {"text": "Check "}})
+                frames.extend(
+                    [
+                        {"interactionStatus": "IN_PROGRESS"},
+                        {"outputTranscription": {"text": "Sunny."}},
+                        {
+                            "inputTranscription": {
+                                "text": "weather"
+                                if split
+                                else "Check weather",
+                            },
+                        },
+                        {"interactionStatus": "IDLE"},
+                    ],
+                )
+                for content in frames:
+                    for event in model._parse({"serverContent": content}):
+                        await agent._on_model_event(event)
+                self.assertEqual(
+                    [
+                        (msg.role, msg.get_text_content())
+                        for msg in agent.state.context
+                    ],
+                    [("user", "Check weather"), ("assistant", "Sunny.")],
+                )
+                user_replies = []
+                snapshots = []
+                while not agent._out.empty():
+                    queued = agent._out.get_nowait()
+                    if isinstance(queued.event, ReplyStartEvent):
+                        if queued.event.role == "user":
+                            user_replies.append(queued.event.reply_id)
+                    if queued.checkpoint is not None:
+                        snapshots.append(
+                            [
+                                (msg.role, msg.get_text_content())
+                                for msg in queued.checkpoint.context
+                            ],
+                        )
+                self.assertEqual(user_replies, [agent.state.context[0].id])
+                self.assertEqual(
+                    snapshots[-1],
+                    [
+                        ("user", "Check weather"),
+                        ("assistant", "Sunny."),
+                    ],
+                )
+                model.connect = AsyncMock()
+                try:
+                    await agent.connect()
+                    self.assertEqual(
+                        model.connect.await_args.kwargs["instructions"],
+                        "\n\n## Conversation so far\n"
+                        "user: Check weather\nFriday: Sunny.",
+                    )
+                finally:
+                    await agent.close()
+
+    async def test_late_transcription_precedes_tool_followup(self) -> None:
+        """Late input precedes the logical reply across model responses."""
+        for delivery in (
+            "separate",
+            "same_frame",
+            "content_status",
+            "root_status",
+            "before_tool_result",
+            "after_tool_result",
+        ):
+            with self.subTest(delivery=delivery):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                )
+
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver a frame through the real Gemini adapter."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
+
+                tasks = []
+                try:
+                    await feed(
+                        {
+                            "serverContent": {
+                                "outputTranscription": {"text": "Checking."},
+                            },
+                        },
+                    )
+                    reply_id = agent._reply_id
+                    await feed(
+                        {
+                            "toolCall": {
+                                "functionCalls": [
+                                    {
+                                        "id": "c1",
+                                        "name": tool.name,
+                                        "args": {"q": "weather"},
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    tasks = list(agent._tasks)
+                    await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    transcription = {
+                        "inputTranscription": {"text": "Weather?"},
+                    }
+                    if delivery == "before_tool_result":
+                        await feed({"serverContent": transcription})
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    output = {"outputTranscription": {"text": "Sunny."}}
+                    if delivery == "same_frame":
+                        await feed(
+                            {"serverContent": {**output, **transcription}},
+                        )
+                    elif delivery in ("content_status", "root_status"):
+                        frame: dict = {"serverContent": transcription}
+                        status_target = (
+                            frame
+                            if delivery == "root_status"
+                            else frame["serverContent"]
+                        )
+                        status_target["interactionStatus"] = "IN_PROGRESS"
+                        await feed(frame)
+                        await feed({"serverContent": output})
+                    elif delivery in (
+                        "before_tool_result",
+                        "after_tool_result",
+                    ):
+                        if delivery == "after_tool_result":
+                            await feed({"serverContent": transcription})
+                        await feed({"serverContent": output})
+                    else:
+                        await feed({"serverContent": output})
+                        await feed({"serverContent": transcription})
+                    self.assertNotEqual(model._response_id, reply_id)
+                    self.assertEqual(agent._reply_id, reply_id)
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    expected = [
+                        ("user", "Weather?"),
+                        ("assistant", "Checking.\nSunny."),
+                    ]
+                    snapshots = [
+                        agent.checkpoint_snapshot(event)
+                        for event in agent.drain_events()
+                    ]
+                    checkpoint = next(
+                        state for state in reversed(snapshots) if state
+                    )
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "checkpoint": [
+                                (msg.role, msg.get_text_content())
+                                for msg in checkpoint.context
+                            ],
+                        },
+                        {"context": expected, "checkpoint": expected},
+                    )
+                    model.connect = AsyncMock()
+                    await agent.connect()
+                    self.assertEqual(
+                        model.connect.await_args.kwargs["instructions"],
+                        "\n\n## Conversation so far\n"
+                        "user: Weather?\nFriday: Checking.\nSunny.",
+                    )
+                finally:
+                    tool.release.set()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await agent.close()
+
+    async def test_tool_idle_preserves_input_fragments(self) -> None:
+        """Tool handoffs must not strip or filter individual fragments."""
+        for min_chars, idle_count in product((1, 4), (1, 2)):
+            with self.subTest(min_chars=min_chars, idle_count=idle_count):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                    aggregator=TurnAggregator(min_chars=min_chars),
+                )
+
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver real adapter events without a network."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
+
+                tasks = []
+                try:
+                    await feed(
+                        {
+                            "serverContent": {
+                                "inputTranscription": {"text": "Go "},
+                                "outputTranscription": {"text": "Checking."},
+                            },
+                            "toolCall": {
+                                "functionCalls": [
+                                    {
+                                        "id": "c1",
+                                        "name": tool.name,
+                                        "args": {"q": "x"},
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    user_id = model._user_id
+                    tasks = list(agent._tasks)
+                    await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    for _ in range(idle_count):
+                        await feed(
+                            {"serverContent": {"interactionStatus": "IDLE"}},
+                        )
+                        self.assertEqual(
+                            (model._user_id, model._input_text),
+                            (user_id, "Go "),
+                        )
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    await feed(
+                        {
+                            "serverContent": {
+                                "inputTranscription": {"text": "there"},
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        (model._user_id, model._input_text),
+                        (user_id, "Go there"),
+                    )
+                    await feed(
+                        {
+                            "serverContent": {
+                                "outputTranscription": {"text": "Done."},
+                                "interactionStatus": "IDLE",
+                            },
+                        },
+                    )
+                    events = list(agent.drain_events())
+                    user_reply_id = agent.state.context[0].id
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "user_text": [
+                                event.delta
+                                for event in events
+                                if isinstance(event, TextBlockDeltaEvent)
+                                and event.reply_id == user_reply_id
+                            ],
+                            "pending": agent._pending_user_turns,
+                            "input": (model._user_id, model._input_text),
+                        },
+                        {
+                            "context": [
+                                ("user", "Go there"),
+                                ("assistant", "Checking.\nDone."),
+                            ],
+                            "user_text": ["Go there"],
+                            "pending": {},
+                            "input": ("", ""),
+                        },
+                    )
+                finally:
+                    tool.release.set()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await agent.close()
+
+    async def test_interruption_keeps_transcription_identities(self) -> None:
+        """A new utterance cannot inherit the interrupted input buffer."""
+        model = GeminiRealtimeModel(
+            "gemini-3.8-live-extended-thinking",
+            GeminiCredential(api_key="test"),
+        )
+        agent = RealtimeAgent("Friday", "", model)
+        agent._connected = True
+        frames = [
+            {"inputTranscription": {"text": "Check weather"}},
+            {"interactionStatus": "IN_PROGRESS"},
+            {"outputTranscription": {"text": "Checking."}},
+            {"interrupted": True, "inputTranscription": {"text": "Change "}},
+            {"interactionStatus": "IN_PROGRESS"},
+            {"outputTranscription": {"text": "Okay."}},
+            {"inputTranscription": {"text": "city"}},
+            {"interactionStatus": "IDLE"},
+        ]
+        for content in frames:
+            for event in model._parse({"serverContent": content}):
+                await agent._on_model_event(event)
+        self.assertEqual(
+            [
+                (msg.role, msg.get_text_content())
+                for msg in agent.state.context
+            ],
+            [
+                ("user", "Check weather"),
+                ("assistant", "Checking."),
+                ("user", "Change city"),
+                ("assistant", "Okay."),
+            ],
+        )
+        self.assertNotEqual(
+            agent.state.context[0].id,
+            agent.state.context[2].id,
+        )
+
+    async def test_local_vad_interruption_preserves_input_history(
+        self,
+    ) -> None:
+        """Local speech starts settle old input and reserve a new turn."""
+        model = GeminiRealtimeModel(
+            "gemini-3.8-live-extended-thinking",
+            GeminiCredential(api_key="test"),
+            parameters=GeminiRealtimeModel.Parameters(turn_detection="none"),
+        )
+        model._send = AsyncMock()
+        agent = RealtimeAgent("Friday", "", model)
+        agent._connected = True
+
+        async def feed(content: dict) -> None:
+            """Deliver parsed provider frames in model event order."""
+            for event in model._parse({"serverContent": content}):
+                await agent._on_model_event(event)
+
+        await agent._forward_audio(b"\x00\x00", SpeechTransition.STARTED)
+        await feed({"inputTranscription": {"text": "Check weather"}})
+        await agent._forward_audio(b"\x00\x00", SpeechTransition.ENDED)
+        await feed(
+            {
+                "interactionStatus": "IN_PROGRESS",
+                "outputTranscription": {"text": "Checking."},
+            },
+        )
+        await agent._forward_audio(b"\x00\x00", SpeechTransition.STARTED)
+        while not model._queue.empty():
+            await agent._on_model_event(model._queue.get_nowait())
+        await feed({"inputTranscription": {"text": "Change "}})
+        await agent._forward_audio(b"\x00\x00", SpeechTransition.ENDED)
+        await feed(
+            {
+                "inputTranscription": {"text": "city"},
+                "interactionStatus": "IDLE",
+            },
+        )
+        await feed(
+            {
+                "interactionStatus": "IN_PROGRESS",
+                "outputTranscription": {"text": "Okay."},
+            },
+        )
+        await feed({"interactionStatus": "IDLE"})
+        self.assertEqual(
+            [
+                (msg.role, msg.get_text_content())
+                for msg in agent.state.context
+            ],
+            [
+                ("user", "Check weather"),
+                ("assistant", "Checking."),
+                ("user", "Change city"),
+                ("assistant", "Okay."),
+            ],
+        )
+        self.assertNotEqual(
+            agent.state.context[0].id,
+            agent.state.context[2].id,
+        )
+        self.assertEqual(agent._pending_user_turns, {})
+
+    async def test_stale_idle_preserves_ongoing_local_input(self) -> None:
+        """Cancelled completions cannot split speech or filter a fragment."""
+        for backchannels in (frozenset(), frozenset({"New"})):
+            with self.subTest(backchannels=backchannels):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                    parameters=GeminiRealtimeModel.Parameters(
+                        turn_detection="none",
+                    ),
+                )
+                model._send = AsyncMock()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    aggregator=TurnAggregator(backchannels=backchannels),
+                )
+                agent._connected = True
+
+                async def feed(
+                    content: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver provider events without a network."""
+                    for event in current_model._parse(
+                        {"serverContent": content},
+                    ):
+                        await current_agent._on_model_event(event)
+
+                try:
+                    with patch(
+                        "agentscope.agent._realtime._aggregator.time",
+                    ) as clock:
+                        clock.monotonic.return_value = 10.0
+                        await feed(
+                            {"outputTranscription": {"text": "Old answer"}},
+                        )
+                        await agent._forward_audio(
+                            b"\x00\x00",
+                            SpeechTransition.STARTED,
+                        )
+                        user_turn = agent._user_turn
+                        await feed({"inputTranscription": {"text": "New "}})
+                        provider_id = model._user_id
+                        for _ in range(2):
+                            await feed({"interactionStatus": "IDLE"})
+                            self.assertIs(agent._user_turn, user_turn)
+                            self.assertEqual(
+                                (
+                                    user_turn.open,
+                                    user_turn.speech_ended,
+                                    model._user_id,
+                                    model._input_text,
+                                ),
+                                (True, False, provider_id, "New "),
+                            )
+                        clock.monotonic.return_value = 12.0
+                        await feed(
+                            {"inputTranscription": {"text": "question"}},
+                        )
+                        self.assertEqual(model._user_id, provider_id)
+                        await agent._forward_audio(
+                            b"\x00\x00",
+                            SpeechTransition.ENDED,
+                        )
+                        await feed(
+                            {
+                                "interactionStatus": "IN_PROGRESS",
+                                "outputTranscription": {"text": "Okay."},
+                            },
+                        )
+                        await feed({"interactionStatus": "IDLE"})
+                    events = list(agent.drain_events())
+                    self.assertEqual(
+                        {
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                            "user_starts": [
+                                event.reply_id
+                                for event in events
+                                if isinstance(event, ReplyStartEvent)
+                                and event.role == "user"
+                            ],
+                            "user_ends": [
+                                event.reply_id
+                                for event in events
+                                if isinstance(event, ReplyEndEvent)
+                                and event.reply_id == user_turn.reply_id
+                            ],
+                            "pending": agent._pending_user_turns,
+                            "current": agent._user_turn,
+                        },
+                        {
+                            "context": [
+                                ("assistant", "Old answer"),
+                                ("user", "New question"),
+                                ("assistant", "Okay."),
+                            ],
+                            "user_starts": [user_turn.reply_id],
+                            "user_ends": [user_turn.reply_id],
+                            "pending": {},
+                            "current": None,
+                        },
+                    )
+                finally:
+                    await agent.close()
+
+    async def test_repeated_local_input_before_cancelled_response_idle(
+        self,
+    ) -> None:
+        """Every local input start separates text, even with no live reply."""
+        model = GeminiRealtimeModel(
+            "gemini-3.8-live-extended-thinking",
+            GeminiCredential(api_key="test"),
+            parameters=GeminiRealtimeModel.Parameters(turn_detection="none"),
+        )
+        model._send = AsyncMock()
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            model,
+            aggregator=TurnAggregator(merge_window_ms=-1),
+        )
+        agent._connected = True
+        user_ids = []
+        provider_ids = []
+        transcripts = ["Check weather", "Change city", "Tomorrow instead"]
+        for index, text in enumerate(transcripts):
+            await agent._forward_audio(b"\x00\x00", SpeechTransition.STARTED)
+            user_ids.append(agent._user_turn.reply_id)
+            while not model._queue.empty():
+                await agent._on_model_event(model._queue.get_nowait())
+            for event in model._parse(
+                {"serverContent": {"inputTranscription": {"text": text}}},
+            ):
+                provider_ids.append(event.item_id)
+                await agent._on_model_event(event)
+            await agent._forward_audio(b"\x00\x00", SpeechTransition.ENDED)
+            if index == 0:
+                for event in model._parse(
+                    {
+                        "serverContent": {
+                            "interactionStatus": "IN_PROGRESS",
+                            "outputTranscription": {"text": "Checking."},
+                        },
+                    },
+                ):
+                    await agent._on_model_event(event)
+            else:
+                self.assertEqual(agent._reply_id, "")
+        for event in model._parse({"interactionStatus": "IDLE"}):
+            await agent._on_model_event(event)
+        self.assertIsNotNone(agent._user_turn)
+        for content in (
+            {"interactionStatus": "IN_PROGRESS"},
+            {"interactionStatus": "IDLE"},
+        ):
+            for event in model._parse({"serverContent": content}):
+                await agent._on_model_event(event)
+        starts = []
+        ends = []
+        while not agent._out.empty():
+            event = agent._out.get_nowait().event
+            if isinstance(event, ReplyStartEvent) and event.role == "user":
+                starts.append(event.reply_id)
+            elif (
+                isinstance(event, ReplyEndEvent) and event.reply_id in user_ids
+            ):
+                ends.append(event.reply_id)
+        self.assertEqual(
+            {
+                "history": [
+                    (msg.role, msg.get_text_content())
+                    for msg in agent.state.context
+                ],
+                "user_ids": [
+                    msg.id for msg in agent.state.context if msg.role == "user"
+                ],
+                "provider_id_count": len(set(provider_ids)),
+                "starts": starts,
+                "ends": ends,
+                "pending": agent._pending_user_turns,
+                "current": agent._user_turn,
+            },
+            {
+                "history": [
+                    ("user", transcripts[0]),
+                    ("assistant", "Checking."),
+                    ("user", transcripts[1]),
+                    ("user", transcripts[2]),
+                ],
+                "user_ids": user_ids,
+                "provider_id_count": 3,
+                "starts": user_ids,
+                "ends": user_ids,
+                "pending": {},
+                "current": None,
+            },
+        )
+
+    async def test_followup_keeps_reply_open_after_tools_finish(self) -> None:
+        """New model output after early IDLE resets model completion."""
+        model = ScriptedModel([])
+        tool = BlockingTool()
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            model,
+            toolkit=Toolkit(tools=[tool]),
+        )
+        await agent._on_model_event(
+            me.ToolCallEvent(
+                item_id="r1",
+                non_blocking=True,
+                tool_call=ToolCallBlock(
+                    id="c1",
+                    name=tool.name,
+                    input='{"q":"x"}',
+                ),
+            ),
+        )
+        tasks = list(agent._tasks)
+        try:
+            await asyncio.wait_for(tool.started.wait(), timeout=1)
+            await agent._on_model_event(me.ResponseDoneEvent(item_id="r1"))
+            await agent._on_model_event(me.ResponseCreatedEvent(item_id="r2"))
+            tool.release.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+            self.assertEqual(agent._reply_id, "r1")
+            await agent._on_model_event(me.ResponseDoneEvent(item_id="r2"))
+            replies = []
+            while not agent._out.empty():
+                event = agent._out.get_nowait().event
+                if isinstance(event, ReplyEndEvent):
+                    replies.append((event.reply_id, event.finished_reason))
+            self.assertEqual(replies, [("r1", "completed")])
+            self.assertEqual(agent._background_tools, {})
+        finally:
+            tool.release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_interrupted_slow_tool_does_not_block_new_reply(
+        self,
+    ) -> None:
+        """Serialize within a reply while allowing the next reply to run."""
+        model = ScriptedModel([])
+        model.push_tool_result_silently = AsyncMock(
+            wraps=model.push_tool_result_silently,
+        )
+        old_tool = BlockingTool()
+        old_tool.name = "slow_tool"
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            model,
+            toolkit=Toolkit(tools=[old_tool, StreamTool()]),
+        )
+        try:
+            for call_id in ("running", "queued"):
+                await agent._on_model_event(
+                    me.ToolCallEvent(
+                        item_id="r1",
+                        non_blocking=True,
+                        tool_call=ToolCallBlock(
+                            id=call_id,
+                            name=old_tool.name,
+                            input='{"q":"old"}',
+                        ),
+                    ),
+                )
+            old_tasks = set(agent._tasks)
+            await asyncio.wait_for(old_tool.started.wait(), timeout=1)
+            started_calls = []
+            while not agent._out.empty():
+                event = agent._out.get_nowait().event
+                if isinstance(event, ToolCallStartEvent):
+                    started_calls.append(event.tool_call_id)
+            self.assertEqual(started_calls, ["running"])
+            await agent._barge_in()
+            await agent._on_model_event(
+                me.ToolCallEvent(
+                    item_id="r2",
+                    non_blocking=True,
+                    tool_call=ToolCallBlock(
+                        id="new",
+                        name="stream_tool",
+                        input='{"q":"new"}',
+                    ),
+                ),
+            )
+            new_tasks = agent._tasks - old_tasks
+            await asyncio.wait_for(asyncio.gather(*new_tasks), timeout=1)
+            self.assertEqual(
+                (old_tool.release.is_set(), model.calls, agent._reply_id),
+                (False, ["tool_result(new,'new-final')"], "r2"),
+            )
+            old_tool.release.set()
+            await asyncio.wait_for(asyncio.gather(*old_tasks), timeout=1)
+            self.assertEqual(
+                model.calls,
+                [
+                    "tool_result(new,'new-final')",
+                    "tool_result(running,'old-final')",
+                    "tool_result(queued,"
+                    "'Reply interrupted before tool execution.')",
+                ],
+            )
+            self.assertEqual(
+                [
+                    (call.args[0].id, call.args[0].state)
+                    for call in model.push_tool_result_silently.await_args_list
+                ],
+                [("running", "success"), ("queued", "interrupted")],
+            )
+            self.assertEqual(
+                [
+                    (
+                        msg.id,
+                        [
+                            (block.type, block.id, block.state)
+                            for block in msg.content
+                            if isinstance(
+                                block,
+                                (ToolCallBlock, ToolResultBlock),
+                            )
+                        ],
+                    )
+                    for msg in agent.state.context
+                ],
+                [
+                    (
+                        "r1",
+                        [
+                            ("tool_call", "running", "finished"),
+                            ("tool_call", "queued", "finished"),
+                            ("tool_result", "running", "success"),
+                            ("tool_result", "queued", "interrupted"),
+                        ],
+                    ),
+                    (
+                        "r2",
+                        [
+                            ("tool_call", "new", "finished"),
+                            ("tool_result", "new", "success"),
+                        ],
+                    ),
+                ],
+            )
+            self.assertEqual(
+                [
+                    (event.type, event.tool_call_id)
+                    for event in agent.drain_events()
+                    if isinstance(
+                        event,
+                        (ToolCallStartEvent, ToolResultEndEvent),
+                    )
+                ],
+                [
+                    ("TOOL_CALL_START", "new"),
+                    ("TOOL_RESULT_END", "new"),
+                    ("TOOL_RESULT_END", "running"),
+                    ("TOOL_RESULT_END", "queued"),
+                ],
+            )
+        finally:
+            old_tool.release.set()
+            await agent.close()
+
+    async def test_interruption_releases_confirmation_lock(self) -> None:
+        """An unanswered old prompt cannot block the next reply's tool."""
+        factories = [None]
+        if eager_factory := getattr(asyncio, "eager_task_factory", None):
+            factories.append(eager_factory)
+        loop = asyncio.get_running_loop()
+        original_factory = loop.get_task_factory()
+        for factory in factories:
+            with self.subTest(eager=factory is not None):
+                try:
+                    loop.set_task_factory(factory)
+                    await self._check_interrupted_confirmation()
+                finally:
+                    loop.set_task_factory(original_factory)
+
+    async def test_interrupted_gemini_tool_results_are_silent(self) -> None:
+        """Late results cannot restart a closed reply or disturb a new one."""
+        for confirmation, new_reply in product((False, True), repeat=2):
+            with self.subTest(confirm=confirmation, new_reply=new_reply):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = AskTool() if confirmation else BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                )
+                agent._connected = True
+
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Deliver real adapter events without a network."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
+
+                await feed(
+                    {
+                        "serverContent": {
+                            "outputTranscription": {"text": "Checking."},
+                        },
+                        "toolCall": {
+                            "functionCalls": [
+                                {
+                                    "id": call_id,
+                                    "name": tool.name,
+                                    "args": {"q": "x"},
+                                }
+                                for call_id in ("c1", "c2")
+                            ],
+                        },
+                    },
+                )
+                tasks = list(agent._tasks)
+                try:
+                    if confirmation:
+
+                        async def wait_for_confirmation(
+                            current_agent: RealtimeAgent = agent,
+                        ) -> None:
+                            """Wait until the prompt can be cancelled."""
+                            while "c1" not in current_agent._confirmations:
+                                await asyncio.sleep(0)
+
+                        await asyncio.wait_for(
+                            wait_for_confirmation(),
+                            timeout=1,
+                        )
+                    else:
+                        await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    await agent.interrupt()
+                    await feed(
+                        {"serverContent": {"interactionStatus": "IDLE"}},
+                    )
+                    expected_context = [("assistant", "Checking.")]
+                    if new_reply:
+                        await feed(
+                            {
+                                "serverContent": {
+                                    "inputTranscription": {"text": "Next"},
+                                    "outputTranscription": {"text": "Ready."},
+                                },
+                            },
+                        )
+                        expected_context += [
+                            ("user", "Next"),
+                            ("assistant", "Ready."),
+                        ]
+                    current_reply = agent._reply_id
+                    list(agent.drain_events())
+                    if not confirmation:
+                        tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    result = (
+                        {"error": 'Tool "ask_tool" denied by user.'}
+                        if confirmation
+                        else {"output": "x-final"}
+                    )
+                    self.assertEqual(
+                        {
+                            "frames": [
+                                call.args[0]
+                                for call in model._send.await_args_list
+                            ],
+                            "reply": agent._reply_id,
+                            "new_reply_events": [
+                                event.type
+                                for event in agent.drain_events()
+                                if isinstance(event, ReplyStartEvent)
+                            ],
+                            "awaiting_followup": model._awaiting_tool_reply,
+                            "context": [
+                                (msg.role, msg.get_text_content())
+                                for msg in agent.state.context
+                            ],
+                        },
+                        {
+                            "frames": [
+                                {
+                                    "toolResponse": {
+                                        "functionResponses": [
+                                            {
+                                                "id": "c1",
+                                                "name": tool.name,
+                                                "response": result,
+                                                "scheduling": "SILENT",
+                                            },
+                                        ],
+                                    },
+                                },
+                                {
+                                    "toolResponse": {
+                                        "functionResponses": [
+                                            {
+                                                "id": "c2",
+                                                "name": tool.name,
+                                                "response": {
+                                                    "error": (
+                                                        "Reply interrupted "
+                                                        "before tool "
+                                                        "execution."
+                                                    ),
+                                                },
+                                                "scheduling": "SILENT",
+                                            },
+                                        ],
+                                    },
+                                },
+                            ],
+                            "reply": current_reply,
+                            "new_reply_events": [],
+                            "awaiting_followup": False,
+                            "context": expected_context,
+                        },
+                    )
+                finally:
+                    if not confirmation:
+                        tool.release.set()
+                    await agent.close()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _check_interrupted_confirmation(self) -> None:
+        """Validate cancellation and approval ownership under one scheduler."""
+        model = ScriptedModel([])
+        agent = RealtimeAgent(
+            "Friday",
+            "",
+            model,
+            toolkit=Toolkit(tools=[AskTool(), StreamTool()]),
+        )
+        old_call = ToolCallBlock(id="old", name="ask_tool", input='{"q":"x"}')
+        await agent._on_model_event(
+            me.ToolCallEvent(
+                item_id="r1",
+                non_blocking=True,
+                tool_call=old_call,
+            ),
+        )
+        tasks = list(agent._tasks)
+        try:
+
+            async def wait_for_confirmation() -> None:
+                """Wait for the controlled prompt to be registered."""
+                while "old" not in agent._confirmations:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_confirmation(), timeout=1)
+            old_future = agent._confirmations["old"]
+            await agent._barge_in()
+            await agent._on_model_event(
+                me.ToolCallEvent(
+                    item_id="r2",
+                    non_blocking=True,
+                    tool_call=ToolCallBlock(
+                        id="new",
+                        name="stream_tool",
+                        input='{"q":"y"}',
+                    ),
+                ),
+            )
+            tasks = list(agent._tasks)
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.gather(*tasks)),
+                timeout=1,
+            )
+            self.assertTrue(old_future.cancelled())
+            new_call = ToolCallBlock(
+                id="old",
+                name="ask_tool",
+                input='{"q":"z"}',
+            )
+            await agent._on_model_event(
+                me.ToolCallEvent(
+                    item_id="r2",
+                    non_blocking=True,
+                    tool_call=new_call,
+                ),
+            )
+            tasks = list(agent._tasks)
+            await asyncio.wait_for(wait_for_confirmation(), timeout=1)
+            with patch(
+                "agentscope.agent._realtime._agent.logger.warning",
+            ) as warning:
+                await agent.send(
+                    UserConfirmResultEvent(
+                        reply_id="r1",
+                        confirm_results=[
+                            ConfirmResult(tool_call=old_call, confirmed=True),
+                        ],
+                    ),
+                )
+            warning.assert_called_once_with(
+                "RealtimeAgent: ignored confirmation for tool %s "
+                "from reply %s; expected reply %s",
+                "old",
+                "r1",
+                "r2",
+            )
+            self.assertFalse(agent._confirmations["old"].done())
+            await agent.send(
+                UserConfirmResultEvent(
+                    reply_id="r2",
+                    confirm_results=[
+                        ConfirmResult(tool_call=new_call, confirmed=True),
+                    ],
+                ),
+            )
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+            self.assertEqual(
+                {
+                    "independent_results": sorted(model.calls[:2]),
+                    "confirmed_result": model.calls[2:],
+                },
+                {
+                    "independent_results": [
+                        "tool_result(new,'y-final')",
+                        "tool_result(old,'Tool \"ask_tool\" denied by user.')",
+                    ],
+                    "confirmed_result": ["tool_result(old,'z-final')"],
+                },
+            )
+            self.assertEqual(agent._confirmations, {})
+            self.assertEqual(agent._confirmation_replies, {})
+        finally:
+            for future in list(agent._confirmations.values()):
+                future.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_tools_and_speech_share_an_interaction(self) -> None:
+        """Tools start before completion; audio continues during execution."""
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                model = GeminiRealtimeModel(
+                    "gemini-3.8-live-extended-thinking",
+                    GeminiCredential(api_key="test"),
+                )
+                model._send = AsyncMock()
+                tool = BlockingTool()
+                agent = RealtimeAgent(
+                    "Friday",
+                    "be brief",
+                    model,
+                    toolkit=Toolkit(tools=[tool]),
+                )
+                transport = FakeTransport(frames=0)
+                agent._transport = transport
+
+                async def feed(
+                    frame: dict,
+                    current_model: GeminiRealtimeModel = model,
+                    current_agent: RealtimeAgent = agent,
+                ) -> None:
+                    """Normalize a provider frame and deliver its events."""
+                    for event in current_model._parse(frame):
+                        await current_agent._on_model_event(event)
+
+                await feed(
+                    {
+                        "serverContent": {
+                            "interactionStatus": "IN_PROGRESS",
+                            "outputTranscription": {"text": "Checking."},
+                            "turnComplete": True,
+                        },
+                        "toolCall": {
+                            "functionCalls": [
+                                {
+                                    "id": "c1",
+                                    "name": "stream_tool",
+                                    "args": {"q": "x"},
+                                },
+                            ],
+                        },
+                    },
+                )
+                tasks = list(agent._tasks)
+                try:
+                    await asyncio.wait_for(tool.started.wait(), timeout=1)
+                    reply_id = agent._reply_id
+                    await feed(
+                        {
+                            "toolCall": {
+                                "functionCalls": [
+                                    {
+                                        "id": "c2",
+                                        "name": "stream_tool",
+                                        "args": {"q": "y"},
+                                    },
+                                ],
+                            },
+                        },
+                    )
+                    tasks = list(agent._tasks)
+                    await feed(
+                        {
+                            "serverContent": {
+                                "modelTurn": {
+                                    "parts": [
+                                        {
+                                            "inlineData": {"data": "AQA="},
+                                        },
+                                    ],
+                                },
+                                "outputTranscription": {
+                                    "text": "Still checking.",
+                                },
+                                "turnComplete": True,
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        {
+                            "reply": agent._reply_id,
+                            "audio_item": transport.item,
+                            "pending": agent._pending_tools,
+                            "done": [task.done() for task in tasks],
+                            "sent": model._send.await_args_list,
+                        },
+                        {
+                            "reply": reply_id,
+                            "audio_item": reply_id,
+                            "pending": {},
+                            "done": [False, False],
+                            "sent": [],
+                        },
+                    )
+                    if interrupted:
+                        await feed({"serverContent": {"interrupted": True}})
+                    tool.release.set()
+                    await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+                    if not interrupted:
+                        await feed(
+                            {
+                                "serverContent": {
+                                    "outputTranscription": {"text": "Sunny."},
+                                },
+                            },
+                        )
+                    await feed(
+                        {
+                            "serverContent": {
+                                "interactionStatus": "IDLE",
+                            },
+                        },
+                    )
+                    await feed(
+                        {
+                            "serverContent": {
+                                "interactionStatus": "IDLE",
+                            },
+                        },
+                    )
+                    self.assertEqual(
+                        sorted(
+                            [
+                                call.args[0]
+                                for call in model._send.await_args_list
+                            ],
+                            key=lambda frame: frame["toolResponse"][
+                                "functionResponses"
+                            ][0]["id"],
+                        ),
+                        [
+                            {
+                                "toolResponse": {
+                                    "functionResponses": [
+                                        {
+                                            "id": call_id,
+                                            "name": "stream_tool",
+                                            "response": result,
+                                            **(
+                                                {"scheduling": "SILENT"}
+                                                if interrupted
+                                                else {}
+                                            ),
+                                        },
+                                    ],
+                                },
+                            }
+                            for call_id, result in [
+                                ("c1", {"output": "x-final"}),
+                                (
+                                    "c2",
+                                    {
+                                        "error": "Reply interrupted before "
+                                        "tool execution.",
+                                    }
+                                    if interrupted
+                                    else {"output": "y-final"},
+                                ),
+                            ]
+                        ],
+                    )
+                    events = []
+                    while not agent._out.empty():
+                        events.append(agent._out.get_nowait().event)
+                    self.assertEqual(
+                        [
+                            (event.reply_id, event.finished_reason)
+                            for event in events
+                            if isinstance(event, ReplyEndEvent)
+                        ],
+                        [
+                            (
+                                reply_id,
+                                "interrupted" if interrupted else "completed",
+                            ),
+                        ],
+                    )
+                    text = agent.state.context[0].get_content_blocks("text")
+                    self.assertEqual(
+                        [block.text for block in text],
+                        ["Checking.", "Still checking."]
+                        + ([] if interrupted else ["Sunny."]),
+                    )
+                    self.assertEqual(
+                        len({block.id for block in text}),
+                        len(text),
+                    )
+                    self.assertEqual(
+                        [
+                            (event.type, event.block_id)
+                            for event in events
+                            if isinstance(
+                                event,
+                                (
+                                    TextBlockStartEvent,
+                                    TextBlockEndEvent,
+                                ),
+                            )
+                        ],
+                        [
+                            (kind, block.id)
+                            for block in text
+                            for kind in (
+                                "TEXT_BLOCK_START",
+                                "TEXT_BLOCK_END",
+                            )
+                        ],
+                    )
+                    self.assertEqual(
+                        sorted(
+                            [
+                                (event.type, event.tool_call_id)
+                                for event in events
+                                if isinstance(
+                                    event,
+                                    (
+                                        ToolCallStartEvent,
+                                        ToolResultEndEvent,
+                                    ),
+                                )
+                            ],
+                            key=lambda event: (event[1], event[0]),
+                        ),
+                        [
+                            ("TOOL_CALL_START", "c1"),
+                            ("TOOL_RESULT_END", "c1"),
+                        ]
+                        + ([] if interrupted else [("TOOL_CALL_START", "c2")])
+                        + [("TOOL_RESULT_END", "c2")],
+                    )
+                    self.assertEqual(agent._reply_id, "")
+                finally:
+                    tool.release.set()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class RealtimeAgentFullStreamTest(IsolatedAsyncioTestCase):

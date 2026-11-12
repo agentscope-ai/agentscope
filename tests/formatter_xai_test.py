@@ -70,17 +70,18 @@ class _StubMessage:
 class _StubImage:
     """Comparable stub for xai_sdk.chat.image()."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, detail: str = "auto") -> None:
         self.type = "image"
         self.url = url
+        self.detail = detail
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, _StubImage):
             return NotImplemented
-        return self.url == other.url
+        return self.url == other.url and self.detail == other.detail
 
     def __repr__(self) -> str:
-        return f"_StubImage(url={self.url!r})"
+        return f"_StubImage(url={self.url!r}, detail={self.detail!r})"
 
 
 def user(*args: Any) -> _StubMessage:
@@ -103,9 +104,9 @@ def tool_result(*args: Any, **kwargs: Any) -> _StubMessage:
     return _StubMessage(role="tool", args=args, kwargs=kwargs)
 
 
-def image(url: str) -> _StubImage:
+def image(url: str, *, detail: str = "auto") -> _StubImage:
     """Create a comparable stub image object."""
-    return _StubImage(url=url)
+    return _StubImage(url=url, detail=detail)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +257,66 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     # XAIChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_image_detail_extra_param(self) -> None:
+        """DataBlock detail extra param is forwarded to xAI image()."""
+        fmt = XAIChatFormatter()
+        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=image_b64,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    "Inspect this image.",
+                    image(
+                        f"data:image/png;base64,{image_b64}",
+                        detail="high",
+                    ),
+                ),
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_assistant_media_skipped(self) -> None:
+        """Skip assistant images without adding user turns."""
+        picture = DataBlock(
+            source=Base64Source(
+                data="SU1HX0RBVEE=",
+                media_type="image/png",
+            ),
+            detail="high",
+        )
+        for text in ("Here is the chart.", ""):
+            with self.subTest(text=text):
+                content = (
+                    [TextBlock(text=text), picture] if text else [picture]
+                )
+                res = await XAIChatFormatter().format(
+                    [
+                        UserMsg(name="user", content="Draw a chart."),
+                        AssistantMsg(name="assistant", content=content),
+                        UserMsg(name="user", content="Explain the chart."),
+                    ],
+                )
+                expected = [user("Draw a chart.")]
+                if text:
+                    expected.append(assistant(text))
+                expected.append(user("Explain the chart."))
+                self.assertListEqual(expected, res)
+
     async def test_chat_formatter_system_message(self) -> None:
         """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
@@ -299,6 +360,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                                     url=path.as_uri(),
                                     media_type="image/png",
                                 ),
+                                detail="high",
                             ),
                         ],
                     ),
@@ -308,7 +370,10 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             [
                 user(
                     "What's in this image?",
-                    image(f"data:image/png;base64,{expected_b64}"),
+                    image(
+                        f"data:image/png;base64,{expected_b64}",
+                        detail="high",
+                    ),
                 ),
             ],
             res,
@@ -481,7 +546,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
         self,
     ) -> None:
-        """Promoted media does not split parallel tool-result messages."""
+        """Skip assistant media; keep result media after all tool results."""
         fmt = XAIChatFormatter()
         picture = DataBlock(
             id="image_1",
@@ -495,6 +560,13 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 AssistantMsg(
                     name="assistant",
                     content=[
+                        TextBlock(text="Original chart."),
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
                         ToolCallBlock(
                             id="call_shot",
                             name="screenshot",
@@ -520,6 +592,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             output=[TextBlock(text="Example Domain")],
                             state=ToolResultState.SUCCESS,
                         ),
+                        TextBlock(text="New chart analysis."),
                     ],
                 ),
             ],
@@ -527,8 +600,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
 
         normalized_res = [
             (
-                res[0].role,
-                [part.text for part in res[0].content],
+                msg.role,
+                [part.text for part in msg.content],
                 [
                     (
                         tool_call.id,
@@ -536,17 +609,19 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                         tool_call.function.name,
                         tool_call.function.arguments,
                     )
-                    for tool_call in res[0].tool_calls
+                    for tool_call in msg.tool_calls
                 ],
-            ),
-            *res[1:],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
         ]
         self.assertListEqual(
             normalized_res,
             [
                 (
                     2,
-                    [],
+                    ["Original chart."],
                     [
                         (
                             "call_shot",
@@ -580,6 +655,64 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     image("https://example.com/shot.png"),
                     "</system-reminder>",
                 ),
+                assistant("New chart analysis."),
+            ],
+        )
+
+    async def test_chat_formatter_media_skipped_before_tool_result(
+        self,
+    ) -> None:
+        """Skipping media preserves calls paired with separate results."""
+        res = await XAIChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
+                        ToolCallBlock(id="call_1", name="edit", input="{}"),
+                    ],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="edit",
+                            output="Done.",
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        normalized_res = [
+            (
+                msg.role,
+                [part.text for part in msg.content],
+                [
+                    (
+                        call.id,
+                        call.type,
+                        call.function.name,
+                        call.function.arguments,
+                    )
+                    for call in msg.tool_calls
+                ],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
+        ]
+        self.assertListEqual(
+            normalized_res,
+            [
+                (2, [], [("call_1", 1, "edit", "{}")]),
+                tool_result("Done.", tool_call_id="call_1"),
             ],
         )
 
@@ -666,6 +799,59 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_multiagent_hint_only_message_precedes_history(self) -> None:
+        """A hint-only message is emitted before following history."""
+        fmt = XAIMultiAgentFormatter()
+        msgs = [
+            AssistantMsg(
+                name="memory",
+                content=[HintBlock(hint="Remember the user's preference.")],
+            ),
+            UserMsg(name="alice", content="What should I remember?"),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                user("Remember the user's preference."),
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nalice: What should I remember?\n</history>",
+                ),
+            ],
+            res,
+        )
+
+    async def test_multiagent_hint_splits_mixed_history_in_order(self) -> None:
+        """A hint embedded in a message separates ordered history segments."""
+        fmt = XAIMultiAgentFormatter()
+        msg = AssistantMsg(
+            name="memory",
+            content=[
+                TextBlock(text="Context before the hint."),
+                HintBlock(hint="Keep this instruction."),
+                TextBlock(text="Context after the hint."),
+            ],
+        )
+
+        res = await fmt.format([msg])
+
+        self.assertListEqual(
+            [
+                user(
+                    fmt.conversation_history_prompt
+                    + "<history>\nmemory: Context before the hint.\n"
+                    + "</history>",
+                ),
+                user("Keep this instruction."),
+                user(
+                    "<history>\nmemory: Context after the hint.\n</history>",
+                ),
+            ],
+            res,
+        )
+
     async def test_multiagent_formatter_first_group_has_hist_prompt(
         self,
     ) -> None:
@@ -731,6 +917,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             data="Zmlyc3Q=",
                             media_type="image/jpeg",
                         ),
+                        detail="high",
                     ),
                 ],
             ),
@@ -743,6 +930,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             url="https://example.com/second.png",
                             media_type="image/png",
                         ),
+                        detail="low",
                     ),
                 ],
             ),
@@ -755,8 +943,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     "user: Compare these two charts.\n"
                     "agent: The second one differs.\n"
                     "</history>",
-                    image("data:image/jpeg;base64,Zmlyc3Q="),
-                    image("https://example.com/second.png"),
+                    image("data:image/jpeg;base64,Zmlyc3Q=", detail="high"),
+                    image("https://example.com/second.png", detail="low"),
                 ),
             ],
             res,
@@ -937,6 +1125,50 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_chat_formatter_assistant_media_around_hint(self) -> None:
+        """Skip assistant images while preserving text and hint order."""
+        before = DataBlock(
+            source=URLSource(
+                url="https://example.com/before.png",
+                media_type="image/png",
+            ),
+        )
+        after = DataBlock(
+            source=URLSource(
+                url="https://example.com/after.png",
+                media_type="image/png",
+            ),
+        )
+        for hint in (
+            "Revise the chart.",
+            [TextBlock(text="Revise the chart.")],
+        ):
+            for text in ("Original chart.", ""):
+                with self.subTest(hint=hint, text=text):
+                    content = [TextBlock(text=text)] if text else []
+                    res = await XAIChatFormatter().format(
+                        [
+                            AssistantMsg(
+                                name="assistant",
+                                content=[
+                                    *content,
+                                    before,
+                                    HintBlock(hint=hint),
+                                    TextBlock(text="Revised chart."),
+                                    after,
+                                ],
+                            ),
+                        ],
+                    )
+                    expected = [assistant(text)] if text else []
+                    expected.extend(
+                        [
+                            user("Revise the chart."),
+                            assistant("Revised chart."),
+                        ],
+                    )
+                    self.assertListEqual(expected, res)
+
     async def test_chat_formatter_hint_block_multimodal(self) -> None:
         """Multimodal HintBlock becomes one user() stub carrying text +
         image."""
@@ -954,6 +1186,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                                     data=image_b64,
                                     media_type="image/png",
                                 ),
+                                detail="high",
                             ),
                         ],
                     ),
@@ -965,7 +1198,10 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             [
                 user(
                     "Inspect this screenshot:",
-                    image(f"data:image/png;base64,{image_b64}"),
+                    image(
+                        f"data:image/png;base64,{image_b64}",
+                        detail="high",
+                    ),
                 ),
             ],
             res,

@@ -38,6 +38,10 @@ from ._chat_input_store import (
 )
 
 if TYPE_CHECKING:
+    from ._client_external_tool import (
+        ClientBuiltinToolName,
+        ClientExternalToolDefinition,
+    )
     from .message_bus._base import MessageBus
 
     from agentscope.event import (
@@ -57,6 +61,10 @@ class ChatQueueFullError(RuntimeError):
 
 class ChatQueueBusyError(RuntimeError):
     """Raised when a short queue mutation lock cannot be acquired."""
+
+
+class ChatSteeringUnavailableError(RuntimeError):
+    """Raised when a queued turn cannot steer the requested active reply."""
 
 
 @asynccontextmanager
@@ -220,6 +228,8 @@ async def enqueue_run_trigger(
     | UserInterruptEvent
     | Msg
     | None = None,
+    client_external_tools: list[ClientExternalToolDefinition] | None = None,
+    client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     signal: bool = True,
 ) -> None:
     """Enqueue a typed run trigger and optionally signal dispatchers.
@@ -260,21 +270,30 @@ async def enqueue_run_trigger(
             should be ``None``) for ``wake`` and ``queued_message``. The
             function calls ``model_dump(mode="json")`` internally — callers
             pass the model object, not a pre-serialised dict.
+        client_external_tools:
+            External tools supported by the client that produced this
+            trigger. They remain scoped to the resulting run.
+        client_builtin_tools:
+            Native external tool names supported by this trigger's client.
         signal:
             Whether to publish the shared wakeup signal after pushing.
             Recovery sweeps pass ``False`` to batch many durable triggers
             behind one signal.
     """
-    await bus.queue_push(
-        MessageBusKeys.wakeup_queue(),
-        {
-            "user_id": user_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "kind": kind,
-            "input": inputs.model_dump(mode="json") if inputs else None,
-        },
-    )
+    payload: dict[str, object] = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "kind": kind,
+        "input": inputs.model_dump(mode="json") if inputs else None,
+    }
+    if client_builtin_tools:
+        payload["client_builtin_tools"] = client_builtin_tools
+    if client_external_tools:
+        payload["client_external_tools"] = [
+            tool.model_dump(mode="json") for tool in client_external_tools
+        ]
+    await bus.queue_push(MessageBusKeys.wakeup_queue(), payload)
     if signal:
         await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
@@ -313,6 +332,9 @@ async def enqueue_chat_input(
     session_id: str,
     agent_id: str,
     inputs: Msg | list[Msg],
+    *,
+    client_external_tools: list[ClientExternalToolDefinition] | None = None,
+    client_builtin_tools: list[ClientBuiltinToolName] | None = None,
 ) -> dict:
     """Append an ordinary user turn to a session FIFO and wake its pump.
 
@@ -334,6 +356,10 @@ async def enqueue_chat_input(
             Agent that owns the session.
         inputs:
             One user message or a non-empty ordered message list.
+        client_external_tools:
+            Client tool definitions scoped to this queued turn.
+        client_builtin_tools:
+            Native external tool names supported by this turn's client.
 
     Returns:
         `dict`:
@@ -359,7 +385,14 @@ async def enqueue_chat_input(
         "agent_id": agent_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "input": serialized,
+        "state": "queued",
     }
+    if client_external_tools:
+        item["client_external_tools"] = [
+            tool.model_dump(mode="json") for tool in client_external_tools
+        ]
+    if client_builtin_tools:
+        item["client_builtin_tools"] = client_builtin_tools
     async with _chat_input_user_quota(bus, user_id):
         if (
             await _count_user_chat_inputs(bus, user_id)
@@ -451,6 +484,310 @@ async def list_chat_inputs(
     return [_public_chat_input(payload) for payload in payloads]
 
 
+async def register_active_chat_reply(
+    bus: "MessageBus",
+    session_id: str,
+    reply_id: str,
+) -> None:
+    """Register the reply currently holding a session's run lock.
+
+    Internal lifecycle writes wait for the mutation lock instead of using the
+    bounded foreground timeout. The registry entry is the authoritative target
+    checked by the public Steer endpoint.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose reply started or resumed.
+        reply_id (`str`):
+            Active reply identifier.
+    """
+    async with bus.acquire_lock(
+        MessageBusKeys.chat_input_mutation_lock(session_id),
+        ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+    ):
+        await bus.registry_set(
+            MessageBusKeys.chat_active_reply_registry(),
+            session_id,
+            reply_id,
+        )
+
+
+async def steer_chat_input(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    item_id: str,
+    reply_id: str,
+) -> list[dict]:
+    """Reserve one pending queue item for the requested active reply.
+
+    The item stays in the durable FIFO until middleware acknowledges actual
+    context injection. Repeating the same request is idempotent.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        user_id (`str`):
+            User that must own the pending item.
+        session_id (`str`):
+            Session that owns the queue and active reply.
+        agent_id (`str`):
+            Agent that must own the pending item.
+        item_id (`str`):
+            Pending queue item to steer with.
+        reply_id (`str`):
+            Reply observed as active by the client.
+
+    Returns:
+        `list[dict]`:
+            Complete public queue snapshot after reservation.
+
+    Raises:
+        `LookupError`:
+            The item is no longer pending.
+        `ChatSteeringUnavailableError`:
+            The reply is stale, idle, or the item targets another reply.
+        `ChatQueueBusyError`:
+            The foreground mutation lock cannot be acquired promptly.
+    """
+    async with chat_input_mutation(bus, session_id):
+        active_replies = await bus.registry_getall(
+            MessageBusKeys.chat_active_reply_registry(),
+        )
+        active_reply_id = active_replies.get(session_id)
+        is_running = await bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        )
+        if not is_running or active_reply_id != reply_id:
+            raise ChatSteeringUnavailableError(
+                f"Reply '{reply_id}' is no longer active.",
+            )
+
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        item = _owned_chat_input(
+            payloads,
+            user_id,
+            session_id,
+            agent_id,
+            item_id,
+        )
+        item_state = item.get("state", "queued")
+        target_reply_id = item.get("target_reply_id")
+        if item_state == "steering":
+            if target_reply_id != reply_id:
+                raise ChatSteeringUnavailableError(
+                    f"Queued message '{item_id}' is steering another reply.",
+                )
+            return [_public_chat_input(payload) for payload in payloads]
+        if item_state not in ("queued", "failed"):
+            raise ChatSteeringUnavailableError(
+                f"Queued message '{item_id}' cannot be steered now.",
+            )
+
+        item["state"] = "steering"
+        item["target_reply_id"] = reply_id
+        item.pop("error", None)
+        await bus.queue_replace(
+            MessageBusKeys.chat_inputs(session_id),
+            [queue_entry(payload) for payload in payloads],
+        )
+        return await _notify_chat_queue_changed(bus, session_id, payloads)
+
+
+async def list_steering_chat_inputs(
+    bus: "MessageBus",
+    session_id: str,
+    reply_id: str,
+) -> list[dict]:
+    """Read items reserved for one reply without removing them.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose queue should be inspected.
+        reply_id (`str`):
+            Active reply that must own the steering reservation.
+
+    Returns:
+        `list[dict]`:
+            Public copies of matching items in FIFO order.
+    """
+    async with bus.acquire_lock(
+        MessageBusKeys.chat_input_mutation_lock(session_id),
+        ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+    ):
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        return [
+            _public_chat_input(payload)
+            for payload in payloads
+            if payload.get("state", "queued") == "steering"
+            and payload.get("target_reply_id") == reply_id
+        ]
+
+
+async def acknowledge_steering_chat_inputs(
+    bus: "MessageBus",
+    session_id: str,
+    reply_id: str,
+    item_ids: list[str],
+) -> list[dict]:
+    """Remove steering items after they were appended to agent context.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose FIFO contains the items.
+        reply_id (`str`):
+            Reply that consumed the items.
+        item_ids (`list[str]`):
+            Exact queue item ids to acknowledge.
+
+    Returns:
+        `list[dict]`:
+            Public copies of the removed items.
+
+    Raises:
+        `LookupError`:
+            Any requested item is no longer reserved for this reply.
+    """
+    requested_ids = set(item_ids)
+    async with bus.acquire_lock(
+        MessageBusKeys.chat_input_mutation_lock(session_id),
+        ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+    ):
+        active_replies = await bus.registry_getall(
+            MessageBusKeys.chat_active_reply_registry(),
+        )
+        if active_replies.get(session_id) != reply_id:
+            raise LookupError(
+                f"Reply '{reply_id}' is no longer active.",
+            )
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        removed = [
+            payload
+            for payload in payloads
+            if payload.get("id") in requested_ids
+            and payload.get("state", "queued") == "steering"
+            and payload.get("target_reply_id") == reply_id
+        ]
+        if {payload.get("id") for payload in removed} != requested_ids:
+            raise LookupError(
+                "One or more steering messages are no longer pending.",
+            )
+        remaining = [payload for payload in payloads if payload not in removed]
+        await bus.queue_replace(
+            MessageBusKeys.chat_inputs(session_id),
+            [queue_entry(payload) for payload in remaining],
+        )
+        for payload in removed:
+            await discard_input(bus, payload)
+        await _notify_chat_queue_changed(bus, session_id, remaining)
+        return [_public_chat_input(payload) for payload in removed]
+
+
+async def fail_steering_chat_input(
+    bus: "MessageBus",
+    session_id: str,
+    reply_id: str,
+    item_id: str,
+    error: str,
+) -> None:
+    """Keep a failed steering item in the FIFO with a visible error.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose queue owns the item.
+        reply_id (`str`):
+            Reply the item attempted to steer.
+        item_id (`str`):
+            Failed queue item id.
+        error (`str`):
+            User-facing failure description.
+    """
+    async with bus.acquire_lock(
+        MessageBusKeys.chat_input_mutation_lock(session_id),
+        ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+    ):
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        changed = False
+        for payload in payloads:
+            if (
+                payload.get("id") == item_id
+                and payload.get("state", "queued") == "steering"
+                and payload.get("target_reply_id") == reply_id
+            ):
+                payload["state"] = "failed"
+                payload["error"] = error
+                payload.pop("target_reply_id", None)
+                changed = True
+                break
+        if changed:
+            await bus.queue_replace(
+                MessageBusKeys.chat_inputs(session_id),
+                [queue_entry(payload) for payload in payloads],
+            )
+            await _notify_chat_queue_changed(bus, session_id, payloads)
+
+
+async def finish_active_chat_reply(
+    bus: "MessageBus",
+    session_id: str,
+    reply_id: str,
+) -> list[str]:
+    """Clear an active reply and restore its unconsumed steering items.
+
+    Args:
+        bus (`MessageBus`):
+            Application message bus.
+        session_id (`str`):
+            Session whose run is finishing.
+        reply_id (`str`):
+            Reply whose active registry entry should be cleared.
+
+    Returns:
+        `list[str]`:
+            Queue item ids restored to deferred-send state.
+    """
+    async with bus.acquire_lock(
+        MessageBusKeys.chat_input_mutation_lock(session_id),
+        ttl_secs=MessageBusKeys.CHAT_INPUT_MUTATION_TTL_SECS,
+    ):
+        active_replies = await bus.registry_getall(
+            MessageBusKeys.chat_active_reply_registry(),
+        )
+        if active_replies.get(session_id) != reply_id:
+            return []
+        await bus.registry_del(
+            MessageBusKeys.chat_active_reply_registry(),
+            session_id,
+        )
+        payloads = await _read_chat_input_payloads(bus, session_id)
+        restored_ids: list[str] = []
+        for payload in payloads:
+            if (
+                payload.get("state", "queued") == "steering"
+                and payload.get("target_reply_id") == reply_id
+            ):
+                payload["state"] = "queued"
+                payload.pop("target_reply_id", None)
+                payload.pop("error", None)
+                restored_ids.append(payload["id"])
+        if restored_ids:
+            await bus.queue_replace(
+                MessageBusKeys.chat_inputs(session_id),
+                [queue_entry(payload) for payload in payloads],
+            )
+            await _notify_chat_queue_changed(bus, session_id, payloads)
+        return restored_ids
+
+
 async def update_chat_input(
     bus: "MessageBus",
     user_id: str,
@@ -497,8 +834,15 @@ async def update_chat_input(
             agent_id,
             item_id,
         )
+        if item.get("state", "queued") == "steering":
+            raise LookupError(
+                f"Queued message '{item_id}' is currently steering.",
+            )
         previous = dict(item)
         item["input"] = serialized
+        item["state"] = "queued"
+        item.pop("target_reply_id", None)
+        item.pop("error", None)
         item["input_ref"] = uuid.uuid4().hex
         await bus.registry_set(
             MessageBusKeys.chat_input_payloads(session_id),
@@ -553,6 +897,10 @@ async def delete_chat_input(
             agent_id,
             item_id,
         )
+        if item.get("state", "queued") == "steering":
+            raise LookupError(
+                f"Queued message '{item_id}' is currently steering.",
+            )
         payloads.remove(item)
         await bus.queue_replace(
             MessageBusKeys.chat_inputs(session_id),
@@ -600,6 +948,13 @@ async def reorder_chat_inputs(
     """
     async with chat_input_mutation(bus, session_id):
         payloads = await _read_chat_input_payloads(bus, session_id)
+        if any(
+            payload.get("state", "queued") == "steering"
+            for payload in payloads
+        ):
+            raise ValueError(
+                "The queue cannot be reordered while a message is steering.",
+            )
         owned = [
             payload
             for payload in payloads
@@ -814,6 +1169,8 @@ def _public_chat_input(payload: dict) -> dict:
         "id": payload["id"],
         "created_at": payload["created_at"],
         "input": payload["input"],
+        "state": payload.get("state", "queued"),
+        "error": payload.get("error"),
     }
 
 
