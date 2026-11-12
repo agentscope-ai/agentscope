@@ -1757,7 +1757,14 @@ class Agent:
 
         # Get the input arguments for the chat model, including messages and
         # tools
+        code_hints = []
+        if isinstance(self.toolkit, CodeModeToolkit):
+            code_hints, tool_choice = self.toolkit.adapt_tool_choice(
+                [],
+                tool_choice,
+            )
         kwargs = await self._prepare_model_input()
+        kwargs["messages"].extend(code_hints)
 
         # Call the chat model
         res = await self._call_model(
@@ -3474,11 +3481,6 @@ class Agent:
                 non-streaming models, or an async generator yielding
                 `ChatResponse` chunks for streaming models.
         """
-        if isinstance(self.toolkit, CodeModeToolkit):
-            messages, tool_choice = self.toolkit.adapt_tool_choice(
-                messages,
-                tool_choice,
-            )
         models = [self.model]
 
         # Fallback to the secondary model if the primary model fails after

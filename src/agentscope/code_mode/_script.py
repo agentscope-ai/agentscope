@@ -49,6 +49,7 @@ class Script:
         # Retain only IDs for late cancellation acknowledgements, not tasks.
         self.completed_requests: set[int] = set()
         self.allowed_tools = toolkit.allowed_tools
+        self.required_tool = toolkit.required_tool
         self.sources: set[str] = set()
         # Reserve space for a visible marker even after many small outputs.
         self.remaining = toolkit.config.max_output_bytes - len(_TRUNCATED)
@@ -358,6 +359,17 @@ class Script:
             error = f"{type(exc).__name__}: {exc}"[:2048]
             if deadline.expired():
                 error = f"Code Mode execution timed out; cleanup: {error}"
+        if error is None and self.required_tool is not None:
+            if not any(
+                call["name"] == self.required_tool
+                and call["state"] == ToolResultState.SUCCESS.value
+                and call.get("id")
+                for call in self.calls
+            ):
+                error = (
+                    "Required native tool did not complete successfully: "
+                    f"{self.required_tool}"
+                )
         if error:
             status = ToolResultState.ERROR
             await self.text(f"\nScript failed: {error}")

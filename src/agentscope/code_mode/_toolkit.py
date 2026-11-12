@@ -107,6 +107,7 @@ class CodeModeToolkit(Toolkit):
         # Explicit SDK opt-in; app callers always use the permission engine.
         self.auto_approve = auto_approve
         self.allowed_tools: frozenset[str] | None = None
+        self.required_tool: str | None = None
         self._state: AgentState | None = None
         self.executor: Callable[..., Awaitable[ToolResponse]] | None = None
         self.condition = asyncio.Condition()
@@ -130,6 +131,7 @@ class CodeModeToolkit(Toolkit):
         if saved.get("reply_id") == state.reply_id:
             names = saved.get("tools")
             self.allowed_tools = None if names is None else frozenset(names)
+            self.required_tool = saved.get("required_tool")
 
     async def definitions(
         self,
@@ -158,6 +160,11 @@ class CodeModeToolkit(Toolkit):
         sections = []
         remaining = 12000
         for definition in definitions.values():
+            if (
+                self.allowed_tools is not None
+                and definition["name"] not in self.allowed_tools
+            ):
+                continue
             section = json.dumps(definition, ensure_ascii=False)
             if len(section) <= remaining:
                 sections.append(section)
@@ -250,26 +257,42 @@ class CodeModeToolkit(Toolkit):
     ) -> tuple[list[Msg], ToolChoice | None]:
         """Map forced native calls, including structured output, to code."""
         self.allowed_tools = None
+        self.required_tool = None
+        if choice is not None and choice.mode not in (
+            "none",
+            "auto",
+            "required",
+            self.code.name,
+        ):
+            if choice.tools is not None and choice.mode not in choice.tools:
+                raise ValueError(
+                    f"Forced tool excluded by tool choice: {choice.mode}",
+                )
+            self.required_tool = choice.mode
         if choice is not None and choice.tools is not None:
             if self.code.name not in choice.tools:
                 self.allowed_tools = frozenset(choice.tools)
-                hint = UserMsg(
-                    name="system",
-                    content=(
-                        "Inside run_code, only these native tools are "
-                        f"allowed for this turn: {sorted(self.allowed_tools)}"
-                    ),
-                )
-                messages = [*messages, hint]
             choice = ToolChoice(mode=choice.mode)
             if self.allowed_tools == frozenset():
                 choice = ToolChoice(mode="none")
         if choice is not None and choice.mode == "none":
             self.allowed_tools = frozenset()
+        if self.required_tool is not None:
+            self.allowed_tools = frozenset([self.required_tool])
+        if self.allowed_tools:
+            hint = UserMsg(
+                name="system",
+                content=(
+                    "Inside run_code, only these native tools are "
+                    f"allowed for this turn: {sorted(self.allowed_tools)}"
+                ),
+            )
+            messages = [*messages, hint]
         if self._state is not None:
             # Keep host restrictions when an app rebuilds a parked agent.
             self._state.middle_context["code_mode_tool_choice"] = {
                 "reply_id": self._state.reply_id,
+                "required_tool": self.required_tool,
                 "tools": (
                     sorted(self.allowed_tools)
                     if self.allowed_tools is not None

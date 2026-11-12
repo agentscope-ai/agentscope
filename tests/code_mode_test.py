@@ -443,7 +443,97 @@ class CodeModeTest(IsolatedAsyncioTestCase):
             ({"echo"}, [], []),
         )
 
-    async def test_whitelist_survives_confirmation_and_agent_rebuild(
+    async def test_forced_tool_enforced_and_missing_call_rejected(
+        self,
+    ) -> None:
+        """Scripts cannot replace or omit a forced native action."""
+        await self.native.add_tool(self.make_tool("other"))
+        self.toolkit.adapt_tool_choice([], ToolChoice(mode="echo"))
+        missing = "Required native tool did not complete successfully: echo"
+        for code, expected_state, expected_error, effects in (
+            ("text('done')", ToolResultState.ERROR, missing, []),
+            (
+                "try:\n    await tools.other(value=99)\n"
+                "except RuntimeError:\n    pass",
+                ToolResultState.ERROR,
+                missing,
+                [],
+            ),
+            (
+                "try:\n    await tools.echo()\n"
+                "except RuntimeError:\n    pass",
+                ToolResultState.ERROR,
+                missing,
+                [],
+            ),
+            (
+                "await tools.echo(value=42)",
+                ToolResultState.SUCCESS,
+                None,
+                [42],
+            ),
+        ):
+            with self.subTest(code=code):
+                result = await self.run_code(code)
+                self.assertEqual(
+                    (
+                        result.state,
+                        result.metadata["code_mode"]["error"],
+                        self.effects,
+                    ),
+                    (expected_state, expected_error, effects),
+                )
+        self.toolkit.adapt_tool_choice([], None)
+        result = await self.run_code("await tools.other(value=7)")
+        self.assertEqual(
+            (result.state, self.toolkit.required_tool, self.effects),
+            (ToolResultState.SUCCESS, None, [42, 7]),
+        )
+
+    async def test_model_contracts_follow_current_tool_choice(self) -> None:
+        """Model-visible contracts match this turn, including resets."""
+        await self.native.add_tool(self.make_tool("other"))
+        model_call = AsyncMock(
+            return_value=ChatResponse(
+                is_last=True,
+                content=[TextBlock(text="ok")],
+            ),
+        )
+        with patch.object(MockModel, "__call__", model_call):
+            for choice, names, expected_choice in (
+                (
+                    ToolChoice(mode="auto", tools=["echo"]),
+                    ["echo"],
+                    ToolChoice(mode="auto"),
+                ),
+                (
+                    ToolChoice(mode="other"),
+                    ["other"],
+                    ToolChoice(mode="run_code"),
+                ),
+                (ToolChoice(mode="none"), [], ToolChoice(mode="none")),
+                (None, ["echo", "other"], None),
+            ):
+                with self.subTest(choice=choice):
+                    async for _ in self.agent._reasoning_impl(choice):
+                        pass
+                    kwargs = model_call.await_args.kwargs
+                    description = kwargs["tools"][0]["function"]["description"]
+                    contracts = description.split(
+                        "Available contracts (possibly partial):\n",
+                    )[1]
+                    self.assertEqual(
+                        (
+                            [
+                                json.loads(line)["name"]
+                                for line in contracts.splitlines()
+                            ],
+                            kwargs["tool_choice"],
+                        ),
+                        (names, expected_choice),
+                    )
+
+    async def test_tool_choice_survives_confirmation_and_agent_rebuild(
         self,
     ) -> None:
         """A parked script retains host restrictions after state reload."""
@@ -460,6 +550,7 @@ class CodeModeTest(IsolatedAsyncioTestCase):
                     cwd=self.directory.name,
                 ),
                 middlewares=[ReplyBudgetControlMiddleware(token_budget=0)],
+                react_config=ReActConfig(max_iters=0),
                 injection_config=InjectionConfig(inject_runtime_state=False),
             )
 
@@ -485,6 +576,16 @@ class CodeModeTest(IsolatedAsyncioTestCase):
         )
         restored = build(
             AgentState.model_validate_json(agent.state.model_dump_json()),
+        )
+        self.assertEqual(
+            (
+                restored.toolkit.allowed_tools,
+                restored.toolkit.required_tool,
+            ),
+            (
+                frozenset(["GenerateStructuredOutput"]),
+                "GenerateStructuredOutput",
+            ),
         )
         result = await restored.reply(
             UserConfirmResultEvent(
