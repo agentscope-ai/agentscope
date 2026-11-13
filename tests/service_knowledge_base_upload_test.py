@@ -19,12 +19,15 @@ import asyncio
 import io
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from agentscope.app import create_app
 from agentscope.app._service import KnowledgeBaseService, ResourceAccessService
@@ -376,6 +379,7 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
     """End-to-end wiring of the upload pipeline through ``TestClient``."""
 
     async def asyncSetUp(self) -> None:
+        # pylint: disable-next=consider-using-with
         self._tmp = tempfile.TemporaryDirectory()
         self._fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self._vector_store = _FakeVectorStore()
@@ -736,11 +740,64 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             after=True,
         )
 
-    async def test_cancellation_after_redis_set_preserves_source_blob(
+    async def test_interrupted_redis_publication_publishes_nothing(
         self,
     ) -> None:
-        """The document SET can commit before the first index SADD."""
-        await self._assert_persisted_blob(self._fr, "sadd")
+        """A record, its indexes and the blob commit or roll back together."""
+        state = self._app.state
+        storage = state.storage
+        service = KnowledgeBaseService(
+            storage,
+            state.knowledge_base_manager,
+            state.blob_store,
+            state.message_bus,
+            ResourceAccessService(storage, state.resource_access_policy),
+        )
+        real_pipeline = self._fr.pipeline
+
+        def interrupted_pipeline(*args: Any, **kwargs: Any) -> Any:
+            pipe = real_pipeline(*args, **kwargs)
+
+            async def interrupted_execute() -> Any:
+                raise RedisConnectionError(
+                    "injected publication failure",
+                )
+
+            pipe.execute = interrupted_execute
+            return pipe
+
+        async with storage, state.message_bus:
+            with patch.object(self._fr, "pipeline", interrupted_pipeline):
+                with self.assertRaises(RedisConnectionError):
+                    await service.register_document(
+                        "user-1",
+                        self._kb_id,
+                        "cancel.txt",
+                        io.BytesIO(b"abc"),
+                        3,
+                    )
+
+            self.assertEqual(
+                await storage.list_knowledge_documents(
+                    "user-1",
+                    self._kb_id,
+                ),
+                [],
+            )
+            self.assertEqual(
+                await storage.list_knowledge_documents_pending_since(
+                    datetime.now() + timedelta(seconds=1),
+                ),
+                [],
+            )
+            self.assertEqual(
+                [
+                    path
+                    for path in Path(self._tmp.name).rglob("*")
+                    if path.is_file()
+                ],
+                [],
+            )
 
     async def _assert_persisted_blob(
         self,
