@@ -152,11 +152,20 @@ class ModelCard(BaseModel):
                         **override,
                     }
 
-        # Build final parameter schema
+        # Build final parameter schema. Auto-filtering and hidden/null
+        # overrides can drop properties, so ``required`` must only name
+        # properties that survived. Otherwise the schema references fields
+        # that no longer exist, which is both invalid JSON Schema and a
+        # frontend that asks for parameters it cannot render.
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
         if "$defs" in base_schema:
             final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])
