@@ -276,11 +276,29 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
-        # Test suggestion for file in root
-        suggestions = await self.write_tool.generate_suggestions(
-            {"file_path": "/test.py"},
-        )
-        self.assertGreater(len(suggestions), 0)
+        # A file with no parent directory must not suggest a
+        # catch-all: ``**`` matches every path in the repository.
+        for file_path in ("/test.py", "result.md"):
+            with self.subTest(file_path=file_path):
+                suggestions = await self.write_tool.generate_suggestions(
+                    {"file_path": file_path},
+                )
+                self.assertEqual(
+                    [s.rule_content for s in suggestions],
+                    [file_path],
+                )
+                self.assertTrue(
+                    await self.write_tool.match_rule(
+                        file_path,
+                        {"file_path": file_path},
+                    ),
+                )
+                self.assertFalse(
+                    await self.write_tool.match_rule(
+                        file_path,
+                        {"file_path": "/repo/main.py"},
+                    ),
+                )
 
     async def test_permission_suggestions_escape_parent(self) -> None:
         """Test approved suggestions cover only the literal parent."""
