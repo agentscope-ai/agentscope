@@ -207,6 +207,20 @@ class _NeverEndingCoro:
         await asyncio.Event().wait()
 
 
+class _UnsubscribableBus(_FakeBus):
+    """A bus whose channels cannot be subscribed to, e.g. a dead Redis."""
+
+    async def subscribe(
+        self,
+        key: str,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        if key:
+            raise ConnectionError("redis is unavailable")
+        yield {}
+
+
 class TestCancelDispatcher(IsolatedAsyncioTestCase):
     """Verifies the cross-process cancel fan-out."""
 
@@ -378,6 +392,21 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
 
         self.assertTrue(chat_task.cancelled() or chat_task.done())
         self.assertTrue(bg_task.cancelled() or bg_task.done())
+
+    async def test_unsubscribable_channel_fails_startup(self) -> None:
+        """A channel that cannot be subscribed to must fail startup
+        instead of leaving a dispatcher that cancels nothing."""
+        bus = _UnsubscribableBus()
+        registry = ChatRunRegistry()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        with self.assertRaisesRegex(RuntimeError, "session-cancel"):
+            async with bg_manager, registry, CancelDispatcher(
+                message_bus=bus,
+                registry=registry,
+                bg_manager=bg_manager,
+            ):
+                pass
 
 
 class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):
