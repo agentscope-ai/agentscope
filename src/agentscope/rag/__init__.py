@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """The retrieval-augmented generation (RAG) module in AgentScope."""
 
-from ._chunker import ApproxTokenChunker, ChunkerBase
+from ._chunker import (
+    ApproxTokenChunker,
+    ChunkerBase,
+    RecursiveTokenChunker,
+)
 from ._document import (
     Section,
     Chunk,
@@ -48,4 +52,5 @@ __all__ = [
     "QdrantStore",
     "KnowledgeBase",
     "MongoDBStore",
+    "RecursiveTokenChunker",
 ]
