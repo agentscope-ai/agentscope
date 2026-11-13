@@ -30,7 +30,12 @@ from agentscope.message import (
     ToolResultState,
     ThinkingBlock,
 )
-from agentscope.model import ChatResponse, ChatUsage, OpenAIResponseModel
+from agentscope.model import (
+    ChatResponse,
+    ChatUsage,
+    FinishedReason,
+    OpenAIResponseModel,
+)
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
 
@@ -76,6 +81,8 @@ def _mock_completion(
     reasoning_id: str = "rs_test123",
     response_id: str = "resp-openai-1",
     reasoning_output_item: Any = None,
+    status: str | None = None,
+    incomplete_reason: str | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming Responses API response."""
     output = []
@@ -126,6 +133,10 @@ def _mock_completion(
     resp.usage.input_tokens = 10
     resp.usage.output_tokens = 5
     resp.usage.input_tokens_details = None
+    resp.status = status
+    resp.incomplete_details = (
+        MagicMock(reason=incomplete_reason) if incomplete_reason else None
+    )
     return resp
 
 
@@ -251,6 +262,26 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(result.id, "resp-openai-1")
+
+    async def test_incomplete_response_reports_length_finish_reason(
+        self,
+    ) -> None:
+        """An output-token limit is retained and normalized to LENGTH."""
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_mock_completion(
+                text="partial",
+                status="incomplete",
+                incomplete_reason="max_output_tokens",
+            ),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(
+            result.metadata,
+            {"raw_finish_reason": "max_output_tokens"},
+        )
 
     async def test_tool_call_response(
         self,
@@ -903,6 +934,43 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_incomplete_response_reports_length_finish_reason(
+        self,
+    ) -> None:
+        """A response.incomplete event carries the output-token limit."""
+        incomplete_response = _mock_completion(
+            status="incomplete",
+            incomplete_reason="max_output_tokens",
+        )
+        events = [
+            _make_event(
+                "response.output_text.delta",
+                delta="partial",
+            ),
+            _make_event(
+                "response.incomplete",
+                response=incomplete_response,
+            ),
+        ]
+        self.mock_client.responses.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        gen = await self.model([])
+        responses = [response async for response in gen]
+        final_response = responses[-1]
+
+        self.assertEqual(
+            final_response.finished_reason,
+            FinishedReason.LENGTH,
+        )
+        self.assertEqual(
+            final_response.metadata,
+            {"raw_finish_reason": "max_output_tokens"},
+        )
+        self.assertEqual(final_response.content[-1].text, "partial")
+        self.assertEqual(final_response.usage.input_tokens, 10)
 
     async def test_stream_reasoning_and_text(
         self,

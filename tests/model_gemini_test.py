@@ -29,7 +29,7 @@ from agentscope.message import (
     ThinkingBlock,
 )
 from agentscope.message._base import Usage
-from agentscope.model import GeminiChatModel
+from agentscope.model import FinishedReason, GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
@@ -76,6 +76,7 @@ def _make_part(
 def _mock_completion(
     parts: list,
     response_id: str = "resp-gem-1",
+    finish_reason: Any = None,
 ) -> MagicMock:
     """Build a mock non-streaming Gemini response."""
     resp = MagicMock()
@@ -83,6 +84,7 @@ def _mock_completion(
     resp.candidates = [MagicMock()]
     resp.candidates[0].content = MagicMock()
     resp.candidates[0].content.parts = parts
+    resp.candidates[0].finish_reason = finish_reason
     resp.usage_metadata = SimpleNamespace(
         prompt_token_count=10,
         candidates_token_count=5,
@@ -480,6 +482,25 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 True,
                 [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
             ),
+        )
+
+    async def test_length_finish_reason_is_normalized(self) -> None:
+        """Gemini's enum value is retained and mapped to LENGTH."""
+        from google.genai.types import FinishReason
+
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion(
+                [],
+                finish_reason=FinishReason.MAX_TOKENS,
+            ),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(result.finished_reason, FinishedReason.LENGTH)
+        self.assertEqual(
+            result.metadata,
+            {"raw_finish_reason": "MAX_TOKENS"},
         )
 
     async def test_call_config_overrides_parameter_defaults(self) -> None:

@@ -11,6 +11,7 @@ from ..._utils._common import _generate_id
 from .._base import ChatModelBase
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
+from .._utils import _record_finish_reason
 from ...credential import OllamaCredential
 from ...formatter import FormatterBase, OllamaChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
     from ollama._types import ChatResponse as OllamaChatResponse
 else:
     OllamaChatResponse = Any
+
+
+_LENGTH_FINISH_REASONS = frozenset({"length"})
 
 
 class OllamaChatModel(ChatModelBase):
@@ -302,6 +306,12 @@ class OllamaChatModel(ChatModelBase):
                     time=current_time,
                 )
 
+                _record_finish_reason(
+                    delta_res,
+                    getattr(chunk, "done_reason", None),
+                    _LENGTH_FINISH_REASONS,
+                )
+
                 yield delta_res
         finally:
             # Closing the parser does not implicitly close its delegated
@@ -360,9 +370,15 @@ class OllamaChatModel(ChatModelBase):
                 time=(datetime.now() - start_datetime).total_seconds(),
             )
 
-        return ChatResponse(
+        chat_response = ChatResponse(
             id=getattr(response, "id", None) or _generate_id(),
             content=content_blocks,
             is_last=True,
             usage=usage,
         )
+        _record_finish_reason(
+            chat_response,
+            getattr(response, "done_reason", None),
+            _LENGTH_FINISH_REASONS,
+        )
+        return chat_response
