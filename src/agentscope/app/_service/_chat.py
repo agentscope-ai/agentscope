@@ -818,6 +818,9 @@ class ChatService:
           HITL, the agent short-circuits into the same cleanup path;
           if it is idle, the agent silently no-ops. Callers do not
           need to distinguish the two — the operation is idempotent.
+          A queued interrupt targets the reply read from storage; it
+          is ignored if the session has moved to a different reply
+          before the trigger is processed.
 
         Args:
             user_id (`str`):
@@ -1474,7 +1477,22 @@ class ChatService:
 
                         else:
                             # Case B: continuation (UserConfirmResult
-                            #  / ExternalExecResult)
+                            #  / ExternalExecResult / UserInterrupt)
+                            if isinstance(input_msg, UserInterruptEvent) and (
+                                not agent.state.has_awaiting_tool_calls(
+                                    agent.name,
+                                )
+                                or input_msg.reply_id != agent.state.reply_id
+                            ):
+                                logger.info(
+                                    "Ignoring idle or stale interrupt for "
+                                    "reply %r in session %r "
+                                    "(current reply %r).",
+                                    input_msg.reply_id,
+                                    session_id,
+                                    agent.state.reply_id,
+                                )
+                                break
                             continuation_reply_id = agent.state.reply_id
                             reply_msg = await self._storage.get_message(
                                 user_id,
