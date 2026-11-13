@@ -8,14 +8,14 @@ other formatter, the ``format()`` method returns a list of
 ``xai_sdk`` chat API accepts proto messages directly.
 """
 
-import base64
+import asyncio
 from fnmatch import fnmatch
 from typing import Any, List
 from urllib.request import url2pathname
 
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, _read_local_file_as_base64
 from .._logging import logger
 from ..message import (
     Msg,
@@ -30,7 +30,7 @@ from ..message import (
 )
 
 
-def _xai_user_args_from_blocks(
+async def _xai_user_args_from_blocks(
     blocks: list,
     image: Any,
     supported_media_types: list[str],
@@ -77,11 +77,10 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url2pathname(url_str.removeprefix("file://"))
-                    with open(local_path, "rb") as f:
-                        encoded = base64.b64encode(f.read()).decode(
-                            "utf-8",
-                        )
+                    encoded = await asyncio.to_thread(
+                        _read_local_file_as_base64,
+                        url2pathname(url_str.removeprefix("file://")),
+                    )
                     args.append(
                         image(
                             f"data:{sub.source.media_type};"
@@ -159,7 +158,7 @@ class XAIChatFormatter(FormatterBase):
 
         xai_messages: List[Any] = []
 
-        def flush_assistant(
+        async def flush_assistant(
             text_blocks: list[TextBlock],
             tool_calls: list[ToolCallBlock],
         ) -> None:
@@ -206,7 +205,7 @@ class XAIChatFormatter(FormatterBase):
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
-                            hint_args = _xai_user_args_from_blocks(
+                            hint_args = await _xai_user_args_from_blocks(
                                 block.hint,
                                 image,
                                 self.supported_input_media_types,
@@ -217,7 +216,7 @@ class XAIChatFormatter(FormatterBase):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
                         content_args.extend(
-                            _xai_user_args_from_blocks(
+                            await _xai_user_args_from_blocks(
                                 [block],
                                 image,
                                 self.supported_input_media_types,
@@ -247,7 +246,7 @@ class XAIChatFormatter(FormatterBase):
                         pending_media = []
 
                     if isinstance(block, ToolResultBlock):
-                        flush_assistant(
+                        await flush_assistant(
                             pending_text,
                             pending_tool_calls,
                         )
@@ -267,7 +266,7 @@ class XAIChatFormatter(FormatterBase):
 
                         # Keep tool results together before emitting media.
                         if multimodal_data:
-                            promo_args = _xai_user_args_from_blocks(
+                            promo_args = await _xai_user_args_from_blocks(
                                 multimodal_data,
                                 image,
                                 self.supported_input_media_types,
@@ -285,14 +284,14 @@ class XAIChatFormatter(FormatterBase):
                         pass
 
                     elif isinstance(block, HintBlock):
-                        flush_assistant(
+                        await flush_assistant(
                             pending_text,
                             pending_tool_calls,
                         )
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
-                            hint_args = _xai_user_args_from_blocks(
+                            hint_args = await _xai_user_args_from_blocks(
                                 block.hint,
                                 image,
                                 self.supported_input_media_types,
@@ -301,7 +300,7 @@ class XAIChatFormatter(FormatterBase):
                                 xai_messages.append(user(*hint_args))
 
                 xai_messages.extend(pending_media)
-                flush_assistant(
+                await flush_assistant(
                     pending_text,
                     pending_tool_calls,
                 )
@@ -402,7 +401,7 @@ class XAIMultiAgentFormatter(FormatterBase):
                         segment,
                         is_first=is_first_agent_message,
                     )
-                    user_args = _xai_user_args_from_blocks(
+                    user_args = await _xai_user_args_from_blocks(
                         [
                             block
                             for msg in segment
