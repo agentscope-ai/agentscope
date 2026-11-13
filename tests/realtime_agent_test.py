@@ -155,6 +155,10 @@ class ScriptedModel(RealtimeModelBase):
         self.supports_text_input = False
         self.connect_error: Exception | None = None
         self.push_text_error: Exception | None = None
+        # Set once the agent has handled the last event of the current
+        # session's script, so a test can wait for that, not a clock.
+        # Tasks the agent started, such as tool runs, may still be going.
+        self.played = asyncio.Event()
         self._open = asyncio.Event()
         self._requested = asyncio.Event()
 
@@ -170,6 +174,7 @@ class ScriptedModel(RealtimeModelBase):
             raise self.connect_error
         self.sessions += 1
         self._open.clear()
+        self.played.clear()
         self.instructions = instructions
         self.calls.append(
             f"connect(session={self.sessions},"
@@ -190,6 +195,9 @@ class ScriptedModel(RealtimeModelBase):
                 continue
             yield event
             await asyncio.sleep(0)
+        # The agent asks for the next event only once it has handled the
+        # previous one, so by now it has handled the whole script.
+        self.played.set()
         if not script or not isinstance(script[-1], me.SessionEndedEvent):
             await self._open.wait()  # a live session stays open
 
@@ -295,13 +303,24 @@ class CrashingSessionModel(ScriptedModel):
 
 
 class FakeTransport(TransportBase):
-    """Emit ``frames`` chunks of silence and record transport calls."""
+    """Emit ``frames`` chunks of silence and record transport calls.
+
+    The input ends after the last frame. With ``until`` it then also
+    waits for that event, so the test decides when the client leaves:
+    the frames say nothing about how far the agent got, since on Windows
+    a 20 ms sleep can end after a few milliseconds.
+    """
 
     input_sample_rate = 16000
     output_sample_rate = 24000
 
-    def __init__(self, frames: int) -> None:
+    def __init__(
+        self,
+        frames: int,
+        until: asyncio.Event | None = None,
+    ) -> None:
         self.frames = frames
+        self.until = until
         self.item = ""
         self.cleared = 0
         self.started = 0
@@ -316,10 +335,12 @@ class FakeTransport(TransportBase):
         self.closed += 1
 
     async def incoming(self) -> AsyncIterator[AudioFrame]:
-        """Emit silence on a 20 ms clock."""
+        """Emit silence on a 20 ms clock, then wait for ``until``."""
         for _ in range(self.frames):
             await asyncio.sleep(0.02)
             yield AudioFrame(pcm=b"\x00" * 3200)
+        if self.until is not None:
+            await asyncio.wait_for(self.until.wait(), timeout=5)
 
     async def send_audio(self, pcm: bytes, item_id: str) -> None:
         """Remember which item is playing."""
@@ -533,7 +554,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         ]
         model = ScriptedModel([script])
         agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(frames=3)
+        transport = FakeTransport(frames=3, until=model.played)
 
         # Rebuild the agent's message from its events the way a client does.
         summary = []
@@ -606,7 +627,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         ]
         model = ScriptedModel([script])
         agent = RealtimeAgent("Friday", "be brief", model)
-        transport = FakeTransport(frames=3)
+        transport = FakeTransport(frames=3, until=model.played)
         rebuilt = Msg(
             id="r1",
             role="assistant",
@@ -852,7 +873,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             self.assertFalse(agent._connected)  # pylint: disable=W0212
             self.assertEqual(model.sessions, 1)
 
-            summary = await self._collect(agent, FakeTransport(frames=2))
+            summary = await self._collect(
+                agent,
+                FakeTransport(frames=2, until=model.played),
+            )
 
         self.assertEqual(model.sessions, 2)
         # Reconnection starts with the context available when the previous
@@ -908,7 +932,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 agent._downlink is None or agent._downlink.done(),
             )  # pylint: disable=W0212
 
-            summary = await self._collect(agent, FakeTransport(frames=2))
+            summary = await self._collect(
+                agent,
+                FakeTransport(frames=2, until=model.played),
+            )
 
             # The pump must be live again: not the finished, crashed task.
             self.assertIsNotNone(agent._downlink)  # pylint: disable=W0212
@@ -2186,8 +2213,9 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
             return str(tool_calls[0].state)
 
         events: list[tuple[Any, ...]] = []
+        reported = asyncio.Event()
         async with agent:
-            transport = FakeTransport(frames=4)
+            transport = FakeTransport(frames=4, until=reported)
             async with transport:
                 async for event in agent.reply_stream(transport):
                     match event:
@@ -2228,6 +2256,9 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
                                     _checkpoint_tool_state(event),
                                 ),
                             )
+                            # The result reached the provider before this
+                            # event did, with any follow-up request.
+                            reported.set()
         return events, model
 
     async def test_non_blocking_permissions_and_errors(self) -> None:
