@@ -2383,6 +2383,9 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
 class WordParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`WordParser`."""
 
+    # Each test is one parser scenario; splitting the class buys nothing.
+    # pylint: disable=too-many-public-methods
+
     async def test_invalid_input_errors(self) -> None:
         """Missing paths and invalid documents use documented errors."""
         parser = WordParser()
@@ -2619,6 +2622,57 @@ class WordParserTest(IsolatedAsyncioTestCase):
                             ["", "wide", "", "last"],
                             ["", "", "tail", ""],
                         ],
+                    )
+
+    async def test_table_cell_tabs_are_preserved(self) -> None:
+        """A run-level tab inside a table cell survives like a paragraph tab.
+
+        The ``w:tab`` in a table cell used to be dropped, so
+        ``Trial\\tVoltage`` came back as ``TrialVoltage``. A tab-stop
+        definition under ``w:pPr``/``w:tabs`` is configuration, not text,
+        and must not be read as a tab character.
+        """
+        # python-docx has no public accessor for the cell paragraph element.
+        # pylint: disable=protected-access
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        doc = DocxDocument()
+        doc.add_paragraph("Trial\tVoltage")
+        table = doc.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "Trial\tVoltage"
+        table.cell(0, 1).text = "Resistance"
+        # python-docx adds a default tab stop, but make it explicit so the
+        # cell has a ``w:tabs`` entry that must not become a tab character.
+        tabs = OxmlElement("w:tabs")
+        tab = OxmlElement("w:tab")
+        tab.set(qn("w:val"), "left")
+        tab.set(qn("w:pos"), "720")
+        tabs.append(tab)
+        table.rows[0].cells[0].paragraphs[0]._p.get_or_add_pPr().append(tabs)
+
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        for table_format in ("markdown", "json"):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    table_format=table_format,
+                    separate_table=True,
+                ).parse(buffer.getvalue(), "tabs.docx")
+                self.assertEqual(len(sections), 2)
+                self.assertEqual(sections[0].content.text, "Trial\tVoltage")
+                text = sections[1].content.text
+                if table_format == "markdown":
+                    expected_table = (
+                        "| Trial\tVoltage | Resistance |\n| --- | --- |\n"
+                    )
+                    self.assertEqual(text, expected_table)
+                else:
+                    self.assertEqual(
+                        json.loads(text.split("\n", 1)[1]),
+                        [["Trial\tVoltage", "Resistance"]],
                     )
 
     async def test_nested_table_text_is_kept(self) -> None:
