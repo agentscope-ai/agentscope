@@ -16,6 +16,7 @@ Text payloads may be passed either as bare ``str`` or as
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
@@ -135,8 +136,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 persisted ``dimensions`` inside ``parameters``.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                Provider-specific non-dimensional parameters.  Currently
-                empty for DashScope.
+                Provider-specific non-dimensional text parameters, such as
+                ``text_type``. Per-call keyword arguments take precedence.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -147,8 +148,6 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             retry_delay (`float`, defaults to ``1.0``):
                 Seconds between retry attempts.
         """
-        self._is_multimodal: bool = model.startswith(_MULTIMODAL_PREFIXES)
-
         super().__init__(
             credential=credential,
             model=model,
@@ -159,11 +158,12 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        self.supports_multimodal = model.startswith(_MULTIMODAL_PREFIXES)
         self.api_key: str = credential.api_key.get_secret_value()
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
         # Resolve multimodal constraints.
-        if self._is_multimodal:
+        if self.supports_multimodal:
             self._limits = _MODEL_LIMITS.get(model, _DEFAULT_LIMITS)
 
     @classmethod
@@ -209,7 +209,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             for item in inputs
         ]
 
-        if not self._is_multimodal:
+        if not self.supports_multimodal:
             # Text mode — use base class batching.
             return await super().__call__(normalized, **kwargs)
 
@@ -315,7 +315,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         Returns:
             `EmbeddingResponse`: Embedding vectors and usage info.
         """
-        if self._is_multimodal:
+        if self.supports_multimodal:
             return await self._call_multimodal(inputs, **kwargs)
         return await self._call_text(inputs, **kwargs)
 
@@ -351,13 +351,21 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         api_kwargs: dict[str, Any] = {
             "input": texts,
             "model": self.model,
+            "api_key": self.api_key,
             "dimension": self.dimensions,
+            **self.parameters.model_dump(exclude_none=True),
             **kwargs,
+        }
+
+        # Exclude api_key from cache identifier to avoid persisting secrets
+        # and to keep cache valid across key rotations.
+        cache_identifier = {
+            k: v for k, v in api_kwargs.items() if k != "api_key"
         }
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
             if cached:
                 return EmbeddingResponse(
@@ -369,8 +377,8 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        response = dashscope.embeddings.TextEmbedding.call(
-            api_key=self.api_key,
+        response = await asyncio.to_thread(
+            dashscope.embeddings.TextEmbedding.call,
             **api_kwargs,
         )
         time = (datetime.now() - start_time).total_seconds()
@@ -381,11 +389,15 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             )
 
         embeddings = [
-            entry["embedding"] for entry in response.output["embeddings"]
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(response.output["embeddings"]),
+                key=lambda item: item[1].get("text_index", item[0]),
+            )
         ]
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
                 embeddings=embeddings,
             )
         return EmbeddingResponse(
@@ -431,14 +443,14 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             "input": formatted,
             "model": self.model,
             "api_key": self.api_key,
+            "dimension": self.dimensions,
             **kwargs,
         }
 
-        # Exclude api_key from cache identifier to avoid persisting secrets
-        # and to keep cache valid across key rotations.
-        cache_identifier = {
-            k: v for k, v in api_kwargs.items() if k != "api_key"
-        }
+        # Exclude api_key and isolate the cache identifier from SDK mutations.
+        cache_identifier = copy.deepcopy(
+            {k: v for k, v in api_kwargs.items() if k != "api_key"},
+        )
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
@@ -454,7 +466,10 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
         import dashscope
 
         start_time = datetime.now()
-        res = dashscope.MultiModalEmbedding.call(**api_kwargs)
+        res = await asyncio.to_thread(
+            dashscope.MultiModalEmbedding.call,
+            **api_kwargs,
+        )
         time = (datetime.now() - start_time).total_seconds()
 
         if res.status_code != 200:
@@ -462,7 +477,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 f"DashScope multimodal embedding API error: {res}",
             )
 
-        embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
+        embeddings = [
+            entry["embedding"]
+            for _, entry in sorted(
+                enumerate(res.output["embeddings"]),
+                key=lambda item: item[1].get("index", item[0]),
+            )
+        ]
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=cache_identifier,

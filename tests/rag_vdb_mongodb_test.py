@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import math
 from contextlib import AsyncExitStack
+from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from utils import AnyString
 
@@ -100,6 +101,45 @@ class _FakeAsyncIterator:
         return item
 
 
+def _read_dotted(doc: dict[str, Any], path: str) -> Any:
+    """Read a dotted path (e.g. ``chunk.chunk_index``) from a dict."""
+    value: Any = doc
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+class _FakeFindCursor:
+    """Chainable find cursor supporting sort / skip / limit."""
+
+    def __init__(self, documents: list[dict[str, Any]]) -> None:
+        self._documents = documents
+
+    def sort(self, key: str, direction: int) -> "_FakeFindCursor":
+        """Sort documents by a dotted key path."""
+        self._documents = sorted(
+            self._documents,
+            key=lambda doc: _read_dotted(doc, key),
+            reverse=direction < 0,
+        )
+        return self
+
+    def skip(self, count: int) -> "_FakeFindCursor":
+        """Skip the first ``count`` documents."""
+        self._documents = self._documents[count:]
+        return self
+
+    def limit(self, count: int) -> "_FakeFindCursor":
+        """Keep at most ``count`` documents."""
+        self._documents = self._documents[:count]
+        return self
+
+    def __aiter__(self) -> _FakeAsyncIterator:
+        return _FakeAsyncIterator(list(self._documents))
+
+
 class _FakeMongoCollection:
     """In-memory collection that implements the async API MongoDBStore uses."""
 
@@ -108,6 +148,28 @@ class _FakeMongoCollection:
         self._name = name
         self._docs: dict[str, dict[str, Any]] = {}
         self._index_queryable = False
+
+    def find(
+        self,
+        filter_doc: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+    ) -> "_FakeFindCursor":
+        """Return a chainable cursor over matching documents."""
+        del projection  # the fake returns whole documents regardless
+        matched = [
+            doc
+            for doc in self._docs.values()
+            if all(
+                _read_dotted(doc, key)
+                == (
+                    value["$eq"]
+                    if isinstance(value, dict) and "$eq" in value
+                    else value
+                )
+                for key, value in filter_doc.items()
+            )
+        ]
+        return _FakeFindCursor(matched)
 
     async def bulk_write(
         self,
@@ -195,6 +257,8 @@ class _FakeMongoCollection:
         match: dict[str, Any],
     ) -> bool:
         for key, expected in match.items():
+            if isinstance(expected, dict) and "$eq" in expected:
+                expected = expected["$eq"]
             value = doc
             for part in key.split("."):
                 value = value[part]
@@ -421,6 +485,183 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_mongodb_delete_filter(self) -> None:
+        """MongoDB combines the source document with metadata equality."""
+        store = self.store
+        collection = SimpleNamespace(delete_many=AsyncMock())
+        with patch.object(store, "_col", return_value=collection):
+            await store.delete(
+                "shared",
+                "doc",
+                metadata_filter={"tenant": "alpha", "project": 2},
+            )
+        collection.delete_many.assert_awaited_once_with(
+            {
+                "document_id": "doc",
+                "$and": [
+                    {"chunk.metadata.tenant": {"$eq": "alpha"}},
+                    {"chunk.metadata.project": {"$eq": 2}},
+                ],
+            },
+        )
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                collection.delete_many.reset_mock()
+                with patch.object(store, "_col", return_value=collection):
+                    await store.delete("shared", "doc", metadata_filter=scope)
+                collection.delete_many.assert_awaited_once_with(
+                    {"document_id": "doc"},
+                )
+
+    async def test_list_documents_uses_literal_metadata_values(self) -> None:
+        """Operator-shaped values must remain equality operands."""
+        collection = SimpleNamespace(
+            aggregate=AsyncMock(return_value=_FakeAsyncIterator([])),
+        )
+        with patch.object(self.store, "_col", return_value=collection):
+            await self.store.list_documents(
+                "shared",
+                metadata_filter={
+                    "scope": {"$ne": "alpha"},
+                    "label": {"$regex": "^private"},
+                    "archived": None,
+                },
+            )
+        pipeline = collection.aggregate.call_args.args[0]
+        self.assertEqual(
+            pipeline[0],
+            {
+                "$match": {
+                    "chunk.metadata.scope": {"$eq": {"$ne": "alpha"}},
+                    "chunk.metadata.label": {"$eq": {"$regex": "^private"}},
+                    "chunk.metadata.archived": {"$eq": None},
+                },
+            },
+        )
+
+    async def test_list_chunks_uses_literal_metadata_values(self) -> None:
+        """Listing keeps literal equality alongside the document fence."""
+        collection = SimpleNamespace(
+            find=Mock(return_value=_FakeFindCursor([])),
+        )
+        with patch.object(self.store, "_col", return_value=collection):
+            await self.store.list_chunks(
+                "shared",
+                "doc",
+                metadata_filter={
+                    "scope": {"$ne": "alpha"},
+                    "label": {"$regex": "^private"},
+                    "archived": None,
+                },
+            )
+        self.assertEqual(
+            collection.find.call_args.args[0],
+            {
+                "document_id": "doc",
+                "chunk.metadata.scope": {"$eq": {"$ne": "alpha"}},
+                "chunk.metadata.label": {"$eq": {"$regex": "^private"}},
+                "chunk.metadata.archived": {"$eq": None},
+            },
+        )
+
+    async def test_search_candidate_limits(self) -> None:
+        """Search caps candidates while preserving the requested limit."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        record = _make_record("A", [1.0, 0.0, 0.0], document_id="doc-1")
+        record.chunk.metadata["kb_scope"] = "kb-a"
+        await self.store.insert("kb-1", [record])
+        col = self._fake_client["test-db"]["kb-1"]
+
+        for top_k, num_candidates, metadata_filter in [
+            (None, 100, None),
+            (500, 10_000, None),
+            (501, 10_000, {"kb_scope": "kb-a"}),
+            (10_000, 10_000, None),
+        ]:
+            with self.subTest(top_k=top_k):
+                search_kwargs: dict[str, Any] = {}
+                if top_k is not None:
+                    search_kwargs["top_k"] = top_k
+                if metadata_filter is not None:
+                    search_kwargs["metadata_filter"] = metadata_filter
+
+                with patch.object(
+                    col,
+                    "aggregate",
+                    wraps=col.aggregate,
+                ) as aggregate:
+                    results = await self.store.search(
+                        "kb-1",
+                        query_vector=[1.0, 0.0, 0.0],
+                        **search_kwargs,
+                    )
+
+                vector_search: dict[str, Any] = {
+                    "index": "vector_index",
+                    "path": "vector",
+                    "queryVector": [1.0, 0.0, 0.0],
+                    "numCandidates": num_candidates,
+                    "limit": 5 if top_k is None else top_k,
+                }
+                if metadata_filter is not None:
+                    vector_search["filter"] = {
+                        "$and": [{"chunk.metadata.kb_scope": {"$eq": "kb-a"}}],
+                    }
+                aggregate.assert_awaited_once_with(
+                    [
+                        {"$vectorSearch": vector_search},
+                        {
+                            "$project": {
+                                "document_id": 1,
+                                "chunk": 1,
+                                "score": {"$meta": "vectorSearchScore"},
+                            },
+                        },
+                    ],
+                )
+                self.assertEqual(
+                    _dump_results(results),
+                    [
+                        {
+                            "score": 1.0,
+                            "document_id": "doc-1",
+                            "chunk": {
+                                "content": {
+                                    "type": "text",
+                                    "text": "A",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                "source": "doc-1.txt",
+                                "chunk_index": 0,
+                                "total_chunks": 1,
+                                "metadata": {"kb_scope": "kb-a"},
+                            },
+                        },
+                    ],
+                )
+
+    async def test_search_top_k_exceeds_limit(self) -> None:
+        """An oversized search is rejected before accessing MongoDB."""
+        store = MongoDBStore(uri="mongodb://mock", database="test-db")
+        with (
+            patch.object(store, "_ensure_index_ready") as ensure_index_ready,
+            patch.object(
+                store,
+                "get_client",
+                return_value=self._fake_client,
+            ) as get_client,
+        ):
+            with self.assertRaisesRegex(ValueError, "top_k.*10000"):
+                await store.search(
+                    "kb-1",
+                    query_vector=[1.0, 0.0, 0.0],
+                    top_k=10_001,
+                )
+            ensure_index_ready.assert_not_awaited()
+            get_client.assert_not_called()
 
     async def test_delete_by_document_id(self) -> None:
         """delete removes all records of one document only."""
@@ -657,3 +898,88 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_list_chunks_pagination_and_isolation(self) -> None:
+        """list_chunks pages by chunk_index and isolates documents."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"doc1-chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            # Insert out of order to prove ordering is restored.
+            for i in (3, 0, 4, 1, 2)
+        ] + [
+            _make_record(
+                f"doc2-chunk{i}",
+                [0.0, 1.0, 0.0],
+                document_id="doc-2",
+                chunk_index=i,
+                total_chunks=2,
+            )
+            for i in (1, 0)
+        ]
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2])
+        self.assertEqual(
+            [c.content.text for c in page],
+            ["doc1-chunk0", "doc1-chunk1", "doc1-chunk2"],
+        )
+
+        tail = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=3,
+            limit=30,
+        )
+        self.assertEqual([c.chunk_index for c in tail], [3, 4])
+
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", offset=5, limit=3),
+            [],
+        )
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", limit=0),
+            [],
+        )
+
+        other = await self.store.list_chunks("kb-1", "doc-2", limit=30)
+        self.assertEqual([c.chunk_index for c in other], [0, 1])
+        self.assertTrue(
+            all(c.content.text.startswith("doc2") for c in other),
+        )
+
+    async def test_list_chunks_metadata_filter(self) -> None:
+        """list_chunks applies the metadata_filter tenant scoping."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        record = _make_record(
+            "scoped",
+            [1.0, 0.0, 0.0],
+            document_id="doc-1",
+        )
+        record.chunk.metadata["kb_scope"] = "kb-a"
+        await self.store.insert("kb-1", [record])
+
+        hit = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-a"},
+        )
+        self.assertEqual(len(hit), 1)
+
+        miss = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-b"},
+        )
+        self.assertEqual(miss, [])

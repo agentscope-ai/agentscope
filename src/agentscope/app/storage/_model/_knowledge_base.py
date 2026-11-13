@@ -8,6 +8,28 @@ from ._base import _RecordBase
 from ._session import EmbeddingModelConfig
 
 
+class ChunkerConfig(BaseModel):
+    """Chunker configuration persisted alongside a knowledge base.
+
+    Stores the chunker ``type`` identifier (as declared by
+    ``ChunkerBase.chunker_type``) and the keyword-argument
+    ``parameters`` used to reconstruct it at indexing time.
+    """
+
+    type: str = Field(
+        description=(
+            "Chunker type identifier, as declared by "
+            "``ChunkerBase.chunker_type``."
+        ),
+    )
+    parameters: dict = Field(
+        default_factory=dict,
+        description=(
+            "Keyword arguments used to build ``ChunkerBase.Parameters``."
+        ),
+    )
+
+
 class KnowledgeBaseData(BaseModel):
     """The mutable payload of a knowledge base record.
 
@@ -37,6 +59,21 @@ class KnowledgeBaseData(BaseModel):
         ),
     )
     """Embedding model configuration pinned at creation time."""
+
+    chunker_config: ChunkerConfig | None = Field(
+        default=None,
+        description=(
+            "Chunker configuration pinned at creation time. "
+            "``None`` only for legacy records created before "
+            "per-KB chunker support was introduced; the index "
+            "worker falls back to ``ApproxTokenChunker()`` in "
+            "that case.  New records always have an explicit value."
+        ),
+    )
+    """Chunker configuration pinned at creation time.
+
+    ``None`` only for legacy records; new creations always set this.
+    """
 
     collection_name: str = Field(
         description=(
@@ -71,9 +108,9 @@ class KnowledgeBaseRecord(_RecordBase):
 
         Pre-refactor records stored the payload fields (``name`` /
         ``description`` / ``embedding_model_config`` /
-        ``collection_name``) at the record top level rather than
-        under ``data``.  This validator runs in ``mode='before'`` so
-        it hooks every pydantic entry point —
+        ``chunker_config`` / ``collection_name``) at the record top
+        level rather than under ``data``.  This validator runs in
+        ``mode='before'`` so it hooks every pydantic entry point —
         :meth:`~pydantic.BaseModel.model_validate`,
         :meth:`~pydantic.BaseModel.model_validate_json` (the path
         the storage backend takes when reading from Redis / SQL),
@@ -97,6 +134,7 @@ class KnowledgeBaseRecord(_RecordBase):
             "name",
             "description",
             "embedding_model_config",
+            "chunker_config",
             "collection_name",
         )
         if not any(key in obj for key in legacy_keys):

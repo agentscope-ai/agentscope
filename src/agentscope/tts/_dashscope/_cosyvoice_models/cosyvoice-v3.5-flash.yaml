@@ -1,0 +1,14 @@
+name: cosyvoice-v3.5-flash
+label: CosyVoice-v3.5-Flash
+status: active
+voice_cloning: true
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+voices: []
+
+parameter_overrides: {}

@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any, Generic, TypeVar, Type, Union
+from typing import Any, Generic, Literal, TypeVar, Type, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -87,7 +87,7 @@ class EmbeddingModelBase(Generic[InputT]):
     """Maximum input length (in tokens) per single input item."""
 
     batch_size: int
-    """Maximum number of input items per API call."""
+    """Positive maximum number of input items per API call."""
 
     max_retries: int
     """The maximum number of retries for the underlying API."""
@@ -134,7 +134,7 @@ class EmbeddingModelBase(Generic[InputT]):
             context_size (`int`):
                 Maximum input length (in tokens) per single input item.
             batch_size (`int`):
-                Maximum number of input items per API call.  When
+                Positive maximum number of input items per API call.  When
                 ``__call__`` receives more items, it splits them into
                 batches and calls :meth:`_call_api` concurrently.
             max_retries (`int`):
@@ -170,6 +170,10 @@ class EmbeddingModelBase(Generic[InputT]):
         if dimensions <= 0:
             raise ValueError(
                 f"dimensions must be a positive integer, got {dimensions}.",
+            )
+        if batch_size <= 0:
+            raise ValueError(
+                f"batch_size must be a positive integer, got {batch_size}.",
             )
 
         self.credential = credential
@@ -253,9 +257,38 @@ class EmbeddingModelBase(Generic[InputT]):
             )
 
         # Dispatch all batches concurrently, each with retry.
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
+        tasks = [
+            asyncio.create_task(self._call_with_retry(batch, **kwargs))
+            for batch in batches
+        ]
+        batches_result = asyncio.gather(*tasks)
+        try:
+            results: list[EmbeddingResponse] = await asyncio.shield(
+                batches_result,
+            )
+        except BaseException as error:
+            # gather propagates a batch error without stopping its siblings.
+            # Finish owned coroutine cleanup before returning to the caller.
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            # Retrieve the original gather's exception on caller cancellation.
+            cleanup = asyncio.gather(
+                batches_result,
+                *tasks,
+                return_exceptions=True,
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(cleanup)
+                    break
+                except asyncio.CancelledError as exc:
+                    # Finish cleanup before propagating caller cancellation.
+                    cancellation = exc
+            if cancellation is not None:
+                raise cancellation from error
+            raise
 
         return self._merge_responses(results)
 
@@ -283,13 +316,21 @@ class EmbeddingModelBase(Generic[InputT]):
         all_embeddings: list = []
         total_tokens = 0
         total_time = 0.0
+        sources: set[str] = set()
 
         for resp in responses:
             all_embeddings.extend(resp.embeddings)
+            if resp.source:
+                sources.add(resp.source)
             if resp.usage:
-                total_time += resp.usage.time
+                total_time = max(total_time, resp.usage.time)
                 if resp.usage.tokens:
                     total_tokens += resp.usage.tokens
+
+        # Mark the merged response as cached only if every batch is cached.
+        merged_source: Literal["cache", "api"] = (
+            "cache" if sources and sources == {"cache"} else "api"
+        )
 
         return EmbeddingResponse(
             embeddings=all_embeddings,
@@ -297,7 +338,7 @@ class EmbeddingModelBase(Generic[InputT]):
                 tokens=total_tokens,
                 time=total_time,
             ),
-            source="api",
+            source=merged_source,
         )
 
     # ------------------------------------------------------------------

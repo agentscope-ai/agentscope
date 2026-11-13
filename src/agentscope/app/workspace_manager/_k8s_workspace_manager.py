@@ -188,7 +188,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
                 Session identifier (unused; Pods are per-workspace).
             workspace_id (`str | None`, optional):
                 Stable workspace identifier — the cache key. When
-                ``None`` the manager falls back to
+                unset the manager falls back to
                 :meth:`assign_workspace_id`.
 
         Returns:
@@ -197,8 +197,8 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         """
         del session_id
 
-        if workspace_id is None:
-            workspace_id = self.assign_workspace_id(
+        if not workspace_id:
+            workspace_id = await self.assign_workspace_id(
                 user_id=user_id,
                 agent_id=agent_id,
                 session_id="",

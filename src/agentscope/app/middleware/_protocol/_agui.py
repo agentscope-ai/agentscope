@@ -33,6 +33,7 @@ from ....event import (
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
 )
+from ....types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ag_ui.core.events import BaseEvent as AGUIBaseEvent
@@ -55,7 +56,7 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
         # but not across concurrent requests.  Use contextvars if
         # concurrency is needed.
         self._last_model_name: str = "model_call"
-        self._tool_result_buffers: dict[str, list[str]] = {}
+        self._tool_result_buffers: dict[tuple[str, str], list[str]] = {}
 
     def _convert_to_protocol(self, event: AgentEvent) -> dict:
         """Convert the AgentScope events into AGUI protocol."""
@@ -99,15 +100,23 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             )
 
         if isinstance(event, ReplyEndEvent):
+            if event.finished_reason == ReplyFinishedReason.EXCEED_MAX_ITERS:
+                return AGUIRunErrorEvent(
+                    message="The agent exceeded the maximum reasoning-acting "
+                    "iterations",
+                    code="exceed_max_iters",
+                )
             return AGUIRunFinishedEvent(
                 thread_id=event.session_id,
                 run_id=event.reply_id,
             )
 
         if isinstance(event, ExceedMaxItersEvent):
-            return AGUIRunErrorEvent(
-                message=(f"Agent '{event.name}' exceeded max iterations"),
-                code="exceed_max_iters",
+            # Deprecated event, still emitted for backward compatibility;
+            # the RUN_ERROR semantics now come from the ReplyEndEvent
+            return AGUICustomEvent(
+                name="exceed_max_iters",
+                value=event.model_dump(exclude_none=True),
             )
 
         if isinstance(event, ModelCallStartEvent):
@@ -185,7 +194,7 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
 
         if isinstance(event, ToolResultTextDeltaEvent):
             self._tool_result_buffers.setdefault(
-                event.tool_call_id,
+                (event.reply_id, event.tool_call_id),
                 [],
             ).append(event.delta)
             return AGUICustomEvent(
@@ -201,11 +210,17 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
 
         if isinstance(event, ToolResultEndEvent):
             content = "".join(
-                self._tool_result_buffers.pop(event.tool_call_id, []),
+                self._tool_result_buffers.pop(
+                    (event.reply_id, event.tool_call_id),
+                    [],
+                ),
             )
+            # ``reply_id`` is shared by every tool result of one reply, so
+            # qualify it with ``tool_call_id`` to keep each result its own
+            # message.
             return AGUIToolCallResultEvent(
                 tool_call_id=event.tool_call_id,
-                message_id=event.reply_id,
+                message_id=f"{event.reply_id}:{event.tool_call_id}",
                 content=content or str(event.state),
             )
 

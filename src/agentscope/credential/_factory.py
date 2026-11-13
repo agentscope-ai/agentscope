@@ -12,7 +12,9 @@ from ._minimax import MiniMaxCredential
 from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
 from ._openai import OpenAICredential
+from ._typesafe import TypeSafeCredential
 from ._xai import XAICredential
+from ._volcengine import VolcengineCredential
 from ._base import CredentialBase
 
 
@@ -43,7 +45,9 @@ class CredentialFactory:
         MoonshotCredential,
         OllamaCredential,
         OpenAICredential,
+        TypeSafeCredential,
         XAICredential,
+        VolcengineCredential,
     ]
     _adapter: TypeAdapter[CredentialBase] | None = None
 

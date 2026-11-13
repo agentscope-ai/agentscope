@@ -7,10 +7,15 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._content_block import (
+    _normalize_openai_compatible_content_error,
+    _openai_compatible_response_block_error,
+)
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ..._utils._common import _generate_id
 from ...credential import MoonshotCredential
+from ...exception import ContentBlockedPhase
 from ...formatter import FormatterBase, MoonshotChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -22,9 +27,20 @@ else:
     ChatCompletion = Any
     AsyncStream = Any
 
+_K3_MODELS = {"kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"}
+
 
 class MoonshotChatModel(ChatModelBase):
-    """The Moonshot AI chat model."""
+    """The Moonshot AI chat model.
+
+    For the Kimi K3 series, thinking is always enabled. Fixed
+    sampling parameters (``temperature``, ``top_p``, ``n``,
+    ``presence_penalty``, ``frequency_penalty``) and ``thinking`` are
+    omitted, including values supplied through ``extra_body``. Call-level
+    reasoning and token budgets override :class:`Parameters`. Token budgets
+    in ``extra_body`` override top-level budgets; within each level,
+    ``max_completion_tokens`` takes precedence over ``max_tokens``.
+    """
 
     class Parameters(BaseModel):
         """The parameters for the Moonshot AI chat model."""
@@ -32,17 +48,23 @@ class MoonshotChatModel(ChatModelBase):
         max_tokens: int | None = Field(
             default=None,
             title="Max Tokens",
-            description="The maximum number of tokens for the LLM output.",
+            description=(
+                "The maximum number of tokens for the LLM output. "
+                "Sent as max_completion_tokens for Kimi K3 and K3.1 Pro."
+            ),
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
                 "Whether to enable thinking mode. For kimi-k2-thinking, "
                 "thinking is always enabled. For kimi-k2.6, thinking is "
-                "enabled by default but can be disabled."
+                "enabled by default but can be disabled. When None, no "
+                "``thinking`` option is sent and the model's default "
+                "behavior applies. "
+                "Ignored for the Kimi K3 series, which always thinks."
             ),
         )
 
@@ -50,7 +72,7 @@ class MoonshotChatModel(ChatModelBase):
             default=None,
             title="Reasoning Effort",
             description=(
-                "The reasoning effort level for kimi-k3. "
+                "The reasoning effort level for Kimi K3 and K3.1 Pro. "
                 "Supports 'low', 'high', and 'max' "
                 "(default 'max')."
             ),
@@ -86,6 +108,7 @@ class MoonshotChatModel(ChatModelBase):
         context_size: int = 131072,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the Moonshot AI chat model.
 
@@ -93,7 +116,8 @@ class MoonshotChatModel(ChatModelBase):
             credential (`MoonshotCredential`):
                 The Moonshot AI credential used to authenticate API calls.
             model (`str`):
-                The model name, e.g. ``moonshot-v1-8k``, ``kimi-k2.6``.
+                The model name, e.g. ``moonshot-v1-8k``, ``kimi-k3.1-pro``,
+                or ``kimi-k3.1-pro-highspeed``.
             parameters (`MoonshotChatModel.Parameters | None`, defaults to \
             `None`):
                 The API parameters. When ``None``, the default parameters
@@ -113,6 +137,10 @@ class MoonshotChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -122,6 +150,7 @@ class MoonshotChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
         )
         self.formatter = formatter or MoonshotChatFormatter()
         self.client_kwargs = client_kwargs or {}
@@ -144,6 +173,27 @@ class MoonshotChatModel(ChatModelBase):
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        import openai
+
+        return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize explicit Moonshot content-filter errors."""
+        if not self.raise_on_content_filter:
+            return error
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="moonshot",
+            blocked_codes={"content_filter"},
+            phase=ContentBlockedPhase.UNKNOWN,
+            code_field="type",
+        )
+        return normalized or error
 
     async def _call_api(
         self,
@@ -181,13 +231,10 @@ class MoonshotChatModel(ChatModelBase):
             "stream": self.stream,
         }
 
-        is_k3 = model_name == "kimi-k3"
+        is_k3 = model_name in _K3_MODELS
 
         if self.parameters.max_tokens is not None:
-            if is_k3:
-                kwargs["max_completion_tokens"] = self.parameters.max_tokens
-            else:
-                kwargs["max_tokens"] = self.parameters.max_tokens
+            kwargs["max_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature
@@ -195,21 +242,55 @@ class MoonshotChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
+        if is_k3 and self.parameters.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.parameters.reasoning_effort
+
         kwargs.update(generate_kwargs)
 
-        if is_k3:
-            if self.parameters.reasoning_effort is not None:
-                kwargs["reasoning_effort"] = self.parameters.reasoning_effort
-        else:
+        if not is_k3 and self.parameters.thinking_enable is not None:
             thinking_type = (
                 "enabled" if self.parameters.thinking_enable else "disabled"
             )
-            kwargs.setdefault("extra_body", {})
-            kwargs["extra_body"].setdefault("thinking", {})
-            kwargs["extra_body"]["thinking"].setdefault(
-                "type",
-                thinking_type,
-            )
+            # Build a new dict so the caller's extra_body is never mutated
+            extra_body = kwargs.get("extra_body") or {}
+            kwargs["extra_body"] = {
+                **extra_body,
+                "thinking": {
+                    "type": thinking_type,
+                    **extra_body.get("thinking", {}),
+                },
+            }
+
+        if is_k3:
+            if "max_tokens" in kwargs:
+                kwargs.setdefault(
+                    "max_completion_tokens",
+                    kwargs.pop("max_tokens"),
+                )
+            # The API fixes these settings. Copy extra_body before filtering
+            # so SDK-level overrides cannot reintroduce them or mutate input.
+            omitted = {
+                "temperature",
+                "top_p",
+                "n",
+                "presence_penalty",
+                "frequency_penalty",
+                "thinking",
+            }
+            for key in omitted:
+                kwargs.pop(key, None)
+            if isinstance(kwargs.get("extra_body"), dict):
+                kwargs["extra_body"] = {
+                    key: value
+                    for key, value in kwargs["extra_body"].items()
+                    if key not in omitted
+                }
+                extra_body = kwargs["extra_body"]
+                if "max_tokens" in extra_body:
+                    extra_body.setdefault(
+                        "max_completion_tokens",
+                        extra_body.pop("max_tokens"),
+                    )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -254,6 +335,7 @@ class MoonshotChatModel(ChatModelBase):
         thinking_id: str = _generate_id()
         # The mapping from index to tool call id
         tool_call_mapping: dict = OrderedDict()
+        has_output = False
 
         async with response as stream:
             async for chunk in stream:
@@ -269,21 +351,42 @@ class MoonshotChatModel(ChatModelBase):
 
                 if chunk.usage:
                     u = chunk.usage
+                    details = getattr(u, "prompt_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
                         time=(datetime.now() - start_datetime).total_seconds(),
                         cache_input_tokens=getattr(
-                            u,
+                            details,
                             "cached_tokens",
                             0,
-                        ),
+                        )
+                        or 0
+                        if details
+                        else 0,
                     )
 
                 if not chunk.choices:
+                    # MoonShot emits a trailing usage-only chunk with no
+                    # choices; forward it as an empty-content delta so the
+                    # base class ``__call__`` can absorb ``usage`` into
+                    # ``acc_res``. The empty delta itself is filtered out
+                    # of the surfaced stream by ``_stream``.
+                    if usage is not None:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
+                blocked_error = _openai_compatible_response_block_error(
+                    choice,
+                    include_content_filter=self.raise_on_content_filter,
+                    provider="moonshot",
+                    request_id=response_id,
+                    partial_output=has_output,
+                )
+                if blocked_error is not None:
+                    raise blocked_error
                 delta = choice.delta
 
                 # Thinking
@@ -324,6 +427,7 @@ class MoonshotChatModel(ChatModelBase):
                     )
 
                 if delta_res.content or usage:
+                    has_output = has_output or bool(delta_res.content)
                     delta_res.usage = usage
                     yield delta_res
 
@@ -348,6 +452,14 @@ class MoonshotChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
+            blocked_error = _openai_compatible_response_block_error(
+                choice,
+                include_content_filter=self.raise_on_content_filter,
+                provider="moonshot",
+                request_id=getattr(response, "id", None),
+            )
+            if blocked_error is not None:
+                raise blocked_error
             reasoning = getattr(choice.message, "reasoning_content", None)
             if reasoning:
                 content_blocks.append(ThinkingBlock(thinking=reasoning))
@@ -367,11 +479,19 @@ class MoonshotChatModel(ChatModelBase):
         usage = None
         if response.usage:
             u = response.usage
+            details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                cache_input_tokens=getattr(u, "cached_tokens", 0),
+                cache_input_tokens=getattr(
+                    details,
+                    "cached_tokens",
+                    0,
+                )
+                or 0
+                if details
+                else 0,
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -395,8 +515,9 @@ class MoonshotChatModel(ChatModelBase):
 
         When ``tool_choice.tools`` is specified the schemas list is filtered
         to only those tools. When ``tool_choice.mode`` is a specific tool name
-        (str) the model is forced to call exactly that tool without needing to
-        filter the list, preserving prompt-cache efficiency.
+        (str), K3 models receive only that tool with ``required`` because
+        named tool choice is incompatible with always-on thinking. Other
+        models receive a named tool choice without filtering the list.
 
         Args:
             tools (`list[dict] | None`, optional):
@@ -420,53 +541,18 @@ class MoonshotChatModel(ChatModelBase):
         mode = tool_choice.mode
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            if self.model in _K3_MODELS and tools:
+                return [
+                    tool for tool in tools if tool["function"]["name"] == mode
+                ], "required"
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """Moonshot-specific override for structured output.
-
-        Moonshot rejects ``tool_choice="required"`` or an object-form
-        ``tool_choice`` when thinking mode is enabled. In that case we
-        default ``tool_choice`` to ``"auto"`` and rely on the base class's
-        injected system-reminder prompt to guide the model. When thinking
-        is disabled, this falls through to the base implementation.
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self.parameters.thinking_enable:
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Skip the disable-thinking fallback for the K3 series."""
+        if self.model in _K3_MODELS:
+            return {}
+        return {
+            "extra_body": {"thinking": {"type": "disabled"}},
+        }

@@ -10,10 +10,26 @@ export interface ChatModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	model_class: string;
 	parameters: Record<string, unknown>;
 }
 
 export interface TTSModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	voice_profile_id?: string | null;
+	parameters: Record<string, unknown>;
+}
+
+export interface ASRModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface RealtimeModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
@@ -40,13 +56,21 @@ export interface InviteConfig {
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
+/** Settings that apply when the agent talks in text. */
+export interface ChatConfig {
+	context_config: ContextConfig;
+	react_config: ReActConfig;
+	invite_config: InviteConfig;
+}
+
+/** Partial text-mode settings accepted by create and update requests. */
+export type ChatConfigInput = Partial<ChatConfig>;
+
 export interface AgentData {
 	id: string;
 	name: string;
 	system_prompt: string;
-	context_config: ContextConfig;
-	react_config: ReActConfig;
-	invite_config: InviteConfig;
+	chat_config: ChatConfig;
 }
 
 export interface AgentView extends RecordBase {
@@ -62,8 +86,12 @@ export interface AgentView extends RecordBase {
 export interface CreateAgentRequest {
 	name: string;
 	system_prompt?: string;
+	chat_config?: ChatConfigInput;
+	/** @deprecated Use `chat_config.context_config`. */
 	context_config?: ContextConfig;
+	/** @deprecated Use `chat_config.react_config`. */
 	react_config?: ReActConfig;
+	/** @deprecated Use `chat_config.invite_config`. */
 	invite_config?: InviteConfig;
 }
 
@@ -74,8 +102,12 @@ export interface CreateAgentResponse {
 export interface UpdateAgentRequest {
 	name?: string;
 	system_prompt?: string;
+	chat_config?: ChatConfigInput;
+	/** @deprecated Use `chat_config.context_config`. */
 	context_config?: ContextConfig;
+	/** @deprecated Use `chat_config.react_config`. */
 	react_config?: ReActConfig;
+	/** @deprecated Use `chat_config.invite_config`. */
 	invite_config?: InviteConfig;
 }
 
@@ -99,11 +131,10 @@ export interface AgentSchemaResponse {
 /**
  * Response of `GET /agent/schema/v2`. `schema` is the full `AgentData`
  * JSON Schema (with `$ref`s inlined, `id` filtered out, and
- * `context_config.summary_schema` filtered out). The frontend derives
- * its section grouping directly from `schema.properties`:
+ * `chat_config.context_config.summary_schema` filtered out). The
+ * frontend derives its section grouping directly from `schema`:
  *   - top-level scalar/textarea/boolean properties → "identity" section
- *   - top-level `object`-typed properties (currently `context_config`,
- *     `react_config`, and `invite_config`) → one section each
+ *   - each object under a mode block (`chat_config`) → one section
  */
 export interface AgentSchemaV2Response {
 	schema: JSONSchema;
@@ -111,15 +142,34 @@ export interface AgentSchemaV2Response {
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-export type SessionSource = 'user' | 'schedule' | 'channel';
+/** How a session came to exist — fixed when it is created. */
+export type SessionOrigin =
+	| { type: 'user' }
+	| { type: 'schedule'; schedule_id: string }
+	| {
+			type: 'channel';
+			channel_id: string;
+			chat_id: string;
+			chat_name: string | null;
+	  }
+	| { type: 'team' };
+
+/** The tag of a {@link SessionOrigin}. */
+export type SessionSourceKind = SessionOrigin['type'];
 
 export interface SessionConfig {
 	name: string;
+	/** Who owns `name` — see the backend's `SessionNaming`. */
+	naming: { auto: boolean };
 	chat_model_config: ChatModelConfig;
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** ASR model configuration. null means speech input is not enabled. */
+	asr_model_config: ASRModelConfig | null;
+	/** Realtime voice model configuration. null disables voice mode. */
+	realtime_model_config: RealtimeModelConfig | null;
 	/** Knowledge bases attached to this session + KB middleware parameters. */
 	knowledge_config: SessionKnowledgeConfig | null;
 	workspace_id: string;
@@ -137,9 +187,7 @@ export type AgentState = Record<string, unknown>;
 export interface SessionRecord extends RecordBase {
 	user_id: string;
 	agent_id: string;
-	source: SessionSource;
-	source_schedule_id: string | null;
-	source_channel_id: string | null;
+	origin: SessionOrigin;
 	/**
 	 * The team this session participates in, if any. Set when the
 	 * session is the leader of a team (the session that called
@@ -159,6 +207,10 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional ASR model. Omit (or pass null) for no speech input. */
+	asr_model_config?: ASRModelConfig | null;
+	/** Optional realtime voice model. Omit (or pass null) for none. */
+	realtime_model_config?: RealtimeModelConfig | null;
 	/** Optional knowledge base attachment. Omit (or null) for none. */
 	knowledge_config?: SessionKnowledgeConfig | null;
 }
@@ -188,6 +240,10 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/** New ASR model, or null to disable speech input. */
+	asr_model_config?: ASRModelConfig | null;
+	/** New realtime voice model, or null to disable voice mode. */
+	realtime_model_config?: RealtimeModelConfig | null;
 	/**
 	 * New knowledge base attachment. PATCH semantics:
 	 *   - omit the field → leave unchanged
@@ -357,6 +413,31 @@ export interface SessionView {
 	team: TeamDetailResponse | null;
 }
 
+// ─── Background tools ─────────────────────────────────────────────────────────
+
+export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface BackgroundTaskInfo {
+	task_id: string;
+	session_id: string;
+	agent_id: string;
+	tool_name: string;
+	summary: string;
+	status: BackgroundTaskStatus;
+	/** UTC date-time when the tool was registered for background execution. */
+	started_at: string;
+	/** Actual execution start, absent or null in records created by older servers. */
+	execution_started_at?: string | null;
+	completed_at: string | null;
+	error_summary: string | null;
+}
+
+export interface ListBackgroundTasksResponse {
+	tasks: BackgroundTaskInfo[];
+	/** Includes retained terminal tasks; this is not the running count. */
+	total: number;
+}
+
 // ─── JSON Schema ──────────────────────────────────────────────────────────────
 
 /**
@@ -445,10 +526,19 @@ import type {
 } from '@agentscope-ai/agentscope/event';
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
+export interface ClientExternalToolDefinition {
+	name: string;
+	description: string;
+	read_only: boolean;
+	input_schema: Record<string, unknown>;
+}
+
 export interface ChatRequest {
 	agent_id: string;
 	session_id: string;
 	input: Msg | Msg[] | UserConfirmResultEvent | ExternalExecutionResultEvent | null;
+	client_external_tools?: ClientExternalToolDefinition[];
+	client_builtin_tools?: Array<'AskUser'>;
 }
 
 // ─── MCP ──────────────────────────────────────────────────────────────────────
@@ -472,6 +562,8 @@ export interface HttpMCPConfig {
 export interface MCPClient {
 	name: string;
 	is_stateful: boolean;
+	/** Opt in to tool progress streaming; omitted means false. */
+	stream_progress?: boolean;
 	mcp_config: StdioMCPConfig | HttpMCPConfig;
 }
 
@@ -499,15 +591,6 @@ export interface Skill {
 	dir: string;
 	markdown: string;
 	updated_at: number;
-}
-
-/**
- * @deprecated The path is resolved on the server, which only means
- * anything for a single-host deployment. Upload a folder or install
- * from the library instead.
- */
-export interface AddSkillRequest {
-	skill_path: string;
 }
 
 // ─── Hub ──────────────────────────────────────────────────────────────────────
@@ -747,6 +830,8 @@ export interface CreateScheduleRequest {
 	description?: string;
 	cron_expression: string;
 	timezone?: string;
+	started_at?: string | null;
+	ended_at?: string | null;
 	agent_id: string;
 	chat_model_config: ChatModelConfig;
 	enabled?: boolean;
@@ -777,6 +862,7 @@ export interface ScheduleListResponse {
 
 export interface ModelCard {
 	type: 'chat_model';
+	model_class: string;
 	name: string;
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
@@ -796,6 +882,56 @@ export interface ListModelRequest {
 export interface ListModelResponse {
 	models: ModelCard[];
 	total: number;
+}
+
+export interface RealtimeModelCard {
+	type: 'realtime_model';
+	model_type: string;
+	name: string;
+	label: string;
+	status: 'active' | 'deprecated' | 'sunset';
+	deprecated_at: string | null;
+	release_date: string | null;
+	input_types: string[];
+	output_types: string[];
+	input_sample_rate: number;
+	output_sample_rate: number;
+	supports_tools: boolean;
+	interaction_mode: 'turn_based' | 'full_duplex';
+	delegation_backend: 'none' | 'session_chat';
+	max_context_tokens: number | null;
+	max_audio_turns: number | null;
+	max_audio_duration_s: number | null;
+	max_session_duration_s: number | null;
+	parameter_schema: Record<string, unknown>;
+	parameter_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListRealtimeModelResponse {
+	models: RealtimeModelCard[];
+	total: number;
+}
+
+export interface RealtimeIceServer {
+	urls: string | string[];
+	username?: string;
+	credential?: string;
+	credentialType?: 'password' | 'oauth';
+}
+
+export interface RealtimeConfigResponse {
+	ice_servers: RealtimeIceServer[];
+}
+
+export interface RealtimeOfferRequest {
+	agent_id: string;
+	sdp: string;
+	type: 'offer';
+}
+
+export interface RealtimeOfferResponse {
+	sdp: string;
+	type: 'answer';
 }
 
 // ─── Embedding ────────────────────────────────────────────────────────────────
@@ -838,6 +974,22 @@ export interface ListEmbeddingModelResponse {
 	total: number;
 }
 
+// ─── Chunker ──────────────────────────────────────────────────────────────────
+
+export interface ChunkerConfig {
+	type: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface ChunkerInfo {
+	type: string;
+	parameter_schema: JSONSchema;
+}
+
+export interface ListChunkersResponse {
+	chunkers: ChunkerInfo[];
+}
+
 // ─── Knowledge Base ───────────────────────────────────────────────────────────
 
 /**
@@ -849,6 +1001,7 @@ export interface KnowledgeBaseView {
 	name: string;
 	description: string;
 	embedding_model_config: EmbeddingModelConfig;
+	chunker_config?: ChunkerConfig;
 	created_at: string;
 	updated_at: string;
 	/**
@@ -857,17 +1010,57 @@ export interface KnowledgeBaseView {
 	 * shared with read-only permission.
 	 */
 	editable: boolean;
+	/** Number of documents registered in the knowledge base. */
+	document_count: number;
+	/** Total indexed chunks across all documents. */
+	chunk_count: number;
+	/**
+	 * Display name of the credential behind
+	 * `embedding_model_config.credential_id`, resolved server-side so
+	 * shared viewers see it too. `null` when the credential was deleted.
+	 */
+	credential_name: string | null;
+	/** Per-indexing-status document counts; always served. */
+	status_counts: KnowledgeBaseStatusCounts;
+}
+
+/** Documents of one knowledge base, counted by indexing status. */
+export interface KnowledgeBaseStatusCounts {
+	pending: number;
+	parsing: number;
+	chunking: number;
+	indexing: number;
+	ready: number;
+	error: number;
+}
+
+/** Query parameters accepted by `GET /knowledge_bases/`. */
+export interface ListKnowledgeBasesParams {
+	/** Filter down to one knowledge base — list doubles as get-single. */
+	id?: string;
+	/** Case-insensitive substring filter on the name. */
+	name?: string;
+	/** 1-based page number (default 1). */
+	page?: number;
+	/** Page size (default 30, max 128). */
+	page_size?: number;
+	orderby?: 'create_time' | 'update_time';
+	desc?: boolean;
 }
 
 export interface ListKnowledgeBasesResponse {
 	knowledge_bases: KnowledgeBaseView[];
+	/** Total across all pages (after filters), for page counts. */
 	total: number;
+	page: number;
+	page_size: number;
 }
 
 export interface CreateKnowledgeBaseRequest {
 	name: string;
 	description?: string;
 	embedding_model_config: EmbeddingModelConfig;
+	chunker_config: ChunkerConfig;
 }
 
 export interface CreateKnowledgeBaseResponse {
@@ -918,9 +1111,28 @@ export interface KnowledgeDocumentView {
 	updated_at: string;
 }
 
+/** Query parameters accepted by `GET /knowledge_bases/{id}/documents`. */
+export interface ListKnowledgeDocumentsParams {
+	/** Filter down to one document by id. */
+	id?: string;
+	/** Case-insensitive substring filter on the filename. */
+	keywords?: string;
+	/** Filter by indexing status. */
+	status?: KnowledgeDocumentStatus;
+	/** 1-based page number (default 1). */
+	page?: number;
+	/** Page size (default 30, max 128). */
+	page_size?: number;
+	orderby?: 'create_time' | 'update_time';
+	desc?: boolean;
+}
+
 export interface ListKnowledgeDocumentsResponse {
 	documents: KnowledgeDocumentView[];
+	/** Total across all pages (after filters), for page counts. */
 	total: number;
+	page: number;
+	page_size: number;
 }
 
 export interface ListKnowledgeDocumentStatusResponse {
@@ -949,6 +1161,29 @@ export interface KnowledgeChunk {
 	chunk_index: number;
 	total_chunks: number;
 	metadata: Record<string, unknown>;
+}
+
+/**
+ * Response of `GET /knowledge_bases/{id}/documents/{doc}/chunks` —
+ * one page of a document's chunks in `chunk_index` order.
+ */
+export interface ListDocumentChunksResponse {
+	chunks: KnowledgeChunk[];
+	/** Total chunks in the document; `0` while it is still indexing. */
+	total: number;
+	page: number;
+	page_size: number;
+}
+
+/**
+ * Response of `POST /knowledge_bases/{id}/documents/{doc}/download_token`
+ * — a short-lived capability for browser-native fetches (`<iframe>`,
+ * `<img>`, download links) that cannot carry the `X-User-ID` header.
+ */
+export interface DocumentDownloadTokenResponse {
+	token: string;
+	/** Unix timestamp after which the token is refused. */
+	expires_at: number;
 }
 
 /**
@@ -1067,7 +1302,9 @@ export interface ChannelRecord {
 export interface CreateChannelRequest {
 	channel_type: string;
 	name?: string | null;
-	credentials: Record<string, unknown>;
+	credentials?: Record<string, unknown>;
+	/** Completed binding to take the credentials from, instead of sending them. */
+	credential_binding_id?: string | null;
 	platform_config?: Record<string, unknown>;
 	routing: RoutingConfig;
 	session: SessionSettings;
@@ -1090,6 +1327,19 @@ export interface ChannelTypeSchema {
 	credentials_schema: Record<string, unknown>;
 	config_schema: Record<string, unknown>;
 	platform_bot_id_field?: string;
+	/** Whether the platform can hand its credentials over interactively. */
+	supports_credential_binding?: boolean;
+}
+
+export type BindingState = 'pending' | 'authorized' | 'failed' | 'cancelled';
+
+export interface BindingView {
+	binding_id: string;
+	state: BindingState;
+	/** Where the operator must approve; rendered as a QR code. */
+	verification_url: string;
+	error: string;
+	retry_after_secs: number;
 }
 
 export type ChannelState = 'stopped' | 'connecting' | 'retrying' | 'connected' | 'failed';
@@ -1108,6 +1358,33 @@ export interface ChannelChatIdsResponse {
 	chats: { chat_id: string; name: string; source: string }[];
 }
 
+// ─── ASR ──────────────────────────────────────────────────────────────────────
+
+export interface ASRModelCard {
+	type: 'asr_model';
+	name: string;
+	label: string;
+	input_types: string[];
+	output_types: string[];
+	realtime: boolean;
+	parameter_schema: Record<string, unknown>;
+	parameters_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListASRModelResponse {
+	models: ASRModelCard[];
+	total: number;
+}
+
+export interface TranscriptionResponse {
+	text: string;
+}
+
+export interface RealtimeASRTokenResponse {
+	token: string;
+	expires_at: number;
+}
+
 // ─── TTS ──────────────────────────────────────────────────────────────────────
 
 export interface TTSModelCard {
@@ -1119,6 +1396,7 @@ export interface TTSModelCard {
 	input_types: string[];
 	output_types: string[];
 	realtime: boolean;
+	voice_cloning: boolean;
 	parameter_schema: Record<string, unknown>;
 	parameters_overrides: Record<string, Record<string, unknown>>;
 }

@@ -1,48 +1,46 @@
 # -*- coding: utf-8 -*-
 """The MiniMax credential."""
+
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import ConfigDict, Field, SecretStr
+from pydantic import Field, SecretStr
 
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
-    from ..model import ModelCard
+    from ..model import ChatModelBase
     from ..tts import TTSModelBase
 
+# MiniMax's recommended Anthropic-compatible endpoint (international site)
+_MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 
-_MINIMAX_GLOBAL_BASE_URL = "https://api.minimax.io"
 
-
-class MiniMaxCredential(CredentialBase):  # pylint: disable=abstract-method
-    """The credential for MiniMax APIs."""
-
-    model_config = ConfigDict(
-        title="MiniMax API",
-    )
+class MiniMaxCredential(CredentialBase):
+    """The MiniMax credential model."""
 
     type: Literal["minimax_credential"] = "minimax_credential"
     """The credential type."""
 
     api_key: SecretStr = Field(
         description="The MiniMax API key.",
-        title="API Key",
     )
     """The API key."""
 
-    base_url: Literal[
-        "https://api.minimax.io",
-        "https://api.minimaxi.com",
-    ] = Field(
-        default=_MINIMAX_GLOBAL_BASE_URL,
-        description="The regional base URL for the MiniMax API.",
+    base_url: str = Field(
+        default=_MINIMAX_BASE_URL,
+        description=(
+            "The base URL for the MiniMax Anthropic-compatible API, use "
+            "``https://api.minimax.cn/anthropic`` for China mainland."
+        ),
     )
-    """The regional base URL for the MiniMax API."""
+    """The base URL for the MiniMax API."""
 
     @classmethod
-    def list_models(cls) -> list["ModelCard"]:
-        """Return no chat models for this TTS-only credential."""
-        return []
+    def get_chat_model_class(cls) -> Type["ChatModelBase"]:
+        """Return the MiniMaxChatModel class."""
+        from ..model import MiniMaxChatModel
+
+        return MiniMaxChatModel
 
     @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:

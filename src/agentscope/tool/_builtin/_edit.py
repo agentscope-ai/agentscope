@@ -2,6 +2,7 @@
 """The edit tool in agentscope."""
 import difflib
 import fnmatch
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -56,8 +57,9 @@ Usage:
             },
             "old_string": {
                 "type": "string",
+                "minLength": 1,
                 "description": (
-                    "The exact string to replace. Must match exactly "
+                    "The nonempty string to replace. Must match exactly "
                     "including whitespace and indentation."
                 ),
             },
@@ -239,7 +241,10 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        escaped = glob.escape(parent)
+        pattern = (escaped.rstrip("/\\") + "/**") if escaped else "**"
 
         return [
             PermissionRule(
@@ -259,6 +264,18 @@ Usage:
         _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Execute the edit and return the result."""
+        if not old_string:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Error: old_string must not be empty. "
+                        "Use the Write tool to populate an empty file.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         # Validate file_path is absolute
         if not self._backend.isabs(file_path):
             return ToolChunk(
@@ -301,7 +318,13 @@ Usage:
 
         content = None
         if _agent_state is not None:
-            cache = await _agent_state.tool_context.get_cache(file_path)
+            # Take the mtime from the backend that reads the file, so the
+            # cache also works for sandbox-only paths.
+            mtime = await self._backend.stat_mtime(file_path)
+            cache = await _agent_state.tool_context.get_cache(
+                file_path,
+                mtime=mtime,
+            )
             if cache is None:
                 # Haven't read this file before
                 return ToolChunk(
@@ -321,9 +344,7 @@ Usage:
                 raw = await self._backend.read_file(file_path)
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(
-                    raw.decode("utf-8", errors="replace"),
-                )
+                content = _normalize_newlines(raw.decode("utf-8"))
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
@@ -384,6 +405,16 @@ Usage:
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
                 state=ToolResultState.ERROR,
                 is_last=True,
+            )
+
+        # Refresh the read cache so consecutive edits don't require a re-read
+        if _agent_state is not None:
+            await _agent_state.tool_context.cache_file(
+                file_path=file_path,
+                lines=_normalize_newlines(updated_content).splitlines(
+                    keepends=True,
+                ),
+                mtime=await self._backend.stat_mtime(file_path),
             )
 
         # Return success message

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Type, Any, AsyncGenerator
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from ._model_response import StructuredResponse, ChatResponse, FinishedReason
 from ._model_card import ModelCard
@@ -17,6 +17,11 @@ from ._utils import _StreamAccumulator
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..credential import CredentialBase
+from ..exception import (
+    ContentBlockedError,
+    StructuredOutputError,
+    ToolJSONDecodeError,
+)
 from ..message import (
     Msg,
     TextBlock,
@@ -67,6 +72,8 @@ class ChatModelBase:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         context_size: int = 32768,
+        raise_on_refusal: bool = False,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the chat model base.
 
@@ -87,6 +94,22 @@ class ChatModelBase:
                 Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether a provider's explicit refusal signal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Opt in to content-filter exceptions and SDK error
+                normalization, including structured-output calls. When
+                disabled, preserve legacy parsing and SDK exceptions.
+                This does not change the provider's filtering policy.
+
+        Content-block exceptions do not use this model's SDK retry budget.
+        Before a result or stream is returned, Agent may retry OUTPUT blocks
+        within ``ModelConfig.max_retries`` if no output was emitted and no
+        review is required. After a stream is returned, consumption errors
+        are surfaced without Agent retries or fallback-model switching,
+        even before the first chunk. This boundary depends on when the error
+        occurs, not just whether ``stream`` is enabled.
         """
         self.credential = credential
         self.model = model
@@ -95,6 +118,8 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self.raise_on_refusal = raise_on_refusal
+        self.raise_on_content_filter = raise_on_content_filter
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -104,6 +129,55 @@ class ChatModelBase:
         declare provider-specific retryable exceptions. SDK exception types
         should be imported lazily inside the override so the SDK stays an
         optional dependency.
+        """
+        return ()
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize a provider exception before retry classification.
+
+        Provider implementations can override this hook to translate SDK
+        exceptions into AgentScope exceptions such as
+        :class:`~agentscope.exception.ContentBlockedError`. Returning the
+        original exception preserves the default behavior.
+
+        The hook is used for ordinary calls, stream-consumption failures,
+        and structured-output calls. Return an exception rather than raising
+        it here: the caller classifies retries or structured-output fallback
+        and chains a replacement exception when raising it. Stream failures
+        are normalized without retrying inside the model stream wrapper.
+        This hook does not invoke agent recovery middleware.
+
+        Args:
+            error (`Exception`):
+                The exception raised by the provider SDK.
+
+        Returns:
+            `Exception`:
+                A normalized exception, or the original object unchanged
+                when the provider signal is not recognized.
+        """
+        return error
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Return kwargs that disable thinking for this provider.
+
+        Subclasses whose API supports a thinking/reasoning toggle
+        should override this to return the appropriate kwargs dict
+        (e.g. ``{"extra_body": {"enable_thinking": False}}``).
+
+        Used by the structured-output fallback mechanism.
+        """
+        return {}
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        """Provider exceptions that indicate the request shape was rejected
+        (e.g. a forced ``tool_choice`` while thinking is enabled), so that
+        another structured-output strategy may succeed. Subclasses should
+        return the provider's bad-request exception types; the default is
+        empty, i.e. only local structured-output failures trigger a fallback.
         """
         return ()
 
@@ -136,6 +210,7 @@ class ChatModelBase:
         yaml_files = list(yaml_dir.glob("*.yaml"))
 
         # Load each YAML file and create ModelCard
+        model_class_type = getattr(cls, "type", "")
         model_cards = []
         for yaml_file in yaml_files:
             try:
@@ -143,6 +218,7 @@ class ChatModelBase:
                     yaml_path=str(yaml_file),
                     parameter_class=cls.Parameters,
                 )
+                card.model_class = model_class_type
                 model_cards.append(card)
             except Exception as e:
                 # Log error but continue with other files
@@ -200,16 +276,19 @@ class ChatModelBase:
                 )
 
             except Exception as e:
-                if not isinstance(e, retryable):
+                normalized_error = self._normalize_exception(e)
+                if not isinstance(normalized_error, retryable):
+                    if normalized_error is not e:
+                        raise normalized_error from e
                     raise
-                last_error = e
+                last_error = normalized_error
                 if attempt < self.max_retries:
                     logger.warning(
                         "Attempt %d failed for model %s: %s. "
                         "Retrying in %.1fs...",
                         attempt + 1,
                         self.model,
-                        str(e),
+                        str(normalized_error),
                         self.retry_delay,
                     )
                     await asyncio.sleep(self.retry_delay)
@@ -238,6 +317,7 @@ class ChatModelBase:
             # For backward compatibility
             yield_acc_res = True
             acc_res = _StreamAccumulator()
+            emitted = False
             try:
                 async for chunk in res:
                     if not chunk.is_last:
@@ -255,10 +335,26 @@ class ChatModelBase:
                             continue
                     else:
                         yield_acc_res = False
+                    emitted = True
                     yield chunk
             except asyncio.CancelledError:
                 acc_res.finished_reason = FinishedReason.INTERRUPTED
                 yield_acc_res = True
+            except Exception as e:
+                normalized_error = self._normalize_exception(e)
+                if isinstance(normalized_error, ContentBlockedError):
+                    normalized_error.partial_output |= emitted
+                if normalized_error is not e:
+                    raise normalized_error from e
+                raise
+            finally:
+                # Closing this wrapper does not close the delegated iterator.
+                # Wait for provider cleanup before ``aclose`` returns.
+                aclose = getattr(res, "aclose", None)
+                if aclose is not None:
+                    maybe_awaitable = aclose()
+                    if inspect.isawaitable(maybe_awaitable):
+                        await maybe_awaitable
 
             if yield_acc_res:
                 yield acc_res.build()
@@ -436,10 +532,24 @@ class ChatModelBase:
         structured_model: Type[BaseModel] | dict,
         **kwargs: Any,
     ) -> StructuredResponse:
-        """Generate required structured output by the given model.
+        """Generate structured output, trying fallback strategies in order.
 
-        Shares the same retry settings (``max_retries``, ``retry_delay``, and
-        ``_get_retryable_exceptions()``) as the ``__call__`` method.
+        Each strategy is retried on transient (retryable) errors. A
+        :class:`~agentscope.exception.StructuredOutputError` (the model did
+        not produce a valid structured output) or a provider error listed in
+        ``_get_structured_output_fallback_exceptions()`` (e.g. a provider
+        rejecting a forced ``tool_choice`` while thinking is enabled) moves
+        on to the next strategy; any other error is raised immediately. The
+        strategies are immutable and local to each call:
+
+        - ``forced``: current config + forced ``tool_choice``
+        - ``auto``: current config + ``auto`` ``tool_choice``
+        - ``no_think``: thinking disabled + forced ``tool_choice`` (skipped
+          when the provider exposes no thinking toggle)
+        - ``none``: current config + no ``tool_choice``
+
+        An explicit ``tool_choice`` in ``kwargs`` bypasses the strategy
+        ladder and is forwarded unchanged.
 
         Args:
             messages (`list[Msg]`):
@@ -451,49 +561,113 @@ class ChatModelBase:
             `StructuredResponse`:
                 The structured response generated by the model.
         """
-
         if len(messages) == 0:
             raise ValueError(
                 "The input messages cannot be empty for the "
                 "`generate_structured_output` method.",
             )
 
+        user_tool_choice = kwargs.pop("tool_choice", None)
+        if user_tool_choice is None:
+            forced_tc = ToolChoice(mode="generate_structured_output")
+            disable_kwargs = self._get_disable_thinking_kwargs()
+            # (name, extra `_call_api` kwargs, tool_choice), best first.
+            # The no-think strategy only applies when the provider can
+            # toggle it.
+            strategies = (
+                ("forced", {}, forced_tc),
+                ("auto", {}, ToolChoice(mode="auto")),
+                *(
+                    (("no_think", disable_kwargs, forced_tc),)
+                    if disable_kwargs
+                    else ()
+                ),
+                ("none", {}, None),
+            )
+        else:
+            strategies = (("explicit", {}, user_tool_choice),)
+
         retryable = tuple(self._get_retryable_exceptions())
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                return await self._call_api_with_structured_output(
-                    self.model,
-                    messages=messages,
-                    structured_model=structured_model,
-                    **kwargs,
-                )
-            except Exception as e:
-                if not isinstance(e, retryable):
-                    raise
-                last_error = e
-                if attempt < self.max_retries:
-                    logger.warning(
-                        "Attempt %d failed for model %s: %s. "
-                        "Retrying in %.1fs...",
-                        attempt + 1,
-                        self.model,
-                        str(e),
-                        self.retry_delay,
-                    )
-                    await asyncio.sleep(self.retry_delay)
-                else:
-                    logger.warning(
-                        "All %d attempt(s) failed for model %s.",
-                        self.max_retries + 1,
-                        self.model,
-                    )
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError(
-            f"Failed to generate structured output after "
-            f"{self.max_retries + 1} retries.",
+        fallback: tuple[Type[Exception], ...] = (
+            StructuredOutputError,
+            *self._get_structured_output_fallback_exceptions(),
         )
+        first_error: Exception | None = None
+        last_error: Exception | None = None
+        for name, extra_kwargs, tool_choice in strategies:
+            # Overlay disable-thinking kwargs; a nested `extra_body` is
+            # merged rather than overwritten so caller keys survive.
+            merged = {**kwargs, **extra_kwargs}
+            for key, val in extra_kwargs.items():
+                if isinstance(val, dict) and isinstance(kwargs.get(key), dict):
+                    merged[key] = {**kwargs[key], **val}
+
+            for attempt in range(self.max_retries + 1):
+                try:
+                    result = await self._call_api_with_structured_output(
+                        self.model,
+                        messages=messages,
+                        structured_model=structured_model,
+                        tool_choice=tool_choice,
+                        **merged,
+                    )
+                    if name not in ("forced", "explicit"):
+                        logger.info(
+                            "Structured output for %s: using fallback "
+                            "strategy '%s'.",
+                            self.model,
+                            name,
+                        )
+                    return result
+                except Exception as e:  # pylint: disable=broad-except
+                    # CancelledError / KeyboardInterrupt derive from
+                    # BaseException and are not caught here, so they
+                    # propagate as expected.
+                    normalized_error = self._normalize_exception(e)
+                    if first_error is None:
+                        first_error = normalized_error
+                    last_error = normalized_error
+                    if isinstance(normalized_error, retryable):
+                        # Transient error: retry the same strategy. A
+                        # different strategy hits the same endpoint, so
+                        # switching would not help a rate limit or timeout.
+                        if attempt < self.max_retries:
+                            logger.warning(
+                                "Structured output attempt %d for %s "
+                                "failed: %s. Retrying in %.1fs...",
+                                attempt + 1,
+                                self.model,
+                                normalized_error,
+                                self.retry_delay,
+                            )
+                            await asyncio.sleep(self.retry_delay)
+                            continue
+                        if normalized_error is not e:
+                            raise normalized_error from e
+                        raise
+                    if not isinstance(normalized_error, fallback):
+                        if normalized_error is not e:
+                            raise normalized_error from e
+                        raise
+                    # Structured-output compatibility failure: try the next
+                    # strategy.
+                    logger.debug(
+                        "Structured output strategy '%s' failed for %s: %s. "
+                        "Trying next.",
+                        name,
+                        self.model,
+                        normalized_error,
+                    )
+                    break
+
+        if last_error is None:
+            raise RuntimeError(
+                f"No structured-output strategy is available for "
+                f"{self.model}.",
+            )
+        if first_error is not None and first_error is not last_error:
+            raise last_error from first_error
+        raise last_error
 
     async def _call_api_with_structured_output(
         self,
@@ -503,22 +677,15 @@ class ChatModelBase:
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
-        """This function constructs a 'generate_structured_output' tool to
-        help LLM generate structured output as a compromise for LLM APIs that
-        don't support structured output.
+        """Run a single structured-output attempt via a forced tool call.
 
-        If your subclasses inherit from `ChatModelBase` and the underlying
-        API supports structured output, you can override this method to
-        provide a more accurate implementation.
-
-        Note by default this method forces LLM to call the
-        'generate_structured_output' tool via tool_choice, and adds
-        instructions into the input messages. Subclasses whose underlying
-        API rejects forced tool_choice in certain modes (e.g. DashScope in
-        thinking mode) can pass ``tool_choice=ToolChoice(mode="auto")`` and
-        rely solely on the injected system-reminder prompt. LLM APIs that
-        don't support "required" tool choice may still fail (e.g. generate
-        text output and ignore the tool call, or fail in validation).
+        Constructs a ``generate_structured_output`` tool, asks the LLM to
+        call it (via ``tool_choice``), and validates the returned
+        arguments against ``structured_model``. Strategy selection and the
+        retry loop live in ``generate_structured_output``; this method
+        performs exactly one attempt with the given ``tool_choice`` and
+        ``kwargs``, and uses ``tool_choice`` as-is (``None`` is forwarded
+        unchanged, i.e. no forcing).
 
         Args:
             model_name (`str`):
@@ -529,20 +696,16 @@ class ChatModelBase:
                 A Pydantic model class or a JSON schema dict describing the
                 required output structure.
             tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``,
-                defaults to forcing the ``generate_structured_output`` tool.
+                The tool_choice forwarded to ``_call_api``, used as-is.
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
         """
-
+        func_name = "generate_structured_output"
         if isinstance(structured_model, dict):
             input_schema = structured_model
         else:
             input_schema = structured_model.model_json_schema()
 
-        func_name = "generate_structured_output"
-        if tool_choice is None:
-            tool_choice = ToolChoice(mode=func_name)
         instruction = (
             "<system-reminder>Now you **MUST** call the tool named "
             f"'{func_name}' to generate the structured output required "
@@ -604,38 +767,47 @@ class ChatModelBase:
             completed_response = res
 
         if completed_response is None or not completed_response.content:
-            raise RuntimeError(
+            raise StructuredOutputError(
                 f"Failed to get the completed response from model "
                 f"{model_name}.",
             )
 
         structured_output: dict[str, Any] | None = None
-        for _ in completed_response.content:
-            if isinstance(_, ToolCallBlock) and _.name == func_name:
-                structured_output = _json_loads_with_repair(
-                    _.input,
-                    input_schema,
+        try:
+            for _ in completed_response.content:
+                if isinstance(_, ToolCallBlock) and _.name == func_name:
+                    structured_output = _json_loads_with_repair(
+                        _.input,
+                        input_schema,
+                    )
+                    break
+
+            if structured_output is None:
+                raise StructuredOutputError(
+                    "Failed to generate structured output for model.",
                 )
-                break
 
-        if structured_output is None:
-            raise RuntimeError(
-                "Failed to generate structured output for model.",
-            )
+            # Validate the output
+            if isinstance(structured_model, dict):
+                jsonschema.validate(structured_output, structured_model)
 
-        # Validate the output
-        if isinstance(structured_model, dict):
-            jsonschema.validate(structured_output, structured_model)
+            elif issubclass(structured_model, BaseModel):
+                structured_model.model_validate(structured_output)
 
-        elif issubclass(structured_model, BaseModel):
-            structured_model.model_validate(structured_output)
-
-        else:
-            raise ValueError(
-                "The structured_model is expected to be a subclass of "
-                "Pydantic.BaseModel or a dict, "
-                f"but got {type(structured_model)}.",
-            )
+            else:
+                raise ValueError(
+                    "The structured_model is expected to be a subclass of "
+                    "Pydantic.BaseModel or a dict, "
+                    f"but got {type(structured_model)}.",
+                )
+        except (
+            ToolJSONDecodeError,
+            jsonschema.ValidationError,
+            PydanticValidationError,
+        ) as e:
+            raise StructuredOutputError(
+                f"Invalid structured output from model {model_name}: {e}",
+            ) from e
 
         return StructuredResponse(
             id=completed_response.id,

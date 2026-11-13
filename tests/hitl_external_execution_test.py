@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-builtin
 """Test the external execution events in the agent class."""
+import json
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
@@ -25,7 +27,10 @@ from agentscope.message import (
     UserMsg,
     ToolResultState,
 )
-from agentscope.event import ExternalExecutionResultEvent
+from agentscope.event import (
+    ExternalExecutionResultEvent,
+    RequireExternalExecutionEvent,
+)
 
 
 class MockExternalSequentialTool(ToolBase):
@@ -145,11 +150,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_END",
                 "block_id": AnyString(),
+                "text": None,
             },
             {
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
         ]
@@ -270,6 +278,49 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             },
         ]
 
+    async def test_external_input_is_normalized_after_repair(self) -> None:
+        """External clients receive valid JSON after input repair."""
+        self.agent.toolkit = Toolkit(
+            tools=[MockExternalSequentialTool()],
+        )
+        malformed_input = "{'input': 'test1'}"
+        response = ChatResponse(
+            content=[
+                ToolCallBlock(
+                    id=self.tool_call_id_1,
+                    name=self.sequential_tool_name,
+                    input=malformed_input,
+                ),
+            ],
+            is_last=True,
+            usage=None,
+        )
+        self.model.set_responses([[response]])
+
+        pending = None
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content=self.user_input_text),
+        ):
+            if isinstance(event, RequireExternalExecutionEvent):
+                pending = event
+
+        self.assertIsNotNone(pending)
+        assert pending is not None
+        normalized_input = pending.tool_calls[0].input
+        stored_call = self.agent.state.context[-1].content[0]
+        self.assertIsInstance(stored_call, ToolCallBlock)
+        assert isinstance(stored_call, ToolCallBlock)
+        self.assertEqual(
+            {
+                "parsed": json.loads(normalized_input),
+                "stored": stored_call.input,
+            },
+            {
+                "parsed": {"input": "test1"},
+                "stored": normalized_input,
+            },
+        )
+
     async def test_single_external_execution(self) -> None:
         """Test single external execution tool call.
 
@@ -344,6 +395,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -599,6 +652,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -933,6 +988,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -1263,6 +1320,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
                 "finished_reason": "completed",
             },
             *self._get_require_external_execution_events(
@@ -1471,6 +1530,132 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {**msg_base, **_} for _ in expected_context_final
         ]
         self.assertListEqual(context_dicts, expected_context_final)
+
+    async def test_external_resumptions_enforce_iteration_budget(self) -> None:
+        """Each resumed round counts toward the iteration budget."""
+        self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
+        for max_iters in (1, 2):
+            with self.subTest(max_iters=max_iters):
+                self.agent.react_config.max_iters = max_iters
+                tool_calls = [
+                    ToolCallBlock(
+                        id=call_id,
+                        name=self.concurrent_tool_name,
+                        input=self.tool_input_1,
+                    )
+                    for call_id in (
+                        self.tool_call_id_1,
+                        self.tool_call_id_2,
+                    )[:max_iters]
+                ]
+                self.model.set_responses(
+                    [
+                        *[
+                            ChatResponse(content=[call], is_last=True)
+                            for call in tool_calls
+                        ],
+                        self.final_mock_responses,
+                    ],
+                )
+                with patch.object(
+                    MockModel,
+                    "__call__",
+                    wraps=self.model.__call__,
+                ) as model_call:
+                    parked = await self.agent.reply(
+                        UserMsg(name="user", content=self.user_input_text),
+                    )
+                    self.assertEqual(
+                        (parked.finished_reason, self.agent.state.cur_iter),
+                        (None, 0),
+                    )
+                    for index, tool_call in enumerate(tool_calls, start=1):
+                        result = await self.agent.reply(
+                            ExternalExecutionResultEvent(
+                                reply_id=self.agent.state.reply_id,
+                                execution_results=[
+                                    ToolResultBlock(
+                                        id=tool_call.id,
+                                        name=tool_call.name,
+                                        output=[
+                                            TextBlock(
+                                                text=self.concurrent_result_1,
+                                            ),
+                                        ],
+                                        state=ToolResultState.SUCCESS,
+                                    ),
+                                ],
+                            ),
+                        )
+                        is_final = index == max_iters
+                        self.assertEqual(
+                            (
+                                result.finished_reason,
+                                self.agent.state.cur_iter,
+                                self.model.cnt,
+                            ),
+                            (
+                                "exceed_max_iters" if is_final else None,
+                                index + 1 if is_final else index,
+                                index + 1,
+                            ),
+                        )
+                    self.assertEqual(
+                        model_call.call_args.kwargs["tool_choice"].mode,
+                        "none",
+                    )
+
+    async def test_partial_external_resumption_counts_round_once(self) -> None:
+        """Partial results count only when the last tool call completes."""
+        self.agent.toolkit = Toolkit(tools=[MockExternalConcurrentTool()])
+        self.agent.react_config.max_iters = 2
+        tool_calls = [
+            ToolCallBlock(
+                id=call_id,
+                name=self.concurrent_tool_name,
+                input=self.tool_input_1,
+            )
+            for call_id in (self.tool_call_id_1, self.tool_call_id_2)
+        ]
+        self.model.set_responses(
+            [
+                ChatResponse(content=tool_calls, is_last=True),
+                self.final_mock_responses,
+            ],
+        )
+        parked = await self.agent.reply(
+            UserMsg(name="user", content=self.user_input_text),
+        )
+        self.assertEqual(
+            (
+                parked.finished_reason,
+                self.agent.state.cur_iter,
+                self.model.cnt,
+            ),
+            (None, 0, 1),
+        )
+        for index, tool_call in enumerate(tool_calls):
+            result = await self.agent.reply(
+                ExternalExecutionResultEvent(
+                    reply_id=self.agent.state.reply_id,
+                    execution_results=[
+                        ToolResultBlock(
+                            id=tool_call.id,
+                            name=tool_call.name,
+                            output=[TextBlock(text=self.concurrent_result_1)],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            )
+            self.assertEqual(
+                (
+                    result.finished_reason,
+                    self.agent.state.cur_iter,
+                    self.model.cnt,
+                ),
+                (None, 0, 1) if index == 0 else ("completed", 2, 2),
+            )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

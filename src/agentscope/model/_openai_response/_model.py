@@ -4,13 +4,19 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, List, TYPE_CHECKING, Type
 
+import openai
 from pydantic import BaseModel, Field
 
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import (
+    _enum_name,
+    _normalize_openai_compatible_content_error,
+)
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, OpenAIResponseFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -26,6 +32,127 @@ else:
 
 # kwargs accepted by Chat Completions but NOT by the Responses API.
 _RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
+_RESPONSE_REVIEW_ERROR_CODES = frozenset(
+    {
+        "BIO_POLICY",
+        "MISALIGNMENT_POLICY_VIOLATION",
+    },
+)
+_RESPONSE_BLOCK_ERROR_CODES = _RESPONSE_REVIEW_ERROR_CODES | {
+    "IMAGE_CONTENT_POLICY_VIOLATION",
+}
+
+
+def _openai_response_error(
+    error: Any,
+    *,
+    request_id: str | None,
+    partial_output: bool = False,
+) -> ContentBlockedError | None:
+    """Build an error from a recognized Responses API safety code.
+
+    Return ``None`` for a missing or unrecognized ``error.code``; do not
+    classify error text. The returned error has UNKNOWN phase because the
+    code alone does not establish whether input or output was blocked.
+    Copy the caller's ``request_id`` and ``partial_output`` flag unchanged;
+    the latter indicates output emitted before this signal. Mark policy
+    review stops explicitly; the shared exception does not classify codes.
+    """
+    code = _enum_name(getattr(error, "code", None))
+    if code not in _RESPONSE_BLOCK_ERROR_CODES:
+        return None
+    message = getattr(error, "message", None)
+    return ContentBlockedError(
+        message or f"OpenAI blocked the response: {code}.",
+        phase=ContentBlockedPhase.UNKNOWN,
+        provider="openai",
+        original_code=code.casefold(),
+        request_id=request_id,
+        partial_output=partial_output,
+        requires_review=code in _RESPONSE_REVIEW_ERROR_CODES,
+    )
+
+
+def _openai_response_block_error(
+    response: Any,
+    *,
+    partial_output: bool = False,
+    include_refusal: bool = False,
+    include_content_filter: bool = True,
+) -> ContentBlockedError | None:
+    """Build an error from explicit signals on a full Responses object.
+
+    Inspect the content-filter incomplete reason, then the safety error
+    object, then refusal content parts when ``include_refusal=True``.
+    Content filters and safety codes require ``include_content_filter``.
+    They do not depend on the refusal option. Ordinary
+    response text is never scanned for refusal phrases.
+
+    Return ``None`` if no supported signal is present. Otherwise use the
+    response ID and copy ``partial_output``, which the caller sets if output
+    was emitted before this signal. This helper does not consume a stream
+    or raise the returned error.
+    """
+    request_id = getattr(response, "id", None)
+    details = getattr(response, "incomplete_details", None)
+    reason = _enum_name(getattr(details, "reason", None))
+    if include_content_filter and reason == "CONTENT_FILTER":
+        return ContentBlockedError(
+            "OpenAI filtered the generated response.",
+            phase=ContentBlockedPhase.OUTPUT,
+            provider="openai",
+            original_code="content_filter",
+            request_id=request_id,
+            partial_output=partial_output,
+        )
+
+    error = _openai_response_error(
+        getattr(response, "error", None),
+        request_id=request_id,
+        partial_output=partial_output,
+    )
+    if include_content_filter and error is not None:
+        return error
+
+    if include_refusal:
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", None) != "message":
+                continue
+            for part in getattr(item, "content", []) or []:
+                if getattr(part, "type", None) != "refusal":
+                    continue
+                refusal = getattr(part, "refusal", None)
+                return ContentBlockedError(
+                    refusal or "OpenAI refused to generate the response.",
+                    phase=ContentBlockedPhase.OUTPUT,
+                    provider="openai",
+                    original_code="refusal",
+                    request_id=request_id,
+                    partial_output=partial_output,
+                )
+
+    return None
+
+
+def _dump_reasoning_item(item: Any) -> dict[str, Any]:
+    """Serialize a Responses API reasoning item for history replay.
+
+    ``exclude_none=True`` avoids emitting optional response-only fields as
+    explicit ``null`` values, which some Responses-compatible APIs reject
+    when the item is replayed as input.
+
+    Args:
+        item (`Any`):
+            The reasoning item returned by the OpenAI SDK.
+
+    Returns:
+        `dict[str, Any]`:
+            The JSON-safe item dictionary.
+    """
+    return item.model_dump(
+        mode="json",
+        exclude_none=True,
+    )
 
 
 class OpenAIResponseModel(ChatModelBase):
@@ -47,13 +174,15 @@ class OpenAIResponseModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
             description=(
-                "Whether to enable reasoning for reasoning models "
-                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
-                "control the depth of reasoning."
+                "None and True forward reasoning_effort as reasoning.effort "
+                "when it is set, including 'none'. If reasoning_effort is "
+                "unset, neither adds reasoning parameters; the provider "
+                "default applies. False overrides reasoning.effort with "
+                "'none' to request that reasoning be disabled."
             ),
         )
 
@@ -68,6 +197,9 @@ class OpenAIResponseModel(ChatModelBase):
                 "model-dependent and may include: none, minimal, low, "
                 "medium, high, xhigh."
             ),
+            json_schema_extra={
+                "x-reset-hidden-on-change": {"thinking_enable": None},
+            },
         )
 
         temperature: float | None = Field(
@@ -92,6 +224,8 @@ class OpenAIResponseModel(ChatModelBase):
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_refusal: bool = False,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the OpenAI Responses API chat model.
 
@@ -119,6 +253,13 @@ class OpenAIResponseModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            raise_on_refusal (`bool`, defaults to `False`):
+                Whether an explicit OpenAI refusal should raise a
+                ``ContentBlockedError`` instead of remaining normal output.
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -128,11 +269,11 @@ class OpenAIResponseModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
+            raise_on_refusal=raise_on_refusal,
         )
         self.formatter = formatter or OpenAIResponseFormatter()
         self.client_kwargs = client_kwargs or {}
-
-        import openai
 
         self.client: openai.AsyncClient = openai.AsyncClient(
             api_key=self.credential.api_key.get_secret_value(),
@@ -143,14 +284,38 @@ class OpenAIResponseModel(ChatModelBase):
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
-        import openai
-
         return (
             openai.APIConnectionError,
             openai.APITimeoutError,
             openai.RateLimitError,
             openai.InternalServerError,
         )
+
+    @classmethod
+    def _get_structured_output_fallback_exceptions(
+        cls,
+    ) -> tuple[Type[Exception], ...]:
+        return (openai.BadRequestError,)
+
+    def _normalize_exception(self, error: Exception) -> Exception:
+        """Normalize structured OpenAI Responses content-filter errors."""
+        if not self.raise_on_content_filter:
+            return error
+        normalized = _normalize_openai_compatible_content_error(
+            error,
+            provider="openai",
+            blocked_codes={
+                code.casefold() for code in _RESPONSE_BLOCK_ERROR_CODES
+            },
+            phase=ContentBlockedPhase.UNKNOWN,
+        )
+        if normalized is not None:
+            normalized.requires_review = (
+                _enum_name(normalized.original_code)
+                in _RESPONSE_REVIEW_ERROR_CODES
+            )
+            return normalized
+        return error
 
     async def _call_api(
         self,
@@ -194,10 +359,9 @@ class OpenAIResponseModel(ChatModelBase):
         if self.parameters.temperature is not None:
             api_kwargs["temperature"] = self.parameters.temperature
 
-        if (
-            self.parameters.thinking_enable
-            and self.parameters.reasoning_effort
-        ):
+        if self.parameters.thinking_enable is False:
+            api_kwargs["reasoning"] = {"effort": "none"}
+        elif self.parameters.reasoning_effort is not None:
             api_kwargs["reasoning"] = {
                 "effort": self.parameters.reasoning_effort,
             }
@@ -257,96 +421,209 @@ class OpenAIResponseModel(ChatModelBase):
         """
         usage: ChatUsage | None = None
         response_id: str = _generate_id()
-        text_id: str = _generate_id()
-        thinking_id: str = _generate_id()
+        text_block_ids: dict[tuple[str, int], str] = {}
+        reasoning_block_ids: dict[str, dict[tuple[str, int], str]] = {}
         # Mapping from Responses API item id (fc_xxx) to (call_id, name)
         # so subsequent argument deltas can be routed to the right tool
         # call block.
         tool_call_mapping: dict = OrderedDict()
+        # The item ids of the function calls that received argument text
+        tool_calls_with_input: set[str] = set()
+        has_output = False
 
-        async for event in response:
-            event_type = event.type
-            delta_res = ChatResponse(
-                content=[],
-                is_last=False,
-                id=response_id,
-            )
+        async with response as stream:
+            async for event in stream:
+                event_type = event.type
+                if event_type in {
+                    "response.failed",
+                    "response.incomplete",
+                    "response.completed",
+                }:
+                    blocked_error = _openai_response_block_error(
+                        event.response,
+                        include_content_filter=self.raise_on_content_filter,
+                        partial_output=has_output,
+                        include_refusal=self.raise_on_refusal,
+                    )
+                    if blocked_error is not None:
+                        raise blocked_error
 
-            if event_type == "response.reasoning_summary_text.delta":
-                # Reasoning summary text is NOT emitted by all models.
-                # As of 2026-05, o1 and o4-mini do not stream reasoning
-                # summary deltas. This handler exists for forward
-                # compatibility with models that do expose it.
-                delta_res.append_thinking(
-                    event.delta,
-                    block_id=thinking_id,
+                # The SDK doesn't raise on these events, so surface them here
+                if event_type in ("response.failed", "error"):
+                    error = (
+                        event.response.error
+                        if event_type == "response.failed"
+                        else event
+                    )
+                    if event_type == "error" and self.raise_on_content_filter:
+                        blocked_error = _openai_response_error(
+                            error,
+                            request_id=response_id,
+                            partial_output=has_output,
+                        )
+                        if blocked_error is not None:
+                            raise blocked_error
+                    raise openai.APIError(
+                        message=error.message if error else "Response failed",
+                        request=stream.response.request,
+                        body=error.model_dump() if error else None,
+                    )
+
+                if (
+                    event_type == "response.refusal.delta"
+                    and self.raise_on_refusal
+                ):
+                    raise ContentBlockedError(
+                        "OpenAI refused to generate the response.",
+                        phase=ContentBlockedPhase.OUTPUT,
+                        provider="openai",
+                        original_code="refusal",
+                        request_id=response_id,
+                        partial_output=has_output,
+                    )
+
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
                 )
 
-            elif event_type == "response.output_text.delta":
-                delta_res.append_text(event.delta, block_id=text_id)
-
-            elif event_type == "response.output_item.added":
-                item = event.item
-                if getattr(item, "type", None) == "function_call":
-                    # item.call_id (call_xxx) is used as ToolCallBlock.id
-                    # so the formatter can echo it back as
-                    # function_call.call_id / function_call_output.call_id.
-                    # Only record the mapping here — do NOT emit an
-                    # empty-input delta so downstream consumers don't see
-                    # a leading no-op chunk. The block is created on the
-                    # first argument delta below.
-                    tool_call_mapping[item.id] = (
-                        item.call_id,
-                        getattr(item, "name", "") or "unknown",
+                if event_type in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_text.delta",
+                }:
+                    # Summary and raw reasoning are distinct representations
+                    # and can both contain multiple parts for the same item.
+                    part_index = (
+                        event.summary_index
+                        if event_type
+                        == "response.reasoning_summary_text.delta"
+                        else event.content_index
+                    )
+                    delta_res.append_thinking(
+                        event.delta,
+                        block_id=reasoning_block_ids.setdefault(
+                            event.item_id,
+                            {},
+                        ).setdefault(
+                            (event_type, part_index),
+                            _generate_id(),
+                        ),
                     )
 
-            elif event_type == "response.function_call_arguments.delta":
-                item_id = event.item_id
-                if item_id in tool_call_mapping:
-                    call_id, name = tool_call_mapping[item_id]
-                    delta_res.append_tool_call(
-                        block_id=call_id,
-                        name=name,
-                        input=event.delta or "",
+                elif event_type in (
+                    "response.output_text.delta",
+                    "response.refusal.delta",
+                ):
+                    # Keep message content parts separate while accumulating
+                    # fragmented deltas into their original ordered blocks.
+                    delta_res.append_text(
+                        event.delta,
+                        block_id=text_block_ids.setdefault(
+                            (event.item_id, event.content_index),
+                            _generate_id(),
+                        ),
                     )
 
-            elif event_type == "response.completed":
-                resp = event.response
-                if resp.usage:
-                    u = resp.usage
-                    details = getattr(u, "input_tokens_details", None)
-                    usage = ChatUsage(
-                        input_tokens=u.input_tokens,
-                        output_tokens=u.output_tokens,
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_input_tokens=getattr(
-                            details,
-                            "cached_tokens",
-                            0,
+                elif event_type == "response.output_item.added":
+                    item = event.item
+                    if getattr(item, "type", None) == "function_call":
+                        # item.call_id (call_xxx) is used as ToolCallBlock.id
+                        # so the formatter can echo it back as
+                        # function_call.call_id / function_call_output.call_id.
+                        # Only record the mapping here — do NOT emit an
+                        # empty-input delta so downstream consumers don't see
+                        # a leading no-op chunk. The block is created on the
+                        # first argument delta below, or on the arguments-done
+                        # event when the call carries no arguments at all.
+                        tool_call_mapping[item.id] = (
+                            item.call_id,
+                            getattr(item, "name", "") or "unknown",
                         )
-                        if details
-                        else 0,
-                    )
-                # Attach reasoning item id metadata from the completed
-                # response so the formatter can echo it back in
-                # multi-turn history. The Responses API requires every
-                # function_call item to be accompanied by its preceding
-                # reasoning item (see the function-calling guide); the
-                # reasoning item may have an empty summary when the model
-                # does not expose it (e.g. o1/o4-mini as of 2026-05).
-                for output_item in getattr(resp, "output", []):
-                    if getattr(output_item, "type", None) == "reasoning":
-                        reasoning_item_id = getattr(output_item, "id", None)
-                        if reasoning_item_id:
-                            delta_res.append_thinking(
-                                thinking="",
-                                block_id=thinking_id,
-                                reasoning_item_id=reasoning_item_id,
-                            )
 
-            if delta_res.content or usage:
-                delta_res.usage = usage
-                yield delta_res
+                elif event_type == "response.function_call_arguments.delta":
+                    item_id = event.item_id
+                    if item_id in tool_call_mapping and event.delta:
+                        call_id, name = tool_call_mapping[item_id]
+                        tool_calls_with_input.add(item_id)
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=name,
+                            input=event.delta,
+                        )
+
+                elif event_type == "response.function_call_arguments.done":
+                    # A call without arguments streams no argument deltas, so
+                    # the block would never be created above; close it with
+                    # the empty object the non-streaming response carries.
+                    item_id = event.item_id
+                    if (
+                        item_id in tool_call_mapping
+                        and item_id not in tool_calls_with_input
+                    ):
+                        call_id, name = tool_call_mapping[item_id]
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=name,
+                            input=event.arguments or "{}",
+                        )
+
+                elif event_type == "response.completed":
+                    resp = event.response
+                    if resp.usage:
+                        u = resp.usage
+                        details = getattr(u, "input_tokens_details", None)
+                        usage = ChatUsage(
+                            input_tokens=u.input_tokens or 0,
+                            output_tokens=u.output_tokens or 0,
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_input_tokens=getattr(
+                                details,
+                                "cached_tokens",
+                                0,
+                            )
+                            or 0
+                            if details
+                            else 0,
+                        )
+                    # Attach reasoning item id metadata from the completed
+                    # response so the formatter can echo it back in
+                    # multi-turn history. The Responses API requires every
+                    # function_call item to be accompanied by its preceding
+                    # reasoning item (see the function-calling guide); the
+                    # reasoning item may have an empty summary when the model
+                    # does not expose it (e.g. o1/o4-mini as of 2026-05).
+                    for output_item in getattr(resp, "output", []):
+                        if getattr(output_item, "type", None) == "reasoning":
+                            reasoning_item_id = getattr(
+                                output_item,
+                                "id",
+                                None,
+                            )
+                            if reasoning_item_id:
+                                block_ids = reasoning_block_ids.setdefault(
+                                    reasoning_item_id,
+                                    {},
+                                )
+                                if not block_ids:
+                                    block_ids[("metadata", 0)] = _generate_id()
+                                reasoning_item_raw = _dump_reasoning_item(
+                                    output_item,
+                                )
+                                for block_id in block_ids.values():
+                                    delta_res.append_thinking(
+                                        thinking="",
+                                        block_id=block_id,
+                                        reasoning_item_id=reasoning_item_id,
+                                        reasoning_item_raw=reasoning_item_raw,
+                                    )
+
+                if delta_res.content or usage:
+                    has_output = has_output or bool(delta_res.content)
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _parse_completion_response(
         self,
@@ -364,7 +641,32 @@ class OpenAIResponseModel(ChatModelBase):
         Returns:
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
+
+        Raises:
+            `RuntimeError`:
+                If the response generation failed.
         """
+        blocked_error = _openai_response_block_error(
+            response,
+            include_content_filter=self.raise_on_content_filter,
+            include_refusal=self.raise_on_refusal,
+        )
+        if blocked_error is not None:
+            raise blocked_error
+
+        # HTTP 200 responses can contain failed generations without the SDK
+        # raising an exception. Surface them before parsing partial output.
+        if response.status == "failed":
+            error = response.error
+            details = (
+                f"{error.code}: {error.message}"
+                if error
+                else "no error details"
+            )
+            raise RuntimeError(
+                f"OpenAI response '{response.id}' failed: {details}",
+            )
+
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         for item in response.output:
@@ -372,19 +674,33 @@ class OpenAIResponseModel(ChatModelBase):
 
             if item_type == "reasoning":
                 reasoning_item_id = getattr(item, "id", None)
-                combined_summary = " ".join(
-                    getattr(s, "text", "")
-                    for s in getattr(item, "summary", [])
-                    if getattr(s, "text", "")
-                )
+                reasoning_item_raw = _dump_reasoning_item(item)
+                # Serialize once to handle both SDK content objects and
+                # provider-specific content dictionaries uniformly. Keep
+                # summary and raw reasoning in separate thinking blocks.
+                summary_parts = [
+                    part["text"]
+                    for part in reasoning_item_raw.get("summary", []) or []
+                    if part.get("text")
+                ]
+                reasoning_parts = [
+                    part["text"]
+                    for part in reasoning_item_raw.get("content", []) or []
+                    if part.get("type") == "reasoning_text"
+                    and part.get("text")
+                ]
+                thinking_texts = summary_parts + reasoning_parts
                 # Keep even empty-summary reasoning items: the API requires
                 # reasoning_item_id to be echoed back in multi-turn history.
-                if combined_summary or reasoning_item_id:
+                if not thinking_texts and reasoning_item_id:
+                    thinking_texts = [""]
+                for thinking in thinking_texts:
                     content_blocks.append(
                         ThinkingBlock(
                             type="thinking",
-                            thinking=combined_summary,
+                            thinking=thinking,
                             reasoning_item_id=reasoning_item_id,
+                            reasoning_item_raw=reasoning_item_raw,
                         ),
                     )
 
@@ -393,6 +709,10 @@ class OpenAIResponseModel(ChatModelBase):
                     if getattr(part, "type", None) == "output_text":
                         content_blocks.append(
                             TextBlock(type="text", text=part.text),
+                        )
+                    elif getattr(part, "type", None) == "refusal":
+                        content_blocks.append(
+                            TextBlock(type="text", text=part.refusal),
                         )
 
             elif item_type == "function_call":
@@ -409,14 +729,15 @@ class OpenAIResponseModel(ChatModelBase):
             u = response.usage
             details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.input_tokens or 0,
+                output_tokens=u.output_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
                     0,
                 )
+                or 0
                 if details
                 else 0,
             )

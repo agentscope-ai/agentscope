@@ -16,14 +16,18 @@ delete flow through ``TestClient``.  Verifies that:
 * delete tears down the vector-store and storage records together.
 """
 import asyncio
+import io
 import tempfile
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
 from agentscope.app import create_app
+from agentscope.app._service import KnowledgeBaseService, ResourceAccessService
 from agentscope.app.rag.blob_store import LocalBlobStore
 from agentscope.app.rag.knowledge_base_manager import (
     KnowledgeBaseManagerBase,
@@ -35,9 +39,12 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
 )
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeBaseData,
     KnowledgeBaseRecord,
+    KnowledgeDocumentData,
+    KnowledgeDocumentRecord,
     RedisStorage,
 )
 from agentscope.app.workspace_manager._base import WorkspaceManagerBase
@@ -105,6 +112,26 @@ class _FakeVectorStore(VectorStoreBase):
     ) -> list[DocumentSummary]:
         return []
 
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list:
+        del metadata_filter  # single-tenant fake — nothing to scope
+        matched = sorted(
+            (
+                record.chunk
+                for record in self._collections.get(collection, [])
+                if record.document_id == document_id
+            ),
+            key=lambda chunk: chunk.chunk_index,
+        )
+        return matched[offset : offset + limit]
+
 
 class _FakeKnowledge:
     """Minimal stand-in for :class:`KnowledgeBase` used by the worker.
@@ -170,6 +197,34 @@ class _FakeKnowledge:
         """
         await self._vector_store.delete(self._collection_name, document_id)
 
+    async def list_chunks(
+        self,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> list:
+        """Delegate chunk listing to the bound fake vector store.
+
+        Args:
+            document_id (`str`):
+                The document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+
+        Returns:
+            `list`:
+                The requested page of chunks.
+        """
+        return await self._vector_store.list_chunks(
+            self._collection_name,
+            document_id,
+            offset=offset,
+            limit=limit,
+        )
+
     async def search(self, queries: list, top_k: int = 5) -> list:
         """Return an empty result list — search is out of scope here.
 
@@ -206,6 +261,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         name: str,
         description: str,
         embedding_model_config: EmbeddingModelConfig,
+        chunker_config: ChunkerConfig | None = None,
     ) -> KnowledgeBaseRecord:
         record = KnowledgeBaseRecord(
             user_id=user_id,
@@ -449,3 +505,281 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
             self.assertEqual(resp.json()["items"], [])
+
+    async def test_failed_kb_delete_preserves_source_file_for_retry(
+        self,
+    ) -> None:
+        """A vector-store failure must not destroy a document's source."""
+        payload = b"original document content"
+        document_id = "doc-1"
+        headers = {"X-User-ID": "user-1"}
+
+        async def _seed_document() -> KnowledgeDocumentRecord:
+            blob_uri = await self._app.state.blob_store.write_stream(
+                key=f"kb/{self._kb_id}/{document_id}",
+                stream=io.BytesIO(payload),
+            )
+            return await self._app.state.storage.upsert_knowledge_document(
+                "user-1",
+                KnowledgeDocumentRecord(
+                    id=document_id,
+                    user_id="user-1",
+                    knowledge_base_id=self._kb_id,
+                    status="ready",
+                    data=KnowledgeDocumentData(
+                        filename="original.txt",
+                        size=len(payload),
+                        content_type="text/plain",
+                        blob_uri=blob_uri,
+                    ),
+                ),
+            )
+
+        with TestClient(self._app, raise_server_exceptions=False) as client:
+            document = client.portal.call(_seed_document)
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            expected_documents = response.json()
+            self.assertEqual(
+                [item["id"] for item in expected_documents["documents"]],
+                [document_id],
+            )
+
+            with patch.object(
+                self._vector_store,
+                "delete_collection",
+                side_effect=RuntimeError("vector store unavailable"),
+            ):
+                response = client.delete(
+                    f"/knowledge_bases/{self._kb_id}",
+                    headers=headers,
+                )
+            self.assertEqual(response.status_code, 500)
+
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), expected_documents)
+            self.assertEqual(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    document_id,
+                ),
+                document,
+            )
+
+            response = client.get(
+                f"/knowledge_bases/{self._kb_id}/documents/{document_id}",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content, payload)
+
+            response = client.delete(
+                f"/knowledge_bases/{self._kb_id}",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 204)
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_base,
+                    "user-1",
+                    self._kb_id,
+                ),
+            )
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.storage.get_knowledge_document,
+                    "user-1",
+                    self._kb_id,
+                    document_id,
+                ),
+            )
+            self.assertEqual(self._vector_store._collections, {})
+            self.assertIsNone(
+                client.portal.call(
+                    self._app.state.blob_store.size,
+                    document.data.blob_uri,
+                ),
+            )
+
+    @asynccontextmanager
+    async def _paused_upload(
+        self,
+        target: Any,
+        method: str,
+        *,
+        after: bool = False,
+    ) -> AsyncIterator[
+        tuple[asyncio.Task[KnowledgeDocumentRecord], KnowledgeDocumentRecord]
+    ]:
+        """Pause a real registration before or after a storage operation."""
+        state = self._app.state
+        storage = state.storage
+        service = KnowledgeBaseService(
+            storage,
+            state.knowledge_base_manager,
+            state.blob_store,
+            state.message_bus,
+            ResourceAccessService(storage, state.resource_access_policy),
+        )
+        reached = asyncio.Event()
+        original = getattr(target, method)
+
+        async def pause(*args: Any, **kwargs: Any) -> None:
+            if after:
+                await original(*args, **kwargs)
+            reached.set()
+            await asyncio.Event().wait()
+
+        async with storage:
+            with (
+                patch.object(target, method, side_effect=pause),
+                patch.object(
+                    storage,
+                    "upsert_knowledge_document",
+                    wraps=storage.upsert_knowledge_document,
+                ) as write,
+            ):
+                task = asyncio.create_task(
+                    service.register_document(
+                        "user-1",
+                        self._kb_id,
+                        "cancel.txt",
+                        io.BytesIO(b"abc"),
+                        3,
+                    ),
+                )
+                try:
+                    await asyncio.wait_for(reached.wait(), timeout=5)
+                    record = write.await_args.args[1]
+                    self.assertTrue(
+                        await state.blob_store.exists(record.data.blob_uri),
+                    )
+                    yield task, record
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+    async def _cancel_upload(
+        self,
+        task: asyncio.Task[KnowledgeDocumentRecord],
+    ) -> None:
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+
+    async def test_cancelled_registration_cleans_up_source_blob(self) -> None:
+        """Cancellation before persistence deletes the source blob."""
+        state = self._app.state
+        async with self._paused_upload(
+            state.storage,
+            "upsert_knowledge_document",
+        ) as (task, record):
+            await self._cancel_upload(task)
+            self.assertFalse(
+                await state.blob_store.exists(record.data.blob_uri),
+            )
+
+    async def test_repeated_cancellation_during_delete_cleans_up_source_blob(
+        self,
+    ) -> None:
+        """A second cancellation during delete must not interrupt cleanup."""
+        state = self._app.state
+        started = asyncio.Event()
+        resume = asyncio.Event()
+        done = asyncio.Event()
+        delete = state.blob_store.delete
+
+        async def slow_delete(uri: str) -> None:
+            started.set()
+            try:
+                await resume.wait()
+                await delete(uri)
+            finally:
+                done.set()
+
+        async with self._paused_upload(
+            state.storage,
+            "upsert_knowledge_document",
+        ) as (task, record):
+            with patch.object(
+                state.blob_store,
+                "delete",
+                side_effect=slow_delete,
+            ):
+                task.cancel()
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=5)
+                    await self._cancel_upload(task)
+                finally:
+                    resume.set()
+                await asyncio.wait_for(done.wait(), timeout=5)
+            self.assertFalse(
+                await state.blob_store.exists(record.data.blob_uri),
+            )
+
+    async def test_cancellation_after_storage_upsert_preserves_source_blob(
+        self,
+    ) -> None:
+        """A fully persisted record retains its source file."""
+        await self._assert_persisted_blob(
+            self._app.state.storage,
+            "upsert_knowledge_document",
+            after=True,
+        )
+
+    async def test_cancellation_after_redis_set_preserves_source_blob(
+        self,
+    ) -> None:
+        """The document SET can commit before the first index SADD."""
+        await self._assert_persisted_blob(self._fr, "sadd")
+
+    async def _assert_persisted_blob(
+        self,
+        target: Any,
+        method: str,
+        *,
+        after: bool = False,
+    ) -> None:
+        state = self._app.state
+        async with self._paused_upload(target, method, after=after) as (
+            task,
+            record,
+        ):
+            await self._cancel_upload(task)
+            stored = await state.storage.get_knowledge_document(
+                "user-1",
+                self._kb_id,
+                record.id,
+            )
+            self.assertEqual(stored, record)
+            self.assertTrue(
+                await state.blob_store.exists(record.data.blob_uri),
+            )
+
+    async def test_cancellation_lookup_failure_preserves_source_blob(
+        self,
+    ) -> None:
+        """An inconclusive lookup must leave the file intact."""
+        state = self._app.state
+        async with self._paused_upload(
+            state.storage,
+            "upsert_knowledge_document",
+        ) as (task, record):
+            with patch.object(
+                state.storage,
+                "get_knowledge_document",
+                side_effect=RuntimeError("lookup failed"),
+            ):
+                await self._cancel_upload(task)
+            self.assertTrue(
+                await state.blob_store.exists(record.data.blob_uri),
+            )

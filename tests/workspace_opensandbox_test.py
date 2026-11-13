@@ -5,13 +5,14 @@ The whole module is skipped when the ``OPENSANDBOX_DOMAIN`` environment
 variable is not set, because every test requires a live OpenSandbox
 service.
 """
+
 import os
 import unittest
-from unittest.async_case import IsolatedAsyncioTestCase
+
+from sandbox_test_support import CheckoutWheelTestCase
 
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.workspace import OpenSandboxWorkspace
-
 
 # ── OpenSandbox availability check ─────────────────────────────────
 
@@ -24,7 +25,7 @@ _SKIP_REASON = "OPENSANDBOX_DOMAIN environment variable is not set"
 
 
 @unittest.skipUnless(_DOMAIN, _SKIP_REASON)
-class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
+class TestOpenSandboxWorkspaceLifecycle(CheckoutWheelTestCase):
     """Test cases for OpenSandboxWorkspace lifecycle and MCP integration.
 
     Each test creates a real OpenSandbox sandbox and tears it down
@@ -33,12 +34,14 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
     access are unaffected.
     """
 
+    workspace_type = OpenSandboxWorkspace
+
     async def test_initialize_and_list_mcps(self) -> None:
         """``initialize`` starts the sandbox and ``list_mcps`` enumerates MCPs.
 
         Verifies:
         1. The workspace initializes without raising.
-        2. ``list_mcps`` returns at least the seeded MCP (browser-use).
+        2. ``list_mcps`` returns at least the seeded MCP (playwright).
         3. Each MCP exposes at least one tool via ``list_raw_tools``.
         4. ``close`` (sandbox pause) completes without raising.
         """
@@ -47,7 +50,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             api_key=_API_KEY,
             default_mcps=[
                 MCPClient(
-                    name="browser-use",
+                    name="playwright",
                     mcp_config=StdioMCPConfig(
                         command="npx",
                         args=["@playwright/mcp@latest"],

@@ -223,16 +223,27 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["runId"], "reply_1")
 
     async def test_exceed_max_iters_to_run_error(self) -> None:
-        """Test ExceedMaxItersEvent -> RUN_ERROR."""
+        """Test ReplyEndEvent with EXCEED_MAX_ITERS -> RUN_ERROR."""
+        event = ReplyEndEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "RUN_ERROR")
+        self.assertEqual(result["code"], "exceed_max_iters")
+
+    async def test_deprecated_exceed_max_iters_to_custom(self) -> None:
+        """Test the deprecated ExceedMaxItersEvent -> CUSTOM."""
         event = ExceedMaxItersEvent(
             reply_id="reply_1",
             name="my_agent",
         )
         result = self.mw._convert_to_protocol(event)
 
-        self.assertEqual(result["type"], "RUN_ERROR")
-        self.assertIn("my_agent", result["message"])
-        self.assertEqual(result["code"], "exceed_max_iters")
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "exceed_max_iters")
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
@@ -455,7 +466,7 @@ class AGUIProtocolToolResultTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["type"], "TOOL_CALL_RESULT")
         self.assertEqual(result["toolCallId"], "tc_1")
-        self.assertEqual(result["messageId"], "reply_1")
+        self.assertEqual(result["messageId"], "reply_1:tc_1")
         self.assertEqual(result["content"], "partial result")
 
     async def test_tool_result_end_fallback_to_state(self) -> None:
@@ -469,7 +480,52 @@ class AGUIProtocolToolResultTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["type"], "TOOL_CALL_RESULT")
+        self.assertEqual(result["messageId"], "reply_1:tc_1")
         self.assertEqual(result["content"], "error")
+
+    async def test_multiple_tool_results_use_unique_message_ids(self) -> None:
+        """Test that two tool results of one reply get distinct ids."""
+        for tool_call_id, delta in (
+            ("tc_1", "result A"),
+            ("tc_2", "result B"),
+        ):
+            self.mw._convert_to_protocol(
+                ToolResultTextDeltaEvent(
+                    reply_id="reply_1",
+                    tool_call_id=tool_call_id,
+                    delta=delta,
+                ),
+            )
+
+        results = [
+            self.mw._convert_to_protocol(
+                ToolResultEndEvent(
+                    reply_id="reply_1",
+                    tool_call_id=tool_call_id,
+                    state=ToolResultState.SUCCESS,
+                ),
+            )
+            for tool_call_id in ("tc_2", "tc_1")
+        ]
+
+        self.assertListEqual(
+            results,
+            [
+                {
+                    "type": "TOOL_CALL_RESULT",
+                    "messageId": "reply_1:tc_2",
+                    "toolCallId": "tc_2",
+                    "content": "result B",
+                },
+                {
+                    "type": "TOOL_CALL_RESULT",
+                    "messageId": "reply_1:tc_1",
+                    "toolCallId": "tc_1",
+                    "content": "result A",
+                },
+            ],
+        )
+        self.assertDictEqual(self.mw._tool_result_buffers, {})
 
     async def test_tool_result_start_to_custom(self) -> None:
         """Test ToolResultStartEvent -> CUSTOM."""

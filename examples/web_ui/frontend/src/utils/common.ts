@@ -1,3 +1,10 @@
+import type { CredentialView } from '@/api';
+
+/** Display label for a credential: its user-facing name, or a short id prefix. */
+export function credentialLabel(credential: CredentialView): string {
+	return (credential.data.name as string) || credential.id.slice(0, 8);
+}
+
 /**
  * Copy a string to the system clipboard.
  *

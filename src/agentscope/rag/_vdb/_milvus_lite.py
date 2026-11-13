@@ -6,9 +6,9 @@ started automatically when the URI points to a local ``.db`` file, so it
 is convenient for local development, tests, and small RAG workloads.
 """
 import asyncio
+import hashlib
 import json
 import os
-import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._vector_store import (
@@ -65,8 +65,14 @@ class MilvusLiteStore(VectorStoreBase):
                 Extra keyword arguments forwarded to
                 :class:`pymilvus.MilvusClient`.
             batch_size (`int`, defaults to ``256``):
-                Batch size used by inserts and document listing.
+                Positive batch size used by inserts and document listing.
+
+        Raises:
+            ValueError: If ``batch_size`` is not positive.
         """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+
         self._uri = uri
         self._metric_type = metric_type
         self._index_type = index_type
@@ -188,6 +194,31 @@ class MilvusLiteStore(VectorStoreBase):
             collection_name=name,
         )
 
+    async def _ensure_loaded(
+        self,
+        client: "MilvusClient",
+        collection: str,
+    ) -> None:
+        """Make sure a collection is loaded before reading from it.
+
+        Milvus may leave a collection in the ``released`` state — for
+        example after the server (or, for Milvus Lite, the host process)
+        restarts. Searching or querying a released collection fails with
+        ``MilvusException: Collection ... is in state 'released'; call
+        load() before search/get/query``. ``load_collection`` is
+        idempotent, so calling it before every read is safe.
+
+        Args:
+            client (`MilvusClient`):
+                The client bound to this store.
+            collection (`str`):
+                The collection that is about to be read.
+        """
+        await asyncio.to_thread(
+            client.load_collection,
+            collection_name=collection,
+        )
+
     # ------------------------------------------------------------------
     # Data operations
     # ------------------------------------------------------------------
@@ -204,6 +235,11 @@ class MilvusLiteStore(VectorStoreBase):
         JSON field used by :meth:`search` and :meth:`list_documents` for
         flat equality filtering.
 
+        Entity IDs are derived deterministically from
+        ``(document_id, chunk_index)`` and written via ``upsert`` so
+        that re-indexing the same document after a mid-pipeline crash
+        replaces the previous records instead of duplicating them.
+
         Args:
             collection (`str`):
                 The target collection name.
@@ -217,11 +253,11 @@ class MilvusLiteStore(VectorStoreBase):
         for start in range(0, len(records), self._batch_size):
             batch = records[start : start + self._batch_size]
             await asyncio.to_thread(
-                self.get_client().insert,
+                self.get_client().upsert,
                 collection_name=collection,
                 data=[
                     {
-                        "id": str(uuid.uuid4()),
+                        "id": self._record_id(record),
                         "vector": record.vector,
                         "document_id": record.document_id,
                         "chunk": record.chunk.model_dump(mode="json"),
@@ -231,16 +267,51 @@ class MilvusLiteStore(VectorStoreBase):
                 ],
             )
 
+    @staticmethod
+    def _record_id(record: VectorRecord) -> str:
+        """Deterministic entity ID for ``(document_id, chunk_index)``.
+
+        Mirrors the Elasticsearch backend's recipe: a SHA-256 over the
+        ``\0``-joined pair, whose 64 hex chars exactly fit the
+        ``VARCHAR(64)`` primary key. Stable IDs make indexing retries
+        idempotent (via ``upsert``).
+
+        Args:
+            record (`VectorRecord`):
+                The record to derive an ID for.
+
+        Returns:
+            `str`:
+                The 64-character hex digest.
+        """
+        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
     async def delete(
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
-        """Delete all records belonging to one source document."""
+        """Delete all records belonging to one source document.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document ID whose records should be removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
+        """
+        clauses = [self._build_document_filter(document_id)]
+        meta_expr = self._build_metadata_filter(metadata_filter)
+        if meta_expr:
+            clauses.append(meta_expr)
         await asyncio.to_thread(
             self.get_client().delete,
             collection_name=collection,
-            filter=self._build_document_filter(document_id),
+            filter=" and ".join(clauses),
         )
 
     # ------------------------------------------------------------------
@@ -275,8 +346,11 @@ class MilvusLiteStore(VectorStoreBase):
                 cosine / inner product metrics, or ascending distance
                 semantics for L2 as exposed by Milvus.
         """
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
+
         response = await asyncio.to_thread(
-            self.get_client().search,
+            client.search,
             collection_name=collection,
             data=[query_vector],
             anns_field="vector",
@@ -324,6 +398,7 @@ class MilvusLiteStore(VectorStoreBase):
                 One summary per distinct ``document_id``.
         """
         client = self.get_client()
+        await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
             self._query_all_rows,
             client,
@@ -403,6 +478,75 @@ class MilvusLiteStore(VectorStoreBase):
             offset += self._batch_size
         return rows
 
+    # ------------------------------------------------------------------
+    # Chunk listing
+    # ------------------------------------------------------------------
+
+    async def list_chunks(
+        self,
+        collection: str,
+        document_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 30,
+        metadata_filter: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
+        """List one document's chunks ordered by ``chunk_index``.
+
+        Selects the page with a JSON-path range expression
+        ``offset <= chunk["chunk_index"] < offset + limit`` instead of
+        sort-and-skip — Milvus ``query`` has no ORDER BY, but because
+        ``chunk_index`` is dense the range filter yields exactly the
+        requested page, which is then sorted in Python (at most
+        ``limit`` items).
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document whose chunks should be listed.
+            offset (`int`, defaults to ``0``):
+                Number of leading chunks to skip.
+            limit (`int`, defaults to ``30``):
+                Maximum number of chunks to return.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Extra ``chunk.metadata`` equality constraints.
+
+        Returns:
+            `list[Chunk]`:
+                At most ``limit`` chunks, ``chunk_index`` ascending.
+        """
+        if limit <= 0:
+            return []
+        clauses = [
+            self._build_document_filter(document_id),
+            f'chunk["chunk_index"] >= {offset}',
+            f'chunk["chunk_index"] < {offset + limit}',
+        ]
+        meta_expr = self._build_metadata_filter(metadata_filter)
+        if meta_expr:
+            clauses.append(meta_expr)
+
+        # Query the WHOLE index range (bounded: its width is `limit`)
+        # and deduplicate by chunk_index — collections written before
+        # deterministic entity IDs may hold duplicates from indexing
+        # retries, and truncating at `limit` raw rows could then drop a
+        # low index while returning a duplicate of a higher one.
+        client = self.get_client()
+        await self._ensure_loaded(client, collection)
+        rows = await asyncio.to_thread(
+            client.query,
+            collection_name=collection,
+            filter=" and ".join(clauses),
+            output_fields=["chunk"],
+            limit=16_384,
+        )
+        by_index: dict[int, Chunk] = {}
+        for row in rows:
+            chunk = Chunk.model_validate(row["chunk"])
+            by_index.setdefault(chunk.chunk_index, chunk)
+        return [by_index[index] for index in sorted(by_index)][:limit]
+
     @staticmethod
     def _build_document_filter(document_id: str) -> str:
         """Build a Milvus scalar filter for a document id."""
@@ -431,14 +575,17 @@ class MilvusLiteStore(VectorStoreBase):
 
         Since milvus-lite >= 3.1.0 the ``distance`` field for COSINE
         already carries the cosine similarity (1.0 for identical
-        vectors), so no conversion is needed.
+        vectors).  For the ``L2`` distance metric the raw value is
+        lower-is-better, so it is negated to keep ``score`` meaning
+        "higher is more relevant" like the similarity metrics.
         """
-        # pylint: disable=unused-argument
         if "distance" in hit:
-            return float(hit["distance"])
-        if "score" in hit:
-            return float(hit["score"])
-        return 0.0
+            score = float(hit["distance"])
+        elif "score" in hit:
+            score = float(hit["score"])
+        else:
+            return 0.0
+        return -score if metric_type == "L2" else score
 
     @staticmethod
     def _is_local_db_uri(uri: str) -> bool:

@@ -7,11 +7,14 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._logging import logger
 from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
+from .._content_block import _enum_name
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import GeminiCredential
+from ...exception import ContentBlockedError, ContentBlockedPhase
 from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
@@ -20,6 +23,83 @@ if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
 else:
     GenerateContentResponse = Any
+
+
+_GEMINI_PROMPT_BLOCK_REASONS = frozenset(
+    {
+        "SAFETY",
+        "BLOCKLIST",
+        "PROHIBITED_CONTENT",
+        "IMAGE_SAFETY",
+    },
+)
+_GEMINI_OUTPUT_BLOCK_REASONS = frozenset(
+    {
+        "SAFETY",
+        "BLOCKLIST",
+        "PROHIBITED_CONTENT",
+        "SPII",
+        "IMAGE_SAFETY",
+    },
+)
+
+
+def _gemini_content_block_error(
+    response: Any,
+    *,
+    partial_output: bool = False,
+) -> ContentBlockedError | None:
+    """Build an error from explicit Gemini prompt or candidate signals.
+
+    Inspect recognized ``prompt_feedback.block_reason`` values first
+    (INPUT phase), then the first candidate's ``finish_reason`` (OUTPUT
+    phase). Return ``None`` for other reasons or absent signals; neither
+    generated text nor safety ratings alone determine a match.
+
+    Accept a complete response or a streamed chunk. Copy ``response_id``
+    when present and the caller's ``partial_output`` flag, which indicates
+    output emitted before this signal. No stream tracking or retry occurs
+    inside this helper.
+    """
+    request_id = getattr(response, "response_id", None)
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    block_reason = _enum_name(
+        getattr(prompt_feedback, "block_reason", None),
+    )
+    if block_reason in _GEMINI_PROMPT_BLOCK_REASONS:
+        message = getattr(prompt_feedback, "block_reason_message", None)
+        return ContentBlockedError(
+            message or f"Gemini blocked the prompt: {block_reason}.",
+            phase=ContentBlockedPhase.INPUT,
+            provider="gemini",
+            original_code=block_reason,
+            request_id=request_id,
+            partial_output=partial_output,
+        )
+
+    candidates = getattr(response, "candidates", None) or []
+    if candidates:
+        finish_reason = _enum_name(
+            getattr(candidates[0], "finish_reason", None),
+        )
+        if finish_reason in _GEMINI_OUTPUT_BLOCK_REASONS:
+            return ContentBlockedError(
+                f"Gemini blocked the response: {finish_reason}.",
+                phase=ContentBlockedPhase.OUTPUT,
+                provider="gemini",
+                original_code=finish_reason,
+                request_id=request_id,
+                partial_output=partial_output,
+            )
+    return None
+
+
+def _is_null_schema(schema: Any) -> bool:
+    """Return whether a schema represents only JSON null."""
+    return isinstance(schema, dict) and schema.get("type") in (
+        "null",
+        ["null"],
+    )
 
 
 def _sanitize_schema_for_gemini(schema: Any) -> Any:
@@ -32,6 +112,11 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``type`` arrays containing ``"null"``: simplified to the single
+      non-null type or converted to ``anyOf`` for multiple non-null
+      types, matching nullable JSON Schema emitted by Pydantic and
+      OpenAPI 3.1. Multi-type arrays with an existing ``anyOf`` raise
+      ``ValueError`` rather than dropping conjunctive constraints.
     - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
       the single non-null type. If there is exactly one non-null
       alternative it is inlined directly; otherwise the ``anyOf`` is
@@ -63,8 +148,22 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # functionDeclaration property type. Some MCP servers emit
     # {"type": "null"} directly (not wrapped in anyOf) for parameters that
     # accept None — rewrite it to "object" so it round-trips through the API.
-    if schema.get("type") == "null":
+    if _is_null_schema(schema):
         schema["type"] = "object"
+    elif isinstance(schema.get("type"), list):
+        non_null_types = [v for v in schema["type"] if v != "null"]
+        if len(non_null_types) == 1:
+            schema["type"] = non_null_types[0]
+        elif non_null_types:
+            if "anyOf" in schema:
+                raise ValueError(
+                    "Cannot safely sanitize Gemini schema with both a "
+                    "multi-type nullable type array and anyOf.",
+                )
+            schema.pop("type")
+            schema["anyOf"] = [{"type": type_} for type_ in non_null_types]
+        else:
+            schema["type"] = "object"
 
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
@@ -78,7 +177,7 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
         any_of = schema["anyOf"]
-        non_null = [v for v in any_of if v != {"type": "null"}]
+        non_null = [v for v in any_of if not _is_null_schema(v)]
         if len(non_null) < len(any_of):  # at least one null entry removed
             if len(non_null) == 1:
                 # Inline the single non-null type, preserving outer keys
@@ -126,10 +225,13 @@ class GeminiChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="Whether to enable thinking output.",
+            description="Whether to enable thinking output."
+            " When no thinking settings are supplied, the model's"
+            " default behavior applies. For Gemini 4 Argon and Carbon,"
+            " this controls summaries only, not reasoning itself.",
         )
 
         thinking_budget: int | None = Field(
@@ -137,6 +239,13 @@ class GeminiChatModel(ChatModelBase):
             title="Thinking Budget",
             description="The thinking budget in tokens.",
             gt=0,
+        )
+
+        thinking_level: Literal["low", "medium", "high"] | None = Field(
+            default=None,
+            title="Thinking Level",
+            description="The reasoning effort for Gemini 4 Argon and Carbon."
+            " When unset, the model defaults to medium.",
         )
 
         temperature: float | None = Field(
@@ -169,6 +278,7 @@ class GeminiChatModel(ChatModelBase):
         context_size: int = 1048576,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        raise_on_content_filter: bool = False,
     ) -> None:
         """Initialize the Gemini chat model.
 
@@ -197,6 +307,10 @@ class GeminiChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
                 ``credentials``, ``http_options``).
+            raise_on_content_filter (`bool`, defaults to `False`):
+                Raise ``ContentBlockedError`` for supported filter signals.
+                Disabled by default. See ``ChatModelBase.__init__`` for
+                compatibility, structured-output, and stream retry limits.
         """
         super().__init__(
             credential=credential,
@@ -206,11 +320,23 @@ class GeminiChatModel(ChatModelBase):
             max_retries=max_retries,
             retry_delay=retry_delay,
             context_size=context_size,
+            raise_on_content_filter=raise_on_content_filter,
         )
         self.formatter = formatter or GeminiChatFormatter()
-        self.client_kwargs = client_kwargs or {}
+        self.client_kwargs = dict(client_kwargs or {})
 
         from google import genai
+
+        if self._is_gemini_4(model):
+            http_options = genai.types.HttpOptions.model_validate(
+                self.client_kwargs.get("http_options") or {},
+            )
+            # Preserve zero: the SDK uses it to disable client timeouts.
+            if http_options.timeout is None:
+                http_options = http_options.model_copy(
+                    update={"timeout": 900_000},
+                )
+            self.client_kwargs["http_options"] = http_options
 
         self.client: genai.Client = genai.Client(
             api_key=self.credential.api_key.get_secret_value(),
@@ -227,6 +353,56 @@ class GeminiChatModel(ChatModelBase):
         # set to make sure 429s are retried, at the cost of also retrying
         # rare 4xx like auth/bad-request a few times.
         return (errors.APIError,)
+
+    @staticmethod
+    def _is_gemini_4(model_name: str) -> bool:
+        """Match supported Gemini 4 IDs, including qualified API names."""
+        return model_name.rsplit("/", 1)[-1] in (
+            "gemini-4-argon",
+            "gemini-4-carbon",
+        )
+
+    @staticmethod
+    def _prepare_gemini_4_config(config: dict[str, Any]) -> None:
+        """Validate the final config and omit ignored sampling settings."""
+        from google.genai.types import ThinkingConfig
+
+        thinking = config.get("thinking_config")
+        if thinking is not None:
+            # The SDK normalizes nested aliases and rejects duplicate names.
+            thinking = ThinkingConfig.model_validate(thinking).model_dump(
+                exclude_none=True,
+            )
+            if thinking.get("thinking_budget") is not None:
+                raise ValueError(
+                    "Gemini 4 Argon and Carbon require thinking_level "
+                    "instead of thinking_budget.",
+                )
+            level = thinking.get("thinking_level")
+            if level is not None:
+                level = level.upper()
+                if level not in ("LOW", "MEDIUM", "HIGH"):
+                    raise ValueError(
+                        "Gemini 4 Argon and Carbon thinking_level must be "
+                        "low, medium, or high.",
+                    )
+                thinking["thinking_level"] = level
+            config["thinking_config"] = thinking
+
+        max_tokens = config.get("max_output_tokens")
+        if max_tokens is not None and max_tokens > 65_536:
+            raise ValueError(
+                "Gemini 4 Argon and Carbon max_output_tokens must not "
+                "exceed 65536; long decode is not supported by this "
+                "adapter yet.",
+            )
+        for key in ("temperature", "top_p", "top_k"):
+            if config.pop(key, None) is not None:
+                logger.warning(
+                    "Gemini 4 Argon and Carbon ignore %s; "
+                    "the parameter will not be sent.",
+                    key,
+                )
 
     async def _call_api(
         self,
@@ -256,9 +432,7 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        formatted_messages = await self.formatter.format(messages)
-
-        config: dict[str, Any] = {**config_kwargs}
+        config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
             config["max_output_tokens"] = self.parameters.max_tokens
@@ -269,16 +443,53 @@ class GeminiChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             config["top_p"] = self.parameters.top_p
 
-        if self.parameters.thinking_enable:
-            config["thinking_config"] = {
-                "include_thoughts": True,
-                "thinking_budget": self.parameters.thinking_budget or 1024,
-            }
-        else:
-            config["thinking_config"] = {
-                "include_thoughts": False,
-                "thinking_budget": 0,
-            }
+        is_gemini_4 = self._is_gemini_4(model_name)
+        if is_gemini_4:
+            thinking = {}
+            if self.parameters.thinking_enable is not None:
+                thinking["include_thoughts"] = self.parameters.thinking_enable
+            if self.parameters.thinking_level is not None:
+                thinking["thinking_level"] = self.parameters.thinking_level
+            if self.parameters.thinking_budget is not None:
+                thinking["thinking_budget"] = self.parameters.thinking_budget
+            if thinking:
+                config["thinking_config"] = thinking
+        elif self.parameters.thinking_level is not None:
+            raise ValueError(
+                "The thinking_level parameter is currently supported only "
+                "for Gemini 4 Argon and Carbon in this adapter.",
+            )
+        elif self.parameters.thinking_enable is not None:
+            if self.parameters.thinking_enable:
+                config["thinking_config"] = {
+                    "include_thoughts": True,
+                    "thinking_budget": self.parameters.thinking_budget or 1024,
+                }
+            else:
+                config["thinking_config"] = {
+                    "include_thoughts": False,
+                    "thinking_budget": 0,
+                }
+
+        # Normalize aliases before merging so per-call values take precedence.
+        if is_gemini_4:
+            for alias, name in {
+                "thinkingConfig": "thinking_config",
+                "maxOutputTokens": "max_output_tokens",
+                "topP": "top_p",
+                "topK": "top_k",
+            }.items():
+                if alias in config_kwargs:
+                    if name in config_kwargs:
+                        raise ValueError(
+                            f"Cannot supply both {alias} and {name}.",
+                        )
+                    config_kwargs[name] = config_kwargs.pop(alias)
+
+        # Per-call config takes precedence over model-level defaults.
+        config.update(config_kwargs)
+        if is_gemini_4:
+            self._prepare_gemini_4_config(config)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -287,6 +498,9 @@ class GeminiChatModel(ChatModelBase):
 
         if fmt_tool_choice is not None:
             config["tool_config"] = fmt_tool_choice
+
+        # Validate config before formatting can read or download media.
+        formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -331,6 +545,7 @@ class GeminiChatModel(ChatModelBase):
         response_id: str = _generate_id()
         text_id: str = _generate_id()
         thinking_id: str = _generate_id()
+        has_output = False
 
         async for chunk in response:
             # Capture response_id from the first chunk that carries it
@@ -343,6 +558,16 @@ class GeminiChatModel(ChatModelBase):
             # Update the response ID if exists
             response_id = getattr(chunk, "response_id", None) or response_id
             delta_res.id = response_id
+
+            if self.raise_on_content_filter:
+                blocked_error = _gemini_content_block_error(
+                    chunk,
+                    partial_output=has_output,
+                )
+                if blocked_error is not None:
+                    if blocked_error.request_id is None:
+                        blocked_error.request_id = response_id
+                    raise blocked_error
 
             if (
                 chunk.candidates
@@ -368,7 +593,8 @@ class GeminiChatModel(ChatModelBase):
                     # Tool call
                     if part.function_call:
                         if part.thought_signature:
-                            call_id = base64.b64encode(
+                            # Mark signature IDs for the history formatter.
+                            call_id = "gemini_ts:" + base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
@@ -386,6 +612,7 @@ class GeminiChatModel(ChatModelBase):
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
             if delta_res.content or usage:
+                has_output = has_output or bool(delta_res.content)
                 delta_res.usage = usage
                 yield delta_res
 
@@ -406,6 +633,11 @@ class GeminiChatModel(ChatModelBase):
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
         """
+        if self.raise_on_content_filter:
+            blocked_error = _gemini_content_block_error(response)
+            if blocked_error is not None:
+                raise blocked_error
+
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         if (
@@ -425,7 +657,8 @@ class GeminiChatModel(ChatModelBase):
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
                     if part.thought_signature:
-                        call_id = base64.b64encode(
+                        # Mark signature IDs for the history formatter.
+                        call_id = "gemini_ts:" + base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
                     else:
@@ -470,15 +703,37 @@ class GeminiChatModel(ChatModelBase):
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
         if prompt_tokens is not None and total_tokens is not None:
+            tool_use_tokens = (
+                getattr(
+                    usage_metadata,
+                    "tool_use_prompt_token_count",
+                    0,
+                )
+                or 0
+            )
+            input_tokens = prompt_tokens + tool_use_tokens
+            candidates_tokens = getattr(
+                usage_metadata,
+                "candidates_token_count",
+                None,
+            )
+            if candidates_tokens is not None:
+                output_tokens = candidates_tokens + (
+                    getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                )
+            else:
+                # Fallback for SDK versions without the candidate count.
+                output_tokens = total_tokens - input_tokens
             return ChatUsage(
-                input_tokens=prompt_tokens,
-                output_tokens=total_tokens - prompt_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=getattr(
                     usage_metadata,
                     "cached_content_token_count",
                     0,
-                ),
+                )
+                or 0,
             )
         return None
 

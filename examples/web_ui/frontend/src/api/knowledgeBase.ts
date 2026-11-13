@@ -2,10 +2,15 @@ import { ApiError, client, getBaseUrl, getUserId } from './client';
 import type {
 	CreateKnowledgeBaseRequest,
 	CreateKnowledgeBaseResponse,
+	DocumentDownloadTokenResponse,
 	KbMiddlewareParametersSchemaResponse,
 	KnowledgeBaseView,
+	ListChunkersResponse,
+	ListDocumentChunksResponse,
 	ListKbEmbeddingModelsResponse,
+	ListKnowledgeBasesParams,
 	ListKnowledgeBasesResponse,
+	ListKnowledgeDocumentsParams,
 	ListKnowledgeDocumentsResponse,
 	ListKnowledgeDocumentStatusResponse,
 	ListSupportedContentTypesResponse,
@@ -14,6 +19,40 @@ import type {
 	UpdateKnowledgeBaseRequest,
 	UploadKnowledgeDocumentResponse,
 } from './types';
+
+/** Drop undefined values and stringify the rest for `client` params. */
+function toQuery(params: Record<string, unknown>): Record<string, string> {
+	const query: Record<string, string> = {};
+	for (const [key, value] of Object.entries(params)) {
+		if (value !== undefined) query[key] = String(value);
+	}
+	return query;
+}
+
+/** The backend caps `page_size` at 128. */
+const MAX_PAGE_SIZE = 128;
+
+/**
+ * Drain a paginated endpoint into one flat array — genuinely all of
+ * it, however many pages that takes.
+ *
+ * Keeps requesting pages while the accumulated count is below the
+ * server-reported `total` and the last page still made progress. An
+ * empty page means the server has nothing more to give, so a lying
+ * `total` degrades into a clean stop instead of an infinite loop —
+ * no arbitrary page cap that would silently truncate large lists.
+ */
+async function fetchAllPages<T>(
+	fetchPage: (page: number, pageSize: number) => Promise<{ items: T[]; total: number }>,
+): Promise<T[]> {
+	const all: T[] = [];
+	for (let page = 1; ; page++) {
+		const { items, total } = await fetchPage(page, MAX_PAGE_SIZE);
+		all.push(...items);
+		if (items.length === 0 || all.length >= total) break;
+	}
+	return all;
+}
 
 /**
  * Callback invoked while bytes are pushed across the wire.
@@ -117,10 +156,27 @@ function uploadDocumentXhr(
  * Client for the `/knowledge_bases` router.
  */
 export const knowledgeBaseApi = {
-	list: () => client.get<ListKnowledgeBasesResponse>('/knowledge_bases/'),
+	list: (params: ListKnowledgeBasesParams = {}) =>
+		client.get<ListKnowledgeBasesResponse>('/knowledge_bases/', toQuery({ ...params })),
+
+	/**
+	 * Fetch every visible knowledge base across all pages — for views
+	 * that render one flat list (e.g. the sidebar).
+	 */
+	listAll: (params: Omit<ListKnowledgeBasesParams, 'page' | 'page_size'> = {}) =>
+		fetchAllPages(async (page, pageSize) => {
+			const res = await knowledgeBaseApi.list({
+				...params,
+				page,
+				page_size: pageSize,
+			});
+			return { items: res.knowledge_bases, total: res.total };
+		}),
 
 	listEmbeddingModels: () =>
 		client.get<ListKbEmbeddingModelsResponse>('/knowledge_bases/embedding_models'),
+
+	listChunkers: () => client.get<ListChunkersResponse>('/knowledge_bases/chunkers'),
 
 	/** Fetch the JSON Schema describing the KB middleware's tunable params. */
 	middlewareParametersSchema: () =>
@@ -140,9 +196,80 @@ export const knowledgeBaseApi = {
 
 	delete: (knowledgeBaseId: string) => client.delete(`/knowledge_bases/${knowledgeBaseId}`),
 
-	/** List every document registered against a knowledge base. */
-	listDocuments: (knowledgeBaseId: string) =>
-		client.get<ListKnowledgeDocumentsResponse>(`/knowledge_bases/${knowledgeBaseId}/documents`),
+	/** List one page of the documents registered against a knowledge base. */
+	listDocuments: (knowledgeBaseId: string, params: ListKnowledgeDocumentsParams = {}) =>
+		client.get<ListKnowledgeDocumentsResponse>(
+			`/knowledge_bases/${knowledgeBaseId}/documents`,
+			toQuery({ ...params }),
+		),
+
+	/**
+	 * Fetch every document of a knowledge base across all pages — for
+	 * views that render one flat list (e.g. the documents panel).
+	 */
+	listAllDocuments: (
+		knowledgeBaseId: string,
+		params: Omit<ListKnowledgeDocumentsParams, 'page' | 'page_size'> = {},
+	) =>
+		fetchAllPages(async (page, pageSize) => {
+			const res = await knowledgeBaseApi.listDocuments(knowledgeBaseId, {
+				...params,
+				page,
+				page_size: pageSize,
+			});
+			return { items: res.documents, total: res.total };
+		}),
+
+	/** Browse one page of a document's chunks in `chunk_index` order. */
+	listDocumentChunks: (knowledgeBaseId: string, documentId: string, page = 1, pageSize = 30) =>
+		client.get<ListDocumentChunksResponse>(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}/chunks`,
+			toQuery({ page, page_size: pageSize }),
+			// 501 means the configured vector store cannot list chunks —
+			// the caller hides the chunk view instead of toasting.
+			{ silent: true },
+		),
+
+	/**
+	 * Mint a short-lived token so a browser-native fetch (`<iframe>`,
+	 * `<img>`, a download navigation) can retrieve the raw file
+	 * without the `X-User-ID` header.
+	 */
+	createDocumentDownloadToken: (knowledgeBaseId: string, documentId: string) =>
+		client.post<DocumentDownloadTokenResponse>(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}/download_token`,
+		),
+
+	/**
+	 * Absolute URL of a document's raw bytes, using a token minted via
+	 * `createDocumentDownloadToken`. Pass `download: true` to force a
+	 * `Content-Disposition: attachment`.
+	 */
+	documentContentUrl: (
+		knowledgeBaseId: string,
+		documentId: string,
+		token: string,
+		download = false,
+	) => {
+		const url = new URL(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`,
+			getBaseUrl(),
+		);
+		url.searchParams.set('token', token);
+		if (download) url.searchParams.set('download', 'true');
+		return url.toString();
+	},
+
+	/**
+	 * Fetch the raw file as text through the authenticated client —
+	 * for markdown / plain-text previews that render in-app.
+	 */
+	fetchDocumentText: async (knowledgeBaseId: string, documentId: string) => {
+		const res = await client.stream(
+			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`,
+		);
+		return res.text();
+	},
 
 	/**
 	 * Batch-query lifecycle status for a list of documents.

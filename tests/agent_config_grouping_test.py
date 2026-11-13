@@ -1,0 +1,484 @@
+# -*- coding: utf-8 -*-
+"""``AgentData.chat_config`` grouping test case.
+
+The text-mode settings moved from the top level of ``AgentData`` into a
+``chat_config`` block, so a realtime voice mode can add its own block
+beside them. Nothing migrates the stored rows and nothing rewrites the
+request bodies clients already send, so both the old and the new shape
+have to land in the same place — that is what these cases pin down.
+"""
+import json
+from typing import Any
+from unittest import IsolatedAsyncioTestCase
+
+import fakeredis.aioredis
+from fastapi.testclient import TestClient
+
+from agentscope.app import create_app
+from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.storage import AgentData, AgentRecord, RedisStorage
+from agentscope.app.workspace_manager import LocalWorkspaceManager
+
+HEADERS = {"X-User-ID": "alice"}
+
+
+class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
+    """Reading, creating and updating agents across both shapes."""
+
+    async def asyncSetUp(self) -> None:
+        """Start an app backed by fakeredis."""
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.redis = redis
+
+        class _Storage(RedisStorage):
+            async def __aenter__(self) -> Any:
+                self._client = redis
+                return self
+
+            async def aclose(self) -> None:
+                self._client = None
+
+        class _Bus(RedisMessageBus):
+            async def __aenter__(self) -> Any:
+                self._client = redis
+                return self
+
+            async def aclose(self) -> None:
+                self._client = None
+
+        app = create_app(
+            storage=_Storage(),
+            message_bus=_Bus(),
+            workspace_manager=LocalWorkspaceManager("/tmp"),
+            enable_index_worker=False,
+        )
+        # pylint: disable=consider-using-with
+        self.client = self.enterContext(TestClient(app))
+        self.storage = app.state.storage
+
+    def test_legacy_record_folds_into_chat_config(self) -> None:
+        """An agent written before the grouping reads back grouped."""
+        data = AgentData.model_validate(
+            {
+                "id": "a1",
+                "name": "ann",
+                "system_prompt": "You are ann.",
+                "context_config": {"max_image_num": 3},
+                "react_config": {"max_iters": 7},
+                "invite_config": {
+                    "invitable": True,
+                    "invite_description": "an old agent",
+                },
+            },
+        )
+
+        self.assertDictEqual(
+            data.model_dump(mode="json", exclude_defaults=True),
+            {
+                "id": "a1",
+                "name": "ann",
+                "system_prompt": "You are ann.",
+                "chat_config": {
+                    "context_config": {"max_image_num": 3},
+                    "react_config": {"max_iters": 7},
+                    "invite_config": {
+                        "invitable": True,
+                        "invite_description": "an old agent",
+                    },
+                },
+            },
+        )
+        with self.assertWarns(DeprecationWarning):
+            context_config = data.context_config
+        with self.assertWarns(DeprecationWarning):
+            react_config = data.react_config
+        with self.assertWarns(DeprecationWarning):
+            invite_config = data.invite_config
+        self.assertEqual(
+            {
+                "context_config": context_config,
+                "react_config": react_config,
+                "invite_config": invite_config,
+            },
+            {
+                "context_config": data.chat_config.context_config,
+                "react_config": data.chat_config.react_config,
+                "invite_config": data.chat_config.invite_config,
+            },
+        )
+
+    def test_create_accepts_both_shapes(self) -> None:
+        """POST bodies in either shape store the same grouped record."""
+        nested = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={
+                "name": "nested",
+                "chat_config": {"react_config": {"max_iters": 5}},
+            },
+        )
+        legacy = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "legacy", "react_config": {"max_iters": 5}},
+        )
+        self.assertEqual(nested.status_code, 201)
+        self.assertEqual(legacy.status_code, 201)
+
+        agents = self.client.get("/agent/", headers=HEADERS).json()["agents"]
+        by_name = {a["data"]["name"]: a["data"] for a in agents}
+        self.assertEqual(
+            by_name["nested"]["chat_config"],
+            by_name["legacy"]["chat_config"],
+        )
+        self.assertEqual(
+            by_name["nested"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "react_config": {"max_iters": 5},
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
+        )
+        self.assertListEqual(
+            sorted(by_name["legacy"]),
+            [
+                "chat_config",
+                "id",
+                "name",
+                "system_prompt",
+            ],
+        )
+
+    def test_create_rejects_context_ratios_that_make_agent_unusable(
+        self,
+    ) -> None:
+        """POST rejects settings that Agent construction would reject."""
+        invalid_configs = (
+            {"trigger_ratio": 0.1},
+            {"trigger_ratio": 0.15},
+            {"context_buffer_ratio": 0.8},
+        )
+
+        for context_config in invalid_configs:
+            config = {"context_config": context_config}
+            payloads: tuple[dict[str, Any], ...] = (
+                config,
+                {"chat_config": config},
+            )
+            for payload in payloads:
+                with self.subTest(payload=payload):
+                    response = self.client.post(
+                        "/agent/",
+                        headers=HEADERS,
+                        json={"name": "invalid", **payload},
+                    )
+                    self.assertEqual(response.status_code, 422)
+
+        self.assertEqual(
+            self.client.get("/agent/", headers=HEADERS).json(),
+            {"agents": [], "total": 0},
+        )
+
+        valid = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "valid-default"},
+        )
+        self.assertEqual(valid.status_code, 201)
+
+    def test_update_rejects_invalid_context_ratio_without_mutating_record(
+        self,
+    ) -> None:
+        """PATCH rejects and does not persist a context ratio violation."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "valid-agent"},
+        ).json()["agent_id"]
+
+        before = self.client.get("/agent/", headers=HEADERS).json()
+        config = {"context_config": {"trigger_ratio": 0.15}}
+        for payload in (config, {"chat_config": config}):
+            with self.subTest(payload=payload):
+                response = self.client.patch(
+                    f"/agent/{agent_id}",
+                    headers=HEADERS,
+                    json=payload,
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(
+                    response.json(),
+                    {
+                        "detail": (
+                            "The 'context_buffer_ratio' of the context "
+                            "config must be smaller than its "
+                            "'trigger_ratio', so that the context length "
+                            "is injected and the compression tool takes "
+                            "effect before the hard compression, got "
+                            "0.2 and 0.15."
+                        ),
+                    },
+                )
+                saved = self.client.get("/agent/", headers=HEADERS)
+                self.assertEqual(saved.status_code, 200)
+                self.assertEqual(saved.json(), before)
+
+    async def test_invalid_stored_ratios_allow_listing_repair_and_delete(
+        self,
+    ) -> None:
+        """Old invalid ratios remain readable and manageable after upgrade."""
+        record = AgentRecord(user_id="alice", data=AgentData(name="old"))
+        valid_data = record.data.model_dump(mode="json")
+        # Simulate an invalid record persisted by an older app version.
+        record.data.chat_config.context_config.trigger_ratio = 0.15
+        await self.storage.upsert_agent("alice", record)
+        healthy = AgentRecord(user_id="alice", data=AgentData(name="healthy"))
+        await self.storage.upsert_agent("alice", healthy)
+
+        listed = self.client.get("/agent/", headers=HEADERS)
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(
+            {
+                **listed.json(),
+                "agents": sorted(
+                    listed.json()["agents"],
+                    key=lambda a: a["id"],
+                ),
+            },
+            {
+                "agents": sorted(
+                    [
+                        {**item.model_dump(mode="json"), "editable": True}
+                        for item in (record, healthy)
+                    ],
+                    key=lambda a: a["id"],
+                ),
+                "total": 2,
+            },
+        )
+        repaired = self.client.patch(
+            f"/agent/{record.id}",
+            headers=HEADERS,
+            json={"chat_config": {"context_config": {"trigger_ratio": 0.8}}},
+        )
+        self.assertEqual(repaired.status_code, 200)
+        self.assertEqual(repaired.json()["data"], valid_data)
+        stored = await self.storage.get_agent("alice", record.id)
+        self.assertEqual(stored.data.model_dump(mode="json"), valid_data)
+
+        await self.storage.upsert_agent("alice", record)
+        deleted = self.client.delete(f"/agent/{record.id}", headers=HEADERS)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(
+            self.client.get("/agent/", headers=HEADERS).json(),
+            {
+                "agents": [
+                    {**healthy.model_dump(mode="json"), "editable": True},
+                ],
+                "total": 1,
+            },
+        )
+
+    def test_update_keeps_untouched_sub_configs(self) -> None:
+        """A legacy PATCH replaces its own sub-config and nothing else."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={
+                "name": "ann",
+                "chat_config": {
+                    "react_config": {"max_iters": 5},
+                    "invite_config": {
+                        "invitable": True,
+                        "invite_description": "keep me",
+                    },
+                },
+            },
+        ).json()["agent_id"]
+
+        updated = self.client.patch(
+            f"/agent/{agent_id}",
+            headers=HEADERS,
+            json={"context_config": {"max_image_num": 9}},
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.json()["data"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 9},
+                        "react_config": {"max_iters": 5},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "keep me",
+                        },
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
+        )
+
+    def test_nested_update_keeps_untouched_sub_configs(self) -> None:
+        """A nested PATCH replaces only the supplied sub-config."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={
+                "name": "ann",
+                "chat_config": {
+                    "context_config": {"max_image_num": 9},
+                    "react_config": {
+                        "max_iters": 5,
+                        "stop_on_reject": True,
+                    },
+                    "invite_config": {
+                        "invitable": True,
+                        "invite_description": "keep me",
+                    },
+                },
+            },
+        ).json()["agent_id"]
+
+        updated = self.client.patch(
+            f"/agent/{agent_id}",
+            headers=HEADERS,
+            json={"chat_config": {"react_config": {"max_iters": 7}}},
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.json()["data"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 9},
+                        "react_config": {"max_iters": 7},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "keep me",
+                        },
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
+        )
+
+    def test_legacy_update_overrides_nested_update(self) -> None:
+        """Flat compatibility fields win over the nested equivalent."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "ann"},
+        ).json()["agent_id"]
+
+        updated = self.client.patch(
+            f"/agent/{agent_id}",
+            headers=HEADERS,
+            json={
+                "chat_config": {
+                    "context_config": {
+                        "max_image_num": 7,
+                        "trigger_ratio": 0.15,
+                    },
+                    "react_config": {"max_iters": 11},
+                },
+                "context_config": {"max_image_num": 3},
+            },
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.json()["data"]["chat_config"],
+            AgentData.model_validate(
+                {
+                    "name": "expected",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 11},
+                    },
+                },
+            ).chat_config.model_dump(mode="json"),
+        )
+
+    def test_schema_exposes_the_grouped_sections(self) -> None:
+        """The form schema carries the sections inside ``chat_config``."""
+        schema = self.client.get("/agent/schema/v2").json()["schema"]
+
+        self.assertListEqual(
+            sorted(schema["properties"]),
+            ["chat_config", "name", "system_prompt"],
+        )
+        chat_config = schema["properties"]["chat_config"]
+        self.assertListEqual(
+            sorted(chat_config["properties"]),
+            ["context_config", "invite_config", "react_config"],
+        )
+        self.assertNotIn(
+            "summary_schema",
+            chat_config["properties"]["context_config"]["properties"],
+        )
+        openapi = self.client.get("/openapi.json").json()
+        agent_view = openapi["components"]["schemas"]["AgentView"]
+        self.assertIn("data", agent_view["properties"])
+        self.assertNotEqual(agent_view.get("additionalProperties"), True)
+
+    async def test_stored_agent_survives_a_round_trip(self) -> None:
+        """A raw legacy Redis record is read and rewritten grouped."""
+        record_id = "record-1"
+        raw_record = {
+            "id": record_id,
+            "created_at": "2026-09-01T01:02:03",
+            "updated_at": "2026-09-02T04:05:06",
+            "user_id": "alice",
+            "source": "user",
+            "data": {
+                "id": "agent-1",
+                "name": "ann",
+                "system_prompt": "You are ann.",
+                "context_config": {"max_image_num": 3},
+                "react_config": {"max_iters": 7},
+                "invite_config": {
+                    "invitable": True,
+                    "invite_description": "an old agent",
+                },
+            },
+        }
+        key = self.storage.key_config.agent.format(
+            user_id="alice",
+            agent_id=record_id,
+        )
+        await self.redis.set(key, json.dumps(raw_record))
+
+        stored = await self.storage.get_agent("alice", record_id)
+        expected = AgentRecord.model_validate(
+            {
+                **raw_record,
+                "data": {
+                    "id": "agent-1",
+                    "name": "ann",
+                    "system_prompt": "You are ann.",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 7},
+                        "invite_config": {
+                            "invitable": True,
+                            "invite_description": "an old agent",
+                        },
+                    },
+                },
+            },
+        )
+
+        self.assertEqual(stored.model_dump(), expected.model_dump())
+
+        await self.storage.upsert_agent("alice", stored)
+        rewritten = json.loads(await self.redis.get(key))
+        self.assertEqual(
+            rewritten["data"],
+            expected.data.model_dump(mode="json"),
+        )

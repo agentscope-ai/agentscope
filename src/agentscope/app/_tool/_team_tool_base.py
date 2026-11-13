@@ -11,8 +11,12 @@ from ...tool import ToolBase
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
-    from ..storage import StorageBase
+    from ..storage import StorageBase, TeamRecord
     from ..workspace_manager import WorkspaceManagerBase
+
+
+class _TeamToolError(Exception):
+    """A failed precondition, rendered by each tool's error wrapper."""
 
 
 class _TeamToolBase(ToolBase):
@@ -25,10 +29,10 @@ class _TeamToolBase(ToolBase):
     its work directly via those dependencies — there is no intermediate
     service layer.
 
-    Permissions: all team tools allow themselves unconditionally — the
-    agent's authority to call them is already gated by the
-    role/source-aware logic inside :func:`get_toolkit` that decides
-    which team tools to attach in the first place.
+    Permissions: all team tools allow themselves unconditionally —
+    which tools get attached is already role-gated in
+    :func:`get_toolkit`, and the leader-side ones re-check their
+    precondition at call time via :meth:`_require_leader_team`.
     """
 
     name: str
@@ -58,9 +62,9 @@ class _TeamToolBase(ToolBase):
             message_bus (`MessageBus`):
                 Application message bus for inter-session delivery.
             workspace_manager (`WorkspaceManagerBase`):
-                Workspace manager, consulted by tools that provision
-                brand-new sessions (e.g. ``AgentInvite``) to honour
-                the deployment's isolation policy.
+                Workspace manager, used by ``AgentInvite`` to assign a
+                borrowed session's workspace and by ``TeamDelete`` to
+                drop each deleted session's workspace state.
             user_id (`str`):
                 The owner user id of the calling agent.
             session_id (`str`):
@@ -74,6 +78,58 @@ class _TeamToolBase(ToolBase):
         self._user_id = user_id
         self._session_id = session_id
         self._agent_id = agent_id
+
+    async def _require_team(self) -> "TeamRecord":
+        """Return this session's team, read fresh at call time.
+
+        Read fresh rather than taken from assembly-time context: the
+        leader may have called ``TeamCreate`` earlier in this same
+        reply, so a cached view would be stale.
+
+        Returns:
+            `TeamRecord`: The team this session participates in.
+
+        Raises:
+            `_TeamToolError`: When the session is teamless or its team
+                record is gone.
+        """
+        session = await self._storage.get_session(
+            self._user_id,
+            self._agent_id,
+            self._session_id,
+        )
+        if session is None or session.team_id is None:
+            raise _TeamToolError(
+                "this session is not in any team — call TeamCreate first.",
+            )
+        team = await self._storage.get_team(self._user_id, session.team_id)
+        if team is None:
+            raise _TeamToolError(f"team {session.team_id} no longer exists.")
+        return team
+
+    async def _require_leader_team(self, leader_only: str) -> "TeamRecord":
+        """Return the team this session **leads**.
+
+        Args:
+            leader_only (`str`):
+                What only the leader may do, e.g. ``"add members"`` —
+                spliced into the rejection so the LLM keeps a concrete
+                next step.
+
+        Returns:
+            `TeamRecord`: The team whose leader is this session.
+
+        Raises:
+            `_TeamToolError`: As :meth:`_require_team`, plus when this
+                session is a worker rather than the leader.
+        """
+        team = await self._require_team()
+        if team.session_id != self._session_id:
+            raise _TeamToolError(
+                f"only the team leader can {leader_only}; this session "
+                f"is a worker.",
+            )
+        return team
 
     async def check_permissions(
         self,

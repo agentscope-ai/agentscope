@@ -17,6 +17,7 @@
 		"error": "出错了",
 		"information": "信息",
 		"knowledge": "知识库",
+		"voiceProfile": "语音配置",
 		"loading": "加载中...",
 		"shownCount": "已显示 {{count}} 个",
 		"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
@@ -99,12 +100,117 @@
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
-		"stop": "停止生成",
-		"stopping": "停止中 ..."
+		"queue": "加入队列",
+		"queued_one": "{{count}} 条消息正在排队",
+		"queued_other": "{{count}} 条消息正在排队",
+		"stop": "停止当前回复",
+		"stopping": "正在停止当前回复 ...",
+		"startRecording": "开始语音输入",
+		"stopRecording": "停止并转写",
+		"requestingMicrophone": "正在请求麦克风权限…",
+		"transcribing": "正在转写…",
+		"asrUnavailable": "语音识别未开启。请在顶部聊天模型旁的「模型设置」→「语音识别」中选择模型。",
+		"recordingUnsupported": "当前浏览器无法录制受支持的音频格式",
+		"microphonePermissionDenied": "麦克风权限已被拒绝",
+		"transcriptionFailed": "语音转写失败",
+		"transcriptionEmpty": "未检测到语音"
+	},
+	"chatQueue": {
+		"title_one": "待发送消息（{{count}} 条）",
+		"title_other": "待发送消息（{{count}} 条）",
+		"attachmentOnly": "附件消息",
+		"drag": "拖动调整顺序",
+		"moveUp": "上移",
+		"moveDown": "下移",
+		"edit": "编辑",
+		"delete": "删除",
+		"steer": "引导当前回复",
+		"save": "保存",
+		"cancel": "取消",
+		"stateQueued": "排队中",
+		"stateSteering": "引导中",
+		"stateSteered": "已引导",
+		"stateFailed": "失败",
+		"injected": "排队消息已注入当前回复。",
+		"steerFailed": "排队消息未能引导当前回复。",
+		"processFailed": "排队消息处理失败。",
+		"processingCancelled": "排队消息处理已中断。"
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
 		"yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}"
+	},
+	"askUser": {
+		"multiSelect": "可选择多项。空格切换选项，回车继续。",
+		"back": "上一题",
+		"next": "下一题",
+		"other": "其他",
+		"otherPlaceholder": "请输入其他方案",
+		"cancel": "取消",
+		"invalidDescription": "请取消本次请求，并让智能体重新发起选择。",
+		"historyAsked": "已询问",
+		"historyAnswered": "已选择",
+		"submit": "继续"
+	},
+	"clientTools": {
+		"trigger": "工具",
+		"triggerLabel": "已启用 {{enabled}} 个客户端工具，共 {{total}} 个",
+		"title": "客户端工具",
+		"description": "选择此 Web UI 在当前对话中向智能体提供的浏览器工具。",
+		"builtInBadge": "内置",
+		"customBadge": "自定义",
+		"add": "添加工具",
+		"selectionNote": "启用的工具会在当前对话的下一轮请求中发送。",
+		"noSessionNote": "打开一个对话后即可选择启用的工具。",
+		"toggleLabel": "启用或停用 {{name}}",
+		"inputSchema": "输入 Schema",
+		"availabilityNote": "自定义工具由你在此浏览器中手动返回结果，不会执行自定义代码。",
+		"deleteTitle": "删除自定义工具“{{name}}”？",
+		"deleteDescription": "该工具会从此浏览器的所有对话中移除；已经在等待结果的调用仍可继续完成。",
+		"cancel": "取消请求",
+		"cancelling": "正在取消",
+		"editor": {
+			"addTitle": "添加自定义工具",
+			"editTitle": "编辑自定义工具",
+			"description": "描述一个可供智能体调用的工具；智能体调用后，由你手动输入返回结果。",
+			"displayName": "显示名称",
+			"displayNamePlaceholder": "请输入显示名称",
+			"toolName": "工具名称",
+			"toolNamePlaceholder": "请输入工具名称",
+			"toolNameHint": "可使用字母、数字、下划线和连字符；系统会自动添加 client__ 命名空间。",
+			"modelDescription": "提供给智能体的描述",
+			"descriptionPlaceholder": "说明智能体应在何时调用此工具，以及期望获得什么结果。",
+			"schemaHint": "根节点必须是包含 properties 的 object，仅允许本地 JSON Schema 引用。",
+			"permissionHint": "自定义工具默认按可能产生副作用处理，每次调用前都需要你确认。"
+		},
+		"validation": {
+			"required": "此项不能为空。",
+			"displayNameTooLong": "显示名称不能超过 80 个字符。",
+			"invalidName": "请输入不超过 56 个字符的有效名称，仅使用字母、数字、下划线或连字符。",
+			"duplicateName": "已有客户端工具使用该名称。",
+			"descriptionTooLong": "描述不能超过 2000 个字符。",
+			"invalidJson": "请输入有效的 JSON。",
+			"invalidSchema": "请输入符合 Draft 2020-12 词汇的有效 JSON Schema。",
+			"schemaMustBeObject": "Schema 根节点必须定义为 object。",
+			"schemaPropertiesRequired": "Schema 必须包含 properties 对象。",
+			"remoteReference": "仅允许以 # 开头的本地 Schema 引用。",
+			"schemaTooLarge": "Schema 不能超过 64 KiB。",
+			"toolLimit": "一个浏览器最多可提供 16 个客户端工具。"
+		},
+		"manual": {
+			"eyebrow": "手动返回工具结果",
+			"description": "检查调用参数，并输入需要返回给智能体的结果。",
+			"arguments": "调用参数",
+			"text": "文本",
+			"textPlaceholder": "输入工具结果",
+			"jsonPlaceholder": "输入 JSON 值",
+			"invalidJson": "请输入有效的 JSON 值后再继续。",
+			"submit": "返回结果"
+		},
+		"askUser": {
+			"name": "请求用户输入",
+			"description": "让智能体提供结构化选项，也允许你输入其他答案。"
+		}
 	},
 	"messageBubble": {
 		"thinking": "思考中",
@@ -119,7 +225,8 @@
 			"team_message": "团队消息",
 			"schedule": "定时任务",
 			"system": "系统消息",
-			"channel": "频道"
+			"channel": "频道",
+			"runtime_state": "运行状态"
 		},
 		"error": {
 			"title": "回复失败",
@@ -132,14 +239,33 @@
 			"internal": "发生了未预期的内部错误。",
 			"setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
-		}
+		},
+		"copy": "复制"
 	},
 	"chat": {
+		"ttsFailed": "语音生成失败，文字回复继续。",
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
+		"askUser": {
+			"title": "需要你的选择",
+			"other": "其他",
+			"otherPlaceholder": "输入你的回答",
+			"submit": "提交回答",
+			"invalid": "无法显示这个问题。"
+		},
+		"externalExecution": {
+			"title": "{{name}} 正在等待外部执行器",
+			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
+			"description": "该工具需要由宿主应用提供的集成完成。"
+		},
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
+		"maxItersExceeded": {
+			"title": "已达到最大迭代次数",
+			"description": "输入新消息可继续对话，或点击继续以完成当前任务。",
+			"continue": "继续"
+		},
 		"agent": {
 			"selectPlaceholder": "选择智能体",
 			"emptyTitle": "暂无智能体",
@@ -189,6 +315,9 @@
 			},
 			"summary-template": {
 				"label": "摘要模板"
+			},
+			"max-image-num": {
+				"label": "最大图片数"
 			}
 		},
 		"react-config": {
@@ -199,6 +328,18 @@
 			},
 			"stop-on-reject": {
 				"label": "拒绝时停止"
+			},
+			"structured-output-grace-iters": {
+				"label": "结构化输出宽限轮数",
+				"description": "超过最大迭代次数后额外允许的轮数，让已经到达上限的回复仍能产出要求的结构化输出。"
+			},
+			"interruption-message": {
+				"label": "中断回复",
+				"description": "用户中断回复时，智能体给出的回复内容。"
+			},
+			"interruption-raise-cancelled-error": {
+				"label": "抛出 CancelledError",
+				"description": "处理完中断后重新抛出 asyncio.CancelledError，而不是将其吞掉。"
 			}
 		},
 		"invite-config": {
@@ -262,6 +403,9 @@
 		"dimension": {
 			"label": "维度"
 		},
+		"chunker": {
+			"label": "分块策略"
+		},
 		"policy": {
 			"lockedTitle": "维度已锁定为 {{dimension}}d",
 			"lockedDescription": "当前实例已要求所有知识库使用 {{dimension}} 维 embedding，下面仅展示兼容的模型。",
@@ -272,7 +416,8 @@
 		"errors": {
 			"nameRequired": "请填写知识库名称。",
 			"embeddingRequired": "请选择 Embedding 模型。",
-			"dimensionRequired": "请选择 Embedding 维度。"
+			"dimensionRequired": "请选择 Embedding 维度。",
+			"chunkerRequired": "请选择分块策略。"
 		}
 	},
 	"dialog-knowledge-base-edit": {
@@ -288,6 +433,9 @@
 		},
 		"embeddingModel": {
 			"label": "Embedding 模型"
+		},
+		"chunker": {
+			"label": "分块策略"
 		},
 		"errors": {
 			"nameRequired": "请填写知识库名称。"
@@ -373,6 +521,35 @@
 			"chunkPosition": "第 {{index}} / {{total}} 段",
 			"emptyTitle": "无匹配",
 			"emptyDescription": "本次查询没有返回任何分块。"
+		},
+		"config": {
+			"title": "配置信息",
+			"embeddingModel": "嵌入模型",
+			"dimensions": "向量维度",
+			"credential": "凭证",
+			"chunker": "分块器",
+			"counts": "内容",
+			"countsValue": "{{documents}} 个文档 · {{chunks}} 个分块",
+			"status": "索引状态",
+			"statusValue": "{{ready}} 就绪 · {{indexing}} 处理中 · {{failed}} 失败",
+			"createdAt": "创建时间"
+		},
+		"documentDetail": {
+			"description": "已索引 {{count}} 个分块",
+			"chunksTab": "分块",
+			"previewTab": "预览",
+			"chunksEmptyTitle": "暂无分块",
+			"chunksEmptyDescription": "该文档尚未产生已索引的分块。",
+			"chunksUnsupportedTitle": "无法浏览分块",
+			"chunksUnsupportedDescription": "当前配置的向量数据库不支持分块列表。",
+			"previousPage": "上一页",
+			"nextPage": "下一页",
+			"pageIndicator": "第 {{page}} / {{pageCount}} 页",
+			"previewUnavailableTitle": "无法在线预览",
+			"previewUnavailableDescription": "该文件类型无法在浏览器中预览。",
+			"previewTooLargeTitle": "文件过大,无法预览",
+			"previewTooLargeDescription": "该文件超出在线预览大小限制,请下载后查看源文件。",
+			"downloadButton": "下载源文件"
 		}
 	},
 	"llm-select": {
@@ -386,6 +563,18 @@
 		"clear": "清除选择",
 		"noFallback": "无兜底模型"
 	},
+	"realtime": {
+		"selectModel": "语音模型",
+		"parameters": "实时语音参数",
+		"noModels": "暂无可用的实时语音模型。",
+		"disable": "停用语音模型",
+		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
+		"backendFollows": "任务后端跟随 Chat 模型 · {{model}}",
+		"backendMissing": "请先选择 Chat 模型，再启动 GPT Live",
+		"pendingChatInteraction": "请先完成 Chat 中待处理的工具确认或外部执行，再启动 GPT Live。",
+		"start": "开始语音对话",
+		"stop": "结束语音对话"
+	},
 	"embedding-select": {
 		"placeholder": "选择 Embedding 模型",
 		"loading": "加载中…",
@@ -394,6 +583,26 @@
 			"description": "请先添加支持 Embedding 的凭证。"
 		},
 		"addCredential": "添加凭证"
+	},
+	"chunker-select": {
+		"placeholder": "选择分块策略",
+		"loading": "加载中…",
+		"empty": "暂无可用分块策略"
+	},
+	"chunker-types": {
+		"approx_token": {
+			"label": "近似 Token 数",
+			"params": {
+				"chunk_size": {
+					"label": "块大小",
+					"description": "每个分块的最大近似 Token 数量。"
+				},
+				"overlap": {
+					"label": "重叠大小",
+					"description": "相邻分块之间共享的近似 Token 数量。"
+				}
+			}
+		}
 	},
 	"dimension-select": {
 		"placeholder": "选择维度",
@@ -414,6 +623,7 @@
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
 		"parseError": "JSON 配置无效：{{message}}",
+		"invalidStreamProgress": "{{name}}.stream_progress 必须为布尔值（true 或 false）。",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
 	},
@@ -469,7 +679,11 @@
 		"wednesday": "周三"
 	},
 	"model-parameters": {
+		"settings": "模型设置",
 		"title": "模型参数",
+		"booleanDefault": "默认",
+		"booleanEnabled": "开启",
+		"booleanDisabled": "关闭",
 		"description": "调整所选模型的推理参数。",
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
@@ -479,7 +693,14 @@
 		"ttsEmpty": "暂无可用的语音合成模型。",
 		"ttsParameters": "参数",
 		"ttsParametersDescription": "调整所选语音合成模型的参数。",
-		"noTts": "不使用语音合成"
+		"voiceProfiles": "语音配置",
+		"voiceProfileUnavailable": "绑定的凭证或模型不可用。",
+		"noTts": "不使用语音合成",
+		"asrLabel": "语音识别",
+		"asrEmpty": "暂无可用的语音识别模型。",
+		"asrParameters": "参数",
+		"asrParametersDescription": "调整所选语音识别模型的参数，数组和对象请使用 JSON。",
+		"noAsr": "不使用语音识别"
 	},
 	"setup": {
 		"title": "连接到服务器",
@@ -529,6 +750,31 @@
 		"blockedBy": "依赖"
 	},
 	"panel": {
+		"background": {
+			"title": "后台工具",
+			"runningCount": "运行中：{{count}}",
+			"refresh": "刷新后台工具",
+			"duration": "后台运行时长：{{duration}}",
+			"totalDuration": "总执行时长：{{duration}}",
+			"backgroundDuration": "其中后台运行：{{duration}}",
+			"copyId": "复制任务 ID",
+			"copied": "已复制任务 ID",
+			"errorDetails": "失败详情",
+			"noSession": "选择会话以查看后台工具",
+			"emptyTitle": "暂无后台工具",
+			"emptyDescription": "转入后台继续执行的工具会显示在这里。",
+			"noRunning": "当前没有正在后台运行的工具。",
+			"recent": "最近结束（{{count}}）",
+			"retention": "最近结果仅临时保留，这里不包含完整历史记录。",
+			"loadError": "无法加载后台工具，请重试。",
+			"stale": "刷新失败，当前显示上次获取的状态，任务可能已发生变化。",
+			"status": {
+				"running": "运行中",
+				"completed": "已完成",
+				"failed": "失败",
+				"cancelled": "已取消"
+			}
+		},
 		"plan": {
 			"title": "计划",
 			"completed": "已完成：{{count}}",
@@ -607,6 +853,15 @@
 		}
 	},
 	"channel": {
+		"credentialBinding": {
+			"tab": "扫码授权",
+			"manualTab": "手动填写",
+			"scanHint": "用平台 App 扫码并确认，凭据将自动生成。",
+			"authorized": "已确认，凭据已就绪。",
+			"failed": "授权未能完成。",
+			"unsafeUrl": "平台返回的链接无法安全展示。",
+			"retry": "重新生成"
+		},
 		"title": "频道",
 		"subtitle": "接入飞书、Discord 等外部平台，让智能体在群聊里工作",
 		"status": "状态",
@@ -780,5 +1035,50 @@
 		"empty": "此文件夹为空",
 		"pressEnter": "先按回车校验该路径",
 		"gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
+	},
+	"voiceProfile": {
+		"title": "语音配置",
+		"subtitle": "管理 Agent 使用的语音配置",
+		"newProfile": "新建配置",
+		"noProfiles": "暂无语音配置",
+		"noProfilesDescription": "创建语音配置以为您的 Agent 设置 TTS 语音参数。",
+		"createTitle": "创建语音配置",
+		"editTitle": "编辑语音配置",
+		"name": "名称",
+		"namePlaceholder": "我的语音配置",
+		"engine": "引擎",
+		"enginePlaceholder": "选择引擎",
+		"model": "语音合成模型",
+		"modelPlaceholder": "选择语音合成模型",
+		"customModel": "自定义模型",
+		"customModelPlaceholder": "输入模型或部署名称",
+		"unavailableCredential": "凭据不可用：{{id}}",
+		"credential": "凭据",
+		"credentialPlaceholder": "选择凭据",
+		"loadingModels": "加载模型列表...",
+		"voice": "音色",
+		"voicePlaceholderPreset": "预设音色名",
+		"voicePlaceholderClone": "预设音色名或克隆音色 ID",
+		"cloneVoice": "声音克隆",
+		"enrollmentModel": "音色复刻模型（自动匹配）",
+		"enrollmentModelHint": "复刻模型用于创建音色，合成模型用于生成语音。复刻模型根据所选合成模型自动匹配。",
+		"cloning": "克隆中...",
+		"clone": "克隆",
+		"uploadAudio": "上传音频克隆",
+		"cloneUrlPlaceholder": "https://公开可访问的音频文件URL",
+		"consentPlaceholder": "OpenAI Consent ID (cons_xxx)",
+		"consentRequired": "请先填写 OpenAI Consent ID",
+		"uploadConsent": "上传同意录音",
+		"consentLanguage": "同意录音语言",
+		"consentRecordingHint": "请按所选语言逐字朗读以下声明，并上传录音。",
+		"consentRequirements": "查看 OpenAI 官方录音要求",
+		"openaiCloneHint": "OpenAI 克隆需要两步：1) 上传声优朗读同意声明的录音获取 Consent ID；2) 上传音频样本创建音色。",
+		"fileTooLarge": "文件过大，最大支持 {{max}}MB",
+		"deleteTitle": "删除语音配置",
+		"deleteDescription": "确定要删除「{{name}}」吗？此操作无法撤销。",
+		"noEngines": "尚未配置 TTS 凭据，请先添加凭据。",
+		"saving": "保存中...",
+		"save": "保存",
+		"cancel": "取消"
 	}
 }

@@ -24,7 +24,7 @@ from agentscope.app.storage import (
     AgentRecord,
     SessionConfig,
     SessionRecord,
-    SessionSource,
+    UserOrigin,
 )
 from agentscope.state import AgentState
 from agentscope.tool import ExecResult
@@ -118,7 +118,7 @@ def _make_session(cwd: str | None = None) -> SessionRecord:
         user_id="u",
         agent_id="a",
         id="s",
-        source=SessionSource.USER,
+        origin=UserOrigin(),
         state=AgentState(),
         config=SessionConfig(workspace_id="ws-1", name="t", cwd=cwd),
         agent_snapshot=AgentRecord(

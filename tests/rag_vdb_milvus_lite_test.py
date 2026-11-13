@@ -5,13 +5,17 @@ import unittest
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, Mock, call, patch
 
 from utils import AnyString
 
+from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
 from agentscope.message import TextBlock
 from agentscope.rag import (
     Chunk,
+    KnowledgeBase,
     MilvusLiteStore,
     VectorRecord,
     VectorSearchResult,
@@ -151,6 +155,70 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
                         "source": "doc-1.txt",
                         "chunk_index": 1,
                         "total_chunks": 2,
+                        "metadata": {},
+                    },
+                },
+            ],
+        )
+
+    async def test_search_negates_l2_distance_scores(self) -> None:
+        """The L2 metric yields higher-is-better scores too."""
+        store = await self._exit_stack.enter_async_context(
+            MilvusLiteStore(
+                uri=str(self._tmpdir / "l2.db"),
+                metric_type="L2",
+            ),
+        )
+        await store.create_collection("kb_2", dimensions=3)
+        await store.insert(
+            "kb_2",
+            [
+                _make_record("Near!", [1.0, 0.0, 0.0], document_id="doc-1"),
+                _make_record("Far!", [10.0, 0.0, 0.0], document_id="doc-2"),
+            ],
+        )
+
+        results = await store.search(
+            "kb_2",
+            query_vector=[0.0, 0.0, 0.0],
+            top_k=2,
+        )
+
+        # Negated squared distances, so the nearest record ranks first
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": -1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Near!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {},
+                    },
+                },
+                {
+                    "score": -100.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "Far!",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": None,
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
                         "metadata": {},
                     },
                 },
@@ -335,28 +403,329 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual([s.document_id for s in summaries], ["doc-2"])
 
     async def test_persists_records_after_reopen(self) -> None:
-        """Records remain available after closing and reopening the DB."""
+        """KnowledgeBase reads load existing collections after reopening."""
         db_path = self._tmpdir / "persistent.db"
+        record = _make_record(
+            "Persisted",
+            [1.0, 0.0, 0.0],
+            document_id="doc-1",
+        )
+        embedding = AsyncMock(spec=EmbeddingModelBase)
+        embedding.dimensions = 3
+        embedding.supports_multimodal = False
+        embedding.return_value = EmbeddingResponse(
+            embeddings=[record.vector],
+        )
 
         async with MilvusLiteStore(uri=str(db_path)) as first_store:
             await first_store.create_collection("kb_persistent", dimensions=3)
-            await first_store.insert(
-                "kb_persistent",
+            await first_store.insert("kb_persistent", [record])
+
+        cases = [
+            (
+                "search",
+                (["Persisted"],),
                 [
-                    _make_record(
-                        "Persisted",
-                        [1.0, 0.0, 0.0],
-                        document_id="doc-1",
-                    ),
+                    {
+                        "score": 1.0,
+                        "document_id": "doc-1",
+                        "chunk": record.chunk.model_dump(),
+                    },
                 ],
+            ),
+            (
+                "list_documents",
+                (),
+                [
+                    {
+                        "document_id": "doc-1",
+                        "source": "doc-1.txt",
+                        "chunk_count": 1,
+                        "metadata": {},
+                    },
+                ],
+            ),
+            ("list_chunks", ("doc-1",), [record.chunk.model_dump()]),
+        ]
+        for method, args, expected in cases:
+            with self.subTest(method=method):
+                # Reopen for each read so earlier reads cannot load it.
+                async with MilvusLiteStore(uri=str(db_path)) as second_store:
+                    knowledge = KnowledgeBase(
+                        name="persistent",
+                        description="Persisted test documents",
+                        embedding_model=embedding,
+                        vector_store=second_store,
+                        collection="kb_persistent",
+                    )
+                    results = await getattr(knowledge, method)(*args)
+                    self.assertEqual(
+                        [result.model_dump() for result in results],
+                        expected,
+                    )
+
+    async def test_list_chunks_pagination_and_isolation(self) -> None:
+        """list_chunks pages by chunk_index and isolates documents."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"doc1-chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            # Insert out of order to prove ordering is restored.
+            for i in (3, 0, 4, 1, 2)
+        ] + [
+            _make_record(
+                f"doc2-chunk{i}",
+                [0.0, 1.0, 0.0],
+                document_id="doc-2",
+                chunk_index=i,
+                total_chunks=2,
+            )
+            for i in (1, 0)
+        ]
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2])
+        self.assertEqual(
+            [c.content.text for c in page],
+            ["doc1-chunk0", "doc1-chunk1", "doc1-chunk2"],
+        )
+
+        tail = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=3,
+            limit=30,
+        )
+        self.assertEqual([c.chunk_index for c in tail], [3, 4])
+
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", offset=5, limit=3),
+            [],
+        )
+        self.assertEqual(
+            await self.store.list_chunks("kb-1", "doc-1", limit=0),
+            [],
+        )
+
+        other = await self.store.list_chunks("kb-1", "doc-2", limit=30)
+        self.assertEqual([c.chunk_index for c in other], [0, 1])
+        self.assertTrue(
+            all(c.content.text.startswith("doc2") for c in other),
+        )
+
+    async def test_list_chunks_metadata_filter(self) -> None:
+        """list_chunks applies the metadata_filter tenant scoping."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        record = _make_record(
+            "scoped",
+            [1.0, 0.0, 0.0],
+            document_id="doc-1",
+        )
+        record.chunk.metadata["kb_scope"] = "kb-a"
+        await self.store.insert("kb-1", [record])
+
+        hit = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-a"},
+        )
+        self.assertEqual(len(hit), 1)
+
+        miss = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            metadata_filter={"kb_scope": "kb-b"},
+        )
+        self.assertEqual(miss, [])
+
+    async def test_list_chunks_deduplicates_reindex_duplicates(self) -> None:
+        """Re-indexing the same document never duplicates or drops chunks.
+
+        Stable record IDs make the second insert an in-place upsert; and
+        even against legacy duplicate rows the listing deduplicates by
+        ``chunk_index``, so a page is never ``[1, 2, 3, 3, 4]``.
+        """
+        await self.store.create_collection("kb-1", dimensions=3)
+        records = [
+            _make_record(
+                f"chunk{i}",
+                [1.0, 0.0, 0.0],
+                document_id="doc-1",
+                chunk_index=i,
+                total_chunks=5,
+            )
+            for i in range(5)
+        ]
+        # Simulate the index worker crashing after the vector insert
+        # and retrying the whole pipeline.
+        await self.store.insert("kb-1", records)
+        await self.store.insert("kb-1", records)
+
+        page = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=0,
+            limit=5,
+        )
+        self.assertEqual([c.chunk_index for c in page], [0, 1, 2, 3, 4])
+
+        window = await self.store.list_chunks(
+            "kb-1",
+            "doc-1",
+            offset=1,
+            limit=3,
+        )
+        self.assertEqual([c.chunk_index for c in window], [1, 2, 3])
+
+    async def test_list_chunks_after_reindexing_into_fewer_chunks(
+        self,
+    ) -> None:
+        """A shorter re-index leaves no tail from the previous run.
+
+        The worker deletes a document's vectors before re-inserting, so
+        even though upserts alone would keep the old high indices, the
+        listing reflects only the latest run.
+        """
+        await self.store.create_collection("kb-1", dimensions=3)
+
+        def _records(count: int) -> list:
+            return [
+                _make_record(
+                    f"v{count}-chunk{i}",
+                    [1.0, 0.0, 0.0],
+                    document_id="doc-1",
+                    chunk_index=i,
+                    total_chunks=count,
+                )
+                for i in range(count)
+            ]
+
+        await self.store.insert("kb-1", _records(5))
+        await self.store.delete("kb-1", "doc-1")
+        await self.store.insert("kb-1", _records(2))
+
+        chunks = await self.store.list_chunks("kb-1", "doc-1", limit=30)
+        self.assertEqual([c.chunk_index for c in chunks], [0, 1])
+        self.assertEqual(
+            [c.content.text for c in chunks],
+            ["v2-chunk0", "v2-chunk1"],
+        )
+
+
+class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
+    """Check delete predicates without starting a Milvus service."""
+
+    async def test_milvus_delete_filter(self) -> None:
+        """Milvus keeps document escaping and ANDs both metadata fields."""
+        store = MilvusLiteStore()
+        client = SimpleNamespace(delete=Mock())
+        with patch.object(store, "get_client", return_value=client):
+            await store.delete(
+                "shared",
+                'doc"id',
+                metadata_filter={"tenant": "alpha", "project": 2},
+            )
+        client.delete.assert_called_once_with(
+            collection_name="shared",
+            filter=(
+                'document_id == "doc\\"id" and '
+                'metadata["tenant"] == "alpha" and metadata["project"] == 2'
+            ),
+        )
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                client.delete.reset_mock()
+                with patch.object(store, "get_client", return_value=client):
+                    await store.delete("shared", "doc", metadata_filter=scope)
+                client.delete.assert_called_once_with(
+                    collection_name="shared",
+                    filter='document_id == "doc"',
+                )
+
+
+class MilvusReadLoadsCollectionTest(IsolatedAsyncioTestCase):
+    """Read paths load the collection before touching Milvus.
+
+    Milvus can leave a collection in the ``released`` state, e.g. after the
+    host process restarts; searching or querying it then raises
+    ``Collection ... is in state 'released'``. The read helpers must
+    therefore call ``load_collection`` first. A mocked client keeps these
+    tests independent of a running Milvus service.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Create a store without connecting to Milvus."""
+        self.store = MilvusLiteStore()
+        self.client = Mock()
+
+    async def test_search_loads_collection_first(self) -> None:
+        """search() loads the collection before issuing the search."""
+        self.client.search.return_value = [[]]
+        with patch.object(self.store, "get_client", return_value=self.client):
+            await self.store.search("kb_1", query_vector=[1.0, 0.0, 0.0])
+
+        self.assertEqual(
+            [call[0] for call in self.client.method_calls],
+            ["load_collection", "search"],
+        )
+        self.client.load_collection.assert_called_once_with(
+            collection_name="kb_1",
+        )
+
+    async def test_list_documents_loads_collection_first(self) -> None:
+        """list_documents() loads the collection before querying it."""
+        self.client.query_rows.return_value = []
+        with (
+            patch.object(self.store, "get_client", return_value=self.client),
+            patch.object(
+                self.store,
+                "_query_all_rows",
+                self.client.query_rows,
+            ),
+        ):
+            self.assertEqual(await self.store.list_documents("kb_1"), [])
+
+        self.assertEqual(
+            self.client.method_calls,
+            [
+                call.load_collection(collection_name="kb_1"),
+                call.query_rows(self.client, "kb_1", None),
+            ],
+        )
+
+    async def test_list_chunks_loads_collection_first(self) -> None:
+        """list_chunks() loads the collection before querying its page."""
+        self.client.query.return_value = []
+        with patch.object(self.store, "get_client", return_value=self.client):
+            self.assertEqual(
+                await self.store.list_chunks("kb_1", "doc-1"),
+                [],
             )
 
-        async with MilvusLiteStore(uri=str(db_path)) as second_store:
-            await second_store.create_collection("kb_persistent", dimensions=3)
-            results = await second_store.search(
-                "kb_persistent",
-                query_vector=[1.0, 0.0, 0.0],
-                top_k=1,
-            )
-
-        self.assertEqual([r.document_id for r in results], ["doc-1"])
+        self.assertEqual(
+            self.client.method_calls,
+            [
+                call.load_collection(collection_name="kb_1"),
+                call.query(
+                    collection_name="kb_1",
+                    filter=(
+                        'document_id == "doc-1" and '
+                        'chunk["chunk_index"] >= 0 and '
+                        'chunk["chunk_index"] < 30'
+                    ),
+                    output_fields=["chunk"],
+                    limit=16_384,
+                ),
+            ],
+        )

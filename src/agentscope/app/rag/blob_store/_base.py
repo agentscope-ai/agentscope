@@ -144,6 +144,34 @@ class BlobStoreBase(ABC):
                 A URI produced by :meth:`write_stream`.
         """
 
+    async def size(self, uri: str) -> int | None:
+        """Return the stored byte length of the blob, if measurable.
+
+        Callers use this to set ``Content-Length`` on a download, which
+        is what turns a browser's progress bar from "bytes so far" into
+        a percentage.  The number therefore has to be the length of the
+        bytes :meth:`open` will actually yield — a stale copy recorded
+        elsewhere would truncate the response — so backends must
+        measure the object itself (``stat`` / ``HEAD``), never echo a
+        size supplied at upload time.
+
+        Not abstract: it was added after third-party subclasses already
+        existed, and the default keeps them working. ``None`` means "I
+        cannot cheaply measure this", and callers then omit the header
+        rather than guessing.
+
+        Args:
+            uri (`str`):
+                A URI produced by :meth:`write_stream`.
+
+        Returns:
+            `int | None`:
+                The byte length, or ``None`` when the blob is missing
+                or the backend cannot measure it.
+        """
+        del uri  # the default cannot measure anything
+        return None
+
     @abstractmethod
     async def exists(self, uri: str) -> bool:
         """Return whether the blob at ``uri`` is present.

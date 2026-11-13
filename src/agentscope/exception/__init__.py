@@ -5,6 +5,11 @@ from ._base import (
     AgentOrientedException,
     DeveloperOrientedException,
 )
+from ._model import (
+    ContentBlockedError,
+    ContentBlockedPhase,
+    StructuredOutputError,
+)
 from ._tool import (
     ToolInterruptedError,
     ToolNotFoundError,
@@ -15,6 +20,9 @@ from ._tool import (
 __all__ = [
     "AgentOrientedException",
     "DeveloperOrientedException",
+    "ContentBlockedError",
+    "ContentBlockedPhase",
+    "StructuredOutputError",
     "ToolInterruptedError",
     "ToolNotFoundError",
     "ToolJSONDecodeError",
