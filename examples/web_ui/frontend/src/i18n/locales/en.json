@@ -1060,6 +1060,7 @@
 		"voicePlaceholderPreset": "Preset voice name",
 		"voicePlaceholderClone": "Preset name or cloned voice ID",
 		"cloneVoice": "Voice Cloning",
+		"minimaxCloneHint": "Upload an MP3, M4A or WAV recording of 10 seconds to 5 minutes, up to 20 MiB. Your MiniMax account requires individual or enterprise verification. Use the cloned voice for speech synthesis within 7 days to prevent expiry; saving the profile alone does not activate it.",
 		"enrollmentModel": "Voice cloning model (automatic)",
 		"enrollmentModelHint": "The cloning model creates the voice; the synthesis model generates speech. The cloning model is matched automatically to your selected synthesis model.",
 		"cloning": "Cloning...",

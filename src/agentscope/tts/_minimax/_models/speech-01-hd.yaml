@@ -1,6 +1,7 @@
 name: speech-01-hd
 label: MiniMax Speech 01 HD
 status: active
+voice_cloning: true
 
 input_types:
   - text/plain

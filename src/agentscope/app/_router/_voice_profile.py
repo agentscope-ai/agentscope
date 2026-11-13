@@ -40,7 +40,10 @@ from ._schema import (
     OpenAIConsentResponse,
     UpdateVoiceProfileRequest,
 )
-from ._schema._voice_profile import MAX_AUDIO_SIZE_BYTES
+from ._schema._voice_profile import (
+    MAX_AUDIO_SIZE_BYTES,
+    MAX_CLONE_AUDIO_SIZE_BYTES,
+)
 
 voice_profile_router = APIRouter(
     prefix="/voice-profile",
@@ -415,7 +418,10 @@ async def delete_voice_profile(
 # ------------------------------------------------------------------
 
 
-def _decode_audio(audio_base64: str) -> bytes:
+def _decode_audio(
+    audio_base64: str,
+    max_size_bytes: int = MAX_AUDIO_SIZE_BYTES,
+) -> bytes:
     """Decode a non-empty audio payload or reject malformed input."""
     try:
         audio = base64.b64decode(audio_base64, validate=True)
@@ -429,10 +435,10 @@ def _decode_audio(audio_base64: str) -> bytes:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="audio_base64 must contain non-empty audio.",
         )
-    if len(audio) > MAX_AUDIO_SIZE_BYTES:
+    if len(audio) > max_size_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Audio must not exceed 10 MiB.",
+            detail=f"Audio must not exceed {max_size_bytes // 1024**2} MiB.",
         )
     return audio
 
@@ -499,9 +505,9 @@ async def clone_voice(
         get_resource_access_service,
     ),
 ) -> CloneVoiceResponse:
-    """Clone a voice using OpenAI or DashScope voice enrollment.
+    """Clone a voice using the credential's voice creation client.
 
-    Supports OpenAI and Qwen-TTS uploads and CosyVoice audio URLs.
+    Supports MiniMax, OpenAI and Qwen-TTS uploads and CosyVoice audio URLs.
 
     Args:
         body: Clone request with engine, model, and audio.
@@ -554,7 +560,12 @@ async def clone_voice(
         "consent": body.consent,
     }
     audio = (
-        _decode_audio(body.audio_base64)
+        _decode_audio(
+            body.audio_base64,
+            MAX_CLONE_AUDIO_SIZE_BYTES
+            if body.engine == "minimax_tts"
+            else MAX_AUDIO_SIZE_BYTES,
+        )
         if body.audio_base64 is not None
         else None
     )
