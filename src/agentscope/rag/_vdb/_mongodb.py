@@ -181,8 +181,16 @@ class MongoDBStore(VectorStoreBase):
             name=self._index_name,
             type="vectorSearch",
         )
-        await col.create_search_index(model)
-        await self._wait_for_index_ready(col, name)
+        try:
+            await col.create_search_index(model)
+            await self._wait_for_index_ready(col, name)
+        except BaseException:
+            # Leave no half-initialized collection behind. Otherwise
+            # ``has_collection`` would report it as ready and every later
+            # attempt would skip index creation, making searches wait for
+            # an index that will never become queryable.
+            await col.drop()
+            raise
 
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
