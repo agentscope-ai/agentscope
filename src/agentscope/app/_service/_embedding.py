@@ -50,6 +50,14 @@ def build_embedding_model(
             400 if the provider does not support embedding.
     """
     credential = CredentialFactory.from_dict(credential_record.data)
+    if credential.type != config.type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Embedding model provider does not match the credential "
+                "type."
+            ),
+        )
 
     credential_cls = CredentialFactory.get_credential_class(config.type)
     if credential_cls is None:
