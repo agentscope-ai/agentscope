@@ -402,30 +402,21 @@ class IndexWorker:
         if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
             # A multipart client that labels its part generically leaves
             # a valid deck unindexed even though the filename says what
-            # it is.  Only a missing type or the generic binary one falls
-            # through to the filename: an explicit specific type stays
-            # authoritative even if nothing is registered for it.  Match
-            # on what each parser declares rather than on
-            # ``mimetypes.guess_type``, whose table is incomplete on
-            # some platforms — on Windows ``.pptx`` often resolves to
-            # nothing on a stock image, which is exactly the upload this
-            # fallback has to serve.
+            # it is.  Match on what each parser declares rather than on
+            # ``mimetypes.guess_type``, whose table is incomplete on some
+            # platforms — on Windows ``.pptx`` often resolves to nothing
+            # on a stock image, which is exactly the upload this fallback
+            # has to serve.
             extension = _filename_extension(data.filename)
-            if extension:
-                registered = (
-                    self._parsers_by_media_type.items()
-                    if media_type in (None, _GENERIC_MEDIA_TYPE)
-                    else ()
+            for known, candidate in self._parsers_by_media_type.items():
+                extensions = getattr(
+                    candidate,
+                    "supported_extensions",
+                    None,
                 )
-                for known, candidate in registered:
-                    extensions = getattr(
-                        candidate,
-                        "supported_extensions",
-                        None,
-                    )
-                    if extensions and extension in extensions():
-                        parser, media_type = candidate, known
-                        break
+                if extension and extensions and extension in extensions():
+                    parser, media_type = candidate, known
+                    break
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
