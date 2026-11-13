@@ -137,6 +137,9 @@ class ChannelLifecycleDispatcher:
                 credentials=record.credentials,
                 config=record.platform_config,
             )
+            channel._bind_storage(  # pylint: disable=protected-access
+                self._storage,
+            )
             task = asyncio.create_task(
                 channel.start_listening(self._gateway.process),
                 name=f"channel-listener:{record.id}",

@@ -17,7 +17,9 @@ import base64
 import json
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
+from urllib.parse import quote, urlencode
 
 from pydantic import BaseModel, Field
 
@@ -31,15 +33,21 @@ from .._base import (
     ChannelConfirmationResultEvent,
     ChannelStatus,
     ChatKind,
+    WikiDocument,
+    WikiNode,
+    WikiPage,
+    WikiSpace,
     _EVENT_ADAPTER,
 )
-from ._credential_binding import FeishuCredentialBinding
 from ._card_templates import (
     _build_action_response,
     _build_approval_card,
     _build_toast,
+    _build_user_auth_card,
     _parse_action,
 )
+from ._credential_binding import FeishuCredentialBinding
+from ._user_oauth import _FeishuDeviceFlowClient
 
 if TYPE_CHECKING:
     import httpx
@@ -50,13 +58,44 @@ if TYPE_CHECKING:
     )
     from .....tool import ToolBase
     from .....workspace import WorkspaceBase
+    from ...storage import StorageBase
 
 _API = "https://open.feishu.cn/open-apis"
-_TOKEN_EXPIRED_CODES = frozenset({99991663, 99991664})
+_TOKEN_EXPIRED_CODES = frozenset(
+    {99991663, 99991664, 99991665, 99991666, 99991668, 99991671},
+)
 _MEDIA_TYPES = frozenset({"image", "audio", "media", "file"})
 _STREAM_ELEMENT_ID = "md"
 # Minimum seconds between live streaming-card updates (throttle).
 _STREAM_MIN_INTERVAL = 0.7
+_USER_TOKEN_REFRESH_SLACK = 300
+_MAX_DOCUMENT_CHARS = 20_000
+_WIKI_SCOPES = frozenset(
+    {
+        "wiki:space:retrieve",
+        "wiki:node:retrieve",
+        "wiki:node:read",
+        "docx:document:readonly",
+    },
+)
+_BLOCK_NAMES = {
+    1: "page",
+    2: "text",
+    3: "heading1",
+    4: "heading2",
+    5: "heading3",
+    6: "heading4",
+    7: "heading5",
+    8: "heading6",
+    9: "heading7",
+    10: "heading8",
+    11: "heading9",
+    12: "bullet",
+    13: "ordered",
+    15: "quote",
+    31: "table",
+    32: "table_cell",
+}
 
 
 class _ThreadLoopProxy:
@@ -135,6 +174,7 @@ class FeishuChannel(ChannelBase):
         file=True,
         interactive=True,
         streaming=True,
+        wiki=True,
         max_message_length=4000,
     )
 
@@ -161,6 +201,9 @@ class FeishuChannel(ChannelBase):
         self.status = ChannelStatus()
         self._http: "httpx.AsyncClient | None" = None
         self._token: str | None = None
+        self._storage: "StorageBase | None" = None
+        self._device_flow: Any = None
+        self._user_auth_locks: dict[str, asyncio.Lock] = {}
         self._bot_open_id: str | None = None
         self._ws_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -177,6 +220,14 @@ class FeishuChannel(ChannelBase):
     def channel_id(self) -> str:
         """The unique channel instance identifier."""
         return self._channel_id
+
+    def _bind_storage(self, storage: "StorageBase") -> None:
+        """Bind storage used for user-scoped OAuth credentials.
+
+        Args:
+            storage (`StorageBase`): The application storage backend.
+        """
+        self._storage = storage
 
     # -- Lifecycle --
 
@@ -272,6 +323,9 @@ class FeishuChannel(ChannelBase):
             if self._http:
                 await self._http.aclose()
                 self._http = None
+            if self._device_flow is not None:
+                await self._device_flow.close()
+                self._device_flow = None
 
     def _launch_ws_thread(self) -> threading.Thread:
         """Start the lark WS client on a daemon thread with its own loop.
@@ -972,6 +1026,395 @@ class FeishuChannel(ChannelBase):
             SendImage(self, backend),
         ] + await super().list_tools(workspace, channel_user_id)
 
+    # -- User-scoped Wiki operations --
+
+    async def list_wiki_spaces(
+        self,
+        channel_user_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> WikiPage[WikiSpace]:
+        """List Wiki spaces visible to one Feishu user.
+
+        Args:
+            channel_user_id (`str`): The sender's Feishu ``open_id``.
+            limit (`int`): Maximum spaces to return (capped at 50).
+            next_token (`str | None`, optional): Feishu pagination token.
+
+        Returns:
+            `WikiPage[WikiSpace]`: One page of visible spaces.
+        """
+        query: dict[str, Any] = {"page_size": min(max(limit, 1), 50)}
+        if next_token:
+            query["page_token"] = next_token
+        data = await self._user_api(
+            channel_user_id,
+            "list Wiki spaces",
+            "GET",
+            "/wiki/v2/spaces",
+            query=query,
+        )
+        payload = data.get("data") or {}
+        items = []
+        for item in payload.get("items") or []:
+            space_id = str(item.get("space_id") or "")
+            if not space_id:
+                continue
+            items.append(
+                WikiSpace(
+                    space_id=space_id,
+                    name=str(item.get("name") or ""),
+                    root_node_id=space_id,
+                    description=item.get("description"),
+                    url=None,
+                ),
+            )
+        token = payload.get("page_token") if payload.get("has_more") else None
+        return WikiPage(items=items, next_token=token or None)
+
+    async def list_wiki_nodes(
+        self,
+        channel_user_id: str,
+        parent_node_id: str,
+        limit: int,
+        next_token: str | None = None,
+    ) -> WikiPage[WikiNode]:
+        """List direct children of a Feishu Wiki space or node.
+
+        Args:
+            channel_user_id (`str`): The sender's Feishu ``open_id``.
+            parent_node_id (`str`): A space id or Wiki node token.
+            limit (`int`): Maximum nodes to return (capped at 50).
+            next_token (`str | None`, optional): Feishu pagination token.
+
+        Returns:
+            `WikiPage[WikiNode]`: One page of child nodes.
+        """
+        query: dict[str, Any] = {"page_size": min(max(limit, 1), 50)}
+        if parent_node_id.startswith("wik"):
+            node = await self._get_wiki_node(
+                channel_user_id,
+                parent_node_id,
+            )
+            space_id = str(node.get("space_id") or "")
+            if not space_id:
+                raise RuntimeError(
+                    "Feishu get Wiki node returned no space id.",
+                )
+            query["parent_node_token"] = parent_node_id
+        else:
+            space_id = parent_node_id
+        if next_token:
+            query["page_token"] = next_token
+        data = await self._user_api(
+            channel_user_id,
+            "list Wiki nodes",
+            "GET",
+            f"/wiki/v2/spaces/{quote(space_id, safe='')}/nodes",
+            query=query,
+        )
+        payload = data.get("data") or {}
+        items = []
+        for item in payload.get("items") or []:
+            node_id = str(item.get("node_token") or "")
+            if not node_id:
+                continue
+            items.append(
+                WikiNode(
+                    node_id=node_id,
+                    name=str(item.get("title") or ""),
+                    has_children=bool(item.get("has_child")),
+                    is_document=item.get("obj_type") == "docx",
+                    url=item.get("node_url") or item.get("url"),
+                    updated_at=self._parse_wiki_time(
+                        item.get("obj_edit_time"),
+                    ),
+                ),
+            )
+        token = payload.get("page_token") if payload.get("has_more") else None
+        return WikiPage(items=items, next_token=token or None)
+
+    async def read_wiki_document(
+        self,
+        channel_user_id: str,
+        node_id: str,
+        start_index: int,
+        max_blocks: int,
+    ) -> WikiDocument | None:
+        """Read a bounded range from a Feishu ``docx`` Wiki node.
+
+        Args:
+            channel_user_id (`str`): The sender's Feishu ``open_id``.
+            node_id (`str`): Feishu Wiki node token.
+            start_index (`int`): Zero-based top-level block index.
+            max_blocks (`int`): Maximum top-level blocks to render.
+
+        Returns:
+            `WikiDocument | None`: Markdown content, or ``None`` for a
+            non-``docx`` node.
+        """
+        node = await self._get_wiki_node(channel_user_id, node_id)
+        if node.get("obj_type") != "docx":
+            return None
+        document_id = str(node.get("obj_token") or "")
+        if not document_id:
+            raise RuntimeError(
+                "Feishu get Wiki node returned no document id.",
+            )
+        markdown, next_index = await self._read_docx_blocks(
+            channel_user_id,
+            document_id,
+            max(start_index, 0),
+            max(max_blocks, 1),
+        )
+        return WikiDocument(
+            node_id=node_id,
+            name=str(node.get("title") or ""),
+            content=[TextBlock(text=markdown)] if markdown else [],
+            next_start_index=next_index,
+        )
+
+    async def _get_wiki_node(
+        self,
+        channel_user_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        """Resolve a Wiki node token to its backing object."""
+        data = await self._user_api(
+            channel_user_id,
+            "get Wiki node",
+            "GET",
+            "/wiki/v2/spaces/get_node",
+            query={"token": node_id},
+        )
+        node = (data.get("data") or {}).get("node")
+        if not isinstance(node, dict):
+            raise RuntimeError("Feishu get Wiki node returned no node.")
+        return node
+
+    @staticmethod
+    def _parse_wiki_time(value: Any) -> datetime | None:
+        """Convert Feishu's epoch value to an aware UTC datetime."""
+        try:
+            stamp = float(value)
+        except (TypeError, ValueError):
+            return None
+        if stamp > 10_000_000_000:
+            stamp /= 1000
+        try:
+            return datetime.fromtimestamp(stamp, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    async def _read_docx_blocks(
+        self,
+        channel_user_id: str,
+        document_id: str,
+        start_index: int,
+        max_blocks: int,
+    ) -> tuple[str, int | None]:
+        """Fetch enough flat blocks to render one top-level range."""
+        blocks: dict[str, dict[str, Any]] = {}
+        roots: list[str] | None = None
+        page_token: str | None = None
+        seen_tokens: set[str] = set()
+        while True:
+            query: dict[str, Any] = {"page_size": 500}
+            if page_token:
+                query["page_token"] = page_token
+            data = await self._user_api(
+                channel_user_id,
+                "read Wiki document blocks",
+                "GET",
+                "/docx/v1/documents/" f"{quote(document_id, safe='')}/blocks",
+                query=query,
+            )
+            payload = data.get("data") or {}
+            for block in payload.get("items") or []:
+                block_id = str(block.get("block_id") or "")
+                if not block_id:
+                    continue
+                blocks[block_id] = block
+                if block.get("block_type") == 1:
+                    roots = [str(item) for item in block.get("children") or []]
+
+            selected = (
+                []
+                if roots is None
+                else roots[start_index : start_index + max_blocks]
+            )
+            if roots is not None and self._subtrees_complete(selected, blocks):
+                break
+            if not payload.get("has_more"):
+                if roots is None:
+                    raise RuntimeError(
+                        "Feishu document blocks returned no page block.",
+                    )
+                raise RuntimeError(
+                    "Feishu document blocks returned an incomplete tree.",
+                )
+            page_token = str(payload.get("page_token") or "")
+            if not page_token or page_token in seen_tokens:
+                raise RuntimeError(
+                    "Feishu document block pagination did not advance.",
+                )
+            seen_tokens.add(page_token)
+
+        assert roots is not None
+        selected = roots[start_index : start_index + max_blocks]
+        rendered: list[str] = []
+        returned = 0
+        used = 0
+        for block_id in selected:
+            text = self._render_docx_block(block_id, blocks).strip()
+            separator = 2 if rendered else 0
+            if rendered and used + separator + len(text) > _MAX_DOCUMENT_CHARS:
+                break
+            rendered.append(text)
+            returned += 1
+            used += separator + len(text)
+        current = start_index + returned
+        next_index = current if current < len(roots) else None
+        return "\n\n".join(rendered), next_index
+
+    @classmethod
+    def _subtrees_complete(
+        cls,
+        root_ids: list[str],
+        blocks: dict[str, dict[str, Any]],
+    ) -> bool:
+        """Return whether every referenced descendant has been fetched."""
+        pending = list(root_ids)
+        visited: set[str] = set()
+        while pending:
+            block_id = pending.pop()
+            if block_id in visited:
+                continue
+            block = blocks.get(block_id)
+            if block is None:
+                return False
+            visited.add(block_id)
+            pending.extend(str(item) for item in block.get("children") or [])
+            if block.get("block_type") == 31:
+                pending.extend(
+                    str(item)
+                    for item in (block.get("table") or {}).get("cells") or []
+                )
+        return True
+
+    @classmethod
+    def _render_docx_block(
+        cls,
+        block_id: str,
+        blocks: dict[str, dict[str, Any]],
+        depth: int = 0,
+    ) -> str:
+        """Render one fetched block tree as Markdown."""
+        block = blocks[block_id]
+        raw_block_type = block.get("block_type")
+        block_type = raw_block_type if isinstance(raw_block_type, int) else -1
+        name = _BLOCK_NAMES.get(block_type, str(block_type))
+        if block_type == 31:
+            return cls._render_docx_table(block, blocks)
+        if block_type == 32:
+            children = block.get("children") or []
+            return "\n".join(
+                cls._render_docx_block(str(child), blocks, depth)
+                for child in children
+            )
+        if block_type == 1:
+            return "\n\n".join(
+                cls._render_docx_block(str(child), blocks, depth)
+                for child in block.get("children") or []
+            )
+        if block_type not in set(range(2, 14)) | {15}:
+            return f"[Unsupported block: {name}]"
+
+        text = cls._render_docx_text(block.get(name) or {})
+        if 3 <= block_type <= 11:
+            line = f"{'#' * (block_type - 2)} {text}"
+        elif block_type == 12:
+            line = f"{'  ' * depth}- {text}"
+        elif block_type == 13:
+            line = f"{'  ' * depth}1. {text}"
+        elif block_type == 15:
+            line = "\n".join(f"> {part}" for part in text.splitlines())
+        else:
+            line = text
+        children = [
+            cls._render_docx_block(
+                str(child),
+                blocks,
+                depth + (1 if block_type in (12, 13) else 0),
+            )
+            for child in block.get("children") or []
+        ]
+        return "\n".join([line, *children]).strip()
+
+    @staticmethod
+    def _render_docx_text(detail: dict[str, Any]) -> str:
+        """Render Feishu rich-text elements as Markdown inline text."""
+        parts: list[str] = []
+        for element in detail.get("elements") or []:
+            if "text_run" in element:
+                run = element.get("text_run") or {}
+                content = str(run.get("content") or "")
+                link = (run.get("text_element_style") or {}).get("link")
+                if isinstance(link, dict) and link.get("url"):
+                    content = f"[{content}]({link['url']})"
+                parts.append(content)
+            elif "mention_doc" in element:
+                mention = element.get("mention_doc") or {}
+                title = str(mention.get("title") or "document")
+                url = mention.get("url")
+                parts.append(f"[{title}]({url})" if url else title)
+            elif "mention_user" in element:
+                mention = element.get("mention_user") or {}
+                parts.append("@" + str(mention.get("user_id") or "user"))
+            elif "equation" in element:
+                equation = element.get("equation") or {}
+                parts.append(f"${equation.get('content') or ''}$")
+        return "".join(parts)
+
+    @classmethod
+    def _render_docx_table(
+        cls,
+        block: dict[str, Any],
+        blocks: dict[str, dict[str, Any]],
+    ) -> str:
+        """Render a Feishu table whose cells are row-major block ids."""
+        table = block.get("table") or {}
+        props = table.get("property") or {}
+        rows = int(props.get("row_size") or 0)
+        columns = int(props.get("column_size") or 0)
+        cells = [str(item) for item in table.get("cells") or []]
+        if rows <= 0 or columns <= 0:
+            return "[Unsupported block: table]"
+
+        def _cell(index: int) -> str:
+            if index >= len(cells) or cells[index] not in blocks:
+                return ""
+            value = cls._render_docx_block(cells[index], blocks).strip()
+            return (
+                value.replace("\\", "\\\\")
+                .replace("|", "\\|")
+                .replace("\r\n", "<br>")
+                .replace("\n", "<br>")
+                .replace("\r", "<br>")
+            )
+
+        matrix = [
+            [_cell(row * columns + column) for column in range(columns)]
+            for row in range(rows)
+        ]
+        header = matrix[0]
+        lines = [
+            "| " + " | ".join(header) + " |",
+            "| " + " | ".join("---" for _ in header) + " |",
+        ]
+        lines.extend("| " + " | ".join(row) + " |" for row in matrix[1:])
+        return "\n".join(lines)
+
     # -- Agent-tool operations (act on chats/users other than the current) --
 
     async def send_message_to(
@@ -1165,7 +1608,18 @@ class FeishuChannel(ChannelBase):
         if self._http is not None:
             await self._http.aclose()
             self._http = None
+        if self._device_flow is not None:
+            await self._device_flow.close()
+            self._device_flow = None
         self._token = None
+
+    async def _ensure_http_client(self) -> "httpx.AsyncClient":
+        """Create and return this channel's shared async HTTP client."""
+        if self._http is None:
+            import httpx
+
+            self._http = httpx.AsyncClient(timeout=30.0)
+        return self._http
 
     async def _ensure_ready(self) -> bool:
         """Make the instance able to call the platform, connected or not.
@@ -1195,19 +1649,308 @@ class FeishuChannel(ChannelBase):
 
     async def _refresh_token(self) -> None:
         """Fetch a fresh tenant access token and cache it."""
-        if self._http is None:
-            import httpx
-
-            self._http = httpx.AsyncClient(timeout=30.0)
-        resp = await self._http.post(
+        http = await self._ensure_http_client()
+        resp = await http.post(
             f"{_API}/auth/v3/tenant_access_token/internal",
             json={"app_id": self._app_id, "app_secret": self._app_secret},
         )
         data = resp.json()
+        if not isinstance(data, dict):
+            logger.error("Feishu tenant token refresh returned invalid JSON")
+            return
         if data.get("code") == 0:
             self._token = data.get("tenant_access_token")
         else:
-            logger.error("Feishu token refresh failed: %s", data)
+            logger.error("Feishu tenant token refresh failed")
+
+    async def _user_api(
+        self,
+        channel_user_id: str,
+        operation: str,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+        _retried: bool = False,
+    ) -> dict[str, Any]:
+        """Call a Feishu endpoint with one sender's access token."""
+        token = await self._require_user_token(channel_user_id)
+        url = f"{_API}{path}"
+        if query:
+            url += "?" + urlencode(query)
+        http = await self._ensure_http_client()
+        try:
+            response = await http.request(
+                method,
+                url,
+                headers={
+                    "Authorization": f"Bearer {token['access_token']}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            data = response.json()
+        except Exception as exc:  # pylint: disable=broad-except
+            raise RuntimeError(
+                f"Feishu {operation} request failed; please try again.",
+            ) from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"Feishu {operation} returned an invalid response.",
+            )
+        if data.get("code") == 0:
+            return data
+        code = data.get("code")
+        if code in _TOKEN_EXPIRED_CODES and not _retried:
+            refreshed = await self._refresh_user_token(token)
+            if refreshed is not None:
+                await self._save_user_token(channel_user_id, refreshed)
+            else:
+                await self._delete_user_token(channel_user_id)
+            return await self._user_api(
+                channel_user_id,
+                operation,
+                method,
+                path,
+                query=query,
+                body=body,
+                _retried=True,
+            )
+        message = self._safe_platform_message(data.get("msg"))
+        access_token = str(token.get("access_token") or "")
+        if access_token:
+            message = message.replace(access_token, "[redacted]")
+        raise RuntimeError(
+            f"Feishu {operation} failed (code {code}): {message}",
+        )
+
+    async def _require_user_token(
+        self,
+        channel_user_id: str,
+    ) -> dict[str, Any]:
+        """Load, refresh, or interactively obtain a user access token."""
+        if self._storage is None:
+            raise RuntimeError(
+                "Feishu Wiki authorization storage is unavailable.",
+            )
+        lock = self._user_auth_locks.setdefault(
+            channel_user_id,
+            asyncio.Lock(),
+        )
+        async with lock:
+            try:
+                token = await self._storage.get_channel_user_credentials(
+                    self._channel_id,
+                    channel_user_id,
+                )
+            except NotImplementedError as exc:
+                raise RuntimeError(
+                    "The configured storage backend does not support "
+                    "Feishu Wiki authorization.",
+                ) from exc
+            if (
+                token
+                and token.get("open_id") == channel_user_id
+                and self._token_scopes_valid(token)
+            ):
+                expires_at = self._number(token.get("expires_at"))
+                if (
+                    expires_at is None
+                    or expires_at - time.time() > _USER_TOKEN_REFRESH_SLACK
+                ):
+                    return token
+                refreshed = await self._refresh_user_token(token)
+                if refreshed is not None:
+                    await self._save_user_token(channel_user_id, refreshed)
+                    return refreshed
+                await self._delete_user_token(channel_user_id)
+            elif token:
+                await self._delete_user_token(channel_user_id)
+            return await self._authorize_user(channel_user_id)
+
+    def _token_scopes_valid(self, token: dict[str, Any]) -> bool:
+        """Return whether a stored token has every required Wiki scope."""
+        raw = token.get("scopes") or []
+        if isinstance(raw, str):
+            scopes = set(raw.replace(",", " ").split())
+        else:
+            scopes = {str(item) for item in raw}
+        return _WIKI_SCOPES.issubset(scopes) and bool(
+            token.get("access_token"),
+        )
+
+    async def _refresh_user_token(
+        self,
+        token: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Refresh a near-expiry user token, returning ``None`` on failure."""
+        refresh_token = str(token.get("refresh_token") or "")
+        refresh_expires_at = self._number(token.get("refresh_expires_at"))
+        if not refresh_token or (
+            refresh_expires_at is not None
+            and refresh_expires_at <= time.time()
+        ):
+            return None
+        try:
+            client = self._get_device_flow_client()
+            refreshed = await client.refresh(refresh_token)
+        except Exception:  # pylint: disable=broad-except
+            return None
+        value = dict(refreshed)
+        if not value.get("scopes"):
+            value["scopes"] = token.get("scopes") or []
+        if not value.get("refresh_token"):
+            value["refresh_token"] = refresh_token
+        if not value.get("refresh_expires_at"):
+            value["refresh_expires_at"] = refresh_expires_at
+        if not value.get("open_id"):
+            value["open_id"] = token.get("open_id") or ""
+        return value if self._token_scopes_valid(value) else None
+
+    async def _authorize_user(
+        self,
+        channel_user_id: str,
+    ) -> dict[str, Any]:
+        """Run Feishu's device flow and verify the authorized identity."""
+        try:
+            client = self._get_device_flow_client()
+            request = await client.start(sorted(_WIKI_SCOPES))
+            verification_uri = str(
+                request.get("verification_uri_complete")
+                or request.get("verification_uri")
+                or "",
+            )
+            user_code = str(request.get("user_code") or "")
+            device_code = str(request.get("device_code") or "")
+            expires_in = int(request.get("expires_in") or 0)
+            interval = int(request.get("interval") or 5)
+            if not verification_uri or not device_code or expires_in <= 0:
+                raise RuntimeError(
+                    "Feishu returned an invalid authorization request.",
+                )
+            sent = await self._api(
+                "POST",
+                f"{_API}/im/v1/messages?receive_id_type=open_id",
+                {
+                    "receive_id": channel_user_id,
+                    "msg_type": "interactive",
+                    "content": _build_user_auth_card(
+                        verification_uri,
+                        user_code,
+                        expires_in,
+                    ),
+                },
+            )
+            if not sent or sent.get("code") != 0:
+                raise RuntimeError(
+                    "Could not send the Feishu authorization card.",
+                )
+            result = await client.poll(
+                device_code,
+                interval=interval,
+                timeout_seconds=expires_in,
+            )
+            value = dict(result)
+            if not value.get("scopes"):
+                value["scopes"] = sorted(_WIKI_SCOPES)
+            actual_open_id = await self._get_user_open_id(value)
+            if actual_open_id != channel_user_id:
+                raise RuntimeError(
+                    "The authorized Feishu account does not match the "
+                    "message sender. Please authorize with the same account.",
+                )
+            value["open_id"] = actual_open_id
+            await self._save_user_token(channel_user_id, value)
+            return value
+        except RuntimeError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            raise RuntimeError(
+                "Feishu Wiki authorization was denied, expired, or failed. "
+                "Please call the tool again to retry.",
+            ) from exc
+
+    async def _get_user_open_id(self, token: dict[str, Any]) -> str:
+        """Read the identity associated with a freshly issued token."""
+        http = await self._ensure_http_client()
+        try:
+            response = await http.get(
+                f"{_API}/authen/v1/user_info",
+                headers={
+                    "Authorization": f"Bearer {token['access_token']}",
+                },
+            )
+            data = response.json()
+        except Exception as exc:  # pylint: disable=broad-except
+            raise RuntimeError(
+                "Feishu authorization identity verification failed.",
+            ) from exc
+        if data.get("code") != 0:
+            raise RuntimeError(
+                "Feishu authorization identity verification failed.",
+            )
+        return str((data.get("data") or {}).get("open_id") or "")
+
+    def _get_device_flow_client(self) -> Any:
+        """Create the Feishu device-flow client lazily."""
+        if self._device_flow is None:
+            self._device_flow = _FeishuDeviceFlowClient(
+                self._app_id,
+                self._app_secret,
+            )
+        return self._device_flow
+
+    async def _save_user_token(
+        self,
+        channel_user_id: str,
+        token: dict[str, Any],
+    ) -> None:
+        """Persist a token without its SDK raw response."""
+        assert self._storage is not None
+        try:
+            await self._storage.upsert_channel_user_credentials(
+                self._channel_id,
+                channel_user_id,
+                token,
+            )
+        except NotImplementedError as exc:
+            raise RuntimeError(
+                "The configured storage backend does not support "
+                "Feishu Wiki authorization.",
+            ) from exc
+        except Exception:  # pylint: disable=broad-except
+            raise RuntimeError(
+                "Could not securely save Feishu Wiki authorization.",
+            ) from None
+
+    async def _delete_user_token(self, channel_user_id: str) -> None:
+        """Discard a stale user token without exposing its value."""
+        assert self._storage is not None
+        try:
+            await self._storage.delete_channel_user_credentials(
+                self._channel_id,
+                channel_user_id,
+            )
+        except NotImplementedError as exc:
+            raise RuntimeError(
+                "The configured storage backend does not support "
+                "Feishu Wiki authorization.",
+            ) from exc
+
+    @staticmethod
+    def _number(value: Any) -> float | None:
+        """Convert a timestamp-like value to a float when possible."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_platform_message(value: Any) -> str:
+        """Bound and sanitize a platform error message for tool output."""
+        message = str(value or "unknown platform error")
+        return message.replace("\r", " ").replace("\n", " ")[:300]
 
     async def _api(
         self,

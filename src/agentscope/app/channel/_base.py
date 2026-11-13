@@ -42,6 +42,7 @@ from ...types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ._credential_binding import CredentialBindingBase
+    from ..storage import StorageBase
     from ...tool import ToolBase
     from ...workspace import WorkspaceBase
 
@@ -382,6 +383,18 @@ class ChannelBase(ABC):
     not access any other gateway state."""
 
     # -- Identity & connection --
+
+    def _bind_storage(self, storage: "StorageBase") -> None:
+        """Bind the service storage to a channel that needs it.
+
+        This is an internal, optional hook. Custom channels that do not need
+        storage keep the default no-op behavior and their constructor contract
+        remains unchanged.
+
+        Args:
+            storage (`StorageBase`): The application storage backend.
+        """
+        _ = storage
 
     @property
     @abstractmethod

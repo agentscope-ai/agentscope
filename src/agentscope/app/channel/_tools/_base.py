@@ -21,6 +21,7 @@ class _WikiToolBase(ToolBase):
     is_concurrency_safe: bool = False
     is_state_injected: bool = False
     is_external_tool: bool = False
+    can_offload: bool = False
     is_mcp: bool = False
     mcp_name: str | None = None
 
