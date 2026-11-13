@@ -938,7 +938,11 @@ async def read_knowledge_document(
     ].strip().lower() or "application/octet-stream"
     inline = not download and media_type in _INLINE_MEDIA_TYPES
     disposition = "inline" if inline else "attachment"
-    filename = quote(data.filename or "download")
+    # RFC 5987 ext-value only allows attr-char; "/" is not one of them, so
+    # `quote`'s default `safe="/"` leaves a path separator raw and makes the
+    # header unparseable — `email.message` stops at the first "/" and the
+    # browser saves "dir" instead of "dir/report.pdf".
+    filename = quote(data.filename or "download", safe="")
     headers = {
         "Content-Disposition": (f"{disposition}; filename*=UTF-8''{filename}"),
         "Cache-Control": "private, max-age=60",
