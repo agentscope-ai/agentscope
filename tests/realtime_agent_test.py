@@ -2319,6 +2319,38 @@ class RealtimeAgentToolTest(IsolatedAsyncioTestCase):
             model.calls,
         )
 
+    async def test_cancelled_prompt_is_not_a_denial(self) -> None:
+        """Teardown while a prompt is pending cancels; it does not deny.
+
+        ``close()`` cancels the tool task. Swallowing that cancellation
+        resumed the tool as if the user had refused, which pushed a
+        denial to a provider that was already closing.
+        """
+        model = ScriptedModel([[]])
+        agent = RealtimeAgent(
+            "Friday",
+            "be brief",
+            model,
+            toolkit=Toolkit(tools=[AskTool()]),
+        )
+        call = ToolCallBlock(id="c1", name="ask_tool", input='{"q": "x"}')
+        # pylint: disable=protected-access
+        tool_task = asyncio.create_task(agent._run_tool("r1", call))
+        for _ in range(1000):
+            if agent._confirmations:
+                break
+            await asyncio.sleep(0)
+        else:
+            self.fail("The tool task never asked for confirmation.")
+
+        tool_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await tool_task
+
+        self.assertTrue(tool_task.cancelled())
+        self.assertFalse(agent._confirmations)
+        self.assertListEqual(model.calls, [])
+
     async def test_failing_tool_reports_error(self) -> None:
         """The toolkit turns an exception into an error response, which
         is forwarded as-is."""
