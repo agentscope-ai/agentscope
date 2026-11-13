@@ -179,7 +179,8 @@ class MiniMaxTTSModel(TTSModelBase):
             text (`str | None`, optional):
                 The text to synthesize.
             **kwargs (`Any`):
-                Additional fields to include in the API request.
+                Additional API fields. Voice and audio settings override
+                individual parameters; transport fields remain fixed.
 
         Returns:
             `TTSResponse | AsyncGenerator[TTSResponse, None]`:
@@ -201,26 +202,25 @@ class MiniMaxTTSModel(TTSModelBase):
                 "format": "mp3",
                 "channel": self.parameters.channel,
             },
-            **kwargs,
             "model": self.model,
             "text": text,
             "stream": self.stream,
             "output_format": "hex",
         }
+        for setting in ("voice_setting", "audio_setting"):
+            override = kwargs.pop(setting, None)
+            if override is not None:
+                if not isinstance(override, dict):
+                    raise ValueError(f"{setting} must be a dictionary.")
+                payload[setting].update(override)
+        payload = {**kwargs, **payload}
         if self.parameters.language_boost is not None:
             payload.setdefault(
                 "language_boost",
                 self.parameters.language_boost,
             )
 
-        audio_setting = payload.get("audio_setting")
-        if isinstance(audio_setting, dict):
-            payload["audio_setting"] = {
-                **audio_setting,
-                "format": "mp3",
-            }
-        else:
-            payload["audio_setting"] = {"format": "mp3"}
+        payload["audio_setting"]["format"] = "mp3"
 
         if self.stream:
             stream_options = payload.get("stream_options")
@@ -303,10 +303,15 @@ class MiniMaxTTSModel(TTSModelBase):
                             continue
 
                         received = bytes(emitted) + (pending or b"")
-                        if audio_bytes.startswith(received):
+                        if not audio_bytes:
+                            final_audio = b""
+                        elif audio_bytes.startswith(received):
                             final_audio = audio_bytes[len(received) :]
                         else:
-                            final_audio = audio_bytes
+                            raise RuntimeError(
+                                "MiniMax TTS terminal aggregate does not "
+                                "match received audio.",
+                            )
 
                         if pending is not None:
                             yield self._audio_response(

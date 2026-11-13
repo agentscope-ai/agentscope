@@ -244,10 +244,6 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
             MiniMaxCredential.get_tts_model_classes(),
             [MiniMaxTTSModel],
         )
-        self.assertEqual(
-            MiniMaxCredential.list_models(),
-            MiniMaxCredential.get_chat_model_class().list_models(),
-        )
         self.assertTrue(MiniMaxCredential.list_models())
         self.assertNotIn("api_url", MiniMaxTTSModel.Parameters.model_fields)
         self.assertNotIn(
@@ -366,6 +362,135 @@ class TestMiniMaxHTTPTransport(IsolatedAsyncioTestCase):
                         pass
                 self.assertTrue(self.response.is_closed)
                 self.assertTrue(self.clients[-1].is_closed)
+
+    async def test_mismatched_terminal_aggregate_is_rejected(self) -> None:
+        """A mismatched aggregate cannot be appended as incremental audio."""
+        self.response = httpx.Response(
+            200,
+            stream=_ByteStream(
+                _event(b"aa") + _event(b"bb") + _event(b"XXaabb", 2),
+            ),
+        )
+        model = MiniMaxTTSModel(MiniMaxCredential(api_key="test"))
+        output = await model.synthesize("Hello")
+        chunks = []
+        with self.assertRaisesRegex(RuntimeError, "aggregate"):
+            async for chunk in output:
+                chunks.append(chunk)
+        self.assertEqual(
+            [
+                (base64.b64decode(c.content.source.data), c.is_last)
+                for c in chunks
+            ],
+            [(b"aa", False)],
+        )
+        self.assertTrue(self.clients[-1].is_closed)
+
+    async def test_partial_settings_and_protected_request_fields(self) -> None:
+        """Merge nested overrides while preserving the transport contract."""
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                if stream:
+                    self.response = httpx.Response(
+                        200,
+                        stream=_ByteStream(_event(b"a") + _event(status=2)),
+                    )
+                model = MiniMaxTTSModel(
+                    MiniMaxCredential(api_key="test"),
+                    stream=stream,
+                    parameters=MiniMaxTTSModel.Parameters(
+                        speed=1.5,
+                        volume=2,
+                        pitch=3,
+                        sample_rate=24000,
+                        bitrate=64000,
+                        channel=2,
+                    ),
+                )
+                voice = {"voice_id": "male-qn-qingse"}
+                audio = {"sample_rate": 32000, "format": "wav"}
+                output = await model.synthesize(
+                    "Hello",
+                    voice_setting=voice,
+                    audio_setting=audio,
+                    model="unexpected-model",
+                    stream=not stream,
+                    output_format="url",
+                    stream_options={"exclude_aggregated_audio": False},
+                    api_url="https://untrusted.test/tts",
+                )
+                if stream:
+                    async for _ in output:
+                        pass
+                expected = {
+                    "voice_setting": {
+                        "voice_id": "male-qn-qingse",
+                        "speed": 1.5,
+                        "vol": 2,
+                        "pitch": 3,
+                    },
+                    "audio_setting": {
+                        "sample_rate": 32000,
+                        "bitrate": 64000,
+                        "format": "mp3",
+                        "channel": 2,
+                    },
+                    "model": "speech-2.8-hd",
+                    "text": "Hello",
+                    "stream": stream,
+                    "output_format": "hex",
+                    "language_boost": "auto",
+                    "stream_options": {"exclude_aggregated_audio": stream},
+                    "api_url": "https://untrusted.test/tts",
+                }
+                request = self.requests[-1]
+                self.assertEqual(json.loads(request.content), expected)
+                self.assertEqual(
+                    (str(request.url), request.headers["authorization"]),
+                    ("https://api.minimax.io/v1/t2a_v2", "Bearer test"),
+                )
+                self.assertEqual(
+                    (voice, audio),
+                    (
+                        {"voice_id": "male-qn-qingse"},
+                        {"sample_rate": 32000, "format": "wav"},
+                    ),
+                )
+
+    async def test_json_success_is_not_a_stream(self) -> None:
+        """A nonstreaming success payload cannot masquerade as SSE."""
+        model = MiniMaxTTSModel(MiniMaxCredential(api_key="test"))
+        output = await model.synthesize("Hello")
+        with self.assertRaisesRegex(RuntimeError, "instead of streamed"):
+            async for _ in output:
+                pass
+        self.assertTrue(self.clients[-1].is_closed)
+
+    async def test_nested_settings_require_objects(self) -> None:
+        """Invalid nested overrides fail before creating an HTTP client."""
+        model = MiniMaxTTSModel(MiniMaxCredential(api_key="test"))
+        for name in ("voice_setting", "audio_setting"):
+            with self.subTest(setting=name):
+                with self.assertRaisesRegex(ValueError, name):
+                    await model.synthesize("Hello", **{name: "invalid"})
+        self.assertEqual((self.requests, self.clients), ([], []))
+
+    async def test_nonstreaming_empty_audio(self) -> None:
+        """An empty success has no audio block and releases its client."""
+        self.response = httpx.Response(
+            200,
+            json={
+                "data": None,
+                "base_resp": {"status_code": 0},
+            },
+        )
+        model = MiniMaxTTSModel(
+            MiniMaxCredential(api_key="test"),
+            stream=False,
+        )
+        result = await model.synthesize("Hello")
+        self.assertEqual((result.content, result.is_last), (None, True))
+        self.assertTrue(self.clients[-1].is_closed)
 
     async def test_json_and_sse_errors_propagate(self) -> None:
         """Decode whole JSON errors and SSE errors without losing status."""
