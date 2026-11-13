@@ -140,6 +140,21 @@ async def get_workspace_service(request: Request) -> WorkspaceService:
     return request.app.state.workspace_service
 
 
+async def get_allowed_stdio_commands(
+    request: Request,
+) -> frozenset[str] | None:
+    """Return the stdio MCP command allowlist, if one is configured.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `frozenset[str] | None`: The commands an API caller may register
+        for a stdio MCP, or ``None`` when no restriction is configured.
+    """
+    return request.app.state.allowed_stdio_commands
+
+
 async def get_chat_run_registry(request: Request) -> ChatRunRegistry:
     """Return the per-process chat-run registry.
 
