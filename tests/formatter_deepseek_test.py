@@ -26,6 +26,168 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
+class TestDeepSeekUnsupportedMedia(IsolatedAsyncioTestCase):
+    """Keep unsupported attachments visible without changing image input."""
+
+    async def test_chat_preserves_media_only_user_turn(self) -> None:
+        """Retain a user turn even when its only attachment is unsupported."""
+        for media_type in ["audio/wav", "image/png", "application/pdf"]:
+            with self.subTest(media_type=media_type):
+                result = await DeepSeekChatFormatter().format(
+                    [
+                        UserMsg(
+                            "user",
+                            [
+                                DataBlock(
+                                    source=Base64Source(
+                                        media_type=media_type,
+                                        data="ZmFrZQ==",
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ],
+                )
+                self.assertEqual(
+                    result,
+                    [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"[{media_type} attached, not supported "
+                                "by this provider]"
+                            ),
+                        },
+                    ],
+                )
+
+    async def test_chat_preserves_attachment_order(self) -> None:
+        """Keep text before and after an unsupported attachment in order."""
+        result = await DeepSeekChatFormatter().format(
+            [
+                UserMsg(
+                    "user",
+                    [
+                        TextBlock(text="Before"),
+                        DataBlock(
+                            source=Base64Source(
+                                media_type="audio/wav",
+                                data="ZmFrZQ==",
+                            ),
+                        ),
+                        TextBlock(text="After"),
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual(
+            result,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Before\n"
+                        "[audio/wav attached, not supported by this provider]"
+                        "\nAfter"
+                    ),
+                },
+            ],
+        )
+
+    async def test_multiagent_preserves_media_only_turn(self) -> None:
+        """Keep the sender and history wrapper for a media-only agent turn."""
+        result = await DeepSeekMultiAgentFormatter(
+            conversation_history_prompt="",
+        ).format(
+            [
+                AssistantMsg(
+                    "agentA",
+                    [
+                        DataBlock(
+                            source=Base64Source(
+                                media_type="audio/wav",
+                                data="ZmFrZQ==",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual(
+            result,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "<history>\n"
+                        "agentA: [audio/wav attached, not supported "
+                        "by this provider]\n"
+                        "</history>"
+                    ),
+                },
+            ],
+        )
+
+    async def test_multiagent_keeps_supported_image_and_placeholders(
+        self,
+    ) -> None:
+        """Keep unsupported attachments on either side of a native image."""
+        result = await DeepSeekMultiAgentFormatter(
+            input_types=["text/plain", "image/png"],
+            conversation_history_prompt="",
+        ).format(
+            [
+                UserMsg(
+                    "user",
+                    [
+                        DataBlock(
+                            source=Base64Source(
+                                media_type=media_type,
+                                data="ZmFrZQ==",
+                            ),
+                        )
+                        for media_type in [
+                            "audio/wav",
+                            "image/png",
+                            "application/pdf",
+                        ]
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual(
+            result,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<history>\n"
+                                "user: [audio/wav attached, not supported "
+                                "by this provider]\nuser: "
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,ZmFrZQ==",
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "\nuser: [application/pdf attached, "
+                                "not supported by this provider]\n</history>"
+                            ),
+                        },
+                    ],
+                },
+            ],
+        )
+
+
 class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
     """Comprehensive tests for DeepSeek Chat and MultiAgent formatters."""
 
