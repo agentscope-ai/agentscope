@@ -23,6 +23,12 @@ Differences from the Docker manager:
   ``workspace_id``.
 * Idle workspaces are evicted by a background sweeper task started in
   :meth:`__aenter__` and cancelled in :meth:`__aexit__`.
+* Cached workspaces renew their sandbox lease on access through
+  :meth:`OpenSandboxWorkspace.prepare_for_reuse`. Tool round-trips
+  call that same hook, so a turn longer than the lease does not wait
+  for the next ``get_workspace``. A renewal 404 evicts the stale
+  connection so the sandbox can be recreated. Transient renewal
+  failures do not.
 * ``close_all`` fans calls out with :func:`asyncio.gather` because
   ``sandbox.pause()`` is a remote round-trip per sandbox.
 """
@@ -30,6 +36,7 @@ Differences from the Docker manager:
 import asyncio
 import time
 from typing import Any, Literal, Self
+from weakref import WeakValueDictionary
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -64,6 +71,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         protocol: Literal["http", "https"] = "http",
         request_timeout_seconds: float | None = DEFAULT_REQUEST_TIMEOUT,
         timeout_seconds: int = DEFAULT_TIMEOUT,
+        renew_interval_seconds: float | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
         sandbox_metadata: dict[str, str] | None = None,
@@ -101,7 +109,15 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 SDK HTTP streaming layer is not shorter than bootstrap
                 command timeout.
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
-                Sandbox keep-alive / resume timeout.
+                Sandbox expiration lease and create/connect/resume
+                timeout. Renewed on cache access and during tool
+                round-trips, not by a background task. Set it higher
+                when one command, or the gap between tool calls, can
+                exceed the lease.
+            renew_interval_seconds (`float | None`, optional):
+                Minimum time between lease renewal attempts, forwarded
+                to every workspace. ``None`` uses half of
+                ``timeout_seconds``.
             gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
                 TCP port the in-sandbox gateway listens on.
             env (`dict[str, str] | None`, optional):
@@ -139,6 +155,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self._protocol = protocol
         self._request_timeout_seconds = request_timeout_seconds
         self._timeout_seconds = timeout_seconds
+        self._renew_interval_seconds = renew_interval_seconds
         self._gateway_port = gateway_port
         self._env = dict(env or {})
         self._sandbox_metadata = dict(sandbox_metadata or {})
@@ -154,8 +171,27 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
 
         # workspace_id -> (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[OpenSandboxWorkspace, float]] = {}
+        # Keep only locks referenced by active operations. Idle cached
+        # workspaces do not need a permanent lock entry.
+        self._workspace_locks: WeakValueDictionary[
+            str,
+            asyncio.Lock,
+        ] = WeakValueDictionary()
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
+
+    async def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
+        """Return the serialization lock for one workspace id.
+
+        The manager-wide lock only protects the weak lock registry.
+        Callers must release it before waiting for the returned lock.
+        """
+        async with self._lock:
+            workspace_lock = self._workspace_locks.get(workspace_id)
+            if workspace_lock is None:
+                workspace_lock = asyncio.Lock()
+                self._workspace_locks[workspace_id] = workspace_lock
+            return workspace_lock
 
     async def _build_and_start(
         self,
@@ -179,6 +215,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             protocol=self._protocol,
             request_timeout_seconds=self._request_timeout_seconds,
             timeout_seconds=self._timeout_seconds,
+            renew_interval_seconds=self._renew_interval_seconds,
             gateway_port=self._gateway_port,
             env=self._env,
             sandbox_metadata={
@@ -205,11 +242,14 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
     ) -> OpenSandboxWorkspace:
         """Return an initialized workspace, reattaching on cache miss.
 
-        On miss, the manager constructs ``OpenSandboxWorkspace`` with
-        the requested ``workspace_id`` and relies on its ``initialize``
-        method to find an existing sandbox by metadata, connect or
-        resume it depending on state, or create a fresh sandbox
-        otherwise.
+        Cached workspaces renew their lease via
+        :meth:`OpenSandboxWorkspace.prepare_for_reuse` before reuse.
+        A renewal 404 replaces the workspace under the same id. Other
+        renewal failures are logged inside the hook and keep the
+        cached workspace. On a miss, initialization connects or
+        resumes an existing sandbox found by metadata, or creates a
+        fresh one. Recreation cannot recover ephemeral data lost with
+        the previous sandbox.
 
         Idle eviction is not performed here; the background sweeper
         started by :meth:`__aenter__` handles that.
@@ -243,53 +283,67 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 session_id="",
             )
 
-        async with self._lock:
-            cached = self._cache.get(workspace_id)
+        # Serialize reuse and recovery per workspace id. Remote
+        # renewal must not hold the manager-wide cache lock, otherwise
+        # one slow sandbox blocks unrelated workspaces.
+        workspace_lock = await self._get_workspace_lock(workspace_id)
+        async with workspace_lock:
+            async with self._lock:
+                cached = self._cache.get(workspace_id)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
-
-        # Cache miss: build under the lock to prevent two concurrent
-        # get_workspace(workspace_id=X) calls from creating two
-        # workspaces (and thus two sandboxes) for the same id.
-        async with self._lock:
-            cached = self._cache.get(workspace_id)
-            if cached is not None:
-                ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
+                if await ws.prepare_for_reuse():
+                    async with self._lock:
+                        self._cache[workspace_id] = (ws, time.monotonic())
+                    return ws
+                async with self._lock:
+                    self._cache.pop(workspace_id, None)
+                logger.warning(
+                    "OpenSandbox workspace %r lost sandbox %r; recreating "
+                    "it. Ephemeral workspace data may have been lost.",
+                    workspace_id,
+                    ws.sandbox_id,
+                )
+                await self._safe_close(ws)
 
             ws = await self._build_and_start(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 agent_id=agent_id,
             )
-            self._cache[workspace_id] = (ws, time.monotonic())
+            async with self._lock:
+                self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace."""
-        async with self._lock:
-            entry = self._cache.pop(workspace_id, None)
-        if entry is None:
-            return
-        ws, _ = entry
-        await self._safe_close(ws)
+        workspace_lock = await self._get_workspace_lock(workspace_id)
+        async with workspace_lock:
+            async with self._lock:
+                entry = self._cache.pop(workspace_id, None)
+            if entry is None:
+                return
+            ws, _ = entry
+            await self._safe_close(ws)
 
     async def close_all(self) -> None:
         """Close every cached workspace in parallel.
 
         ``sandbox.pause()`` is a remote round-trip per sandbox; doing
         it sequentially on shutdown would produce unnecessary latency.
+        In-flight reuse is included so a workspace being renewed is
+        not left running after shutdown.
         """
         async with self._lock:
-            entries = list(self._cache.values())
-            self._cache.clear()
-        if not entries:
+            workspace_ids = list(
+                dict.fromkeys(
+                    list(self._cache) + list(self._workspace_locks),
+                ),
+            )
+        if not workspace_ids:
             return
         await asyncio.gather(
-            *(self._safe_close(ws) for ws, _ in entries),
+            *(self.close(workspace_id) for workspace_id in workspace_ids),
             return_exceptions=True,
         )
 
@@ -329,20 +383,40 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
 
     async def _sweep_once(self) -> None:
         """One sweeper tick: evict expired entries and close them."""
-        now = time.monotonic()
+        cutoff = time.monotonic() - self._ttl
         async with self._lock:
             expired_ids = [
-                wid
-                for wid, (_, ts) in self._cache.items()
-                if now - ts > self._ttl
+                wid for wid, (_, ts) in self._cache.items() if ts < cutoff
             ]
-            evicted = [self._cache.pop(wid)[0] for wid in expired_ids]
-        if not evicted:
+        if not expired_ids:
             return
         await asyncio.gather(
-            *(self._safe_close(ws) for ws in evicted),
+            *(
+                self._close_if_expired(workspace_id, cutoff)
+                for workspace_id in expired_ids
+            ),
             return_exceptions=True,
         )
+
+    async def _close_if_expired(
+        self,
+        workspace_id: str,
+        cutoff: float,
+    ) -> None:
+        """Close a candidate only if it is still idle after serialization.
+
+        A renewal that started after the sweep snapshot refreshes the
+        access time under the same lock, so an active workspace is not
+        paused out from under the turn that is renewing it.
+        """
+        workspace_lock = await self._get_workspace_lock(workspace_id)
+        async with workspace_lock:
+            async with self._lock:
+                entry = self._cache.get(workspace_id)
+                if entry is None or entry[1] >= cutoff:
+                    return
+                ws, _ = self._cache.pop(workspace_id)
+            await self._safe_close(ws)
 
     @staticmethod
     async def _safe_close(ws: OpenSandboxWorkspace) -> None:
