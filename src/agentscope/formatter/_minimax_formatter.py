@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The MiniMax formatters, i.e. the Anthropic formatters plus video input."""
+
 import fnmatch
 from typing import Any
 
@@ -23,7 +24,7 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
         ),
     )
 
-    def _format_anthropic_data_block(
+    async def _format_anthropic_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -33,8 +34,8 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
             fnmatch.fnmatch(media_type, _)
             for _ in self.supported_input_media_types
         ):
-            return self._format_source(block.source, "video")
-        return super()._format_anthropic_data_block(block)
+            return await self._format_source(block.source, "video")
+        return await super()._format_anthropic_data_block(block)
 
 
 class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
@@ -66,7 +67,7 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
             input_types=self.input_types,
         ).format(msgs)
 
-    def _format_anthropic_data_block(
+    async def _format_anthropic_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -76,5 +77,5 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
             fnmatch.fnmatch(media_type, _)
             for _ in self.supported_input_media_types
         ):
-            return self._format_source(block.source, "video")
-        return super()._format_anthropic_data_block(block)
+            return await self._format_source(block.source, "video")
+        return await super()._format_anthropic_data_block(block)

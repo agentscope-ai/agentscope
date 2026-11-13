@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """The OpenAI formatter for agentscope."""
+
+import asyncio
 import base64
 import re
 from abc import ABC
@@ -8,9 +10,13 @@ from typing import Any
 from urllib.request import url2pathname
 
 import requests
+
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import (
+    FormatterBase,
+    _read_file_as_base64,
+)
 from .._logging import logger
 from ..message import (
     Msg,
@@ -23,7 +29,6 @@ from ..message import (
     HintBlock,
     ThinkingBlock,
 )
-
 
 # The Chat Completions API rejects a message ``name`` containing whitespace
 # or any of ``<|\/>`` with a 400 error: "string does not match pattern.
@@ -56,7 +61,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     """Base class for OpenAI formatters, providing shared data block
     formatting logic."""
 
-    def _format_openai_data_block(
+    async def _format_openai_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -93,13 +98,17 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         main_type = block.source.media_type.split("/")[0]
 
         if main_type == "image":
-            return self._format_image_source(block.source, block.model_extra)
+            return await self._format_image_source(
+                block.source, block.model_extra
+            )
 
         if main_type == "audio":
-            return self._format_audio_source(block.source, block.model_extra)
+            return await self._format_audio_source(
+                block.source, block.model_extra
+            )
 
         if block.source.media_type == "application/pdf":
-            return self._format_file_source(block.source, block.name)
+            return await self._format_file_source(block.source, block.name)
 
         logger.warning(
             "Unsupported main media type %s for OpenAI API. "
@@ -108,7 +117,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         )
         return None
 
-    def _format_image_source(
+    async def _format_image_source(
         self,
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
@@ -141,10 +150,13 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                # Local file — read and encode as base64 data URI
+                # Local file — read and encode as base64 data URI, off the
+                # event loop so a large file cannot stall it
                 local_path = url2pathname(url_str.removeprefix("file://"))
-                with open(local_path, "rb") as f:
-                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                encoded = await asyncio.to_thread(
+                    _read_file_as_base64,
+                    local_path,
+                )
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
                 # Remote URL — pass through as-is
@@ -161,8 +173,8 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             "image_url": image_url_payload,
         }
 
-    @staticmethod
-    def _format_audio_source(
+    async def _format_audio_source(
+        self,
         source: URLSource | Base64Source,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -211,13 +223,19 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         if isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                # Local file
+                # Local file — read off the event loop
                 local_path = url2pathname(url_str.removeprefix("file://"))
-                with open(local_path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
+                data = await asyncio.to_thread(
+                    _read_file_as_base64,
+                    local_path,
+                )
             else:
-                # Remote URL — download and encode
-                response = requests.get(url_str, timeout=30)
+                # Remote URL — download and encode, off the event loop
+                response = await asyncio.to_thread(
+                    requests.get,
+                    url_str,
+                    timeout=30,
+                )
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
 
@@ -234,8 +252,8 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
 
         raise TypeError(f"Unsupported audio source type: {type(source)}.")
 
-    @staticmethod
-    def _format_file_source(
+    async def _format_file_source(
+        self,
         source: URLSource | Base64Source,
         name: str | None,
     ) -> dict[str, Any]:
@@ -261,13 +279,16 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url_str = str(source.url)
             if url_str.startswith("file://"):
-                with open(
+                data = await asyncio.to_thread(
+                    _read_file_as_base64,
                     url2pathname(url_str.removeprefix("file://")),
-                    "rb",
-                ) as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
+                )
             else:
-                response = requests.get(url_str, timeout=30)
+                response = await asyncio.to_thread(
+                    requests.get,
+                    url_str,
+                    timeout=30,
+                )
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
         else:
@@ -337,7 +358,7 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
+                    formatted = await self._format_openai_data_block(
                         block,
                     )
                     if formatted is not None:
@@ -373,8 +394,10 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": sub.text},
                                 )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = self._format_openai_data_block(
-                                    sub,
+                                formatted_sub = (
+                                    await self._format_openai_data_block(
+                                        sub,
+                                    )
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -430,8 +453,10 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                fmt_item = self._format_openai_data_block(
-                                    item,
+                                fmt_item = (
+                                    await self._format_openai_data_block(
+                                        item,
+                                    )
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -593,7 +618,7 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
                     accumulated_text.append(f"{msg.name}: {block.text}")
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
+                    formatted = await self._format_openai_data_block(
                         block,
                     )
                     if formatted is not None:
