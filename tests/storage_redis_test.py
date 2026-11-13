@@ -20,8 +20,12 @@ from agentscope.app.storage import (
     ChatModelConfig,
     ScheduleRecord,
     ScheduleData,
+    ChannelBinding,
     ChannelOrigin,
+    ChannelRecord,
+    RoutingConfig,
     ScheduleOrigin,
+    SessionSettings,
     TeamData,
     TeamMember,
     TeamRecord,
@@ -1788,6 +1792,104 @@ class TestChannelSessionIndex(IsolatedAsyncioTestCase):
                 "chan-1",
             ),
             [],
+        )
+
+
+def make_channel_record(channel_id: str, bot_id: str) -> ChannelRecord:
+    """A channel record whose credentials carry *bot_id* as its platform id."""
+    return ChannelRecord(
+        id=channel_id,
+        channel_type="feishu",
+        user_id="user-1",
+        credentials={"app_id": bot_id},
+        routing=RoutingConfig(
+            bindings=[ChannelBinding(match_value="*", agent_id="agent-x")],
+        ),
+        session=SessionSettings(
+            chat_model_config={
+                "type": "openai",
+                "credential_id": "cred-1",
+                "model": "gpt-4o",
+                "parameters": {},
+            },
+        ),
+    )
+
+
+class TestChannel(IsolatedAsyncioTestCase):
+    """The channel record API, which no test covered before.
+
+    ``platform_bot_id`` is the uniqueness index (``_base.py``), and the SQL
+    backend raises when a second channel claims a bot that a live record
+    already drives. Nothing pinned the same answer here.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+
+    async def test_platform_bot_id_is_globally_unique(self) -> None:
+        """One bot drives one channel; a second claim is refused."""
+        await self.storage.upsert_channel(
+            make_channel_record("chan-1", "cli-1"),
+            "cli-1",
+        )
+
+        with self.assertRaises(ValueError):
+            await self.storage.upsert_channel(
+                make_channel_record("chan-2", "cli-1"),
+                "cli-1",
+            )
+
+        self.assertEqual(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-1"),
+            "chan-1",
+        )
+        self.assertEqual(
+            [r.id for r in await self.storage.list_channels("user-1")],
+            ["chan-1"],
+        )
+
+    async def test_resaving_the_same_channel_keeps_its_bot(self) -> None:
+        """Updating a channel re-writes its own bot id, not a conflict."""
+        record = make_channel_record("chan-1", "cli-1")
+        await self.storage.upsert_channel(record, "cli-1")
+
+        record.name = "renamed"
+        await self.storage.upsert_channel(record, "cli-1")
+
+        self.assertEqual(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-1"),
+            "chan-1",
+        )
+        self.assertEqual(
+            (await self.storage.get_channel("chan-1")).name,
+            "renamed",
+        )
+
+    async def test_a_stale_bot_index_does_not_block_the_bot(self) -> None:
+        """An index entry whose record expired is reclaimed, not obeyed."""
+        await self.storage.upsert_channel(
+            make_channel_record("chan-1", "cli-1"),
+            "cli-1",
+        )
+        # The record key can expire on its own (``key_ttl``) or be dropped
+        # by a delete that knew no bot id; the index is what is left.
+        await self.storage._client.delete(
+            self.storage._key(
+                self.storage.key_config.channel,
+                channel_id="chan-1",
+            ),
+        )
+
+        await self.storage.upsert_channel(
+            make_channel_record("chan-2", "cli-1"),
+            "cli-1",
+        )
+
+        self.assertEqual(
+            await self.storage.get_channel_id_by_platform_bot_id("cli-1"),
+            "chan-2",
         )
 
 
