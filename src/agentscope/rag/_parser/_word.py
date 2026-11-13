@@ -193,7 +193,7 @@ def _is_blank_paragraph(para: DocxParagraph) -> bool:
 
 def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """Extract table data from a python-docx Table, preserving line breaks
-    within cells.
+    and run-level tabs within cells.
 
     Horizontal merges (``w:gridSpan``) are expanded with empty strings so
     that every row has the same number of columns. Omitted leading and
@@ -206,6 +206,8 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     from docx.oxml.ns import qn
 
     text_tag = qn("w:t")
+    tab_tag = qn("w:tab")
+    run_tag = qn("w:r")
     break_tags = {qn("w:br"), qn("w:cr")}
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
@@ -221,6 +223,11 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                 for element in p_elem.iter():
                     if element.tag == text_tag and element.text:
                         text_parts.append(element.text)
+                    elif (
+                        element.tag == tab_tag
+                        and element.getparent().tag == run_tag
+                    ):
+                        text_parts.append("\t")
                     elif element.tag in break_tags:
                         text_parts.append("\n")
                 para_text = "".join(text_parts)

@@ -2493,6 +2493,30 @@ class WordParserTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sections), 1)
         self.assertEqual(sections[0].content.text, "Paragraph one.")
 
+    async def test_table_cell_preserves_run_tab(self) -> None:
+        """Preserve tabs between terms without emitting tab-stop settings."""
+        import json
+        from docx import Document
+        from docx.shared import Inches
+
+        doc = Document()
+        table = doc.add_table(rows=1, cols=1)
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.paragraph_format.tab_stops.add_tab_stop(Inches(1))
+        paragraph.add_run("Trial\tVoltage")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        sections = await WordParser(
+            include_image=False,
+            separate_table=True,
+            table_format="json",
+        ).parse(buffer.getvalue(), "lab.docx")
+
+        self.assertEqual(len(sections), 1)
+        _, rows = sections[0].content.text.split("\n", 1)
+        self.assertEqual(json.loads(rows), [["Trial\tVoltage"]])
+
     async def test_table_merges_by_default(self) -> None:
         """``separate_table=False`` merges the table into surrounding
         text."""
