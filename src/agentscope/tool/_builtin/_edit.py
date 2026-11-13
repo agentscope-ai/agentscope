@@ -20,7 +20,11 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, _normalize_newlines
+from ._backend import (
+    BackendBase,
+    _detect_line_ending,
+    _normalize_newlines,
+)
 
 
 class Edit(ToolBase):
@@ -317,6 +321,7 @@ Usage:
             )
 
         content = None
+        line_ending = "\n"
         if _agent_state is not None:
             # Take the mtime from the backend that reads the file, so the
             # cache also works for sandbox-only paths.
@@ -338,19 +343,27 @@ Usage:
                     is_last=True,
                 )
             content = "".join(cache.lines)
+            line_ending = cache.line_ending
         else:
             # No state provided, read from backend
             try:
                 raw = await self._backend.read_file(file_path)
+                decoded = raw.decode("utf-8")
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = _normalize_newlines(raw.decode("utf-8"))
+                line_ending = _detect_line_ending(decoded)
+                content = _normalize_newlines(decoded)
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
                     state=ToolResultState.ERROR,
                     is_last=True,
                 )
+
+        # Match and edit in normalized (LF) form, then restore the file's
+        # original line ending on write, so editing a Windows file does not
+        # rewrite every untouched line.
+        new_string = _normalize_newlines(new_string)
 
         # Count occurrences
         occurrences = content.count(old_string)
@@ -395,10 +408,15 @@ Usage:
             )
 
         # Write updated content back to file via backend
+        write_content = (
+            updated_content
+            if line_ending == "\n"
+            else updated_content.replace("\n", line_ending)
+        )
         try:
             await self._backend.write_file(
                 file_path,
-                updated_content.encode("utf-8"),
+                write_content.encode("utf-8"),
             )
         except Exception as e:
             return ToolChunk(
@@ -411,10 +429,9 @@ Usage:
         if _agent_state is not None:
             await _agent_state.tool_context.cache_file(
                 file_path=file_path,
-                lines=_normalize_newlines(updated_content).splitlines(
-                    keepends=True,
-                ),
+                lines=updated_content.splitlines(keepends=True),
                 mtime=await self._backend.stat_mtime(file_path),
+                line_ending=line_ending,
             )
 
         # Return success message
