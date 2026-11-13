@@ -304,7 +304,7 @@ async def nudge_chat_inputs(
     session_id: str,
     agent_id: str,
 ) -> None:
-    """Wake pending input after releasing a run lock; recovery is fallback."""
+    """Wake pending input after releasing locks; recovery is fallback."""
     try:
         pending = await bus.queue_read(
             MessageBusKeys.chat_inputs(session_id),
@@ -854,7 +854,10 @@ async def update_chat_input(
             [queue_entry(payload) for payload in payloads],
         )
         await discard_input(bus, previous)
-        return await _notify_chat_queue_changed(bus, session_id, payloads)
+        items = await _notify_chat_queue_changed(bus, session_id, payloads)
+
+    await nudge_chat_inputs(bus, user_id, session_id, agent_id)
+    return items
 
 
 async def delete_chat_input(
@@ -907,7 +910,11 @@ async def delete_chat_input(
             [queue_entry(payload) for payload in payloads],
         )
         await discard_input(bus, item)
-        return await _notify_chat_queue_changed(bus, session_id, payloads)
+        items = await _notify_chat_queue_changed(bus, session_id, payloads)
+
+    if items:
+        await nudge_chat_inputs(bus, user_id, session_id, agent_id)
+    return items
 
 
 async def reorder_chat_inputs(
