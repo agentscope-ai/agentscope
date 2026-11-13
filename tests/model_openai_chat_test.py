@@ -142,7 +142,7 @@ def _make_stream_chunk(
 
 
 def _make_tool_call_delta(
-    index: int,
+    index: int | None,
     tc_id: str | None = None,
     name: str | None = None,
     arguments: str | None = None,
@@ -896,6 +896,67 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
                         ),
                     ],
                 ),
+            ],
+        )
+
+    async def test_stream_tool_calls_without_index(
+        self,
+    ) -> None:
+        """Tool calls streamed without ``index`` stay separate calls.
+
+        OpenAI-compatible servers may omit ``index`` on every tool call
+        delta. Each delta that carries a new non-empty id starts a new
+        call; deltas without an id continue the most recent one.
+        """
+        chunks = [
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(
+                        None,
+                        "call-1",
+                        "get_weather",
+                        '{"ci',
+                    ),
+                ],
+            ),
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(None, None, None, 'ty":"BJ"}'),
+                ],
+            ),
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(
+                        None,
+                        "call-2",
+                        "get_time",
+                        '{"zone',
+                    ),
+                ],
+            ),
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(None, None, None, '":"UTC"}'),
+                ],
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        self.mock_client.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        final = responses[-1]
+        self.assertTrue(final.is_last)
+        self.assertListEqual(
+            [
+                (b.id, b.name, b.input)
+                for b in final.content
+                if isinstance(b, ToolCallBlock)
+            ],
+            [
+                ("call-1", "get_weather", '{"city":"BJ"}'),
+                ("call-2", "get_time", '{"zone":"UTC"}'),
             ],
         )
 
