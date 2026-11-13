@@ -1463,43 +1463,62 @@ class RedisStorage(StorageBase):
         session_id: str,
         msg: Msg,
     ) -> None:
-        """Persist a message to the session's message list."""
+        """Persist a message to the session's message list.
+
+        Read-modify-write under ``WATCH`` on the list and id-index keys
+        so two concurrent writers persisting the *same* message id
+        cannot both take the insert path and store it twice. This
+        mirrors the SQL backend, whose ``upsert_message`` is a single
+        atomic ``INSERT ... ON CONFLICT`` on ``(session_id, msg_id)``.
+        """
         key = self._message_key(user_id, session_id)
         index_key = self._message_index_key(user_id, session_id)
-
-        async with self._client.pipeline(transaction=False) as pipe:
-            pipe.exists(index_key)
-            pipe.sismember(index_key, msg.id)
-            index_exists, message_exists = await pipe.execute()
-        message_exists = bool(message_exists)
-        if not index_exists:
-            raw_messages = await self._client.lrange(key, 0, -1)
-            message_ids = {
-                Msg.model_validate_json(raw).id for raw in raw_messages
-            }
-            message_exists = msg.id in message_ids
-            if message_ids:
-                await self._client.sadd(index_key, *message_ids)
-
         payload = msg.model_dump_json()
-        if message_exists:
-            index = await self._find_message_index(key, msg.id)
-            if index is not None:
-                async with self._client.pipeline(transaction=True) as pipe:
-                    pipe.lset(key, index, payload)
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            while True:
+                try:
+                    await pipe.watch(key, index_key)
+                    index_exists = bool(await pipe.exists(index_key))
+                    message_exists = bool(
+                        await pipe.sismember(index_key, msg.id),
+                    )
+                    backfill_ids: set[str] = set()
+                    if not index_exists:
+                        # Legacy list without an id index: rebuild it.
+                        raw_messages = await self._client.lrange(key, 0, -1)
+                        backfill_ids = {
+                            Msg.model_validate_json(raw).id
+                            for raw in raw_messages
+                        }
+                        message_exists = msg.id in backfill_ids
+                    if message_exists:
+                        index = await self._find_message_index(key, msg.id)
+                        if index is not None:
+                            pipe.multi()
+                            pipe.lset(key, index, payload)
+                            if backfill_ids:
+                                pipe.sadd(index_key, *backfill_ids)
+                            if self.key_ttl is not None:
+                                pipe.expire(key, self.key_ttl)
+                                pipe.expire(index_key, self.key_ttl)
+                            await pipe.execute()
+                            return
+                    pipe.multi()
+                    if backfill_ids:
+                        pipe.sadd(index_key, *backfill_ids)
+                    pipe.rpush(key, payload)
+                    pipe.sadd(index_key, msg.id)
                     if self.key_ttl is not None:
                         pipe.expire(key, self.key_ttl)
                         pipe.expire(index_key, self.key_ttl)
                     await pipe.execute()
-                return
-
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.rpush(key, payload)
-            pipe.sadd(index_key, msg.id)
-            if self.key_ttl is not None:
-                pipe.expire(key, self.key_ttl)
-                pipe.expire(index_key, self.key_ttl)
-            await pipe.execute()
+                    return
+                except _watch_error():
+                    # A concurrent writer touched the list or the id
+                    # index between WATCH and EXEC; re-read and re-decide
+                    # insert vs in-place update.
+                    continue
 
     async def delete_message(
         self,
