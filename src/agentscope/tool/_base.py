@@ -95,6 +95,8 @@ class ToolMiddlewareBase(ABC):
             `ToolChunk`:
                 The chunks produced by this tool invocation.
         """
+        raise NotImplementedError
+        yield  # pylint: disable=unreachable
 
 
 class ToolBase(ABC):

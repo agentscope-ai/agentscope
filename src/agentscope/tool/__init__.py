@@ -5,6 +5,7 @@ from ._types import ToolChoice, Function, RegisteredTool
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
 from ._base import ToolBase, ParamsBase, ToolMiddlewareBase
+from ._validation_middleware import ToolValidationMiddleware
 from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
     AskUser,
@@ -43,6 +44,7 @@ __all__ = [
     "ToolBase",
     "ParamsBase",
     "ToolMiddlewareBase",
+    "ToolValidationMiddleware",
     "MCPTool",
     "FunctionTool",
     "ToolGroup",
