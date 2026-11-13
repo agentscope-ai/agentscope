@@ -136,7 +136,10 @@ class KnowledgeDocumentView(BaseModel):
             size=record.data.size,
             content_type=record.data.content_type,
             status=record.status,
-            error=record.data.error,
+            # ``error`` is meaningful only for a failed document. Retry
+            # clears the stored text with an empty string; do not expose
+            # that sentinel (or a stale failure) on a successful record.
+            error=record.data.error if record.status == "error" else None,
             chunk_count=record.data.chunk_count,
             created_at=record.created_at,
             updated_at=record.updated_at,

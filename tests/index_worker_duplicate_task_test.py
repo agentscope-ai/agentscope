@@ -50,7 +50,7 @@ class _StubStorage:
         self.status_writes.append(status)
         self.record.status = status
         if error is not None:
-            self.record.data.error = error
+            self.record.data.error = error or None
         if chunk_count is not None:
             self.record.data.chunk_count = chunk_count
 
@@ -177,6 +177,7 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
         self.embedding.side_effect = RuntimeError("embedding unavailable")
         await self.worker.process("owner", "kb-1", "doc-1")
         self.assertEqual(self.storage.record.status, "error")
+        self.assertIsNotNone(self.storage.record.data.error)
         self.embedding.side_effect = None
 
         await self.worker.process("owner", "kb-1", "doc-1")
@@ -184,12 +185,13 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             (
                 self.storage.record.status,
+                self.storage.record.data.error,
                 self.storage.record.data.chunk_count,
                 self.embedding.await_count,
                 self.vectors.delete.await_count,
                 self.vectors.insert.await_count,
             ),
-            ("ready", 1, 2, 2, 1),
+            ("ready", None, 1, 2, 2, 1),
         )
 
     async def test_ready_document_is_reindexed_after_status_reset(
