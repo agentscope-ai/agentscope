@@ -72,6 +72,28 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_retry_on_transient_error(self) -> None:
+        """A retryable transport error is retried instead of raised."""
+        import httpx
+
+        model = OllamaEmbeddingModel(
+            credential=_cred(),
+            model="nomic-embed-text",
+            dimensions=2,
+            retry_delay=0.0,
+        )
+        model._call_api = AsyncMock(
+            side_effect=[
+                httpx.ConnectError("connection refused"),
+                _mock_resp([[0.1, 0.2]]),
+            ],
+        )
+
+        result = await model(["hello"])
+
+        self.assertEqual(result.embeddings, [[0.1, 0.2]])
+        self.assertEqual(model._call_api.await_count, 2)
+
     async def test_dimensions_and_host(self) -> None:
         """Dimensions and host are set correctly from constructor."""
         model = OllamaEmbeddingModel(

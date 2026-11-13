@@ -86,6 +86,21 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             self.client._client.base_url,  # pylint: disable=protected-access
         )
 
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[type[Exception], ...]:
+        """Return Ollama exceptions that warrant a retry."""
+        import httpx
+
+        # Local service: retry transient transport-layer failures only,
+        # mirroring the Ollama chat model. ollama.ResponseError wraps
+        # server-side errors regardless of cause (incl. 4xx like "model
+        # not found"), so we don't retry on it.
+        return (
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        )
+
     async def _call_api(
         self,
         inputs: list[str],
