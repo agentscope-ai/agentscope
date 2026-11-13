@@ -157,6 +157,44 @@ def _remove_title_field(schema: dict) -> dict:
             if isinstance(def_schema, dict):
                 _remove_title_field(def_schema)
 
+    # Applicators nest sub-schemas that carry their own generated titles.
+    # Pydantic emits ``anyOf`` for unions/optionals and ``prefixItems``
+    # for tuples, and a ``Field(title=...)`` on an ``Annotated`` union
+    # member survives inside those branches. Walk every sub-schema
+    # position so those titles are stripped too.
+    for keyword in ("anyOf", "oneOf", "allOf", "prefixItems"):
+        branches = schema.get(keyword)
+        if isinstance(branches, list):
+            for branch in branches:
+                if isinstance(branch, dict):
+                    _remove_title_field(branch)
+
+    for keyword in (
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+        "contains",
+        "additionalItems",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    ):
+        child = schema.get(keyword)
+        if isinstance(child, dict):
+            _remove_title_field(child)
+
+    for keyword in (
+        "definitions",
+        "patternProperties",
+        "dependentSchemas",
+    ):
+        children = schema.get(keyword)
+        if isinstance(children, dict):
+            for child in children.values():
+                if isinstance(child, dict):
+                    _remove_title_field(child)
+
     return schema
 
 
