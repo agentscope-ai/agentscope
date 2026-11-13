@@ -388,6 +388,54 @@ classes plus documentation:
    [agentscope-ai/docs](https://github.com/agentscope-ai/docs) describing
    how to configure and use your workspace.
 
+### Storage
+
+Ordinary owner-scoped records share their typed CRUD methods in `StorageBase`.
+The SQL and Redis backends implement `_upsert_record`, `_get_record`,
+`_list_records`, and `_delete_record` once. To add an ordinary persisted entity:
+
+1. Define its record model with `id`, `user_id`, timestamps, and payload fields.
+   Use `_RecordBase` for the existing envelope.
+2. Add the typed methods **once** to `StorageBase`, delegating to those
+   primitives with the declared record class. For example:
+   ```python
+   async def upsert_note(self, user_id: str, record: NoteRecord) -> NoteRecord:
+       return await self._upsert_record(NoteRecord, user_id, record)
+
+   async def get_note(self, user_id: str, note_id: str) -> NoteRecord | None:
+       return await self._get_record(NoteRecord, user_id, note_id)
+
+   async def list_notes(self, user_id: str) -> list[NoteRecord]:
+       return await self._list_records(NoteRecord, user_id)
+
+   async def delete_note(self, user_id: str, note_id: str) -> bool:
+       return await self._delete_record(NoteRecord, user_id, note_id)
+   ```
+3. Declare its SQL row and migration, including `user_id` in `_indexed_fields`,
+   and add `NoteRecord: NoteRow` to `AsyncSQLAlchemyStorage._record_rows`.
+4. Declare Redis record/index templates on `RedisStorage.KeyConfig`, and add
+   `NoteRecord: ("note", "note_index", "note_id")` to `_record_keys`. These are
+   the two **KeyConfig attribute names** and the record-ID placeholder. The
+   primitives read the instance's templates, including custom prefixes.
+5. Run the same contract tests against both backends. The test-only entity in
+   [`tests/storage_crud_extension_test.py`](tests/storage_crud_extension_test.py)
+   demonstrates all four operations with metadata-only backend subclasses.
+
+Ordinary upserts preserve the stored creation time and refresh the update time;
+Redis also applies `key_ttl`. SQL IDs remain table-global and reject writes to
+another owner's ID; Redis keys remain owner-scoped, so two users may use the
+same ID independently. Existing backend-specific timestamp conventions remain
+unchanged. New primitives are non-abstract so existing custom backends that
+implement the typed methods do not acquire new abstract-method requirements.
+
+Keep specialized operations explicit. Name uniqueness, secrets, global or
+secondary indexes, TTL exceptions, filtering, leases, and cascades are not
+ordinary CRUD. In particular, `_delete_record` does **not** perform application
+cascades or secondary-index cleanup: use the typed delete method for those
+entities. SQL cascade helpers must keep their caller's transaction rather than
+call a primitive that commits its own session. A feature can share its ordinary
+reads while overriding its special writes/deletes, as existing entities do.
+
 ### Examples
 
 We highly encourage contributions of new examples that showcase
