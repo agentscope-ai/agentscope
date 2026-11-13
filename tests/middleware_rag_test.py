@@ -1296,6 +1296,59 @@ class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
                 score_threshold=None,
             )
 
+    async def test_cancellation_reaches_the_caller_while_a_sibling_blocks(
+        self,
+    ) -> None:
+        """A cancelled search propagates without waiting for a stalled
+        sibling: the caller must see the cancellation before the other
+        knowledge base is released."""
+        blocked_started = asyncio.Event()
+        blocked_released = asyncio.Event()
+
+        class _BlockingKnowledgeBase(_StubKnowledgeBase):
+            async def search(
+                self,
+                queries: list[str | TextBlock | DataBlock],
+                top_k: int = 5,
+                score_threshold: float | None = None,
+            ) -> list[VectorSearchResult]:
+                blocked_started.set()
+                await blocked_released.wait()
+                return self.results
+
+        cancelled = _StubKnowledgeBase(
+            [],
+            error=asyncio.CancelledError(),
+            name="catalog",
+        )
+        blocking = _BlockingKnowledgeBase([], name="policies")
+
+        search_task = asyncio.ensure_future(
+            _search_across(
+                [blocking, cancelled],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            ),
+        )
+        await asyncio.wait_for(blocked_started.wait(), timeout=2)
+        try:
+            # The blocked search is still running, so this only returns
+            # if the sibling's own cancellation was propagated at once.
+            await asyncio.wait_for(
+                asyncio.shield(search_task),
+                timeout=2,
+            )
+            self.fail("the cancellation was swallowed")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Releasing the sibling afterwards must not resurrect the
+            # turn or raise an unhandled exception of its own.
+            blocked_released.set()
+            await asyncio.gather(search_task, return_exceptions=True)
+            self.assertTrue(search_task.done())
+
     async def test_failure_is_not_reported_as_no_hits(self) -> None:
         """If the knowledge bases that worked found nothing, the error
         still surfaces instead of an empty result."""

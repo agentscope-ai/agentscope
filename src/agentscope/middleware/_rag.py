@@ -417,26 +417,30 @@ async def _search_across(
         rerank_candidate_k = top_k
 
     queries_list = list(queries)
-    per_kb = await asyncio.gather(
-        *(
-            kb.search(
+
+    async def _search_one(
+        kb: "KnowledgeBase",
+    ) -> list["VectorSearchResult"] | Exception:
+        """Turn a per-KB failure into a value so the others still merge."""
+        try:
+            return await kb.search(
                 queries=queries_list,
                 top_k=rerank_candidate_k,
                 score_threshold=score_threshold,
             )
-            for kb in knowledge_bases
-        ),
-        return_exceptions=True,
-    )
+        except Exception as error:
+            return error
 
-    # One knowledge base must not erase the others' context.  Cancelled
-    # replies are not a scoring problem, so they still propagate.
-    failures: list[tuple["KnowledgeBase", BaseException]] = []
+    # One knowledge base must not erase the others' context.  Only
+    # ordinary exceptions are collected: ``CancelledError`` is a
+    # ``BaseException`` and stays uncaught so ``gather`` re-raises it at
+    # once instead of waiting for a slow sibling to finish.
+    per_kb = await asyncio.gather(*(_search_one(kb) for kb in knowledge_bases))
+
+    failures: list[tuple["KnowledgeBase", Exception]] = []
     successful: list[list["VectorSearchResult"]] = []
     for kb, hits in zip(knowledge_bases, per_kb):
-        if isinstance(hits, BaseException):
-            if not isinstance(hits, Exception):
-                raise hits
+        if isinstance(hits, Exception):
             failures.append((kb, hits))
         else:
             successful.append(hits)
