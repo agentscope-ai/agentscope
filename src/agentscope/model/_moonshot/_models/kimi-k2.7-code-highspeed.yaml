@@ -1,7 +1,6 @@
 name: kimi-k2.7-code-highspeed
 label: Kimi K2.7 Code Highspeed
 status: active
-release_date: null
 
 input_types:
   - text/plain

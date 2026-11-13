@@ -2,7 +2,6 @@
 name: doubao-seed-evolving
 label: Doubao Seed Evolving
 status: active
-release_date: null
 
 # Only modalities implemented by the current Ark formatter are listed.
 input_types:

@@ -1,7 +1,6 @@
 name: deepseek-chat
 label: DeepSeek Chat
 status: sunset
-release_date: null
 deprecated_at: "2026-07-24T00:00:00"
 
 input_types:

@@ -1,7 +1,6 @@
 name: llama4
 label: Llama 4 Scout
 status: active
-release_date: null
 
 input_types:
   - text/plain

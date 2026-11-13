@@ -1,7 +1,6 @@
 name: qwen-long
 label: Qwen Long
 status: active
-release_date: null
 
 input_types:
   - text/plain

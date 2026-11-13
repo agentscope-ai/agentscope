@@ -1,7 +1,6 @@
 name: qwen3.5
 label: Qwen3.5 9B
 status: active
-release_date: null
 
 input_types:
   - text/plain
