@@ -14,9 +14,15 @@ class _Parser:
     """Minimal parser stub that records the selected upload."""
 
     supported_media_types = ["text/markdown"]
+    extensions = [".md", ".markdown"]
 
     def __init__(self) -> None:
         self.calls: list[tuple[bytes, str]] = []
+
+    @classmethod
+    def supported_extensions(cls) -> list[str]:
+        """Return the extensions declared by this stub."""
+        return cls.extensions
 
     async def parse(self, file: bytes, filename: str) -> list[Section]:
         """Return one text section and record the parser invocation."""
@@ -240,6 +246,13 @@ _PPTX_MEDIA_TYPE = (
 )
 
 
+class _PptxParser(_Parser):
+    """Stub standing in for ``PPTParser``'s declaration."""
+
+    supported_media_types = [_PPTX_MEDIA_TYPE]
+    extensions = [".pptx"]
+
+
 def _worker(
     storage: _Storage,
     parsers: list[object],
@@ -259,14 +272,13 @@ def _worker(
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
     """A generic multipart Content-Type must not shadow the filename."""
 
-    async def test_generic_octet_stream_routes_by_filename(self) -> None:
+    async def test_generic_octet_stream_routes_by_extension(self) -> None:
         """Index a deck sent as ``application/octet-stream``."""
         storage = _Storage(
             "application/octet-stream",
             filename="lesson.pptx",
         )
-        parser = _Parser()
-        parser.supported_media_types = [_PPTX_MEDIA_TYPE]
+        parser = _PptxParser()
         worker, manager = _worker(storage, [parser])
 
         await worker.run_pipeline()
@@ -284,6 +296,19 @@ class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
             _PPTX_MEDIA_TYPE,
         )
 
+    async def test_extension_match_is_case_insensitive(self) -> None:
+        """An upper-case suffix still routes to the declared parser."""
+        storage = _Storage(
+            "application/octet-stream",
+            filename="LESSON.PPTX",
+        )
+        parser = _PptxParser()
+        worker, _ = _worker(storage, [parser])
+
+        await worker.run_pipeline()
+
+        self.assertListEqual(parser.calls, [(b"# AgentScope", "LESSON.PPTX")])
+
     async def test_registered_generic_parser_stays_authoritative(self) -> None:
         """A parser registered for the generic type still wins."""
         storage = _Storage(
@@ -292,20 +317,19 @@ class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
         )
         generic = _Parser()
         generic.supported_media_types = ["application/octet-stream"]
-        by_filename = _Parser()
-        by_filename.supported_media_types = [_PPTX_MEDIA_TYPE]
-        worker, _ = _worker(storage, [by_filename, generic])
+        generic.extensions = [".pptx"]
+        by_extension = _PptxParser()
+        worker, _ = _worker(storage, [by_extension, generic])
 
         await worker.run_pipeline()
 
         self.assertListEqual(generic.calls, [(b"# AgentScope", "lesson.pptx")])
-        self.assertListEqual(by_filename.calls, [])
+        self.assertListEqual(by_extension.calls, [])
 
     async def test_specific_unregistered_type_is_not_overridden(self) -> None:
         """An explicit specific type stays authoritative."""
         storage = _Storage("image/png", filename="lesson.pptx")
-        parser = _Parser()
-        parser.supported_media_types = [_PPTX_MEDIA_TYPE]
+        parser = _PptxParser()
         worker, _ = _worker(storage, [parser])
 
         with self.assertRaisesRegex(
@@ -323,8 +347,7 @@ class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
             "application/octet-stream",
             filename="lesson.unknownext",
         )
-        parser = _Parser()
-        parser.supported_media_types = [_PPTX_MEDIA_TYPE]
+        parser = _PptxParser()
         worker, _ = _worker(storage, [parser])
 
         with self.assertRaisesRegex(
