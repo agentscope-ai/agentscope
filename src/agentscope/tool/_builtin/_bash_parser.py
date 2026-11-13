@@ -205,6 +205,18 @@ class BashCommandParser:
         if self._is_mutating_find_command(cmd):
             return False
 
+        # ``rg --pre <cmd>`` runs <cmd> for every file it searches.
+        if cmd.startswith("rg "):
+            try:
+                tokens = shlex.split(cmd)
+            except ValueError:
+                return False
+            if any(
+                token == "--pre" or token.startswith("--pre=")
+                for token in tokens[1:]
+            ):
+                return False
+
         # ``git grep -O<cmd>`` runs a command, ``--output=<file>`` writes one
         if cmd.startswith("git "):
             try:

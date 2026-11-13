@@ -397,6 +397,21 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     read_only,
                 )
 
+    async def test_ripgrep_preprocessor_is_not_read_only(self) -> None:
+        """``rg --pre`` runs an arbitrary command for every file."""
+        expected = {
+            "rg --pre cat needle .": False,
+            "rg --pre='cat' needle .": False,
+            "rg --pretty needle .": True,
+            "rg needle .": True,
+        }
+        for cmd, read_only in expected.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(
+                    self.parser.is_read_only_command(cmd),
+                    read_only,
+                )
+
     async def test_single_read_only_docker_commands(self) -> None:
         """Test single read-only docker commands."""
         read_only_commands = [
