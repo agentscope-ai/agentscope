@@ -23,7 +23,7 @@ from collections import defaultdict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from typing import Callable, Self
+from typing import Any, Callable, Self
 
 from ._base import MessageBus
 
@@ -78,9 +78,14 @@ class InMemoryMessageBus(
         # Mode E — locks: key -> asyncio.Lock
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # Track which key is currently held so is_locked() works.
-        # key -> monotonic expiry deadline; ``acquire_lock`` has no
-        # lease, so it stores infinity.
-        self._lock_holders: dict[str, float] = {}
+        # key -> (monotonic expiry deadline, owning task); ``acquire_lock``
+        # has no lease, so it stores infinity. Keeping the owner next to the
+        # deadline is what lets a release tell "I still hold this" from
+        # "my lease expired and somebody else holds it now".
+        self._lock_holders: dict[
+            str,
+            tuple[float, asyncio.Task[Any] | None],
+        ] = {}
 
         # Mode F — registry maps: namespace -> {field: value}
         self._registries: dict[str, dict[str, str]] = defaultdict(dict)
@@ -445,11 +450,15 @@ class InMemoryMessageBus(
         """
         lock = self._locks[key]
         async with lock:
-            self._lock_holders[key] = math.inf
+            owner = asyncio.current_task()
+            self._lock_holders[key] = (math.inf, owner)
             try:
                 yield
             finally:
-                self._lock_holders.pop(key, None)
+                # Only drop the entry while it is still ours.
+                holder = self._lock_holders.get(key)
+                if holder is not None and holder[1] is owner:
+                    self._lock_holders.pop(key, None)
 
     async def is_locked(self, key: str) -> bool:
         """Return whether ``key`` currently holds a lock.
@@ -462,20 +471,27 @@ class InMemoryMessageBus(
             `bool`:
                 ``True`` if some coroutine holds the lock.
         """
-        return self._lock_holders.get(key, 0.0) > time.monotonic()
+        holder = self._lock_holders.get(key)
+        return holder is not None and holder[0] > time.monotonic()
 
     async def try_lock(self, key: str, *, ttl_secs: int = 600) -> bool:
         """Non-blocking claim on ``key``. See base."""
-        if self._lock_holders.get(key, 0.0) > time.monotonic():
+        holder = self._lock_holders.get(key)
+        if holder is not None and holder[0] > time.monotonic():
             return False
         # The lease keeps a crashed holder from blocking the key
         # forever, the contract the Redis bus gets from SET NX EX.
-        self._lock_holders[key] = time.monotonic() + ttl_secs
+        self._lock_holders[key] = (
+            time.monotonic() + ttl_secs,
+            asyncio.current_task(),
+        )
         return True
 
     async def unlock(self, key: str) -> None:
-        """Release a ``try_lock`` claim."""
-        self._lock_holders.pop(key, None)
+        """Release this task's ``try_lock`` claim, if it still owns it."""
+        holder = self._lock_holders.get(key)
+        if holder is not None and holder[1] is asyncio.current_task():
+            self._lock_holders.pop(key, None)
 
     # ------------------------------------------------------------------
     # Mode F — registry map
