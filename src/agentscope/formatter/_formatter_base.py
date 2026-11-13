@@ -4,7 +4,7 @@ import base64
 import mimetypes
 import tempfile
 from abc import abstractmethod
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from typing import Any, AsyncGenerator, Awaitable, Callable, List
 
 from pydantic import BaseModel, Field
@@ -139,9 +139,16 @@ class FormatterBase(BaseModel):
             elif isinstance(block, DataBlock):
                 main_type = block.source.media_type.split("/")[0]
 
+                # `fnmatch` normalises both sides through `os.path.normcase`,
+                # which lowercases only on Windows, so an uppercase media
+                # type -- legal per RFC 2045/6838 and common in HTTP
+                # `Content-Type` headers -- matched on Windows and missed on
+                # Linux. `fnmatchcase` plus explicit lowercasing gives every
+                # platform the same, spec-correct answer.
+                media_type = block.source.media_type.lower()
                 if any(
-                    fnmatch(block.source.media_type, _)
-                    for _ in self.supported_input_media_types
+                    fnmatchcase(media_type, pattern.lower())
+                    for pattern in self.supported_input_media_types
                 ):
                     # If supported, promote the block
 
