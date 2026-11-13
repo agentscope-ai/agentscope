@@ -35,6 +35,7 @@ import asyncio
 import secrets
 from typing import Any
 
+import anyio
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 
@@ -71,7 +72,8 @@ async def _build_client(
     except BaseException:
         # Until discovery succeeds the registry cannot close this client.
         if client.is_stateful and client.is_connected:
-            await client.close()
+            with anyio.CancelScope(shield=True):
+                await client.close()
         raise
     return client
 
