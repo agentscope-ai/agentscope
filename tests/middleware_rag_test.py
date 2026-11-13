@@ -1296,6 +1296,24 @@ class SearchAcrossFailureIsolation(IsolatedAsyncioTestCase):
                 score_threshold=None,
             )
 
+    async def test_failure_is_not_reported_as_no_hits(self) -> None:
+        """If the knowledge bases that worked found nothing, the error
+        still surfaces instead of an empty result."""
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            await _search_across(
+                [
+                    _StubKnowledgeBase([], name="policies"),
+                    _StubKnowledgeBase(
+                        [],
+                        error=RuntimeError("embedding provider unavailable"),
+                        name="catalog",
+                    ),
+                ],
+                ["Where is Paris?"],
+                top_k=2,
+                score_threshold=None,
+            )
+
 
 class RAGHintTemplateValidationTest(IsolatedAsyncioTestCase):
     """``hint_template`` must be renderable, not merely contain a marker."""

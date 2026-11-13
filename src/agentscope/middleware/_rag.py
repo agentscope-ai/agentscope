@@ -367,8 +367,8 @@ async def _search_across(
     not accept, and a knowledge base can fail for unrelated reasons
     (unavailable embedding provider or vector store).  A failing
     knowledge base is logged by name and skipped, so the others still
-    contribute; only when every knowledge base fails does the first
-    error propagate.  Per-KB hits are flattened, sorted by descending
+    contribute; if none of them has a hit, the first error propagates
+    instead.  Per-KB hits are flattened, sorted by descending
     score, and truncated to ``top_k``.  With a ``rerank_model``,
     retrieval widens to ``rerank_candidate_k`` hits and
     :func:`_rerank_results` picks the final ``top_k`` out of them.
@@ -431,27 +431,31 @@ async def _search_across(
 
     # One knowledge base must not erase the others' context.  Cancelled
     # replies are not a scoring problem, so they still propagate.
-    failures: list[BaseException] = []
+    failures: list[tuple["KnowledgeBase", BaseException]] = []
     successful: list[list["VectorSearchResult"]] = []
     for kb, hits in zip(knowledge_bases, per_kb):
         if isinstance(hits, BaseException):
             if not isinstance(hits, Exception):
                 raise hits
-            logger.warning(
-                "Knowledge base %r search failed; skipping it.",
-                kb.name,
-                exc_info=hits,
-            )
-            failures.append(hits)
+            failures.append((kb, hits))
         else:
             successful.append(hits)
 
-    if failures and len(failures) == len(per_kb):
-        raise failures[0]
-
-    # A cancelled reply already logged its own warning; one surviving
-    # knowledge base is enough to serve the merged order.
     merged = [r for sub in successful for r in sub]
+    if failures and not merged:
+        # Nothing else to show, so report the failure instead of
+        # "No relevant content found."  The caller logs it.
+        raise failures[0][1]
+
+    # Only the knowledge bases that are really skipped get a warning;
+    # one that left nothing to merge was re-raised above.
+    for kb, error in failures:
+        logger.warning(
+            "Knowledge base %r search failed; skipping it.",
+            kb.name,
+            exc_info=error,
+        )
+
     merged.sort(key=lambda r: r.score, reverse=True)
     results = merged[:rerank_candidate_k]
     if rerank_model is None or not results:
