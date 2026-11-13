@@ -103,7 +103,11 @@ class TTSMiddleware(MiddlewareBase):
                     text = evt.delta
                     push = True
                 elif isinstance(evt, TextBlockEndEvent):
-                    text = text_buffer
+                    # A voice reply may be cut short: the end event can
+                    # carry the text the user actually heard as an override
+                    # for the accumulated deltas. Speak the same final text
+                    # that message reconstruction will store.
+                    text = evt.text if evt.text is not None else text_buffer
                     text_buffer = ""
                 else:
                     continue
