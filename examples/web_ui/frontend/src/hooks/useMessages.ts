@@ -10,9 +10,9 @@ import type {
 	ToolResultEndEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
-import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
+import { AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
-import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
 import { toast } from 'sonner';
 
@@ -26,6 +26,9 @@ import {
 	useChatQueue,
 } from '@/hooks/useChatQueue';
 import { useTranslation } from '@/i18n/useI18n';
+import { ASK_USER_TOOL_NAME, formatAskUserOutput, parseAskUserResult } from '@/lib/ask-user';
+import type { ClientExternalToolResult } from '@/lib/client-external-tools';
+import { appendMessageEvent } from '@/lib/message-events';
 import { getPendingHitlCalls } from '@/lib/pendingToolCalls';
 
 /**
@@ -372,7 +375,7 @@ export function useMessages(
 						: (msgsRef.current.find((message) => message.id === event.reply_id) ?? null)
 					: currentReplyRef.current;
 				if (reply) {
-					appendEvent(reply, event);
+					appendMessageEvent(reply, event);
 					// ``appendEvent`` mutates in place, which would leave
 					// every Msg identical across renders and force the whole
 					// list to re-render on each delta. Republish just the
@@ -697,6 +700,53 @@ export function useMessages(
 		[agentId, sessionId, session],
 	);
 
+	/** Return a client-executed tool result and resume the parked reply. */
+	const onClientExternalToolResult = useCallback(
+		async (toolCall: ToolCallBlock, result: ClientExternalToolResult, replyId: string) => {
+			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
+
+			currentReplyRef.current = msgsRef.current.find((msg) => msg.id === replyId) ?? null;
+			const createdAt = new Date().toISOString();
+			const nativeResult =
+				toolCall.name === ASK_USER_TOOL_NAME ? parseAskUserResult(result) : null;
+			if (toolCall.name === ASK_USER_TOOL_NAME && !nativeResult) {
+				throw new Error('Invalid AskUser answers');
+			}
+			const toolResult: ToolResultBlock = {
+				type: 'tool_result',
+				id: toolCall.id,
+				name: toolCall.name,
+				output: [
+					{
+						type: 'text',
+						id: crypto.randomUUID(),
+						text: nativeResult
+							? formatAskUserOutput(nativeResult)
+							: typeof result === 'string'
+								? result
+								: JSON.stringify(result),
+						created_at: createdAt,
+						finished_at: createdAt,
+					},
+				],
+				state: 'success',
+				metadata: nativeResult ?? {},
+				created_at: createdAt,
+				finished_at: createdAt,
+			};
+			const event: ExternalExecutionResultEvent = {
+				type: EventType.EXTERNAL_EXECUTION_RESULT,
+				id: crypto.randomUUID(),
+				created_at: createdAt,
+				reply_id: replyId,
+				execution_results: [toolResult],
+			};
+
+			await onExternalExecutionResult(event);
+		},
+		[agentId, sessionId, session, onExternalExecutionResult],
+	);
+
 	/** Abort the current SSE connection. */
 	const abort = useCallback(() => {
 		abortRef.current?.abort();
@@ -826,6 +876,7 @@ export function useMessages(
 		steerQueued,
 		send,
 		onUserConfirm,
+		onClientExternalToolResult,
 		onExternalExecutionResult,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],
