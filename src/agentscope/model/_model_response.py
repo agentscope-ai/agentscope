@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Any, Literal, Self, List
 
 from ._model_usage import ChatUsage
+from .._logging import logger
 from .._utils._common import _generate_id, _generate_timestamp
 from .._utils._mixin import DictMixin
 from ..message import (
@@ -244,6 +245,22 @@ class ChatResponse(DictMixin):
         for block in self.content:
             if block.id in new_block_dict:
                 delta_block = new_block_dict.pop(block.id)
+                if block.type != delta_block.type:
+                    # A block id must identify one kind of content for the
+                    # whole stream. Merging fields from a different kind
+                    # would either raise AttributeError or silently drop
+                    # the replacement, so keep the new block instead.
+                    logger.warning(
+                        "Block %s changed its type from %s to %s during "
+                        "streaming, replacing the old block.",
+                        block.id,
+                        block.type,
+                        delta_block.type,
+                    )
+                    self.content[
+                        self.content.index(block)
+                    ] = delta_block.model_copy(deep=True)
+                    continue
                 # Append data according to the block type
                 if isinstance(block, ThinkingBlock):
                     block.thinking += delta_block.thinking
