@@ -22,7 +22,6 @@ know about each other.
 """
 import asyncio
 import contextlib
-import mimetypes
 from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
 from typing import Any, TYPE_CHECKING
@@ -41,6 +40,15 @@ if TYPE_CHECKING:
 # Read blob bytes in chunks bounded so the worker never holds the whole
 # file in memory at once even when the parser is byte-oriented.
 _READ_CHUNK = 1 << 20  # 1 MiB
+
+# What a multipart client sends when it has no opinion about the type.
+_GENERIC_MEDIA_TYPE = "application/octet-stream"
+
+
+def _filename_extension(filename: str) -> str:
+    """Return the lower-cased extension of ``filename``, ``""`` if none."""
+    _, dot, suffix = filename.rpartition(".")
+    return f".{suffix}".lower() if dot and suffix else ""
 
 
 def _build_parser_registry(
@@ -385,16 +393,34 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
-        media_type = (
-            data.content_type or mimetypes.guess_type(data.filename)[0]
-        )
+        media_type = data.content_type
         if media_type:
             media_type = media_type.split(";", 1)[0].strip().lower()
+        parser = (
+            self._parsers_by_media_type.get(media_type) if media_type else None
+        )
+        if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
+            # A multipart client that labels its part generically leaves
+            # a valid deck unindexed even though the filename says what
+            # it is.  Match on what each parser declares rather than on
+            # ``mimetypes.guess_type``, whose table is incomplete on some
+            # platforms — on Windows ``.pptx`` often resolves to nothing
+            # on a stock image, which is exactly the upload this fallback
+            # has to serve.
+            extension = _filename_extension(data.filename)
+            for known, candidate in self._parsers_by_media_type.items():
+                extensions = getattr(
+                    candidate,
+                    "supported_extensions",
+                    None,
+                )
+                if extension and extensions and extension in extensions():
+                    parser, media_type = candidate, known
+                    break
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
             )
-        parser = self._parsers_by_media_type.get(media_type)
         if parser is None:
             raise ValueError(
                 f"No parser registered for media type {media_type!r}.",
