@@ -358,12 +358,16 @@ class Toolkit:
             if isinstance(e, DeveloperOrientedException):
                 raise e from None
 
-            # The exceptions should be handled by the agent
+            # The exceptions should be handled by the agent. `str(e)` is
+            # empty for a message-less exception such as a bare
+            # `TimeoutError()`, which would hand the model an error block
+            # with nothing to act on; `_describe_exception` falls back to
+            # the exception type and unwraps `ExceptionGroup` leaves.
             chunk = ToolChunk(
                 content=[
                     TextBlock(
                         type="text",
-                        text=str(e),
+                        text=_describe_exception(e),
                     ),
                 ],
                 state=ToolResultState.ERROR,
