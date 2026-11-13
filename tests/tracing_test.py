@@ -7,6 +7,7 @@ from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
+from opentelemetry.trace import StatusCode
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -1067,3 +1068,183 @@ class TracingTest(IsolatedAsyncioTestCase):
         )
         with self.assertNoLogs("opentelemetry.context", level="ERROR"):
             await self._drive_then_close_from_other_task(gen)
+
+    # -----------------------------------------------------------------------
+    # Tests: early close / cancellation is not a span failure (issue #3924)
+    # -----------------------------------------------------------------------
+
+    async def _assert_close_leaves_span_not_error(
+        self,
+        span_fragment: str,
+        drive: Any,
+    ) -> None:
+        """Shared assertion: after an early close, the span is finished, its
+        status is not ERROR, and no synthetic exception was recorded."""
+        n_before = len(self._spans_by_name(span_fragment))
+        await drive()
+        spans = self._spans_by_name(span_fragment)
+        self.assertEqual(len(spans), n_before + 1)
+        span = spans[-1]
+        self.assertIsNotNone(
+            span.end_time,
+            "the span must be ended after the stream is closed",
+        )
+        self.assertNotEqual(
+            span.status.status_code,
+            StatusCode.ERROR,
+            f"an early close must not mark the {span_fragment} span ERROR",
+        )
+        self.assertEqual(
+            len(span.events),
+            0,
+            "an early close must not record a synthetic exception",
+        )
+
+    async def test_on_reply_close_marks_span_not_error(self) -> None:
+        """Closing the reply stream early must not record the invoke_agent
+        span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield UserMsg(name="user", content="partial chunk")
+            await asyncio.Event().wait()  # suspend at the yield boundary
+
+        async def drive() -> None:
+            gen = middleware.on_reply(
+                self.agent,
+                {"inputs": UserMsg(name="user", content="hi")},
+                next_handler,
+            )
+            await anext(gen)
+            await gen.aclose()
+
+        await self._assert_close_leaves_span_not_error("invoke_agent", drive)
+
+    async def test_on_reply_cancelled_task_marks_span_not_error(self) -> None:
+        """Cancelling the task consuming the reply stream must not record the
+        invoke_agent span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield UserMsg(name="user", content="partial chunk")
+            await asyncio.Event().wait()
+
+        async def drive() -> None:
+            gen = middleware.on_reply(
+                self.agent,
+                {"inputs": UserMsg(name="user", content="hi")},
+                next_handler,
+            )
+            await anext(gen)  # deliver the first chunk
+            # the next anext suspends inside next_handler; cancel it there
+            task = asyncio.ensure_future(anext(gen))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await gen.aclose()
+
+        await self._assert_close_leaves_span_not_error("invoke_agent", drive)
+
+    async def test_on_acting_close_marks_span_not_error(self) -> None:
+        """Closing the acting stream early must not record the execute_tool
+        span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield ToolResultBlock(
+                id="t1",
+                name="get_weather",
+                output="ok",
+                state=ToolResultState.SUCCESS,
+            )
+            await asyncio.Event().wait()
+
+        async def drive() -> None:
+            tool_call = ToolCallBlock(
+                id="t1",
+                name="get_weather",
+                input=json.dumps({"city": "Hangzhou"}),
+            )
+            gen = middleware.on_acting(
+                self.agent,
+                {"tool_call": tool_call},
+                next_handler,
+            )
+            await anext(gen)
+            await gen.aclose()
+
+        await self._assert_close_leaves_span_not_error("execute_tool", drive)
+
+    async def test_model_stream_close_marks_span_not_error(self) -> None:
+        """Closing the wrapped model stream early must not record the chat
+        span as ERROR (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def drive() -> None:
+            async def stream() -> Any:
+                yield _make_text_response("partial")
+                await asyncio.Event().wait()
+
+            async def next_handler(**_kwargs: Any) -> Any:
+                return stream()
+
+            gen = await middleware.on_model_call(
+                self.agent,
+                {"current_model": self.model},
+                next_handler,
+            )
+            await anext(gen)
+            await gen.aclose()
+
+        await self._assert_close_leaves_span_not_error("chat", drive)
+
+    async def test_on_model_call_cancelled_marks_span_not_error(self) -> None:
+        """Cancelling the model call before it returns (e.g. the user stops
+        before the first chunk arrives) must not record the chat span as
+        ERROR with a synthetic exception event (issue #3924)."""
+        middleware = TracingMiddleware()
+
+        async def drive() -> None:
+            event = asyncio.Event()
+
+            async def next_handler(**_kwargs: Any) -> Any:
+                await event.wait()  # suspend while the model call is awaited
+                return _make_text_response("done")
+
+            task = asyncio.ensure_future(
+                middleware.on_model_call(
+                    self.agent,
+                    {"current_model": self.model},
+                    next_handler,
+                ),
+            )
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        await self._assert_close_leaves_span_not_error("chat", drive)
+
+    async def test_real_exception_still_marks_span_error(self) -> None:
+        """A real failure must keep the ERROR status and the recorded
+        exception (issue #3924 does not relax that)."""
+        middleware = TracingMiddleware()
+
+        async def next_handler(**_kwargs: Any) -> Any:
+            yield UserMsg(name="user", content="partial chunk")
+            raise RuntimeError("model exploded")
+
+        gen = middleware.on_reply(
+            self.agent,
+            {"inputs": UserMsg(name="user", content="hi")},
+            next_handler,
+        )
+        await anext(gen)
+        with self.assertRaises(RuntimeError):
+            await anext(gen)
+
+        spans = self._spans_by_name("invoke_agent")
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[-1].status.status_code, StatusCode.ERROR)
+        self.assertEqual(len(spans[-1].events), 1)
