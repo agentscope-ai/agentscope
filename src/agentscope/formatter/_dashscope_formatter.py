@@ -273,6 +273,27 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
     """
 
     # pylint: disable=too-many-branches
+    def _append_data_block(
+        self,
+        block: DataBlock,
+        role: str,
+        formatted_msgs: list[dict[str, Any]],
+        content_blocks: list[dict[str, Any]],
+    ) -> None:
+        """Format a data block; assistant-role media becomes a user message.
+
+        The target API only accepts media parts in user messages, so
+        assistant-role media is promoted into its own preceding user
+        message (the same promotion the xai and ollama formatters do).
+        """
+        formatted = self._format_dashscope_data_block(block)
+        if not formatted:
+            return
+        if role == "assistant":
+            formatted_msgs.append({"role": "user", "content": [formatted]})
+        else:
+            content_blocks.append(formatted)
+
     async def format(
         self,
         msgs: list[Msg],
@@ -309,11 +330,12 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_dashscope_data_block(
+                    self._append_data_block(
                         block,
+                        msg.role,
+                        formatted_msgs,
+                        content_blocks,
                     )
-                    if formatted_block:
-                        content_blocks.append(formatted_block)
 
                 elif isinstance(block, HintBlock):
                     if content_blocks or tool_calls or thinking_parts:

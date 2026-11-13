@@ -151,6 +151,27 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
     )
 
     # pylint: disable=too-many-branches
+    def _append_data_block(
+        self,
+        block: DataBlock,
+        role: str,
+        messages: list[dict[str, Any]],
+        content_blocks: list[dict[str, Any]],
+    ) -> None:
+        """Format a data block; assistant-role media becomes a user message.
+
+        The target API only accepts media parts in user messages, so
+        assistant-role media is promoted into its own preceding user
+        message (the same promotion the xai and ollama formatters do).
+        """
+        formatted = self._format_volcengine_data_block(block)
+        if not formatted:
+            return
+        if role == "assistant":
+            messages.append({"role": "user", "content": [formatted]})
+        else:
+            content_blocks.append(formatted)
+
     async def format(
         self,
         msgs: list[Msg],
@@ -185,9 +206,12 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_volcengine_data_block(block)
-                    if formatted is not None:
-                        content_blocks.append(formatted)
+                    self._append_data_block(
+                        block,
+                        msg.role,
+                        messages,
+                        content_blocks,
+                    )
 
                 elif isinstance(block, ThinkingBlock):
                     reasoning_content_blocks.append(block.thinking)
