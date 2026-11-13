@@ -7,8 +7,9 @@ Only external resource factories and durable storage are substituted,
 matching the existing service_chat_* test fixtures.
 """
 import asyncio
+from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
@@ -19,15 +20,22 @@ from agentscope.app import _bus_ops
 from agentscope.app._service import ChatService
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
 from agentscope.app._manager import _wakeup_dispatcher as wakeup_module
+from agentscope.app.channel import ChannelClients, ChannelEvent
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
+    ChannelOrigin,
     ChatModelConfig,
     SessionConfig,
     SessionRecord,
 )
-from agentscope.event import AgentEvent, UserInterruptEvent
+from agentscope.event import (
+    AgentEvent,
+    ConfirmResult,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
 from agentscope.message import AssistantMsg, Msg, TextBlock, ToolCallBlock
 from agentscope.model import ChatResponse
 from agentscope.permission import AdditionalWorkingDirectory
@@ -110,17 +118,24 @@ class _NoCallModel(MockModel):
         raise AssertionError("Interrupt unexpectedly invoked the model")
 
 
+@dataclass
+class _ServiceFixture:
+    """The session resources shared by interrupt and channel regressions."""
+
+    service: ChatService
+    storage: _Storage
+    bus: _RecordingBus
+    invoked: list[object]
+
+
 class TestStaleInterruptService(IsolatedAsyncioTestCase):
     """A delayed trigger must not end whichever reply is now parked."""
 
-    async def _assert_interrupt(
-        self,
+    @staticmethod
+    def _fixture(
         tool_state: str | None,
-        *,
-        stale: bool,
-        through_retry: bool = False,
-    ) -> None:
-        """Deliver an interrupt through real service assembly and execution."""
+    ) -> _ServiceFixture:
+        """Build a detached session and observe the actual Agent stream."""
         user_id, session_id, agent_id = "user-1", "session-1", "agent-1"
         message = AssistantMsg(
             id="current-reply",
@@ -147,8 +162,6 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
         state.permission_context.working_directories[
             _WORKDIR
         ] = AdditionalWorkingDirectory(path=_WORKDIR, source="session")
-        original_state = state.model_dump(mode="json")
-        original_message = message.model_dump(mode="json")
         session = SessionRecord(
             id=session_id,
             user_id=user_id,
@@ -170,7 +183,6 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
             data=AgentData(name="agent"),
         )
         storage, bus = _Storage(session, message), _RecordingBus()
-        model = _NoCallModel()
         invoked: list[object] = []
 
         class _ObservedAgent(Agent):
@@ -202,8 +214,39 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
             custom_agent_cls=_ObservedAgent,
             tool_offload_timeout_secs=None,
         )
+        return _ServiceFixture(service, storage, bus, invoked)
+
+    async def _assert_interrupt(
+        self,
+        tool_state: str | None,
+        *,
+        stale: bool,
+        through_retry: bool = False,
+        channel_bound: bool = False,
+    ) -> None:
+        """Deliver an interrupt through real service assembly and execution."""
+        fixture = self._fixture(tool_state)
+        service, storage, bus = fixture.service, fixture.storage, fixture.bus
+        user_id = storage.session.user_id
+        session_id = storage.session.id
+        agent_id = storage.session.agent_id
+        message = storage.message
+        original_state = storage.session.state.model_dump(mode="json")
+        original_message = message.model_dump(mode="json")
+        model = _NoCallModel()
+        deliver = AsyncMock()
+        if channel_bound:
+            storage.session.origin = ChannelOrigin(
+                channel_id="channel-1",
+                chat_id="chat-1",
+            )
+            service._channel_clients = SimpleNamespace(
+                get=AsyncMock(return_value=None),
+                deliver=deliver,
+            )
         notify = AsyncMock(wraps=service._notify_leader_of_failure)
         abandon = AsyncMock(wraps=_bus_ops.abandon_inbox_consumer)
+        register = AsyncMock(wraps=_bus_ops.register_inbox_consumer)
         with (
             patch(
                 "agentscope.app._service._chat.get_toolkit",
@@ -217,6 +260,10 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
             patch(
                 "agentscope.app._service._chat.abandon_inbox_consumer",
                 new=abandon,
+            ),
+            patch(
+                "agentscope.app._service._chat.register_inbox_consumer",
+                new=register,
             ),
         ):
             current_state = storage.session.state
@@ -272,8 +319,12 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(model.calls, 0)
+        self.assertFalse(
+            await bus.is_locked(MessageBusKeys.session_lock(session_id)),
+        )
         if stale or tool_state is None:
-            self.assertEqual(invoked, [])
+            deliver.assert_not_awaited()
+            self.assertEqual(fixture.invoked, [])
             self.assertEqual(storage.get_message_calls, 0)
             self.assertEqual(storage.written_messages, [])
             self.assertEqual(bus.events, [])
@@ -286,9 +337,18 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
                 original_message,
             )
             notify.assert_not_awaited()
-            abandon.assert_awaited_once()
+            register.assert_not_awaited()
+            abandon.assert_not_awaited()
         else:
-            self.assertEqual(len(invoked), 1)
+            register.assert_awaited_once_with(bus, session_id)
+            if channel_bound:
+                deliver.assert_awaited_once_with(
+                    session_id=session_id,
+                    channel_id="channel-1",
+                    chat_id="chat-1",
+                    agent_id=agent_id,
+                )
+            self.assertEqual(len(fixture.invoked), 1)
             self.assertEqual(storage.get_message_calls, 1)
             self.assertEqual(
                 storage.session.state.get_awaiting_tool_calls("agent"),
@@ -447,3 +507,111 @@ class TestStaleInterruptService(IsolatedAsyncioTestCase):
         for tool_state in ("asking", "submitted"):
             with self.subTest(tool_state=tool_state):
                 await self._assert_interrupt(tool_state, stale=False)
+
+    async def test_channel_interrupt_only_delivers_current_parked_reply(
+        self,
+    ) -> None:
+        """Ignored interrupts must not start an outbound channel stream."""
+        for tool_state in (None, "asking", "submitted"):
+            for stale in (False, True):
+                with self.subTest(tool_state=tool_state, stale=stale):
+                    await self._assert_interrupt(
+                        tool_state,
+                        stale=stale,
+                        channel_bound=True,
+                    )
+
+    async def test_stale_channel_interrupt_does_not_duplicate_resumed_reply(
+        self,
+    ) -> None:
+        """An ignored trigger must not attach a reader to the next reply."""
+        fixture = self._fixture("asking")
+        service, storage, bus = fixture.service, fixture.storage, fixture.bus
+        storage.session.origin = ChannelOrigin(
+            channel_id="channel-1",
+            chat_id="chat-1",
+        )
+        responses: list[list[dict]] = []
+
+        async def record_response(
+            _target: ChannelEvent,
+            events: AsyncIterator[dict],
+        ) -> None:
+            """Drain each real delivery separately, as a platform would."""
+            response: list[dict] = []
+            responses.append(response)
+            async for event in events:
+                response.append(event)
+
+        channel = SimpleNamespace(
+            display_name="recording",
+            chat_kind=AsyncMock(return_value=None),
+            chat_name=AsyncMock(return_value="chat"),
+            list_tools=AsyncMock(return_value=[]),
+            send_response=record_response,
+        )
+        clients = ChannelClients(storage, bus, object())
+        service._channel_clients = clients
+        model = MockModel(
+            stream=False,
+            mock_chat_responses=[
+                ChatResponse(
+                    content=[TextBlock(text="Resumed answer.")],
+                    is_last=True,
+                ),
+            ],
+        )
+        with (
+            patch.object(clients, "get", new=AsyncMock(return_value=channel)),
+            patch(
+                "agentscope.app._service._chat.get_toolkit",
+                new=AsyncMock(return_value=Toolkit()),
+            ),
+            patch(
+                "agentscope.app._service._chat.get_model",
+                new=AsyncMock(return_value=model),
+            ),
+        ):
+            async with asyncio.timeout(5), clients:
+                await service._run_impl(
+                    storage.session.user_id,
+                    storage.session.id,
+                    storage.session.agent_id,
+                    UserInterruptEvent(reply_id="old-reply"),
+                )
+                await service._run_impl(
+                    storage.session.user_id,
+                    storage.session.id,
+                    storage.session.agent_id,
+                    UserConfirmResultEvent(
+                        reply_id=storage.message.id,
+                        confirm_results=[
+                            ConfirmResult(
+                                confirmed=False,
+                                tool_call=storage.message.get_content_blocks(
+                                    "tool_call",
+                                )[0],
+                            ),
+                        ],
+                    ),
+                )
+                await asyncio.gather(*clients._deliveries)
+
+        self.assertEqual(model.cnt, 1)
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(
+            [
+                event["delta"]
+                for event in responses[0]
+                if event["type"] == "TEXT_BLOCK_DELTA"
+            ],
+            ["Resumed answer."],
+        )
+        self.assertEqual(
+            [
+                event["reply_id"]
+                for event in responses[0]
+                if event["type"] == "REPLY_END"
+            ],
+            [storage.message.id],
+        )

@@ -1340,6 +1340,18 @@ class ChatService:
 
                 if self._skip_parked_wakeup(session_id, agent, input_msg):
                     return
+                if isinstance(input_msg, UserInterruptEvent) and (
+                    not agent.state.has_awaiting_tool_calls(agent.name)
+                    or input_msg.reply_id != agent.state.reply_id
+                ):
+                    logger.info(
+                        "Ignoring idle or stale interrupt for "
+                        "reply %r in session %r (current reply %r).",
+                        input_msg.reply_id,
+                        session_id,
+                        agent.state.reply_id,
+                    )
+                    return
             except Exception as e:  # pylint: disable=broad-except
                 # Under the session lock, like the reply this run never got
                 # to make: these events share a channel with a live reply's,
@@ -1478,21 +1490,6 @@ class ChatService:
                         else:
                             # Case B: continuation (UserConfirmResult
                             #  / ExternalExecResult / UserInterrupt)
-                            if isinstance(input_msg, UserInterruptEvent) and (
-                                not agent.state.has_awaiting_tool_calls(
-                                    agent.name,
-                                )
-                                or input_msg.reply_id != agent.state.reply_id
-                            ):
-                                logger.info(
-                                    "Ignoring idle or stale interrupt for "
-                                    "reply %r in session %r "
-                                    "(current reply %r).",
-                                    input_msg.reply_id,
-                                    session_id,
-                                    agent.state.reply_id,
-                                )
-                                break
                             continuation_reply_id = agent.state.reply_id
                             reply_msg = await self._storage.get_message(
                                 user_id,
