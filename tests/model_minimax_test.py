@@ -101,7 +101,9 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
         )
 
     async def test_format_video(self) -> None:
-        """Supported videos become video blocks, unsupported ones skipped."""
+        """Supported videos become video blocks; unsupported ones leave a
+        text placeholder so the turn stays visible (#3105).
+        """
         formatter = MiniMaxChatFormatter(
             input_types=["text/plain", "image/*", "video/mp4"],
         )
@@ -145,6 +147,13 @@ class MiniMaxTest(IsolatedAsyncioTestCase):
                                 "media_type": "video/mp4",
                                 "data": "AAAA",
                             },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "[video file returned, URL: "
+                                "https://example.com/a.mkv]"
+                            ),
                         },
                         {
                             "type": "image",

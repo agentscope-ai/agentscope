@@ -139,11 +139,10 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                         {"type": "text", "text": sub.text},
                                     )
                             elif isinstance(sub, DataBlock):
-                                formatted_sub = (
+                                hint_parts.append(
                                     self._format_anthropic_data_block(sub)
+                                    or self._unsupported_media_text(sub),
                                 )
-                                if formatted_sub:
-                                    hint_parts.append(formatted_sub)
 
                     if hint_parts:
                         if content_blocks:
@@ -158,9 +157,10 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                         )
 
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_anthropic_data_block(block)
-                    if formatted_block:
-                        content_blocks.append(formatted_block)
+                    content_blocks.append(
+                        self._format_anthropic_data_block(block)
+                        or self._unsupported_media_text(block),
+                    )
 
                 elif isinstance(block, ToolCallBlock):
                     content_blocks.append(
@@ -220,20 +220,10 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                 if fmt_block:
                                     tool_result_content.append(fmt_block)
                                 else:
-                                    source = out_block.source
-                                    main_type = source.media_type.split("/")[0]
-                                    if isinstance(source, URLSource):
-                                        fallback = (
-                                            f"[{main_type} file returned, "
-                                            f"URL: {source.url}]"
-                                        )
-                                    else:
-                                        fallback = (
-                                            f"[{main_type} file returned, "
-                                            f"type: {source.media_type}]"
-                                        )
                                     tool_result_content.append(
-                                        {"type": "text", "text": fallback},
+                                        self._unsupported_media_text(
+                                            out_block,
+                                        ),
                                     )
 
                     # Anthropic rejects a tool_result whose content list is
@@ -274,6 +264,23 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 )
 
         return messages
+
+    @staticmethod
+    def _unsupported_media_text(block: DataBlock) -> dict[str, str]:
+        """Build a text placeholder for media this endpoint cannot handle.
+
+        Keeping the turn visible instead of dropping a message that only
+        contains unsupported media (e.g. audio on Anthropic).
+        """
+        source = block.source
+        main_type = source.media_type.split("/")[0]
+        if isinstance(source, URLSource):
+            fallback = f"[{main_type} file returned, URL: {source.url}]"
+        else:
+            fallback = (
+                f"[{main_type} file returned, " f"type: {source.media_type}]"
+            )
+        return {"type": "text", "text": fallback}
 
     def _format_anthropic_data_block(
         self,
