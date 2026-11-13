@@ -127,6 +127,41 @@ class TestTTSMiddlewareNonRealtime(IsolatedAsyncioTestCase):
         # synthesize was called with the full text
         tts.synthesize.assert_called_once_with("Hello world")
 
+    async def test_final_text_override_is_synthesized(self) -> None:
+        """A block's authoritative final text replaces streamed deltas."""
+        tts = MagicMock(spec=TTSModelBase)
+        tts.realtime = False
+        tts.__aenter__ = AsyncMock(return_value=tts)
+        tts.__aexit__ = AsyncMock(return_value=None)
+        tts.synthesize = AsyncMock(
+            return_value=_make_tts_response(base64.b64encode(b"x").decode()),
+        )
+
+        middleware = TTSMiddleware(tts_model=tts)
+        agent = _make_agent_stub()
+
+        upstream_events = [
+            TextBlockDeltaEvent(
+                reply_id="reply-1",
+                block_id="blk-1",
+                delta="Hello world",
+            ),
+            TextBlockEndEvent(
+                reply_id="reply-1",
+                block_id="blk-1",
+                text="Hello",
+            ),
+        ]
+
+        async def next_handler(**_kwargs: Any) -> AsyncGenerator:
+            for evt in upstream_events:
+                yield evt
+
+        async for _ in middleware.on_reply(agent, {}, next_handler):
+            pass
+
+        tts.synthesize.assert_called_once_with("Hello")
+
     async def test_empty_text_skips_synthesize(self) -> None:
         """When accumulated text is whitespace-only, synthesize is not called
         and no DATA_BLOCK events are emitted."""
