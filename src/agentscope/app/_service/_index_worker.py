@@ -406,6 +406,10 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "parsing",
+            # A retry starts with a clean failure field. Storage treats
+            # ``None`` as "leave unchanged", so an empty string clears a
+            # previous error through the existing status-update API.
+            error="" if getattr(data, "error", None) else None,
         )
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
