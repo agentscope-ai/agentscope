@@ -109,6 +109,24 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
                 result = self.parser.extract_command_prefixes(command)
                 self.assertEqual(result, expected)
 
+    async def test_non_ascii_argument_keeps_prefix_boundary(self) -> None:
+        """A non-ASCII argument must not bleed into the extracted prefix."""
+        test_cases = [
+            ("sudo 中文字 cp a b", ["sudo 中文字"]),
+            ("sudo ✓ ls", ["sudo ✓"]),
+            ("env 中文=1 ls -la", ["env 中文=1"]),
+            ("NODE_ENV=测试 npm run build", ["npm run"]),
+            (
+                "sudo 中文字 ls && git commit -m 中文",
+                ["sudo 中文字", "git commit"],
+            ),
+        ]
+
+        for command, expected in test_cases:
+            with self.subTest(command=command):
+                result = self.parser.extract_command_prefixes(command)
+                self.assertEqual(result, expected)
+
     async def test_single_command_without_prefix(self) -> None:
         """Test single commands that cannot extract prefixes."""
         test_cases = [
@@ -810,6 +828,24 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
                 result = self.parser.extract_file_paths(cmd)
                 self.assertEqual(result, expected)
 
+    async def test_non_ascii_arguments_keep_later_paths(self) -> None:
+        """A non-ASCII argument must not shift paths extracted after it."""
+        test_cases = [
+            ("cp ✓ .bashrc", [("cp", "✓"), ("cp", ".bashrc")]),
+            (
+                "cp 中文字 ../../etc/passwd",
+                [("cp", "中文字"), ("cp", "../../etc/passwd")],
+            ),
+            (
+                "mv 中文.txt 备份/中文.txt",
+                [("mv", "中文.txt"), ("mv", "备份/中文.txt")],
+            ),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.extract_file_paths(cmd)
+                self.assertEqual(result, expected)
+
     async def test_commands_without_file_operations(self) -> None:
         """Test commands that don't operate on files."""
         test_cases = [
@@ -857,6 +893,13 @@ class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
             with self.subTest(cmd=cmd):
                 result = self.parser.extract_redirections(cmd)
                 self.assertEqual(result, expected)
+
+    async def test_non_ascii_argument_keeps_redirection_target(self) -> None:
+        """A non-ASCII argument must not shift the redirection target."""
+        self.assertEqual(
+            self.parser.extract_redirections("cat 中文.txt > 备份.txt"),
+            ["备份.txt"],
+        )
 
     async def test_append_redirection(self) -> None:
         """Test append redirection (>>)."""

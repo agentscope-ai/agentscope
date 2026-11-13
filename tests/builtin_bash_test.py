@@ -177,6 +177,31 @@ class BashToolTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_non_ascii_argument_keeps_dangerous_path_check(
+        self,
+    ) -> None:
+        """A non-ASCII argument must not hide a dangerous write target."""
+        for mode in (PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS):
+            decision = await self.bash_tool.check_permissions(
+                {"command": "cp ✓ .bashrc"},
+                PermissionContext(mode=mode),
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ASK,
+                f"Expected ASK in {mode} for a dangerous write target",
+            )
+
+    async def test_non_ascii_argument_keeps_working_directory_check(
+        self,
+    ) -> None:
+        """A non-ASCII argument must not make an outside target look local."""
+        decision = await self.bash_tool.check_permissions(
+            {"command": "cp 中文字 ../../etc/passwd"},
+            PermissionContext(mode=PermissionMode.ACCEPT_EDITS),
+        )
+        self.assertNotEqual(decision.behavior, PermissionBehavior.ALLOW)
+
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []
