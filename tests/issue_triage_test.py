@@ -7,13 +7,17 @@ arbitrary stranger's issue text — into something posted under the
 repository's own identity, plus the guards that decide a verdict is not
 trustworthy.
 """
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from typing import Any
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, skipUnless
 from unittest.mock import AsyncMock, patch
+
+import yaml
 
 from agentscope.message import Msg, TextBlock
 from agentscope.permission import PermissionBehavior
@@ -231,3 +235,192 @@ class MissingOutputTest(IsolatedAsyncioTestCase):
             '"wants_to_claim": false',
             printed.call_args_list[0].args[0],
         )
+
+
+_NODE_HARNESS = r"""
+const fs = require("fs");
+const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+Object.assign(process.env, payload.env);
+const calls = {
+  listForRepo: [],
+  createComment: [],
+  update: [],
+  outputs: {},
+  notices: [],
+};
+const github = {
+  paginate: async (fn, params) => fn(params),
+  rest: {
+    issues: {
+      listForRepo: async (params) => {
+        calls.listForRepo.push(params);
+        return payload.open;
+      },
+      createComment: async (params) => {
+        calls.createComment.push(params);
+        return {};
+      },
+      update: async (params) => {
+        calls.update.push(params);
+        return {};
+      },
+    },
+  },
+};
+const core = {
+  setOutput: (key, value) => {
+    calls.outputs[key] = value;
+  },
+  notice: (message) => {
+    calls.notices.push(message);
+  },
+};
+const context = payload.context;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const fn = new AsyncFunction("github", "context", "core", payload.script);
+fn(github, context, core)
+  .then(() => {
+    process.stdout.write(JSON.stringify(calls));
+  })
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+"""
+
+
+@skipUnless(shutil.which("node"), "node is required to test workflow scripts")
+class QuotaWorkflowTest(IsolatedAsyncioTestCase):
+    """The issue quota check must not close earlier issues during a burst."""
+
+    @staticmethod
+    def _load_quota_step() -> tuple[dict[str, str], str]:
+        workflow_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            ".github",
+            "workflows",
+            "issue-triage.yml",
+        )
+        with open(workflow_path, encoding="utf-8") as f:
+            workflow = yaml.safe_load(f)
+        env = {k: str(v) for k, v in workflow["env"].items()}
+        script = workflow["jobs"]["quota"]["steps"][0]["with"]["script"]
+        return env, script
+
+    def _run_quota(
+        self,
+        *,
+        action: str,
+        issue_number: int,
+        open_items: list[dict[str, Any]],
+        author: str = "reporter",
+        actor: str = "reporter",
+    ) -> dict[str, Any]:
+        env, script = self._load_quota_step()
+        payload = {
+            "env": env,
+            "script": script,
+            "open": open_items,
+            "context": {
+                "repo": {"owner": "agentscope-ai", "repo": "agentscope"},
+                "actor": actor,
+                "payload": {
+                    "action": action,
+                    "issue": {
+                        "number": issue_number,
+                        "user": {"login": author},
+                    },
+                },
+            },
+        }
+        proc = subprocess.run(
+            ["node", "-e", _NODE_HARNESS],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout)
+
+    async def test_concurrent_opened_burst_preserves_first_five(self) -> None:
+        """A delayed opened job for the 5th issue ignores later #6 in burst."""
+        open_items = [{"number": n} for n in (10, 11, 12, 13, 14, 15)]
+        res = self._run_quota(
+            action="opened",
+            issue_number=14,
+            open_items=open_items,
+        )
+        self.assertEqual(res["createComment"], [])
+        self.assertEqual(res["update"], [])
+        self.assertEqual(res["outputs"], {})
+
+    async def test_concurrent_opened_burst_closes_sixth(self) -> None:
+        """The 6th opened issue sees 5 older open issues and is closed."""
+        open_items = [{"number": n} for n in (10, 11, 12, 13, 14, 15)]
+        res = self._run_quota(
+            action="opened",
+            issue_number=15,
+            open_items=open_items,
+        )
+        self.assertEqual(len(res["createComment"]), 1)
+        self.assertEqual(len(res["update"]), 1)
+        self.assertEqual(res["update"][0]["state"], "closed")
+        self.assertEqual(res["update"][0]["state_reason"], "not_planned")
+        self.assertEqual(res["outputs"].get("closed"), "true")
+        self.assertEqual(
+            res["notices"],
+            ["Closed: reporter already has 5 open."],
+        )
+
+    async def test_reopened_counts_all_other_open_issues(self) -> None:
+        """Reopening an older issue still counts newer open issues."""
+        open_items = [{"number": n} for n in (5, 20, 21, 22, 23, 24)]
+        res = self._run_quota(
+            action="reopened",
+            issue_number=5,
+            open_items=open_items,
+        )
+        self.assertEqual(len(res["update"]), 1)
+        self.assertEqual(res["outputs"].get("closed"), "true")
+        self.assertEqual(
+            res["notices"],
+            ["Closed: reporter already has 5 open."],
+        )
+
+    async def test_reopened_under_limit_stays_open(self) -> None:
+        """Reopening an issue when fewer than 5 others are open passes."""
+        open_items = [{"number": n} for n in (5, 20, 21, 22, 23)]
+        res = self._run_quota(
+            action="reopened",
+            issue_number=5,
+            open_items=open_items,
+        )
+        self.assertEqual(res["createComment"], [])
+        self.assertEqual(res["update"], [])
+        self.assertEqual(res["outputs"], {})
+
+    async def test_pull_requests_excluded_from_issue_quota(self) -> None:
+        """Open PRs returned by listForRepo do not count toward the limit."""
+        open_items: list[dict[str, Any]] = [
+            {"number": n} for n in (10, 11, 12, 13, 14)
+        ] + [{"number": n, "pull_request": {}} for n in (1, 2, 3)]
+        res = self._run_quota(
+            action="opened",
+            issue_number=14,
+            open_items=open_items,
+        )
+        self.assertEqual(res["createComment"], [])
+        self.assertEqual(res["update"], [])
+
+    async def test_maintainer_exempt_from_quota(self) -> None:
+        """A maintainer's issues and maintainer-triggered reopens skip cap."""
+        open_items = [{"number": n} for n in range(1, 10)]
+        res = self._run_quota(
+            action="reopened",
+            issue_number=1,
+            open_items=open_items,
+            author="reporter",
+            actor="DavdGao",
+        )
+        self.assertEqual(res["createComment"], [])
+        self.assertEqual(res["update"], [])

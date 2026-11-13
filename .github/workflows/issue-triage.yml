@@ -53,7 +53,14 @@ jobs:
             const others = open.filter(
               (i) => !i.pull_request && i.number !== issue_number,
             );
-            if (others.length < limit) return;
+            // Concurrent issues.opened jobs see each other's issues before any
+            // of them closes; count only older open issues on opened so burst
+            // reports only close past the cap, while reopened counts all others.
+            const counted =
+              context.payload.action === 'opened'
+                ? others.filter((i) => i.number < issue_number)
+                : others;
+            if (counted.length < limit) return;
 
             await github.rest.issues.createComment({
               owner, repo, issue_number,
@@ -68,7 +75,7 @@ jobs:
               state_reason: 'not_planned',
             });
             core.setOutput('closed', 'true');
-            core.notice(`Closed: ${author} already has ${others.length} open.`);
+            core.notice(`Closed: ${author} already has ${counted.length} open.`);
 
   triage:
     needs: quota
