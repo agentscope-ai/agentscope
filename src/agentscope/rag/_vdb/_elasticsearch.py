@@ -11,6 +11,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _scope_digest,
 )
 
 if TYPE_CHECKING:
@@ -389,8 +390,16 @@ class ElasticsearchStore(VectorStoreBase):
 
     @staticmethod
     def _record_id(record: VectorRecord) -> str:
-        """Build a stable ID so re-indexing replaces the same chunk."""
+        """Build a stable ID so re-indexing replaces the same chunk.
+
+        A scoped record also mixes in the digest of
+        :attr:`VectorRecord.scope`, so another scope reusing the
+        document ID gets distinct records.
+        """
         raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        digest = _scope_digest(record.scope)
+        if digest is not None:
+            raw = f"{raw}\0{digest}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
