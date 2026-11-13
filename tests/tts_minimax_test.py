@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for the MiniMax TTS model."""
+import asyncio
 import base64
 import json
-from typing import Any
+from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+import httpx
 
 from agentscope.credential import CredentialFactory, MiniMaxCredential
 from agentscope.tts import MiniMaxTTSModel, TTSResponse
@@ -21,6 +24,7 @@ class _StreamResponse:
 
     def __init__(self, lines: list[str]) -> None:
         self.lines = lines
+        self.headers = {"content-type": "text/event-stream"}
 
     @staticmethod
     def raise_for_status() -> None:
@@ -38,6 +42,8 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         """Replace the HTTP client with a mock."""
         self.client = MagicMock()
+        self.client.__aenter__ = AsyncMock(return_value=self.client)
+        self.client.__aexit__ = AsyncMock(return_value=None)
         self.client_patcher = patch(
             "httpx.AsyncClient",
             return_value=self.client,
@@ -87,7 +93,7 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         )
         self.client.post.assert_awaited_once()
         api_url, call_kwargs = self.client.post.call_args
-        self.assertEqual(api_url[0], _GLOBAL_BASE_URL + _TTS_PATH)
+        self.assertEqual(str(api_url[0]), _GLOBAL_BASE_URL + _TTS_PATH)
         payload = call_kwargs["json"]
         self.assertEqual(payload["model"], "speech-2.8-hd")
         self.assertEqual(payload["text"], "Hello world")
@@ -103,7 +109,7 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
         self.assertTrue(payload["subtitle_enable"])
 
     async def test_regional_endpoint_is_credential_owned(self) -> None:
-        """The credential selects an allowlisted regional endpoint."""
+        """The endpoint remains credential-owned and supports chat URLs."""
         response = Mock()
         response.raise_for_status = Mock()
         response.json.return_value = {
@@ -111,25 +117,28 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
             "base_resp": {"status_code": 0},
         }
         self.client.post = AsyncMock(return_value=response)
-        model = MiniMaxTTSModel(
-            credential=MiniMaxCredential(
-                api_key="test",
-                base_url=_CHINA_BASE_URL,
+        for base, root in (
+            (_CHINA_BASE_URL, _CHINA_BASE_URL),
+            ("https://api.minimax.io/anthropic", _GLOBAL_BASE_URL),
+            ("https://api.minimax.cn/anthropic/", "https://api.minimax.cn"),
+            (
+                "https://proxy.test/minimax/anthropic",
+                "https://proxy.test/minimax",
             ),
-            stream=False,
-        )
-
-        result = await model.synthesize("Hello")
-
-        api_url, _ = self.client.post.call_args
-        self.assertEqual(api_url[0], _CHINA_BASE_URL + _TTS_PATH)
-        self.assertEqual(result.content.source.media_type, "audio/mpeg")
-
-        with self.assertRaises(ValueError):
-            MiniMaxCredential(
-                api_key="test",
-                base_url="https://example.com",
-            )
+        ):
+            with self.subTest(base=base):
+                credential = MiniMaxCredential(api_key="test", base_url=base)
+                model = MiniMaxTTSModel(credential, stream=False)
+                result = await model.synthesize("Hello")
+                api_url, _ = self.client.post.call_args
+                self.assertEqual(
+                    (
+                        str(api_url[0]),
+                        credential.base_url,
+                        result.content.source.media_type,
+                    ),
+                    (root + _TTS_PATH, base, "audio/mpeg"),
+                )
 
     async def test_streaming_synthesis(self) -> None:
         """Streaming accepts SSE and plain JSON response lines."""
@@ -143,6 +152,7 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
                     "base_resp": {"status_code": 0},
                 },
             ),
+            "",
             json.dumps(
                 {
                     "data": {
@@ -234,9 +244,227 @@ class TestMiniMaxTTSModel(IsolatedAsyncioTestCase):
             MiniMaxCredential.get_tts_model_classes(),
             [MiniMaxTTSModel],
         )
-        self.assertEqual(MiniMaxCredential.list_models(), [])
+        self.assertEqual(
+            MiniMaxCredential.list_models(),
+            MiniMaxCredential.get_chat_model_class().list_models(),
+        )
+        self.assertTrue(MiniMaxCredential.list_models())
         self.assertNotIn("api_url", MiniMaxTTSModel.Parameters.model_fields)
         self.assertNotIn(
             "response_format",
             MiniMaxTTSModel.Parameters.model_fields,
         )
+
+
+class _ByteStream(httpx.AsyncByteStream):
+    """Fragment SSE bytes and optionally keep the connection open."""
+
+    def __init__(self, content: str, wait: bool = False) -> None:
+        self.content = content.encode()
+        self.wait = wait
+        self.waiting = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for offset in range(0, len(self.content), 7):
+            yield self.content[offset : offset + 7]
+        if self.wait:
+            self.waiting.set()
+            await asyncio.Event().wait()
+
+    async def aclose(self) -> None:
+        """Record that the response released its underlying stream."""
+        self.closed = True
+
+
+def _event(audio: bytes = b"", status: int = 1) -> str:
+    """Encode an SSE audio packet with an explicit provider status."""
+    packet = {
+        "data": {"audio": audio.hex(), "status": status},
+        "base_resp": {"status_code": 0},
+    }
+    return "data: " + json.dumps(packet) + "\n\n"
+
+
+class TestMiniMaxHTTPTransport(IsolatedAsyncioTestCase):
+    """Exercise decoding and resource ownership using real HTTPX clients."""
+
+    def setUp(self) -> None:
+        """Replace only the network transport and track client lifetimes."""
+        self.clients: list[httpx.AsyncClient] = []
+        self.requests: list[httpx.Request] = []
+        self.response = httpx.Response(
+            200,
+            json={
+                "data": {"audio": b"audio".hex(), "status": 2},
+                "base_resp": {"status_code": 0},
+            },
+        )
+        client_cls = httpx.AsyncClient
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return self.response
+
+        def create(**kwargs: Any) -> httpx.AsyncClient:
+            client = client_cls(
+                transport=httpx.MockTransport(handle),
+                **kwargs,
+            )
+            self.clients.append(client)
+            return client
+
+        patcher = patch("httpx.AsyncClient", side_effect=create)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def asyncTearDown(self) -> None:
+        """Release clients even when a regression assertion fails."""
+        for client in self.clients:
+            await client.aclose()
+
+    async def test_completion_without_audio_does_not_wait_for_eof(
+        self,
+    ) -> None:
+        """An empty status=2 packet completes an otherwise open connection."""
+        stream = _ByteStream(_event(b"first") + _event(status=2), wait=True)
+        self.response = httpx.Response(200, stream=stream)
+        model = MiniMaxTTSModel(MiniMaxCredential(api_key="test"))
+        output = await model.synthesize("Hello")
+
+        async def collect() -> list:
+            return [chunk async for chunk in output]
+
+        chunks = await asyncio.wait_for(collect(), timeout=0.5)
+        self.assertEqual(
+            [
+                (base64.b64decode(c.content.source.data), c.is_last)
+                for c in chunks
+            ],
+            [(b"first", True)],
+        )
+        self.assertTrue(stream.closed)
+        self.assertTrue(all(client.is_closed for client in self.clients))
+
+    async def test_incomplete_and_malformed_streams_raise(self) -> None:
+        """Missing completion and invalid JSON cannot become success."""
+        for wire in (
+            _event(b"partial"),
+            _event(b"partial") + "data: [DONE]\n\n",
+            "data: {broken json}\n\n",
+            "",
+        ):
+            with self.subTest(wire=wire):
+                self.response = httpx.Response(
+                    200,
+                    stream=_ByteStream(wire),
+                )
+                model = MiniMaxTTSModel(MiniMaxCredential(api_key="test"))
+                output = await model.synthesize("Hello")
+                with self.assertRaises((RuntimeError, ValueError)):
+                    async for _ in output:
+                        pass
+                self.assertTrue(self.response.is_closed)
+                self.assertTrue(self.clients[-1].is_closed)
+
+    async def test_json_and_sse_errors_propagate(self) -> None:
+        """Decode whole JSON errors and SSE errors without losing status."""
+        error = {
+            "data": None,
+            "base_resp": {"status_code": 1004, "status_msg": "auth failed"},
+        }
+        pretty = json.dumps(error, indent=2)
+        for stream, content_type, body in (
+            (False, "application/json", pretty),
+            (True, "application/json; charset=utf-8", pretty),
+            (
+                True,
+                "text/event-stream",
+                "data: " + json.dumps(error) + "\n\n",
+            ),
+            (
+                True,
+                "text/event-stream",
+                "\n".join("data: " + line for line in pretty.splitlines())
+                + "\n\n",
+            ),
+        ):
+            with self.subTest(stream=stream, content_type=content_type):
+                self.response = httpx.Response(
+                    200,
+                    headers={"content-type": content_type},
+                    text=body,
+                )
+                model = MiniMaxTTSModel(
+                    MiniMaxCredential(api_key="test"),
+                    stream=stream,
+                )
+                with self.assertRaisesRegex(RuntimeError, "1004"):
+                    output = await model.synthesize("Hello")
+                    if stream:
+                        async for _ in output:
+                            pass
+                self.assertTrue(self.clients[-1].is_closed)
+
+    async def test_client_cleanup_after_success_and_http_errors(self) -> None:
+        """Every request owns its client, including ordinary synthesis."""
+        for streaming in (False, True):
+            for status in (200, 429):
+                with self.subTest(streaming=streaming, status=status):
+                    if streaming:
+                        self.response = httpx.Response(
+                            status,
+                            stream=_ByteStream(
+                                _event(b"first") + _event(status=2),
+                            ),
+                        )
+                    else:
+                        self.response = httpx.Response(
+                            status,
+                            json={
+                                "data": {"audio": b"first".hex(), "status": 2},
+                            },
+                        )
+                    model = MiniMaxTTSModel(
+                        MiniMaxCredential(api_key="test"),
+                        stream=streaming,
+                    )
+
+                    async def invoke(
+                        current: MiniMaxTTSModel,
+                        stream: bool,
+                    ) -> None:
+                        output = await current.synthesize("Hello")
+                        if stream:
+                            async for _ in output:
+                                pass
+
+                    if status == 200:
+                        await invoke(model, streaming)
+                    else:
+                        with self.assertRaises(httpx.HTTPStatusError):
+                            await invoke(model, streaming)
+                    self.assertTrue(self.clients[-1].is_closed)
+
+    async def test_early_close_and_cancellation_release_clients(self) -> None:
+        """Consumers can stop or cancel synthesis without leaking clients."""
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                stream = _ByteStream(
+                    _event(b"first") + _event(b"second"),
+                    wait=True,
+                )
+                self.response = httpx.Response(200, stream=stream)
+                model = MiniMaxTTSModel(MiniMaxCredential(api_key="test"))
+                output = await model.synthesize("Hello")
+                await anext(output)
+                if cancel:
+                    task = asyncio.create_task(anext(output))
+                    await asyncio.wait_for(stream.waiting.wait(), timeout=0.5)
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                else:
+                    await output.aclose()
+                self.assertTrue(stream.closed)
+                self.assertTrue(self.clients[-1].is_closed)

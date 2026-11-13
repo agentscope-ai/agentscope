@@ -2,18 +2,16 @@
 """MiniMax TTS model implementation using the T2A HTTP API."""
 import base64
 import json
-from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
+from contextlib import aclosing
+from typing import Any, AsyncGenerator, Literal
 
+import httpx
 from pydantic import BaseModel, Field
 
 from .._tts_base import TTSModelBase
 from .._tts_response import TTSResponse
 from ...credential import MiniMaxCredential
 from ...message import Base64Source, DataBlock
-
-if TYPE_CHECKING:
-    from httpx import AsyncClient
-
 
 _TTS_PATH = "/v1/t2a_v2"
 _MEDIA_TYPE = "audio/mpeg"
@@ -28,6 +26,33 @@ def _raise_for_api_error(payload: dict[str, Any]) -> None:
         raise RuntimeError(
             f"MiniMax TTS API error {status_code}: {status_message}",
         )
+
+
+async def _iter_payloads(
+    response: httpx.Response,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Decode SSE events or JSON lines without suppressing malformed data."""
+    data: list[str] = []
+    async for line in response.aiter_lines():
+        if line.startswith("data:"):
+            data.append(line[5:].lstrip(" "))
+            continue
+        if line.startswith((":", "event:", "id:", "retry:")):
+            continue
+        if line:
+            event = line
+        elif data:
+            event = "\n".join(data)
+            data.clear()
+        else:
+            continue
+        if event == "[DONE]":
+            return
+        yield json.loads(event)
+    if data:
+        event = "\n".join(data)
+        if event != "[DONE]":
+            yield json.loads(event)
 
 
 class MiniMaxTTSModel(TTSModelBase):
@@ -45,48 +70,56 @@ class MiniMaxTTSModel(TTSModelBase):
             title="Voice",
             description="The voice ID to use for synthesis.",
         )
+        """The MiniMax voice identifier used to synthesize speech."""
 
         speed: float = Field(
             default=1.0,
             title="Speed",
             description="The speech speed multiplier.",
         )
+        """The speech speed multiplier, with 1.0 preserving normal speed."""
 
         volume: float = Field(
             default=1.0,
             title="Volume",
             description="The output volume multiplier.",
         )
+        """The output volume multiplier, with 1.0 preserving normal volume."""
 
         pitch: int = Field(
             default=0,
             title="Pitch",
             description="The voice pitch adjustment.",
         )
+        """The pitch adjustment, with zero preserving the original pitch."""
 
         sample_rate: int = Field(
             default=32000,
             title="Sample Rate",
             description="The audio sample rate in hertz.",
         )
+        """The sample rate of the generated audio, measured in hertz."""
 
         bitrate: int = Field(
             default=128000,
             title="Bitrate",
             description="The audio bitrate in bits per second.",
         )
+        """The bitrate of the generated MP3, measured in bits per second."""
 
         channel: int = Field(
             default=1,
             title="Channels",
             description="The number of audio channels.",
         )
+        """The number of output channels: one for mono or two for stereo."""
 
         language_boost: str | None = Field(
             default="auto",
             title="Language Boost",
             description="The language or dialect optimization mode.",
         )
+        """The language hint; auto detects it and None omits the hint."""
 
     type: Literal["minimax_tts"] = "minimax_tts"
     """The type of the TTS model."""
@@ -120,13 +153,16 @@ class MiniMaxTTSModel(TTSModelBase):
             stream=stream,
         )
 
-        import httpx
+        base_url = httpx.URL(self.credential.base_url)
+        root_path = base_url.path.rstrip("/").removesuffix("/anthropic")
+        self._url = base_url.copy_with(path=root_path + _TTS_PATH)
 
-        self.client: AsyncClient = httpx.AsyncClient(
+    def _create_client(self) -> httpx.AsyncClient:
+        """Create an HTTP client owned and closed by one synthesis request."""
+        api_key = self.credential.api_key.get_secret_value()
+        return httpx.AsyncClient(
             headers={
-                "Authorization": (
-                    "Bearer " + self.credential.api_key.get_secret_value()
-                ),
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             timeout=httpx.Timeout(60.0, connect=10.0),
@@ -203,12 +239,10 @@ class MiniMaxTTSModel(TTSModelBase):
         payload: dict[str, Any],
     ) -> TTSResponse:
         """Return the complete audio from a non-streaming response."""
-        response = await self.client.post(
-            self.credential.base_url.rstrip("/") + _TTS_PATH,
-            json=payload,
-        )
-        response.raise_for_status()
-        result = response.json()
+        async with self._create_client() as client:
+            response = await client.post(self._url, json=payload)
+            response.raise_for_status()
+            result = response.json()
         _raise_for_api_error(result)
 
         data = result.get("data") or {}
@@ -235,58 +269,62 @@ class MiniMaxTTSModel(TTSModelBase):
         pending: bytes | None = None
         emitted = bytearray()
 
-        async with self.client.stream(
-            "POST",
-            self.credential.base_url.rstrip("/") + _TTS_PATH,
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                line = line.strip()
-                if line.startswith("data:"):
-                    line = line.removeprefix("data:").strip()
-                if not line or line == "[DONE]":
-                    continue
-                try:
-                    result = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                _raise_for_api_error(result)
-                data = result.get("data") or {}
-                audio = data.get("audio")
-                if not audio:
-                    continue
-
-                audio_bytes = bytes.fromhex(audio)
-                if data.get("status") != 2:
-                    if pending is not None:
-                        emitted.extend(pending)
-                        yield self._audio_response(pending, is_last=False)
-                    pending = audio_bytes
-                    continue
-
-                received = bytes(emitted) + (pending or b"")
-                if audio_bytes.startswith(received):
-                    final_audio = audio_bytes[len(received) :]
-                else:
-                    final_audio = audio_bytes
-
-                if pending is not None:
-                    yield self._audio_response(
-                        pending,
-                        is_last=not final_audio,
+        async with self._create_client() as client:
+            async with client.stream(
+                "POST",
+                self._url,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                if "application/json" in response.headers.get(
+                    "content-type",
+                    "",
+                ):
+                    await response.aread()
+                    _raise_for_api_error(response.json())
+                    raise RuntimeError(
+                        "MiniMax TTS returned JSON instead of streamed audio.",
                     )
-                if final_audio:
-                    yield self._audio_response(final_audio, is_last=True)
-                elif pending is None:
-                    yield TTSResponse(content=None, is_last=True)
-                return
+                async with aclosing(_iter_payloads(response)) as packets:
+                    async for result in packets:
+                        _raise_for_api_error(result)
+                        data = result.get("data") or {}
+                        audio_bytes = bytes.fromhex(data.get("audio") or "")
+                        if data.get("status") != 2:
+                            if not audio_bytes:
+                                continue
+                            if pending is not None:
+                                emitted.extend(pending)
+                                yield self._audio_response(
+                                    pending,
+                                    is_last=False,
+                                )
+                            pending = audio_bytes
+                            continue
 
-        if pending is not None:
-            yield self._audio_response(pending, is_last=True)
-        else:
-            yield TTSResponse(content=None, is_last=True)
+                        received = bytes(emitted) + (pending or b"")
+                        if audio_bytes.startswith(received):
+                            final_audio = audio_bytes[len(received) :]
+                        else:
+                            final_audio = audio_bytes
+
+                        if pending is not None:
+                            yield self._audio_response(
+                                pending,
+                                is_last=not final_audio,
+                            )
+                        if final_audio:
+                            yield self._audio_response(
+                                final_audio,
+                                is_last=True,
+                            )
+                        elif pending is None:
+                            yield TTSResponse(content=None, is_last=True)
+                        return
+
+                raise RuntimeError(
+                    "MiniMax TTS stream ended before completion.",
+                )
 
     @staticmethod
     def _audio_response(audio: bytes, is_last: bool) -> TTSResponse:
