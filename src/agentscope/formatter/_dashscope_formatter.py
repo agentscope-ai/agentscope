@@ -597,6 +597,13 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
             conversation_blocks.append(
                 {"text": "\n".join(accumulated_text)},
             )
+        elif media_blocks and conversation_history_prompt:
+            # A first turn that carries only media still needs the
+            # multi-agent history framing. Seed an empty text block so the
+            # wrapping below emits the prompt and the <history> markers;
+            # without it the caller's ``is_first`` bookkeeping would keep
+            # the prompt from ever being emitted.
+            conversation_blocks.append({"text": ""})
 
         if conversation_blocks:
             if conversation_blocks[0].get("text"):

@@ -828,6 +828,35 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format([])
         self.assertListEqual([], res)
 
+    async def test_multiagent_formatter_media_only_first_turn(self) -> None:
+        """A media-only first turn still carries the history framing."""
+        fmt = DashScopeMultiAgentFormatter()
+
+        res = await fmt.format(
+            [
+                UserMsg(
+                    name="user",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url=self.image_url,
+                                media_type="image/png",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertEqual(len(res), 1)
+        content = res[0]["content"]
+        self.assertTrue(
+            content[0]["text"].startswith(fmt.conversation_history_prompt),
+        )
+        self.assertIn("<history>", content[0]["text"])
+        self.assertIn("</history>", content[0]["text"])
+        self.assertEqual(content[1]["type"], "image_url")
+
     async def test_multiagent_formatter_thinking_in_tool_sequence(
         self,
     ) -> None:
