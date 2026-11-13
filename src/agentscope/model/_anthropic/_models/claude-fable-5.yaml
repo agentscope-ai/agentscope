@@ -1,6 +1,8 @@
 name: claude-fable-5
 label: Claude Fable 5
 status: active
+# Release date source: https://platform.claude.com/docs/en/release-notes/overview
+release_date: 2026-06-09
 
 input_types:
   - text/plain

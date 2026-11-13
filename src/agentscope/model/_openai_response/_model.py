@@ -187,7 +187,8 @@ class OpenAIResponseModel(ChatModelBase):
         )
 
         reasoning_effort: (
-            Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+            Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+            | None
         ) = Field(
             default=None,
             title="Reasoning Effort",
@@ -195,7 +196,7 @@ class OpenAIResponseModel(ChatModelBase):
                 "Controls the depth of reasoning for reasoning models "
                 "(e.g. o3, o4-mini, gpt-5.5). Supported values are "
                 "model-dependent and may include: none, minimal, low, "
-                "medium, high, xhigh."
+                "medium, high, xhigh, max."
             ),
             json_schema_extra={
                 "x-reset-hidden-on-change": {"thinking_enable": None},

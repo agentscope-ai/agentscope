@@ -1,6 +1,8 @@
 name: gpt-5.4
 label: GPT-5.4 (Responses API)
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2026-03-05
 
 input_types:
   - text/plain

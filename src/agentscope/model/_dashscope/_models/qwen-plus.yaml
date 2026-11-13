@@ -1,6 +1,7 @@
 name: qwen-plus
 label: Qwen Plus
 status: active
+release_date: null
 
 input_types:
   - text/plain

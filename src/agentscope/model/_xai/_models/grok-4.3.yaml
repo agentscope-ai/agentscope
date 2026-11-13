@@ -1,6 +1,7 @@
 name: grok-4.3
 label: Grok 4.3
 status: active
+release_date: null
 
 input_types:
   - text/plain

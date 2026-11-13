@@ -1,6 +1,8 @@
 name: grok-build-0.1
 label: Grok Build 0.1
 status: active
+# Release date source: https://docs.x.ai/developers/release-notes
+release_date: 2026-05-19
 
 input_types:
   - text/plain

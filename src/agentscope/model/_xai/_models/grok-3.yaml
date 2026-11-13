@@ -1,6 +1,8 @@
 name: grok-3
 label: Grok 3
 status: deprecated
+# Release date source: https://docs.x.ai/developers/release-notes
+release_date: 2025-04-03
 
 input_types:
   - text/plain

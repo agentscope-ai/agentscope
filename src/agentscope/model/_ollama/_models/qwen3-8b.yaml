@@ -1,6 +1,7 @@
 name: qwen3:8b
 label: Qwen3 8B
 status: active
+release_date: null
 
 input_types:
   - text/plain

@@ -2,6 +2,7 @@
 name: doubao-seed-2-1-lite-260915
 label: Doubao Seed 2.1 Lite (260915)
 status: active
+release_date: null
 
 # Only modalities implemented by the current Ark formatter are listed.
 input_types:

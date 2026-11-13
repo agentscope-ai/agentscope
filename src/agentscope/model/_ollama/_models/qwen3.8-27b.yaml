@@ -1,6 +1,7 @@
 name: qwen3.8
 label: Qwen3.8 27B
 status: active
+release_date: null
 
 input_types:
   - text/plain

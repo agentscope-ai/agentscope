@@ -28,14 +28,17 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 			if (!result[type]) result[type] = [];
 			try {
 				const { models } = await modelApi.list(type);
-				// Reverse-alphabetical, which is how the providers' naming
-				// schemes rank themselves — gpt-5 before gpt-4, qwen3 before
-				// qwen2 — so the strongest models sit at the top of the picker.
+				// Newest releases first; unknown dates last, then model name.
 				result[type].push({
 					credential,
-					models: [...models].sort((a, b) =>
-						b.name.localeCompare(a.name, undefined, { numeric: true }),
-					),
+					models: [...models].sort((a, b) => {
+						const byReleaseDate = (b.release_date ?? '').localeCompare(
+							a.release_date ?? '',
+						);
+						return (
+							byReleaseDate || b.name.localeCompare(a.name, undefined, { numeric: true })
+						);
+					}),
 				});
 			} catch {
 				result[type].push({ credential, models: [] });

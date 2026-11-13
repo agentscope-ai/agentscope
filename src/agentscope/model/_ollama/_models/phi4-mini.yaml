@@ -1,6 +1,7 @@
 name: phi4-mini
 label: Phi-4 Mini
 status: active
+release_date: null
 
 input_types:
   - text/plain

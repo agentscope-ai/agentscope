@@ -867,6 +867,7 @@ export interface ModelCard {
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
+	release_date: string | null;
 	input_types: string[];
 	output_types: string[];
 	context_size: number;

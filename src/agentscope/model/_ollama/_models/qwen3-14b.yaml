@@ -1,6 +1,7 @@
 name: qwen3:14b
 label: Qwen3 14B
 status: active
+release_date: null
 
 input_types:
   - text/plain

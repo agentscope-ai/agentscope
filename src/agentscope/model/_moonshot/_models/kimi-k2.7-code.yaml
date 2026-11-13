@@ -1,6 +1,7 @@
 name: kimi-k2.7-code
 label: Kimi K2.7 Code
 status: active
+release_date: null
 
 input_types:
   - text/plain

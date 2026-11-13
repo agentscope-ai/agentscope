@@ -1,6 +1,8 @@
 name: gemini-3.6-flash
 label: Gemini 3.6 Flash
 status: active
+# Release date source: https://aistudio.google.com/docs/changelog
+release_date: 2026-07-21
 
 input_types:
   - text/plain

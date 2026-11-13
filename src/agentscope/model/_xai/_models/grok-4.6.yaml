@@ -1,6 +1,8 @@
 name: grok-4.6
 label: Grok 4.6
 status: active
+# Release date source: https://docs.x.ai/developers/release-notes
+release_date: 2026-08-12
 
 input_types:
   - text/plain
