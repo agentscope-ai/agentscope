@@ -360,6 +360,98 @@ class TestPubSubPrimitive(IsolatedAsyncioTestCase):
         self.assertEqual(r2, [{"x": 42}])
 
 
+class TestPayloadIsolation(IsolatedAsyncioTestCase):
+    """Log readers and pub/sub consumers receive independent payloads."""
+
+    async def asyncSetUp(self) -> None:
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(
+            InMemoryMessageBus(),
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+
+    async def test_log_append_copies_publisher_payload(self) -> None:
+        """Changes after append cannot rewrite the replay log."""
+        payload = {"nested": {"values": [1]}}
+        entry_id = await self.bus.log_append("k", payload)
+
+        payload["nested"]["values"].append(2)
+
+        self.assertEqual(
+            await self.bus.log_read("k"),
+            [(entry_id, {"nested": {"values": [1]}})],
+        )
+
+    async def test_log_read_copies_payload_with_and_without_cursor(
+        self,
+    ) -> None:
+        """A reader cannot mutate payloads returned to later readers."""
+        for use_cursor in (False, True):
+            with self.subTest(use_cursor=use_cursor):
+                key = f"log-{use_cursor}"
+                cursor = await self.bus.log_append(key, {"seed": True})
+                entry_id = await self.bus.log_append(
+                    key,
+                    {"nested": {"values": [1]}},
+                )
+                since = cursor if use_cursor else None
+                first = await self.bus.log_read(key, since=since)
+
+                first[-1][1]["nested"]["values"].append(2)
+
+                second = await self.bus.log_read(key, since=since)
+                self.assertEqual(
+                    second[-1],
+                    (entry_id, {"nested": {"values": [1]}}),
+                )
+
+    async def test_publish_copies_publisher_payload(self) -> None:
+        """Changes after publishing cannot change the delivered event."""
+        ready = asyncio.Event()
+        subscription = self.bus.subscribe("ch", on_ready=ready.set)
+        task = asyncio.create_task(anext(subscription))
+        try:
+            await asyncio.wait_for(ready.wait(), timeout=2.0)
+            payload = {"nested": {"values": [1]}}
+
+            await self.bus.publish("ch", payload)
+            payload["nested"]["values"].append(2)
+
+            received = await asyncio.wait_for(task, timeout=2.0)
+            self.assertEqual(received, {"nested": {"values": [1]}})
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await subscription.aclose()
+
+    async def test_publish_isolates_subscriber_payloads(self) -> None:
+        """A subscriber cannot change another subscriber's event."""
+        ready1 = asyncio.Event()
+        ready2 = asyncio.Event()
+        subscription1 = self.bus.subscribe("ch", on_ready=ready1.set)
+        subscription2 = self.bus.subscribe("ch", on_ready=ready2.set)
+        task1 = asyncio.create_task(anext(subscription1))
+        task2 = asyncio.create_task(anext(subscription2))
+        try:
+            await asyncio.wait_for(ready1.wait(), timeout=2.0)
+            await asyncio.wait_for(ready2.wait(), timeout=2.0)
+            await self.bus.publish("ch", {"nested": {"values": [1]}})
+            first = await asyncio.wait_for(task1, timeout=2.0)
+            second = await asyncio.wait_for(task2, timeout=2.0)
+
+            first["nested"]["values"].append(2)
+
+            self.assertEqual(second, {"nested": {"values": [1]}})
+        finally:
+            task1.cancel()
+            task2.cancel()
+            await asyncio.gather(task1, task2, return_exceptions=True)
+            await subscription1.aclose()
+            await subscription2.aclose()
+
+
 class TestLockPrimitive(IsolatedAsyncioTestCase):
     """Mode E — distributed mutex (process-local asyncio.Lock)."""
 
