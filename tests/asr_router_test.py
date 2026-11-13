@@ -126,6 +126,45 @@ class ASRRouterTest(TestCase):
             filename="speech.webm",
         )
 
+    def test_rejects_unsupported_audio_format(self) -> None:
+        """A filename the model cannot encode is the caller's error, not an
+        internal server error."""
+        model = SimpleNamespace(
+            transcribe=AsyncMock(
+                side_effect=ValueError(
+                    "Unsupported audio file format: .aiff",
+                ),
+            ),
+        )
+        client = self.enterContext(
+            TestClient(
+                self.client.app,
+                raise_server_exceptions=False,
+            ),
+        )
+
+        with patch(
+            "agentscope.app._router._asr.get_asr_model",
+            new=AsyncMock(return_value=model),
+        ):
+            response = client.post(
+                "/asr/transcriptions",
+                data={
+                    "credential_id": "credential-1",
+                    "model": "asr-1",
+                    "parameters": "{}",
+                },
+                files={
+                    "file": ("speech.aiff", b"audio", "audio/aiff"),
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {"detail": "Unsupported audio file format: .aiff"},
+        )
+
     def test_rejects_empty_audio(self) -> None:
         """Reject an empty recording before constructing an ASR model."""
         with patch(

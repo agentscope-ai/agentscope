@@ -169,10 +169,18 @@ async def transcribe_audio(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         ) from error
-    result = await asr_model.transcribe(
-        audio=audio,
-        filename=file.filename or "audio.webm",
-    )
+    try:
+        result = await asr_model.transcribe(
+            audio=audio,
+            filename=file.filename or "audio.webm",
+        )
+    except ValueError as error:
+        # A filename the model cannot encode is the caller's problem; every
+        # other user-input failure on this route is already a 400.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
     return TranscriptionResponse(
         text=result.content.text if result.content is not None else "",
     )
