@@ -651,6 +651,38 @@ class SOPServiceTest(  # pylint: disable=too-many-public-methods
         with self.assertRaises(KeyError):
             await service.record_verdict("user-2", run.id, 0, True)
 
+    async def test_a_human_verdict_needs_a_submission(self) -> None:
+        """An executor parked on HITL has nothing for a human to judge."""
+        sop = _sop(
+            "user-1",
+            HumanVerifier(question="Watertight?"),
+            ("modeller", "modeller"),
+        )
+        await self.storage.upsert_sop("user-1", sop)
+        service = SOPService(
+            self.storage,
+            _Workspaces(),
+            self.bus,
+            None,
+            self.sessions,
+        )
+        run = await service.create_run("user-1", sop.id)
+        await self._drive(
+            _ScriptedChat(self.storage, self.bus, ["park"]),
+            run.id,
+        )
+
+        stored = await self.storage.get_sop_run("user-1", run.id)
+        self.assertEqual(stored.state.steps[0].phase, SOPPhase.AWAITING)
+        self.assertIsNone(stored.state.steps[0].submission)
+
+        with self.assertRaises(ValueError):
+            await service.record_verdict("user-1", run.id, 0, True)
+
+        stored = await self.storage.get_sop_run("user-1", run.id)
+        self.assertEqual(stored.state.steps[0].phase, SOPPhase.AWAITING)
+        self.assertListEqual(stored.state.steps[0].verifications, [])
+
     async def test_deleting_a_run_takes_its_conversations(self) -> None:
         """A session nobody opened is still wakeable, so none is left."""
         sop = _sop("user-1", None, ("modeller", "modeller"))
