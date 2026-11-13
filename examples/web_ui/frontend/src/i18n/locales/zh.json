@@ -1060,6 +1060,7 @@
 		"voicePlaceholderPreset": "预设音色名",
 		"voicePlaceholderClone": "预设音色名或克隆音色 ID",
 		"cloneVoice": "声音克隆",
+		"minimaxCloneHint": "上传 10 秒至 5 分钟的 MP3、M4A 或 WAV 录音，最大 20 MiB。MiniMax 账户需完成个人或企业认证。复刻音色须在 7 天内用于语音合成，否则会失效；仅保存音色不会激活。",
 		"enrollmentModel": "音色复刻模型（自动匹配）",
 		"enrollmentModelHint": "复刻模型用于创建音色，合成模型用于生成语音。复刻模型根据所选合成模型自动匹配。",
 		"cloning": "克隆中...",

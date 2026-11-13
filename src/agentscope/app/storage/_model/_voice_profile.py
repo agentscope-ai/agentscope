@@ -13,6 +13,7 @@ _ENGINE_TYPE = Literal[
     "dashscope_tts",
     "openai_tts",
     "gemini_tts",
+    "minimax_tts",
 ]
 
 ENGINE_TO_CREDENTIAL_TYPE: dict[str, str] = {
@@ -20,6 +21,7 @@ ENGINE_TO_CREDENTIAL_TYPE: dict[str, str] = {
     "dashscope_tts": "dashscope_credential",
     "openai_tts": "openai_credential",
     "gemini_tts": "gemini_credential",
+    "minimax_tts": "minimax_credential",
 }
 
 
@@ -35,7 +37,7 @@ class VoiceProfileData(BaseModel):
         default=None,
         description=(
             "Preferred TTS engine: cosyvoice, "
-            "dashscope_tts, openai_tts, or gemini_tts."
+            "dashscope_tts, openai_tts, gemini_tts, or minimax_tts."
         ),
         title="Engine",
     )

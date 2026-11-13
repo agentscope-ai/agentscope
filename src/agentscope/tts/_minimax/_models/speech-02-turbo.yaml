@@ -1,6 +1,7 @@
 name: speech-02-turbo
 label: MiniMax Speech 02 Turbo
 status: active
+voice_cloning: true
 
 input_types:
   - text/plain
