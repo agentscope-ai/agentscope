@@ -3,11 +3,13 @@
 
 from ._base import PipelineProtocol
 from ._goal_pipeline import GoalPipeline
+from ._race_pipeline import RacePipeline
 from ._team_pipeline import TeamMember, TeamPipeline
 
 __all__ = [
     "PipelineProtocol",
     "GoalPipeline",
+    "RacePipeline",
     "TeamMember",
     "TeamPipeline",
 ]
