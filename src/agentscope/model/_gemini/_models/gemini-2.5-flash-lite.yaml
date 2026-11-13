@@ -1,6 +1,8 @@
 name: gemini-2.5-flash-lite
 label: Gemini 2.5 Flash-Lite
 status: active
+# Release date source: https://aistudio.google.com/docs/changelog
+release_date: 2025-07-22
 
 input_types:
   - text/plain
@@ -21,5 +23,7 @@ context_size: 1048576
 output_size: 65536
 
 parameter_overrides:
+  thinking_level:
+    hidden: true
   max_tokens:
     maximum: 65536

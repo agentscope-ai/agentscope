@@ -1,6 +1,8 @@
 name: gpt-audio-mini
 label: GPT Audio Mini
 status: deprecated
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2025-10-06
 deprecated_at: "2027-01-20T00:00:00"
 
 input_types:

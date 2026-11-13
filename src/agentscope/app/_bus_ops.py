@@ -38,6 +38,10 @@ from ._chat_input_store import (
 )
 
 if TYPE_CHECKING:
+    from ._client_external_tool import (
+        ClientBuiltinToolName,
+        ClientExternalToolDefinition,
+    )
     from .message_bus._base import MessageBus
 
     from agentscope.event import (
@@ -224,6 +228,8 @@ async def enqueue_run_trigger(
     | UserInterruptEvent
     | Msg
     | None = None,
+    client_external_tools: list[ClientExternalToolDefinition] | None = None,
+    client_builtin_tools: list[ClientBuiltinToolName] | None = None,
     signal: bool = True,
 ) -> None:
     """Enqueue a typed run trigger and optionally signal dispatchers.
@@ -264,21 +270,30 @@ async def enqueue_run_trigger(
             should be ``None``) for ``wake`` and ``queued_message``. The
             function calls ``model_dump(mode="json")`` internally — callers
             pass the model object, not a pre-serialised dict.
+        client_external_tools:
+            External tools supported by the client that produced this
+            trigger. They remain scoped to the resulting run.
+        client_builtin_tools:
+            Native external tool names supported by this trigger's client.
         signal:
             Whether to publish the shared wakeup signal after pushing.
             Recovery sweeps pass ``False`` to batch many durable triggers
             behind one signal.
     """
-    await bus.queue_push(
-        MessageBusKeys.wakeup_queue(),
-        {
-            "user_id": user_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "kind": kind,
-            "input": inputs.model_dump(mode="json") if inputs else None,
-        },
-    )
+    payload: dict[str, object] = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "kind": kind,
+        "input": inputs.model_dump(mode="json") if inputs else None,
+    }
+    if client_builtin_tools:
+        payload["client_builtin_tools"] = client_builtin_tools
+    if client_external_tools:
+        payload["client_external_tools"] = [
+            tool.model_dump(mode="json") for tool in client_external_tools
+        ]
+    await bus.queue_push(MessageBusKeys.wakeup_queue(), payload)
     if signal:
         await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
@@ -289,7 +304,7 @@ async def nudge_chat_inputs(
     session_id: str,
     agent_id: str,
 ) -> None:
-    """Wake pending input after releasing a run lock; recovery is fallback."""
+    """Wake pending input after releasing locks; recovery is fallback."""
     try:
         pending = await bus.queue_read(
             MessageBusKeys.chat_inputs(session_id),
@@ -317,6 +332,9 @@ async def enqueue_chat_input(
     session_id: str,
     agent_id: str,
     inputs: Msg | list[Msg],
+    *,
+    client_external_tools: list[ClientExternalToolDefinition] | None = None,
+    client_builtin_tools: list[ClientBuiltinToolName] | None = None,
 ) -> dict:
     """Append an ordinary user turn to a session FIFO and wake its pump.
 
@@ -338,6 +356,10 @@ async def enqueue_chat_input(
             Agent that owns the session.
         inputs:
             One user message or a non-empty ordered message list.
+        client_external_tools:
+            Client tool definitions scoped to this queued turn.
+        client_builtin_tools:
+            Native external tool names supported by this turn's client.
 
     Returns:
         `dict`:
@@ -365,6 +387,12 @@ async def enqueue_chat_input(
         "input": serialized,
         "state": "queued",
     }
+    if client_external_tools:
+        item["client_external_tools"] = [
+            tool.model_dump(mode="json") for tool in client_external_tools
+        ]
+    if client_builtin_tools:
+        item["client_builtin_tools"] = client_builtin_tools
     async with _chat_input_user_quota(bus, user_id):
         if (
             await _count_user_chat_inputs(bus, user_id)
@@ -826,7 +854,10 @@ async def update_chat_input(
             [queue_entry(payload) for payload in payloads],
         )
         await discard_input(bus, previous)
-        return await _notify_chat_queue_changed(bus, session_id, payloads)
+        items = await _notify_chat_queue_changed(bus, session_id, payloads)
+
+    await nudge_chat_inputs(bus, user_id, session_id, agent_id)
+    return items
 
 
 async def delete_chat_input(
@@ -879,7 +910,11 @@ async def delete_chat_input(
             [queue_entry(payload) for payload in payloads],
         )
         await discard_input(bus, item)
-        return await _notify_chat_queue_changed(bus, session_id, payloads)
+        items = await _notify_chat_queue_changed(bus, session_id, payloads)
+
+    if items:
+        await nudge_chat_inputs(bus, user_id, session_id, agent_id)
+    return items
 
 
 async def reorder_chat_inputs(

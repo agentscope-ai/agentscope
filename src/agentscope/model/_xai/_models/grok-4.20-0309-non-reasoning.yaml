@@ -1,6 +1,8 @@
 name: grok-4.20-0309-non-reasoning
 label: Grok 4.20 Non-Reasoning
 status: active
+# Release date source: https://docs.x.ai/developers/release-notes
+release_date: 2026-03-10
 
 input_types:
   - text/plain

@@ -477,7 +477,8 @@ class BackgroundTaskManager:
 
         async def renew_pending() -> None:
             """Share the queue without creating a worker for every task."""
-            while pending:
+            # An I/O dependency may return despite a pending cancellation.
+            while pending and not asyncio.current_task().cancelling():
                 _, task = pending.popitem(last=False)
                 await self._renew_running_record(task)
 

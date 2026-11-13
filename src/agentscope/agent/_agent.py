@@ -2,8 +2,8 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import collections
-import json
 import inspect
+import json
 import re
 import warnings
 
@@ -22,7 +22,7 @@ from typing import (
 )
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._config import (
     ContextConfig,
@@ -31,8 +31,7 @@ from ._config import (
     InjectionConfig,
     _validate_context_config_ratios,
 )
-from ..state import AgentState
-from ..state._state import ReplyContext
+from ..state import AgentState, ReplyContext
 from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
@@ -72,7 +71,11 @@ from ..event import (
     UserInterruptEvent,
     HintBlockEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import (
+    AgentOrientedException,
+    ContentBlockedError,
+    ContentBlockedPhase,
+)
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -97,6 +100,8 @@ from ..message import (
     HintBlock,
 )
 from ..tool import (
+    AskUser,
+    AskUserParams,
     Toolkit,
     ToolBase,
     ToolChunk,
@@ -460,6 +465,10 @@ class Agent:
             await self.compress_context(context_config=context_config)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
+            if isinstance(e, ContentBlockedError) and (
+                e.partial_output or e.requires_review
+            ):
+                raise
             return ToolChunk(
                 content=[TextBlock(text=f"Context compression failed: {e}")],
                 state=ToolResultState.ERROR,
@@ -641,6 +650,10 @@ class Agent:
             )
 
         except Exception as error:
+            if isinstance(error, ContentBlockedError) and (
+                error.partial_output or error.requires_review
+            ):
+                raise
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -679,6 +692,11 @@ class Agent:
                         structured_model=cfg.summary_schema,
                     )
                 except Exception as retry_error:
+                    if isinstance(retry_error, ContentBlockedError) and (
+                        retry_error.partial_output
+                        or retry_error.requires_review
+                    ):
+                        raise
                     error = retry_error
 
             if res is None:
@@ -2531,10 +2549,23 @@ class Agent:
             # TODO: Maybe some logic to mix the validation error in runtime
             try:
                 jsonschema.validate(parsed_input, tool.input_schema)
+                if isinstance(tool, AskUser):
+                    # JSON Schema omits the model's uniqueness validators.
+                    AskUserParams.model_validate(parsed_input)
             except jsonschema.ValidationError as e:
                 raise AgentOrientedException(
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message} (at {e.json_path})",
+                ) from e
+            except ValidationError as e:
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    f"{e}",
+                ) from e
+            except Exception as e:
+                raise AgentOrientedException(
+                    f"Input schema evaluation failed for tool "
+                    f"'{tool_call.name}': {e}",
                 ) from e
 
         # The exceptions that
@@ -2639,6 +2670,12 @@ class Agent:
             )
             # Send requiring external execution event if it's an external tool
             if tool.is_external_tool:
+                # External clients should receive the same repaired and
+                # schema-validated JSON that permission checks consumed.
+                tool_call.input = json.dumps(
+                    parsed_input,
+                    ensure_ascii=False,
+                )
                 # Update the state to "submitted" BEFORE yielding
                 # because the outer loop will break immediately after
                 # receiving this event, preventing any code after yield
@@ -3423,7 +3460,7 @@ class Agent:
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
-                        return await model(
+                        result = await model(
                             messages=messages,
                             tools=tools,
                             tool_choice=tool_choice,
@@ -3471,9 +3508,27 @@ class Agent:
                                     next_handler=next_handler,
                                 )
 
-                        return await execute_chain()
+                        result = await execute_chain()
+
+                    if inspect.isasyncgen(result):
+                        return self._observe_model_stream(result, model)
+                    return result
                 except Exception as e:
                     last_exception = e
+                    if isinstance(e, ContentBlockedError):
+                        # Custom models or middleware may consume a stream
+                        # before returning. Honor any reported output rather
+                        # than replaying a partially delivered response.
+                        if e.partial_output or e.requires_review:
+                            raise
+                        if e.phase != ContentBlockedPhase.OUTPUT:
+                            message = (
+                                f"Model {model.model} blocked content for "
+                                f"agent {self.name}; skipping retries with "
+                                f"the same payload."
+                            )
+                            logger.warning(message)
+                            break
                     # Only log a "Retrying" message when there's actually a
                     # next attempt left for this model. When ``max_retries=0``
                     # or the last retry has been used, the outer loop either
@@ -3497,11 +3552,41 @@ class Agent:
                         )
 
         if last_exception:
+            if isinstance(last_exception, ContentBlockedError):
+                raise last_exception
             raise last_exception from None
 
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    async def _observe_model_stream(
+        self,
+        stream: AsyncGenerator[ChatResponse, None],
+        model: ChatModelBase,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Observe a returned model stream without replaying model calls.
+
+        Yield chunks unchanged. Log and re-raise content-block errors that
+        occur during consumption. At this point
+        the agent's model-selection loop has returned, so this wrapper does
+        not retry or switch fallback models, even before the first chunk.
+        Always close the delegated stream when iteration exits, including
+        on error or explicit closure of this wrapper.
+        """
+        try:
+            async for chunk in stream:
+                yield chunk
+        except ContentBlockedError:
+            message = (
+                f"Model {model.model} blocked content for agent {self.name} "
+                f"during stream consumption; Agent-level retries and "
+                f"fallback model switching are not attempted."
+            )
+            logger.warning(message)
+            raise
+        finally:
+            await stream.aclose()
 
     def _update_tool_call_state(
         self,

@@ -1,6 +1,8 @@
 name: qwen3.7-flash
 label: Qwen3.7-Flash
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-07-21
 
 input_types:
   - text/plain

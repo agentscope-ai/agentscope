@@ -1,0 +1,19 @@
+name: speech-02-turbo
+label: MiniMax Speech 02 Turbo
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+
+# System presets documented by the MiniMax speech API:
+# https://platform.minimax.io/docs/api-reference/speech-t2a-http
+# https://platform.minimax.cn/docs/api-reference/speech-t2a-http
+voices:
+  - English_expressive_narrator
+  - male-qn-qingse
+  - English_Graceful_Lady
+
+parameter_overrides: {}

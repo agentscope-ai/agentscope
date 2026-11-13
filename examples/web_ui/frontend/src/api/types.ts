@@ -526,10 +526,19 @@ import type {
 } from '@agentscope-ai/agentscope/event';
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
+export interface ClientExternalToolDefinition {
+	name: string;
+	description: string;
+	read_only: boolean;
+	input_schema: Record<string, unknown>;
+}
+
 export interface ChatRequest {
 	agent_id: string;
 	session_id: string;
 	input: Msg | Msg[] | UserConfirmResultEvent | ExternalExecutionResultEvent | null;
+	client_external_tools?: ClientExternalToolDefinition[];
+	client_builtin_tools?: Array<'AskUser'>;
 }
 
 // ─── MCP ──────────────────────────────────────────────────────────────────────
@@ -858,6 +867,7 @@ export interface ModelCard {
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
+	release_date: string | null;
 	input_types: string[];
 	output_types: string[];
 	context_size: number;
