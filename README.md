@@ -73,6 +73,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-10] `FEAT`:** Voice profile management and voice cloning supported — select saved voices in chat, with DashScope and OpenAI voice cloning clients available in the Python SDK.
 - **[2026-10] `FEAT` `Experimental`:** Agent service supports realtime voice conversations over WebRTC, with text and voice sharing the same session history.
 - **[2026-09] `FEAT` `Experimental`:** SOP supported — run multi-step tasks as standard operating procedures, in both the framework and agent service. [Docs](https://docs.agentscope.io/latest/en/building-blocks/sop) | [Service](https://docs.agentscope.io/latest/en/deploy/sop)
 - **[2026-09] `FEAT`:** `TeamPipeline` supported — a leader agent delegates tasks to member agents. [Docs](https://docs.agentscope.io/latest/en/building-blocks/pipeline/team)
@@ -82,7 +83,6 @@ rather than constraining them with strict prompts and opinionated orchestrations
 - **[2026-09] `FEAT`:** [agentscope-skill](https://github.com/agentscope-ai/skills/tree/main/skills/agentscope-skill) now supports AgentScope v2.
 - **[2026-09] `INTE`:** Support DashScope, OpenAI, Gemini and xAI realtime APIs in `RealtimeAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/realtime/speech-to-speech)
 - **[2026-09] `FEAT` `Experimental`:** Realtime voice agent supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/realtime) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/realtime/overview)
-- **[2026-09] `FEAT`:** A2A protocol supported — chat with any remote A2A agent via `A2AAgent`. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/a2a) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/a2a)
 <!-- END NEWS -->
 
 [More news →](./docs/NEWS.md)
