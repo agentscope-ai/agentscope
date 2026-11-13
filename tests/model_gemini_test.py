@@ -1649,6 +1649,25 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_boolean_definition_with_siblings(self) -> None:
+        """A boolean definition keeps its siblings from raising TypeError."""
+        for definition, expected in ((True, True), (False, False)):
+            for ref, keyword in (
+                ({"$ref": "#/$defs/Anything"}, "$defs"),
+                ({"$ref": "#/definitions/Anything"}, "definitions"),
+            ):
+                with self.subTest(definition=definition, keyword=keyword):
+                    schema = {
+                        keyword: {"Anything": definition},
+                        "properties": {
+                            "value": {**ref, "description": "Any value"},
+                        },
+                    }
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {"properties": {"value": definition}},
+                    )
+
     def test_flatten_escaped_definition_names(self) -> None:
         """JSON Pointer escapes are decoded once and in the correct order."""
         for keyword in ("$defs", "definitions"):
