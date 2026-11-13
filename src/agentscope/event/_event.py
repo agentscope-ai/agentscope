@@ -371,6 +371,11 @@ class ToolResultTextDeltaEvent(EventBase):
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
+    block_id: str | None = None
+    """ID of the ``TextBlock`` this delta belongs to. Deltas sharing one id
+    are grouped into the same block on replay, mirroring how
+    ``ToolResponse.append_chunk`` accumulates streamed tool chunks. When
+    omitted, the delta is appended to the trailing text block."""
     delta: str
     """Incremental text content of the tool result."""
 
