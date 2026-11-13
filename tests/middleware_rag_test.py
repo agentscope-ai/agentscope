@@ -19,7 +19,7 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.middleware import RAGMiddleware
-from agentscope.middleware._rag import _search_across
+from agentscope.middleware._rag import _format_results, _search_across
 from agentscope.model import StructuredResponse
 from agentscope.rag import (
     Chunk,
@@ -1026,6 +1026,35 @@ class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
         with self.assertRaises(ValueError):
             RAGMiddleware.Parameters(rerank_prompt="{query} {unknown}")
         RAGMiddleware.Parameters(rerank_prompt="Rank for {query}.")
+
+
+class CitationFormattingTest(IsolatedAsyncioTestCase):
+    """Tests for source locations shown in RAG citations."""
+
+    def test_pdf_hits_include_page_numbers(self) -> None:
+        """Distinguish results from different pages of the same PDF."""
+        hits = [
+            VectorSearchResult(
+                score=1.0,
+                document_id="lab",
+                chunk=Chunk(
+                    content=TextBlock(text=f"Experiment step {page}"),
+                    source="lab.pdf",
+                    chunk_index=page - 1,
+                    total_chunks=2,
+                    metadata={"page": page},
+                ),
+            )
+            for page in (1, 2)
+        ]
+
+        blocks = _format_results(hits)
+
+        self.assertEqual(
+            blocks[0].text,
+            "[1] (source: lab.pdf, page: 1)\nExperiment step 1\n\n"
+            "[2] (source: lab.pdf, page: 2)\nExperiment step 2",
+        )
 
 
 class SearchAcrossRerankTest(IsolatedAsyncioTestCase):

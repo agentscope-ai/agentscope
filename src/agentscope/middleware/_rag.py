@@ -535,8 +535,9 @@ def _format_results(
 ) -> list[TextBlock | DataBlock]:
     """Render search results as a numbered, cited list of blocks.
 
-    Every result becomes ``[N] (source: ...)`` followed by its chunk
-    content (text inlined, multimodal blocks kept as standalone
+    Every result becomes a numbered source citation, including the page
+    number when available, followed by its chunk content (text inlined,
+    multimodal blocks kept as standalone
     :class:`DataBlock` entries).  Adjacent text fragments are merged
     into a single :class:`TextBlock` so downstream consumers see one
     contiguous text block instead of many small ones.
@@ -553,7 +554,11 @@ def _format_results(
     entries: list[TextBlock | DataBlock] = []
     last = len(results)
     for index, result in enumerate(results, start=1):
-        prefix = f"[{index}] (source: {result.chunk.source})\n"
+        source = result.chunk.source
+        page = result.chunk.metadata.get("page")
+        if type(page) is int and page > 0:
+            source = f"{source}, page: {page}"
+        prefix = f"[{index}] (source: {source})\n"
         block = deepcopy(result.chunk.content)
         if isinstance(block, TextBlock):
             block.text = prefix + block.text
