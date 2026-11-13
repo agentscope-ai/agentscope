@@ -1957,6 +1957,31 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_boolean_schema_ref_with_siblings(self) -> None:
+        """A $ref to a boolean schema keeps the siblings instead of failing."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Anything": True, "Nothing": False},
+                    "type": "object",
+                    "properties": {
+                        "free": {
+                            "$ref": "#/$defs/Anything",
+                            "description": "d",
+                        },
+                        "denied": {"$ref": "#/$defs/Nothing"},
+                    },
+                },
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "free": {"allOf": [True], "description": "d"},
+                    "denied": {"allOf": [False]},
+                },
+            },
+        )
+
     def test_flatten_removes_local_discriminators(self) -> None:
         """Flattened unions retain constraints without dangling mappings."""
 
