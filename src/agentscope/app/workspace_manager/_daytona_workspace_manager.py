@@ -24,7 +24,7 @@ Daytona-specific behavior:
 
 import asyncio
 import time
-from typing import Self
+from typing import Self, cast
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -33,6 +33,9 @@ from ...workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_SWEEP_INTERVAL,
     DEFAULT_TIMEOUT,
+)
+from ...workspace._daytona._daytona_workspace import (
+    _validate_auto_stop_interval,
 )
 from ._base import IsolationPolicy, WorkspaceManagerBase
 
@@ -60,6 +63,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         os_user: str | None = None,
+        auto_stop_interval: int | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
@@ -100,13 +104,27 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             os_user (`str | None`, optional):
                 Optional Daytona OS user forwarded to workspace create
                 params. ``None`` leaves user selection to Daytona.
+            auto_stop_interval (`int | None`, optional):
+                Minutes of inactivity before Daytona automatically stops
+                a sandbox. ``None`` preserves the provider's policy;
+                ``0`` disables auto-stop and a positive integer sets the
+                interval. Forwarded to newly created and reattached
+                workspaces, independently of ``ttl``.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle cached workspace is evicted and
                 its sandbox stopped.
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up to
                 look for idle workspaces.
+
+        Raises:
+            TypeError:
+                If ``auto_stop_interval`` is not ``None`` or an integer
+                (booleans are not accepted).
+            ValueError:
+                If ``auto_stop_interval`` is negative.
         """
+        _validate_auto_stop_interval(auto_stop_interval)
         self._api_key = api_key
         self._api_url = api_url
         self._target = target
@@ -118,6 +136,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self._default_mcps = list(default_mcps or [])
         self._skill_paths = list(skill_paths or [])
         self._os_user = os_user
+        self._auto_stop_interval = auto_stop_interval
         self._ttl = ttl
         self._sweep_interval = sweep_interval
         super().__init__(isolation=isolation)
@@ -170,6 +189,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
             os_user=self._os_user,
+            auto_stop_interval=self._auto_stop_interval,
         )
         await ws.initialize()
         return ws
@@ -213,6 +233,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
                 agent_id=agent_id,
                 session_id="",
             )
+        # assign_workspace_id returns str, including on the fallback path.
+        workspace_id = cast(str, workspace_id)
 
         async with self._lock:
             cached = self._cache.get(workspace_id)
