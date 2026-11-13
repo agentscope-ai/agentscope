@@ -449,9 +449,11 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":
-            formatted_msgs.append(
-                await self._format_system_message(msgs[0]),
-            )
+            system_msg = await self._format_system_message(msgs[0])
+            # Anthropic rejects empty text blocks with a 400, so drop an
+            # empty system prompt as the chat formatter does.
+            if system_msg["content"][0]["text"]:
+                formatted_msgs.append(system_msg)
             start_index = 1
 
         is_first_agent_message = True
