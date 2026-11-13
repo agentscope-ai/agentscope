@@ -842,9 +842,7 @@ class BashCommandParser:
         if marker in "01234567":
             taken = 1
             while (
-                taken < 3
-                and taken < len(rest)
-                and rest[taken] in "01234567"
+                taken < 3 and taken < len(rest) and rest[taken] in "01234567"
             ):
                 taken += 1
             return chr(int(rest[:taken], 8)), index + 1 + taken
