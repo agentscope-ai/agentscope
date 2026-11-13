@@ -253,7 +253,7 @@ class _FakeDashScopeWebSocket:
                 {
                     "output": {
                         "sentence": {
-                            "text": "hello",
+                            "text": " Hel",
                             "sentence_end": False,
                         },
                     },
@@ -278,7 +278,7 @@ class _FakeDashScopeWebSocket:
                     {
                         "output": {
                             "sentence": {
-                                "text": "hello world",
+                                "text": " world!\t",
                                 "sentence_end": True,
                             },
                         },
@@ -356,6 +356,7 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Map the complete realtime task lifecycle to ASR responses."""
+        # pylint: disable=protected-access
         socket = _FakeDashScopeWebSocket()
         model = DashScopeRealtimeASRModel(
             credential=DashScopeCredential(api_key="test-key"),
@@ -371,7 +372,28 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         ) as connect:
             async with model:
                 partial = await model.push(b"pcm")
+                responses = [partial]
+                for text, sentence_end in [
+                    (" Hello ", False),
+                    (" Hello.\n", True),
+                    (" wor", False),
+                    (" world ", False),
+                ]:
+                    await socket._put_event(
+                        "result-generated",
+                        {
+                            "output": {
+                                "sentence": {
+                                    "text": text,
+                                    "sentence_end": sentence_end,
+                                },
+                            },
+                        },
+                    )
+                    await asyncio.sleep(0)
+                    responses.append(model._drain_latest_response())
                 final = await model.transcribe()
+                responses.append(final)
 
         connect.assert_awaited_once_with(
             "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
@@ -400,10 +422,20 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(socket.sent[1], b"pcm")
-        self.assertEqual(partial.content.text, "hello")
-        self.assertFalse(partial.is_last)
-        self.assertEqual(final.content.text, "hello world")
-        self.assertTrue(final.is_last)
+        self.assertEqual(
+            [
+                (response.content.text, response.is_last)
+                for response in responses
+            ],
+            [
+                (" Hel", False),
+                (" Hello ", False),
+                (" Hello.\n", False),
+                (" Hello.\n wor", False),
+                (" Hello.\n world ", False),
+                (" Hello.\n world!\t", True),
+            ],
+        )
         self.assertEqual(
             json.loads(socket.sent[2])["header"]["action"],
             "finish-task",
@@ -590,35 +622,6 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "not connected"):
             await model.push(b"pcm")
 
-
-class DashScopeRealtimeSentenceJoinTest(TestCase):
-    """Preserve provider text while accumulating sentence results."""
-
-    def _model(self) -> DashScopeRealtimeASRModel:
-        return DashScopeRealtimeASRModel(
-            credential=DashScopeCredential(api_key="test-key"),
-        )
-
-    def _send_sentence(
-        self,
-        model: DashScopeRealtimeASRModel,
-        text: str,
-        sentence_end: bool = True,
-    ) -> None:
-        """Feed a provider sentence through the result handler."""
-        model._handle_result(  # pylint: disable=protected-access
-            {
-                "payload": {
-                    "output": {
-                        "sentence": {
-                            "text": text,
-                            "sentence_end": sentence_end,
-                        },
-                    },
-                },
-            },
-        )
-
     def test_preserves_sentence_text(self) -> None:
         """Keep whitespace and punctuation without inserting separators."""
         # pylint: disable=protected-access
@@ -631,9 +634,22 @@ class DashScopeRealtimeSentenceJoinTest(TestCase):
         ]
         for sentences, expected in cases:
             with self.subTest(sentences=sentences):
-                model = self._model()
+                model = DashScopeRealtimeASRModel(
+                    credential=DashScopeCredential(api_key="test-key"),
+                )
                 for text in sentences:
-                    self._send_sentence(model, text)
+                    model._handle_result(
+                        {
+                            "payload": {
+                                "output": {
+                                    "sentence": {
+                                        "text": text,
+                                        "sentence_end": True,
+                                    },
+                                },
+                            },
+                        },
+                    )
                 response = model._drain_latest_response()
                 self.assertEqual(
                     {
@@ -651,43 +667,3 @@ class DashScopeRealtimeSentenceJoinTest(TestCase):
                         "current": "",
                     },
                 )
-
-    def test_replaces_partial_text_and_commits_final_text(self) -> None:
-        """Replace partials without duplicating text or trimming spaces."""
-        # pylint: disable=protected-access
-        model = self._model()
-        responses = []
-        for text, sentence_end in [
-            (" Hel", False),
-            (" Hello ", False),
-            (" Hello.\n", True),
-            (" wor", False),
-            (" world ", False),
-            (" world!\t", True),
-            ("", False),
-        ]:
-            self._send_sentence(model, text, sentence_end)
-            response = model._drain_latest_response()
-            responses.append((response.content.text, response.is_last))
-        self.assertEqual(
-            {
-                "responses": responses,
-                "text": model._complete_text(),
-                "sentences": model._committed_sentences,
-                "current": model._current_sentence,
-            },
-            {
-                "responses": [
-                    (" Hel", False),
-                    (" Hello ", False),
-                    (" Hello.\n", False),
-                    (" Hello.\n wor", False),
-                    (" Hello.\n world ", False),
-                    (" Hello.\n world!\t", False),
-                    (" Hello.\n world!\t", False),
-                ],
-                "text": " Hello.\n world!\t",
-                "sentences": [" Hello.\n", " world!\t"],
-                "current": "",
-            },
-        )
