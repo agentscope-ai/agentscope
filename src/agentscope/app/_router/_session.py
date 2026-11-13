@@ -780,6 +780,14 @@ async def get_session_status(
 
 _HEARTBEAT_INTERVAL_SECS = 30
 _SUBSCRIBE_TIMEOUT_SECS = 5.0
+_closing_feeders: set[asyncio.Task[None]] = set()
+
+
+def _feeder_closed(task: asyncio.Task[None]) -> None:
+    """Release a failed setup's feeder and observe any cleanup error."""
+    _closing_feeders.discard(task)
+    if not task.cancelled():
+        task.exception()
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
@@ -896,7 +904,7 @@ async def stream_session_events(
     async def _sse_generator() -> AsyncGenerator[str, None]:
         events_key = MessageBusKeys.session_events(session_id)
         ready = asyncio.Event()
-        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        queue: asyncio.Queue[dict | Exception | None] = asyncio.Queue()
 
         async def _feeder() -> None:
             """Read from the bus subscription and forward to the queue.
@@ -912,6 +920,9 @@ async def stream_session_events(
                     await queue.put(evt)
             except asyncio.CancelledError:
                 pass
+            except Exception as error:
+                await queue.put(error)
+                raise
             finally:
                 await queue.put(None)
 
@@ -919,14 +930,20 @@ async def stream_session_events(
             _feeder(),
             name=f"sse-feeder:{session_id}",
         )
+        ready_task = asyncio.create_task(ready.wait())
 
         try:
             # Subscribe first, then replay. Events arriving across that
             # seam are present in both paths and deduplicated by entry id.
-            await asyncio.wait_for(
-                ready.wait(),
+            done, _ = await asyncio.wait(
+                {ready_task, feeder_task},
                 timeout=_SUBSCRIBE_TIMEOUT_SECS,
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if not ready.is_set():
+                if feeder_task in done:
+                    await feeder_task
+                raise TimeoutError("Timed out waiting for the bus subscription")
             seen_entry_ids: set[str] = set()
             for entry_id, event in await message_bus.log_read(
                 events_key,
@@ -978,11 +995,14 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
+                    if isinstance(item, Exception):
+                        raise item
                     entry_id = item.get("_entry_id")
                     if entry_id is not None:
                         entry_id = str(entry_id)
                         if entry_id in seen_entry_ids:
                             continue
+                        seen_entry_ids.add(entry_id)
                     payload = {
                         key: value
                         for key, value in item.items()
@@ -993,11 +1013,14 @@ async def stream_session_events(
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:
-            feeder_task.cancel()
+            ready_task.cancel()
             try:
-                await feeder_task
+                await ready_task
             except asyncio.CancelledError:
                 pass
+            _closing_feeders.add(feeder_task)
+            feeder_task.add_done_callback(_feeder_closed)
+            feeder_task.cancel()
 
     return StreamingResponse(
         _sse_generator(),
