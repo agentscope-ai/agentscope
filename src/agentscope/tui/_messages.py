@@ -40,15 +40,22 @@ from ..message import (
 def _elapsed(created_at: str, finished_at: str | None) -> str:
     """Return a compact elapsed time for an ISO timestamp pair."""
     try:
-        started = datetime.fromisoformat(created_at).timestamp()
-        ended = (
-            datetime.fromisoformat(finished_at).timestamp()
-            if finished_at
-            else datetime.now().timestamp()
-        )
+        started = datetime.fromisoformat(created_at)
+        if finished_at:
+            ended = datetime.fromisoformat(finished_at)
+            if (started.tzinfo is None) != (ended.tzinfo is None):
+                # Timestamps from different producers may differ in whether
+                # they include an offset. Do not interpret only one endpoint
+                # in the viewer's local timezone: compare wall-clock fields.
+                started = started.replace(tzinfo=None)
+                ended = ended.replace(tzinfo=None)
+        else:
+            # A running block needs a current time in the same clock kind
+            # as its creation timestamp, not an implicit local datetime.
+            ended = datetime.now(started.tzinfo)
+        seconds = max(0.0, (ended - started).total_seconds())
     except ValueError:
         return ""
-    seconds = max(0.0, ended - started)
     if seconds < 10:
         return f"{seconds:.1f}s"
     if seconds < 60:
