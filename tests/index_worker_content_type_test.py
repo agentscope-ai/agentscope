@@ -232,3 +232,105 @@ class IndexWorkerContentTypeTest(IsolatedAsyncioTestCase):
                         "size_bytes": len(payload),
                     },
                 )
+
+
+_PPTX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.presentationml"
+    ".presentation"
+)
+
+
+def _worker(
+    storage: _Storage,
+    parsers: list[object],
+) -> tuple[_TestIndexWorker, _Manager]:
+    """Build a worker over the given storage and parser registry."""
+    manager = _Manager()
+    worker = _TestIndexWorker(
+        storage=storage,  # type: ignore[arg-type]
+        blob_store=object(),  # type: ignore[arg-type]
+        knowledge_base_manager=manager,  # type: ignore[arg-type]
+        parsers=parsers,  # type: ignore[arg-type]
+        node_id="test-node",
+    )
+    return worker, manager
+
+
+class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
+    """A generic multipart Content-Type must not shadow the filename."""
+
+    async def test_generic_octet_stream_routes_by_filename(self) -> None:
+        """Index a deck sent as ``application/octet-stream``."""
+        storage = _Storage(
+            "application/octet-stream",
+            filename="lesson.pptx",
+        )
+        parser = _Parser()
+        parser.supported_media_types = [_PPTX_MEDIA_TYPE]
+        worker, manager = _worker(storage, [parser])
+
+        await worker.run_pipeline()
+
+        self.assertListEqual(
+            parser.calls,
+            [(b"# AgentScope", "lesson.pptx")],
+        )
+        self.assertListEqual(
+            storage.statuses,
+            ["parsing", "chunking", "indexing", "ready"],
+        )
+        self.assertEqual(
+            manager.knowledge.inserted_metadata["media_type"],
+            _PPTX_MEDIA_TYPE,
+        )
+
+    async def test_registered_generic_parser_stays_authoritative(self) -> None:
+        """A parser registered for the generic type still wins."""
+        storage = _Storage(
+            "application/octet-stream",
+            filename="lesson.pptx",
+        )
+        generic = _Parser()
+        generic.supported_media_types = ["application/octet-stream"]
+        by_filename = _Parser()
+        by_filename.supported_media_types = [_PPTX_MEDIA_TYPE]
+        worker, _ = _worker(storage, [by_filename, generic])
+
+        await worker.run_pipeline()
+
+        self.assertListEqual(generic.calls, [(b"# AgentScope", "lesson.pptx")])
+        self.assertListEqual(by_filename.calls, [])
+
+    async def test_specific_unregistered_type_is_not_overridden(self) -> None:
+        """An explicit specific type stays authoritative."""
+        storage = _Storage("image/png", filename="lesson.pptx")
+        parser = _Parser()
+        parser.supported_media_types = [_PPTX_MEDIA_TYPE]
+        worker, _ = _worker(storage, [parser])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "No parser registered for media type 'image/png'",
+        ):
+            await worker.run_pipeline()
+        self.assertListEqual(parser.calls, [])
+
+    async def test_generic_type_with_unknown_extension_still_fails(
+        self,
+    ) -> None:
+        """The filename fallback must not invent a route."""
+        storage = _Storage(
+            "application/octet-stream",
+            filename="lesson.unknownext",
+        )
+        parser = _Parser()
+        parser.supported_media_types = [_PPTX_MEDIA_TYPE]
+        worker, _ = _worker(storage, [parser])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "No parser registered for media type "
+            "'application/octet-stream'",
+        ):
+            await worker.run_pipeline()
+        self.assertListEqual(parser.calls, [])

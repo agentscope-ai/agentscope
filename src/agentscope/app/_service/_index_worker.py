@@ -42,6 +42,9 @@ if TYPE_CHECKING:
 # file in memory at once even when the parser is byte-oriented.
 _READ_CHUNK = 1 << 20  # 1 MiB
 
+# What a multipart client sends when it has no opinion about the type.
+_GENERIC_MEDIA_TYPE = "application/octet-stream"
+
 
 def _build_parser_registry(
     parsers: "list[ParserBase] | dict[str, ParserBase]",
@@ -385,16 +388,31 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
-        media_type = (
-            data.content_type or mimetypes.guess_type(data.filename)[0]
-        )
+        media_type = data.content_type
         if media_type:
             media_type = media_type.split(";", 1)[0].strip().lower()
+        parser = (
+            self._parsers_by_media_type.get(media_type) if media_type else None
+        )
+        if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
+            # A multipart client that labels its part generically leaves
+            # a valid deck unindexed even though the filename says what
+            # it is.  Only a missing type or the generic binary one falls
+            # through to the filename: an explicit specific type stays
+            # authoritative even if nothing is registered for it.  The
+            # guessed type must be registered before it is used, so an
+            # unsupported extension still fails rather than parsing with
+            # a parser that never claimed it.
+            guessed = mimetypes.guess_type(data.filename)[0]
+            guessed_parser = (
+                self._parsers_by_media_type.get(guessed) if guessed else None
+            )
+            if guessed_parser is not None:
+                media_type, parser = guessed, guessed_parser
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
             )
-        parser = self._parsers_by_media_type.get(media_type)
         if parser is None:
             raise ValueError(
                 f"No parser registered for media type {media_type!r}.",
