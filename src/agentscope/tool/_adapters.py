@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import asyncio
+import hashlib
 import inspect
 import json
 import re
 import warnings
+from collections import defaultdict
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Callable, Any, AsyncGenerator, Generator
 
@@ -34,6 +36,217 @@ from ..message import (
     ToolResultState,
     URLSource,
 )
+
+# OpenAI and Anthropic reject a function name longer than 64 characters,
+# and one over-long name fails the whole model request (#3371). Collision
+# suffixes stay inside this budget so a later length-limit pass does not
+# have to shorten two already-distinct names back into each other.
+_MAX_TOOL_NAME_LENGTH = 64
+_MCP_NAME_PATTERN = re.compile(r"[^a-zA-Z0-9_-]")
+_DIGEST_LENGTHS = (8, 16, 32, 48, 63)
+
+
+def _mcp_raw_identity(tool: ToolBase) -> tuple[str, str] | None:
+    """Return ``(server, raw tool name)`` for an MCP tool.
+
+    The raw name is the one the MCP server is called with. Other tools,
+    and MCP adapters that do not keep the original descriptor, return
+    ``None``.
+    """
+    if not getattr(tool, "is_mcp", False):
+        return None
+    raw_tool = getattr(tool, "_tool", None)
+    raw_name = getattr(raw_tool, "name", None)
+    mcp_name = getattr(tool, "mcp_name", None)
+    if not isinstance(raw_name, str) or not isinstance(mcp_name, str):
+        return None
+    return mcp_name, raw_name
+
+
+def _owns_unsanitized_base(
+    base_name: str,
+    mcp_name: str,
+    raw_name: str,
+) -> bool:
+    """Whether *raw_name* is already legal and composes to *base_name*.
+
+    That identity is the one that can keep the unsuffixed spelling. Two
+    different raw names cannot both own it: the composed string contains
+    the raw name itself.
+    """
+    if _MCP_NAME_PATTERN.search(raw_name):
+        return False
+    return f"mcp__{mcp_name}__{raw_name}" == base_name
+
+
+def _fit_provider_name(base_name: str, suffix: str) -> str:
+    """Append *suffix*, staying within the 64-character provider limit."""
+    if len(suffix) > _MAX_TOOL_NAME_LENGTH:
+        suffix = suffix[-_MAX_TOOL_NAME_LENGTH:]
+    if len(base_name) + len(suffix) <= _MAX_TOOL_NAME_LENGTH:
+        return base_name + suffix
+    kept = _MAX_TOOL_NAME_LENGTH - len(suffix)
+    if kept <= 0:
+        return suffix[-_MAX_TOOL_NAME_LENGTH:]
+    return base_name[:kept] + suffix
+
+
+def _identity_digest(mcp_name: str, raw_name: str) -> str:
+    """Hash the unsanitized ``server + raw tool name`` identity."""
+    payload = f"{mcp_name}\0{raw_name}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _blocked_name(
+    candidate: str,
+    identity: tuple[str, str],
+    holders: dict[str, set[tuple[str, str] | None]],
+) -> bool:
+    """Whether *candidate* is already used by some other identity."""
+    return any(holder != identity for holder in holders.get(candidate, ()))
+
+
+def _allocate_disambiguated_name(
+    base_name: str,
+    identity: tuple[str, str],
+    holders: dict[str, set[tuple[str, str] | None]],
+) -> str:
+    """Pick a suffix of the original identity that nobody else is using.
+
+    Raises:
+        ValueError: If every digest length still collides with a name
+            held by a different tool.
+    """
+    digest = _identity_digest(identity[0], identity[1])
+    for length in _DIGEST_LENGTHS:
+        candidate = _fit_provider_name(base_name, f"_{digest[:length]}")
+        if _MCP_NAME_PATTERN.search(candidate):
+            continue
+        if not _blocked_name(candidate, identity, holders):
+            return candidate
+    raise ValueError(
+        f"Cannot give MCP tool '{identity[1]}' on server '{identity[0]}' "
+        f"a model-facing name distinct from '{base_name}'. Two different "
+        "tools would otherwise be exposed as one.",
+    )
+
+
+def _canonical_mcp_name(mcp_name: str, raw_name: str) -> str:
+    """Model-facing name ``MCPTool`` assigns before disambiguation."""
+    sanitized = _MCP_NAME_PATTERN.sub("x", raw_name)
+    return f"mcp__{mcp_name}__{sanitized}"
+
+
+def disambiguate_sanitized_mcp_names(tools: list[ToolBase]) -> None:
+    """Give sanitization-colliding MCP tools distinct model-facing names.
+
+    ``MCPTool`` replaces characters outside ``[a-zA-Z0-9_-]`` with ``x``.
+    Distinct server tools such as ``search.docs`` and ``searchxdocs`` then
+    share one model-facing name, and toolkit registration used to keep
+    only the last one. Names that do not collide are left unchanged,
+    including a sanitized tool registered on its own.
+
+    The server-side name (``MCPTool._tool.name``) is never modified. When
+    several raw identities share a sanitized spelling, the identity whose
+    raw name was already legal keeps that spelling. Every other identity
+    gets a suffix derived from its original server and tool name, so the
+    result does not depend on registration order. The suffix is kept
+    within 64 characters for the provider limit in #3372. Identical raw
+    names stay identical and the toolkit still overwrites true duplicates.
+
+    Args:
+        tools (`list[ToolBase]`):
+            Tools that will share one model-facing namespace. Tool names
+            are updated in place.
+
+    Raises:
+        ValueError: If a collision cannot be given a free name inside
+            the provider limit.
+    """
+    if len(tools) < 2:
+        return
+
+    buckets: dict[str, list[ToolBase]] = defaultdict(list)
+    for tool in tools:
+        buckets[tool.name].append(tool)
+
+    # Identity -> collision spellings it currently shares with someone else.
+    collision_bases: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for base_name, bucket in buckets.items():
+        identities: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for tool in bucket:
+            identity = _mcp_raw_identity(tool)
+            if identity is None or identity in seen:
+                continue
+            seen.add(identity)
+            identities.append(identity)
+        if len(identities) < 2:
+            continue
+
+        owner: tuple[str, str] | None = None
+        for identity in identities:
+            if _owns_unsanitized_base(base_name, identity[0], identity[1]):
+                owner = identity
+                break
+        # A function registered under the sanitized spelling keeps that
+        # explicit name. Every MCP identity then takes a suffix so none
+        # of them is overwritten by the function or by each other.
+        if any(_mcp_raw_identity(tool) is None for tool in bucket):
+            owner = None
+        for identity in identities:
+            if identity != owner:
+                collision_bases[identity].add(base_name)
+
+    if not collision_bases:
+        return
+
+    tools_by_identity: dict[tuple[str, str], list[ToolBase]] = defaultdict(
+        list,
+    )
+    for tool in tools:
+        identity = _mcp_raw_identity(tool)
+        if identity in collision_bases:
+            tools_by_identity[identity].append(tool)
+
+    holders: dict[str, set[tuple[str, str] | None]] = defaultdict(set)
+    for tool in tools:
+        holders[tool.name].add(_mcp_raw_identity(tool))
+
+    # One base per identity. Prefer the canonical sanitized spelling when
+    # that is the collision, so a copy that was already suffixed converges
+    # on the same name instead of growing a second suffix.
+    pending: list[tuple[str, tuple[str, str]]] = []
+    for identity, bases in collision_bases.items():
+        canonical = _canonical_mcp_name(identity[0], identity[1])
+        base_name = canonical if canonical in bases else min(bases)
+        pending.append((base_name, identity))
+    pending.sort(key=lambda item: (item[0], item[1][0], item[1][1]))
+
+    planned: list[tuple[ToolBase, str, tuple[str, str]]] = []
+    for base_name, identity in pending:
+        new_name = _allocate_disambiguated_name(base_name, identity, holders)
+        old_names = {tool.name for tool in tools_by_identity[identity]}
+        for old_name in old_names:
+            holders[old_name].discard(identity)
+            if not holders[old_name]:
+                del holders[old_name]
+        holders[new_name].add(identity)
+        for tool in tools_by_identity[identity]:
+            planned.append((tool, new_name, identity))
+
+    for tool, new_name, identity in planned:
+        if tool.name == new_name:
+            continue
+        logger.debug(
+            "MCP tool name '%s' on server '%s' collides with another tool "
+            "after sanitization as '%s'; exposing it as '%s'.",
+            identity[1],
+            identity[0],
+            tool.name,
+            new_name,
+        )
+        tool.name = new_name
 
 
 class FunctionTool(ToolBase):
@@ -252,7 +465,10 @@ class MCPTool(ToolBase):
         # colons, etc. — replace illegal chars with "x" (not "_")
         # to avoid collisions with the "__" separator.
         # self._tool.name retains the original for server-side calls.
-        sanitized_tool = re.sub(r"[^a-zA-Z0-9_-]", "x", tool.name)
+        # A tool registered on its own keeps this spelling. Distinct raw
+        # names that sanitize to the same spelling are separated later by
+        # disambiguate_sanitized_mcp_names, without touching _tool.name.
+        sanitized_tool = _MCP_NAME_PATTERN.sub("x", tool.name)
         self.name = f"mcp__{mcp_name}__{sanitized_tool}"
         if sanitized_tool != tool.name:
             logger.debug(
