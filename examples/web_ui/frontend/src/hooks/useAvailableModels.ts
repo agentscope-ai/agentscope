@@ -36,7 +36,8 @@ async function fetchGroups(): Promise<Record<string, CredentialWithModels[]>> {
 							a.release_date ?? '',
 						);
 						return (
-							byReleaseDate || b.name.localeCompare(a.name, undefined, { numeric: true })
+							byReleaseDate ||
+							b.name.localeCompare(a.name, undefined, { numeric: true })
 						);
 					}),
 				});
