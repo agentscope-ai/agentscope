@@ -16,6 +16,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
 )
 from .._document import Chunk
 
@@ -236,9 +237,11 @@ class MilvusLiteStore(VectorStoreBase):
         flat equality filtering.
 
         Entity IDs are derived deterministically from
-        ``(document_id, chunk_index)`` and written via ``upsert`` so
-        that re-indexing the same document after a mid-pipeline crash
-        replaces the previous records instead of duplicating them.
+        ``(document_id, chunk_index)`` (and the record's scope when
+        scoped) and written via ``upsert`` so that re-indexing the same
+        document after a mid-pipeline crash replaces the previous
+        records instead of duplicating them, without colliding across
+        scopes.
 
         Args:
             collection (`str`):
@@ -269,10 +272,10 @@ class MilvusLiteStore(VectorStoreBase):
 
     @staticmethod
     def _record_id(record: VectorRecord) -> str:
-        """Deterministic entity ID for ``(document_id, chunk_index)``.
+        """Derive the entity ID from the document, chunk, and scope.
 
         Mirrors the Elasticsearch backend's recipe: a SHA-256 over the
-        ``\0``-joined pair, whose 64 hex chars exactly fit the
+        ``\0``-joined identity key, whose 64 hex chars exactly fit the
         ``VARCHAR(64)`` primary key. Stable IDs make indexing retries
         idempotent (via ``upsert``).
 
@@ -284,7 +287,7 @@ class MilvusLiteStore(VectorStoreBase):
             `str`:
                 The 64-character hex digest.
         """
-        raw = f"{record.document_id}\0{record.chunk.chunk_index}"
+        raw = _record_identity_key(record)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def delete(

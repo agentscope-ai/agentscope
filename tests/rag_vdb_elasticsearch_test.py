@@ -117,6 +117,31 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(first_operations[1]["document_id"], "doc-1")
 
+    async def test_scoped_insert_uses_scope_isolated_ids(self) -> None:
+        record = _record("shared-doc", 0)
+        await self.store.insert("kb-1", [record])
+        unscoped_id = self.client.bulk.await_args.kwargs["operations"][0][
+            "index"
+        ]["_id"]
+
+        await self.store.insert(
+            "kb-1",
+            [record.model_copy(update={"scope": {"tenant": "alpha"}})],
+        )
+        alpha_id = self.client.bulk.await_args.kwargs["operations"][0][
+            "index"
+        ]["_id"]
+
+        await self.store.insert(
+            "kb-1",
+            [record.model_copy(update={"scope": {"tenant": "beta"}})],
+        )
+        beta_id = self.client.bulk.await_args.kwargs["operations"][0]["index"][
+            "_id"
+        ]
+
+        self.assertEqual(len({unscoped_id, alpha_id, beta_id}), 3)
+
     async def test_insert_empty_records_is_noop(self) -> None:
         await self.store.insert("kb-1", [])
         self.client.bulk.assert_not_awaited()

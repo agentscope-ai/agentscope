@@ -13,6 +13,7 @@ through the constructor arguments:
   (MongoDB 7.0+ with Vector Search enabled)
 """
 import asyncio
+import hashlib
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -21,6 +22,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _record_identity_key,
 )
 from .._document import Chunk
 
@@ -276,9 +278,9 @@ class MongoDBStore(VectorStoreBase):
         col = self._col(collection)
         operations = [
             ReplaceOne(
-                {"_id": f"{record.document_id}_{record.chunk.chunk_index}"},
+                {"_id": self._record_id(record)},
                 {
-                    "_id": f"{record.document_id}_{record.chunk.chunk_index}",
+                    "_id": self._record_id(record),
                     "document_id": record.document_id,
                     "vector": record.vector,
                     "chunk": record.chunk.model_dump(mode="json"),
@@ -288,6 +290,19 @@ class MongoDBStore(VectorStoreBase):
             for record in records
         ]
         await col.bulk_write(operations, ordered=False)
+
+    @staticmethod
+    def _record_id(record: VectorRecord) -> str:
+        """Derive the MongoDB ID from the document, chunk, and scope.
+
+        Unscoped records retain the legacy document ID and chunk index
+        separated by an underscore. Scoped records use a SHA-256 digest
+        of the scoped identity key.
+        """
+        if not record.scope:
+            return f"{record.document_id}_{record.chunk.chunk_index}"
+        raw = _record_identity_key(record)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     async def delete(
         self,

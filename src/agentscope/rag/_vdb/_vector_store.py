@@ -18,11 +18,35 @@ Lifecycle is managed via the async context manager protocol
 automatically.
 """
 from abc import ABC, abstractmethod
+import json
 from typing import Any, Self
 
 from pydantic import BaseModel, Field
 
 from .._document import Chunk
+
+
+def _record_identity_key(record: "VectorRecord") -> str:
+    """Build a collision-free identity key for a vector record.
+
+    An omitted or empty scope returns the legacy
+    ``f"{record.document_id}\\0{record.chunk.chunk_index}"`` string so
+    unscoped collection IDs remain unchanged. When a non-empty scope
+    filter is supplied, appends a NUL delimiter and the canonical JSON
+    encoding of the filter so scoped ``KnowledgeBase`` instances sharing
+    a collection do not overwrite each other's chunks when ``document_id``
+    overlaps.
+    """
+    base_key = f"{record.document_id}\0{record.chunk.chunk_index}"
+    if not record.scope:
+        return base_key
+    scope_key = json.dumps(
+        record.scope,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return f"{base_key}\0{scope_key}"
 
 
 class VectorRecord(BaseModel):
@@ -48,6 +72,9 @@ class VectorRecord(BaseModel):
 
     chunk: Chunk
     """The business payload — content, source, structural metadata."""
+
+    scope: dict[str, Any] | None = Field(default=None, exclude=True)
+    """Optional identity scope, excluded from serialized records."""
 
 
 class VectorSearchResult(BaseModel):
