@@ -493,6 +493,89 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertIn("SlowTool finished", hint_text)
         self.assertIn("<system-notification>", hint_text)
 
+    def _inbox_hint_texts(
+        self,
+        agent: Agent,
+        middleware: ToolOffloadMiddleware,
+    ) -> list[str]:
+        """Return the text of every notification pushed to the inbox."""
+        texts = []
+        for call in middleware._message_bus.queue_push.call_args_list:
+            if call.args[0] != MessageBusKeys.inbox(agent.state.session_id):
+                continue
+            hint = call.args[1]["hint"]
+            texts.append(hint if isinstance(hint, str) else hint[0]["text"])
+        return texts
+
+    async def test_completion_notification_names_the_placeholder_id(
+        self,
+    ) -> None:
+        """The agent is told one id for a background tool, start to finish.
+
+        The placeholder announces the background task id, which is also the
+        id ``ToolStop`` accepts. The completion notification has to name the
+        same id, otherwise the agent cannot tell which of several background
+        calls of one tool has finished.
+        """
+        toolkit = Toolkit(tools=[SlowTool()])
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+
+        placeholders: dict[str, str] = {}
+        for call_id, delay in (("call_first", 0.3), ("call_second", 0.1)):
+            tool_call = ToolCallBlock(
+                id=call_id,
+                name="slow_tool",
+                input=json.dumps({"delay": delay}),
+            )
+            results = [item async for item in agent._acting(tool_call)]
+            response = results[-1]
+            task_id = response.metadata["background_task_id"]
+            self.assertIn(
+                f"(id={task_id})",
+                response.content[0].text,  # type: ignore[union-attr]
+            )
+            placeholders[call_id] = task_id
+
+        await asyncio.sleep(0.6)
+
+        texts = self._inbox_hint_texts(agent, middleware)
+        self.assertEqual(len(texts), 2)
+        # The shorter second call finishes first.
+        for text, call_id in zip(texts, ("call_second", "call_first")):
+            self.assertIn(
+                "Tool 'slow_tool' running in background "
+                f"(id={placeholders[call_id]}) has completed",
+                text,
+            )
+            self.assertNotIn(call_id, text)
+
+    async def test_notification_falls_back_when_registration_fails(
+        self,
+    ) -> None:
+        """A tool whose registration failed still reports its result."""
+        toolkit = Toolkit(tools=[SlowTool()])
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+
+        tool_call = ToolCallBlock(
+            id="call_unregistered",
+            name="slow_tool",
+            input=json.dumps({"delay": 0.2}),
+        )
+        with patch.object(
+            self.bg_manager,
+            "register_task",
+            AsyncMock(side_effect=RuntimeError("registry unavailable")),
+        ):
+            with self.assertRaises(RuntimeError):
+                async for _ in agent._acting(tool_call):
+                    pass
+
+        await asyncio.sleep(0.4)
+
+        texts = self._inbox_hint_texts(agent, middleware)
+        self.assertEqual(len(texts), 1)
+        self.assertIn("(id=call_unregistered) has completed", texts[0])
+
     async def test_background_task_triggers_wakeup_on_completion(
         self,
     ) -> None:
@@ -640,7 +723,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
                 prefix = (
                     "<system-notification>Tool 'slow_tool' running in "
-                    "background (id=call_interrupted) has been cancelled"
+                    f"background (id={bg.id}) has been cancelled"
                 )
                 expected_hint: str | list[dict]
                 if output:
