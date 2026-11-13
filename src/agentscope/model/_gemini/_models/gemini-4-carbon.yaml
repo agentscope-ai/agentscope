@@ -1,6 +1,8 @@
 name: gemini-4-carbon
 label: Gemini 4 Carbon
 status: active
+# Release date source: https://aistudio.google.com/docs/changelog
+release_date: 2026-11-10
 
 input_types:
   - text/plain
@@ -28,6 +30,10 @@ parameter_overrides:
     description: Show reasoning summaries; this does not disable reasoning.
   thinking_level:
     default: medium
+    anyOf:
+      - enum: [low, medium, high]
+        type: string
+      - type: "null"
   thinking_budget:
     hidden: true
   temperature:

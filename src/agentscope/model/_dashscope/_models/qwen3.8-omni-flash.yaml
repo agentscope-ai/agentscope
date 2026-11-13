@@ -1,6 +1,8 @@
 name: qwen3.8-omni-flash
 label: Qwen3.8-Omni-Flash
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-09-17
 
 input_types:
   - text/plain

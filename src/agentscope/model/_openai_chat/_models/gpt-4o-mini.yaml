@@ -1,6 +1,8 @@
 name: gpt-4o-mini
 label: GPT-4o Mini
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2024-07-18
 
 input_types:
   - text/plain

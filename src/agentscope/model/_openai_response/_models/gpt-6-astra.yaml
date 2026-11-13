@@ -1,6 +1,8 @@
 name: gpt-6-astra
 label: GPT-6 Astra (Responses API)
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2026-09-03
 
 input_types:
   - text/plain

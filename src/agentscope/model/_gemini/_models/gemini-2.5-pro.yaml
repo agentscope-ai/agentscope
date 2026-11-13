@@ -1,6 +1,8 @@
 name: gemini-2.5-pro
 label: Gemini 2.5 Pro
 status: active
+# Release date source: https://aistudio.google.com/docs/changelog
+release_date: 2025-06-17
 
 input_types:
   - text/plain
