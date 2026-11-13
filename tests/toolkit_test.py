@@ -190,6 +190,32 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_call_tool_closes_cleanly_when_the_consumer_stops_early(
+        self,
+    ) -> None:
+        """Closing the stream after a chunk must not raise, and a call that
+        runs to the end still ends with the complete ToolResponse."""
+        toolkit = Toolkit(tools=[Tool1(), Tool2()])
+        state = AgentState()
+
+        stream = toolkit.call_tool(
+            ToolCallBlock(id="test_2", name="tool_2", input="{}"),
+            state,
+        )
+        self.assertIsInstance(await anext(stream), ToolChunk)
+        # Used to raise "RuntimeError: async generator ignored GeneratorExit"
+        await stream.aclose()
+
+        results = [
+            _
+            async for _ in toolkit.call_tool(
+                ToolCallBlock(id="test_1", name="tool_1", input="{}"),
+                state,
+            )
+        ]
+        self.assertEqual(len(results), 2)
+        self.assertIsInstance(results[-1], ToolResponse)
+
     async def test_tool(self) -> None:
         """Test executing a tool."""
         toolkit = Toolkit(tools=[Tool1(), Tool2()])
