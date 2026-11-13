@@ -195,10 +195,16 @@ class SteeringQueue(SteeringSource):
     ) -> None:
         """Settle the specified inputs after context injection."""
         pending = self._pending.get((session_id, reply_id), {})
-        if any(item.id not in pending for item in inputs):
+        ids = [item.id for item in inputs]
+        # Validate the whole batch before removing anything. A repeated
+        # id would otherwise pass the membership check twice and then
+        # raise on the second pop, leaving the first receipt settled.
+        if len(ids) != len(set(ids)) or any(
+            item_id not in pending for item_id in ids
+        ):
             raise LookupError("The steering inputs are no longer pending.")
-        for item in inputs:
-            _, receipt = pending.pop(item.id)
+        for item_id in ids:
+            _, receipt = pending.pop(item_id)
             receipt._finish("injected")
 
     async def reject(
