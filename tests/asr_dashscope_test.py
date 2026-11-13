@@ -592,45 +592,102 @@ class DashScopeRealtimeASRModelTest(IsolatedAsyncioTestCase):
 
 
 class DashScopeRealtimeSentenceJoinTest(TestCase):
-    """Sentences must be joined the way the speaker said them."""
+    """Preserve provider text while accumulating sentence results."""
 
     def _model(self) -> DashScopeRealtimeASRModel:
         return DashScopeRealtimeASRModel(
             credential=DashScopeCredential(api_key="test-key"),
         )
 
-    def _commit(self, model: DashScopeRealtimeASRModel, text: str) -> None:
-        """Feed one finished sentence through the result handler."""
+    def _send_sentence(
+        self,
+        model: DashScopeRealtimeASRModel,
+        text: str,
+        sentence_end: bool = True,
+    ) -> None:
+        """Feed a provider sentence through the result handler."""
         model._handle_result(  # pylint: disable=protected-access
             {
                 "payload": {
                     "output": {
-                        "sentence": {"text": text, "sentence_end": True},
+                        "sentence": {
+                            "text": text,
+                            "sentence_end": sentence_end,
+                        },
                     },
                 },
             },
         )
 
-    def test_cjk_sentences_are_not_separated_by_a_space(self) -> None:
-        """``'你'.isalnum()`` is true, so the old word-space heuristic put
-        a space between two Chinese sentences that had none."""
+    def test_preserves_sentence_text(self) -> None:
+        """Keep whitespace and punctuation without inserting separators."""
+        # pylint: disable=protected-access
+        cases = [
+            (["Hello", "world"], "Helloworld"),
+            (["Hello.", "World."], "Hello.World."),
+            ([" Hello. ", " World. \n"], " Hello.  World. \n"),
+            (["Really?", "Yes."], "Really?Yes."),
+            (["Hello", "\t \n", "world"], "Hello\t \nworld"),
+        ]
+        for sentences, expected in cases:
+            with self.subTest(sentences=sentences):
+                model = self._model()
+                for text in sentences:
+                    self._send_sentence(model, text)
+                response = model._drain_latest_response()
+                self.assertEqual(
+                    {
+                        "text": model._complete_text(),
+                        "response_text": response.content.text,
+                        "is_last": response.is_last,
+                        "sentences": model._committed_sentences,
+                        "current": model._current_sentence,
+                    },
+                    {
+                        "text": expected,
+                        "response_text": expected,
+                        "is_last": False,
+                        "sentences": sentences,
+                        "current": "",
+                    },
+                )
+
+    def test_replaces_partial_text_and_commits_final_text(self) -> None:
+        """Replace partials without duplicating text or trimming spaces."""
+        # pylint: disable=protected-access
         model = self._model()
-        self._commit(model, "你好")
-        self._commit(model, "世界")
-
+        responses = []
+        for text, sentence_end in [
+            (" Hel", False),
+            (" Hello ", False),
+            (" Hello.\n", True),
+            (" wor", False),
+            (" world ", False),
+            (" world!\t", True),
+            ("", False),
+        ]:
+            self._send_sentence(model, text, sentence_end)
+            response = model._drain_latest_response()
+            responses.append((response.content.text, response.is_last))
         self.assertEqual(
-            model._complete_text(),  # pylint: disable=protected-access
-            "你好世界",
-        )
-
-    def test_space_delimited_sentences_keep_a_word_separator(self) -> None:
-        """Semantic punctuation ends the sentences, and English still needs
-        the space the old ``isalnum`` check dropped after a period."""
-        model = self._model()
-        self._commit(model, "Hello.")
-        self._commit(model, "World.")
-
-        self.assertEqual(
-            model._complete_text(),  # pylint: disable=protected-access
-            "Hello. World.",
+            {
+                "responses": responses,
+                "text": model._complete_text(),
+                "sentences": model._committed_sentences,
+                "current": model._current_sentence,
+            },
+            {
+                "responses": [
+                    (" Hel", False),
+                    (" Hello ", False),
+                    (" Hello.\n", False),
+                    (" Hello.\n wor", False),
+                    (" Hello.\n world ", False),
+                    (" Hello.\n world!\t", False),
+                    (" Hello.\n world!\t", False),
+                ],
+                "text": " Hello.\n world!\t",
+                "sentences": [" Hello.\n", " world!\t"],
+                "current": "",
+            },
         )

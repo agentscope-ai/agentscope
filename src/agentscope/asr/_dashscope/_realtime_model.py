@@ -20,39 +20,6 @@ _FINISH_TIMEOUT_SECONDS = 30.0
 _REALTIME_PATH = "/api-ws/v1/inference"
 
 
-_CJK_RANGES = (
-    (0x3040, 0x30FF),  # Hiragana and Katakana
-    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
-    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
-    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
-)
-_CJK_PUNCTUATION = "。、，！？；：（）「」『』【】…—"
-_ASCII_PUNCTUATION = ".!?;:,"
-
-
-def _is_cjk(char: str) -> bool:
-    """Whether ``char`` belongs to a script written without word spaces."""
-    code = ord(char)
-    return any(low <= code <= high for low, high in _CJK_RANGES)
-
-
-def _needs_separator(previous: str, following: str) -> bool:
-    """Whether a space belongs between two adjacent recognised sentences.
-
-    The recognizer returns one text per sentence and leaves the spacing
-    between them out, so it is restored here: a space separates two words
-    of a space-delimited script, but never sits between the characters of
-    a CJK sentence, and punctuation already separates a sentence.
-    """
-    if previous.isspace() or following.isspace():
-        return False
-    if previous in _CJK_PUNCTUATION or following in _CJK_PUNCTUATION:
-        return False
-    if _is_cjk(previous) and _is_cjk(following):
-        return False
-    return previous.isalnum() or previous in _ASCII_PUNCTUATION
-
-
 def _realtime_url(base_url: str) -> str:
     """Build the native DashScope inference WebSocket endpoint."""
     parsed = urlsplit(base_url)
@@ -373,7 +340,6 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         text = sentence.get("text")
         if not isinstance(text, str):
             return
-        text = text.strip()
         self._current_sentence = text
         transcript = self._complete_text()
         if transcript:
@@ -388,19 +354,8 @@ class DashScopeRealtimeASRModel(ASRModelBase):
             self._current_sentence = ""
 
     def _complete_text(self) -> str:
-        """Return committed sentences plus the active partial sentence."""
-        parts = [*self._committed_sentences]
-        if self._current_sentence:
-            parts.append(self._current_sentence)
-        result = ""
-        for part in parts:
-            if not part:
-                continue
-            if result and _needs_separator(result[-1], part[0]):
-                result = f"{result} {part}"
-            else:
-                result = f"{result}{part}"
-        return result
+        """Concatenate committed and current text without normalization."""
+        return "".join([*self._committed_sentences, self._current_sentence])
 
     def _drain_latest_response(self) -> ASRResponse:
         """Return the newest queued partial response without blocking."""
