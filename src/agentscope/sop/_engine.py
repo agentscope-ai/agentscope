@@ -130,6 +130,13 @@ class SOPEngine:
                     record,
                 ):
                     yield event
+                if (
+                    not interrupting
+                    and record.phase in (SOPPhase.PENDING, SOPPhase.RUNNING)
+                    and len(record.verifications) >= step.max_attempts
+                ):
+                    # Settle the attempt before consumers can checkpoint it.
+                    record.phase = SOPPhase.FAILED
                 yield CustomEvent(
                     name="SOP_STEP_ENDED",
                     value={
@@ -148,9 +155,6 @@ class SOPEngine:
                     return
                 if record.phase is SOPPhase.COMPLETED:
                     break
-                if len(record.verifications) >= step.max_attempts:
-                    record.phase = SOPPhase.FAILED
-                    return
 
     def _handover(self, index: int) -> list[Msg]:
         """What a step is given to work from.
