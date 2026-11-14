@@ -9,6 +9,7 @@ re-parsing the rest of the string.
 """
 import os
 import shutil
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import IO, AsyncIterator
@@ -84,7 +85,9 @@ class LocalBlobStore(BlobStoreBase):
         Creates intermediate directories as needed.  Existing blobs at
         the same key are overwritten — keys are generated server-side
         from document ids, so collisions only happen on intentional
-        re-uploads.
+        re-uploads. The destination is replaced only after the complete
+        stream has been copied. Failed or cancelled copies leave an
+        existing blob unchanged and remove the temporary file.
 
         Args:
             key (`str`):
@@ -98,12 +101,20 @@ class LocalBlobStore(BlobStoreBase):
         """
         path = self._path_for(key)
         await aiofiles.os.makedirs(path.parent, exist_ok=True)
-        async with aiofiles.open(path, "wb") as out:
-            while True:
-                chunk = stream.read(_CHUNK_SIZE)
-                if not chunk:
-                    break
-                await out.write(chunk)
+        # Close the temporary handle before reopening it on Windows. Keep it
+        # on the destination filesystem so replacement is atomic.
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            async with aiofiles.open(tmp_path, "wb") as out:
+                while True:
+                    chunk = stream.read(_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    await out.write(chunk)
+            os.replace(tmp_path, path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
         return f"{_SCHEME}{key}"
 
     @asynccontextmanager
