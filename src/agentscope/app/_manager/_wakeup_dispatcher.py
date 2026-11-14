@@ -307,7 +307,9 @@ class WakeupDispatcher:
                     raw_client_external_tools=payload.get(
                         "client_external_tools",
                     ),
-                    raw_client_builtin_tools=payload.get("client_builtin_tools"),
+                    raw_client_builtin_tools=payload.get(
+                        "client_builtin_tools",
+                    ),
                 )
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
