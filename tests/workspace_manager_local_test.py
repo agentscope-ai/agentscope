@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Test cases for :class:`LocalWorkspaceManager`."""
 
+import os
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -56,4 +57,32 @@ class TestLocalWorkspaceManager(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [alice.kwargs["workspace_id"], bob.kwargs["workspace_id"]],
             ["982aa9b33217069a", "883053c3e4594c5b"],
+        )
+
+    async def test_agent_id_cannot_escape_the_basedir(self) -> None:
+        """A caller-supplied ``agent_id`` may not point the workdir
+        outside the base directory — the same containment the Docker
+        manager applies to ``workspace_id`` (an absolute id must not
+        replace the base entirely either)."""
+        manager = LocalWorkspaceManager("/tmp/local-manager-test-escape")
+
+        for agent_id in ("../../etc", "/etc", "a/../../../etc"):
+            with self.assertRaises(ValueError):
+                await manager.get_workspace("u1", agent_id, "s1", "fixed-id")
+
+    async def test_nested_but_contained_agent_id_still_works(self) -> None:
+        """An ``agent_id`` with separators that stays inside the base
+        directory keeps its historical nested-workdir behaviour."""
+        manager = LocalWorkspaceManager("/tmp/local-manager-test-nested")
+
+        ws = await manager.get_workspace("u1", "team-a/agent-b", "s1")
+
+        expected = os.path.join(
+            os.path.realpath("/tmp/local-manager-test-nested"),
+            "team-a",
+            "agent-b",
+        )
+        self.assertEqual(
+            os.path.realpath(ws.kwargs["workdir"]),
+            os.path.realpath(expected),
         )
