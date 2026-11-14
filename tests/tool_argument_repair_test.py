@@ -150,6 +150,23 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             ),
             {"items": [{"unit": "C", "verbse": True}]},
         )
+        # ...and when the repair truncates an array itself
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"items": [1, 2, 3], "name": "x"}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "prefixItems": [{"type": "integer"}],
+                            "items": False,
+                        },
+                    },
+                },
+            ),
+            {"items": [1, 2, 3], "name": "x"},
+        )
         # Type repairs inside a nested object still happen
         self.assertDictEqual(
             _json_loads_with_repair(
