@@ -166,27 +166,32 @@ class FeishuApprovalTest(IsolatedAsyncioTestCase):
     ) -> None:
         channel = _channel()
         received: list[ChannelConfirmationResultEvent] = []
+        release_authorization = asyncio.Event()
         authorization_finished = asyncio.Event()
 
         async def emit(
             event: ChannelConfirmationResultEvent,
         ) -> ChannelDecisionStatus:
             received.append(event)
-            await asyncio.sleep(0.05)
+            await release_authorization.wait()
             authorization_finished.set()
             return ChannelDecisionStatus.AUTHORIZED
 
         channel._emit = emit
-        with patch(
-            "agentscope.app.channel._feishu._channel."
-            "_AUTHORIZATION_TIMEOUT_SECS",
-            0.01,
-        ):
-            response = await asyncio.to_thread(
-                channel._on_card_action,
-                _callback(),
-                asyncio.get_running_loop(),
-            )
+        try:
+            with patch(
+                "agentscope.app.channel._feishu._channel."
+                "_AUTHORIZATION_TIMEOUT_SECS",
+                0.01,
+            ):
+                response = await asyncio.to_thread(
+                    channel._on_card_action,
+                    _callback(),
+                    asyncio.get_running_loop(),
+                )
+        finally:
+            # Keep authorization pending until the callback has timed out.
+            release_authorization.set()
         await asyncio.wait_for(authorization_finished.wait(), timeout=1.0)
 
         body = _body(response)
