@@ -5,6 +5,8 @@ import asyncio
 import hashlib
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
@@ -182,6 +184,33 @@ class WorkspaceManagerBase(ABC):
                 triggers the :meth:`assign_workspace_id` fallback —
                 expected only for callers without a persisted binding.
         """
+
+    @asynccontextmanager
+    async def acquire_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        workspace_id: str | None = None,
+    ) -> AsyncIterator[WorkspaceBase]:
+        """Borrow a workspace for the entire execution scope.
+
+        Args:
+            user_id (`str`): Owning user.
+            agent_id (`str`): Agent identity.
+            session_id (`str`): Session identity.
+            workspace_id (`str | None`): Explicit workspace binding.
+
+        Yields:
+            `WorkspaceBase`: Initialized workspace. Remote managers may
+            hold renewable usage leases until the scope exits.
+        """
+        yield await self.get_workspace(
+            user_id,
+            agent_id,
+            session_id,
+            workspace_id,
+        )
 
     @abstractmethod
     async def close(self, workspace_id: str) -> None:

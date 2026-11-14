@@ -190,6 +190,53 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 )
             self._sandbox = None
 
+    async def release_local(self) -> None:
+        """Release local clients without pausing the shared sandbox.
+
+        The gateway facade has no remote shutdown action. Remote gateway
+        and MCP processes remain available to other service nodes.
+        """
+        gateway = getattr(self, "_gateway", None)
+        sandbox = self._sandbox
+        try:
+            if gateway is not None:
+                await gateway.aclose()
+        finally:
+            try:
+                if sandbox is not None:
+                    await sandbox.close()
+            finally:
+                self._gateway = None
+                self._sandbox = None
+                self._mcp_instances.clear()
+                self._mcp_last_used.clear()
+                self._backend = None
+                self.is_alive = False
+
+    async def pause_remote(self) -> None:
+        """Pause an existing sandbox without initializing its gateway.
+
+        Called only while a lifecycle collector claim excludes users.
+        Missing or already paused sandboxes require no remote operation.
+        Errors propagate: an ambiguous pause must keep its claim held.
+        """
+        from opensandbox import Sandbox
+
+        info = await self._find_existing_sandbox()
+        if info is None or info.status.state.lower() == "paused":
+            return
+        if info.status.state.lower() != "running":
+            raise RuntimeError("Sandbox is in a transitional state")
+        sandbox = await Sandbox.connect(
+            sandbox_id=info.id,
+            connection_config=self._connection_config(),
+            connect_timeout=timedelta(seconds=self.timeout_seconds),
+        )
+        try:
+            await sandbox.pause()
+        finally:
+            await sandbox.close()
+
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace.
 

@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from utils import AnyString
 
+from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._bus_ops import deliver_to_inbox
 from agentscope.app._service import ChatService
@@ -89,6 +90,8 @@ class _Storage:
 class _WorkspaceManager:
     """Return a minimal workspace handle."""
 
+    acquire_workspace = WorkspaceManagerBase.acquire_workspace
+
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
         return SimpleNamespace(workdir="/tmp/agentscope-team-failure-test")
@@ -96,6 +99,8 @@ class _WorkspaceManager:
 
 class _FailingWorkspaceManager:
     """A backend that is down — assembly dies before the agent exists."""
+
+    acquire_workspace = WorkspaceManagerBase.acquire_workspace
 
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Fail the way an unreachable sandbox does."""

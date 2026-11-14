@@ -4,8 +4,9 @@
 import asyncio
 import json
 from typing import Any
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import BaseModel
 
@@ -15,6 +16,7 @@ from utils import AnyString, MockModel
 from agentscope.agent import Agent
 from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.app.middleware import ToolOffloadMiddleware
+from agentscope.app.workspace_manager import OpenSandboxWorkspaceManager
 from agentscope.app._manager import BackgroundTaskManager
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.permission import (
@@ -272,6 +274,48 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         # Background task should be registered
         self.assertEqual(len(self.bg_manager.tasks), 1)
+
+    async def test_offloaded_tool_keeps_workspace_after_turn(self) -> None:
+        """An independent usage scope protects tools after chat returns."""
+        manager = OpenSandboxWorkspaceManager(
+            ttl=0,
+            usage_lease_seconds=0.15,
+        )
+        workspace = SimpleNamespace(
+            workspace_id="x",
+            initialize=AsyncMock(),
+            release_local=AsyncMock(),
+            pause_remote=AsyncMock(),
+        )
+        agent, middleware = self._make_agent(
+            Toolkit(tools=[SlowTool()]),
+            timeout_secs=0.02,
+        )
+        middleware._workspace_manager = manager
+        middleware._workspace_id = "x"
+        tool_call = ToolCallBlock(
+            id="offloaded-with-workspace",
+            name="slow_tool",
+            input=json.dumps({"delay": 0.25}),
+        )
+        with patch.object(manager, "_new_workspace", return_value=workspace):
+            async with manager.acquire_workspace("u", "a", "s", "x"):
+                async for _ in agent._acting(tool_call):
+                    pass
+            self.assertEqual(len(self.bg_manager.tasks), 1)
+            await manager._sweep_once()
+            workspace.pause_remote.assert_not_awaited()
+            workspace.release_local.assert_not_awaited()
+            await asyncio.gather(
+                *(
+                    task.asyncio_task
+                    for task in list(self.bg_manager.tasks.values())
+                ),
+            )
+            await asyncio.wait_for(manager._drained.wait(), 1)
+            await manager._sweep_once()
+            workspace.pause_remote.assert_awaited_once()
+            workspace.release_local.assert_awaited_once()
 
     async def test_background_task_result_injected_into_context(
         self,

@@ -9,6 +9,7 @@ from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._service import ChatService
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
@@ -125,6 +126,8 @@ class _Access:
 
 class _WorkspaceManager:
     """Return a minimal workspace handle used during agent assembly."""
+
+    acquire_workspace = WorkspaceManagerBase.acquire_workspace
 
     async def get_workspace(
         self,

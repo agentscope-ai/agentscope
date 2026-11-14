@@ -15,6 +15,7 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
+from contextlib import AsyncExitStack
 from typing import Literal, TYPE_CHECKING
 
 from fastapi import HTTPException
@@ -913,9 +914,12 @@ class ChatService:
         resumed_sop_run_id: str | None = None
         interrupted = False
 
-        async with self._message_bus.acquire_lock(
-            MessageBusKeys.session_lock(session_id),
-            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        async with (
+            AsyncExitStack() as workspace_scope,
+            self._message_bus.acquire_lock(
+                MessageBusKeys.session_lock(session_id),
+                ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+            ),
         ):
             # Bound before the try: an assembly failure reports through
             # them, and may happen before either is resolved.
@@ -1021,11 +1025,13 @@ class ChatService:
                             leader_name=leader.name,
                         )
 
-                workspace = await self._workspace_manager.get_workspace(
-                    user_id,
-                    agent_id,
-                    session_id,
-                    session_record.config.workspace_id,
+                workspace = await workspace_scope.enter_async_context(
+                    self._workspace_manager.acquire_workspace(
+                        user_id,
+                        agent_id,
+                        session_id,
+                        session_record.config.workspace_id,
+                    ),
                 )
 
                 # Add workspace working directory to the permission context
@@ -1095,6 +1101,8 @@ class ChatService:
                         message_bus=self._message_bus,
                         user_id=user_id,
                         agent_id=agent_id,
+                        workspace_manager=self._workspace_manager,
+                        workspace_id=session_record.config.workspace_id,
                     ),
                 ]
                 # Equip the member middleware for loop control

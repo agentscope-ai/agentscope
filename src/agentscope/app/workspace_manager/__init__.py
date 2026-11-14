@@ -2,6 +2,11 @@
 """The workspace manager classes, responsible for managing the resources
 and their lifecycles, and filesystem isolation."""
 
+from ._workspace_lifecycle import (
+    WorkspaceLifecycle,
+    LocalWorkspaceLifecycle,
+    RedisWorkspaceLifecycle,
+)
 from ._base import IsolationPolicy, WorkspaceManagerBase
 from ._prewarm import PrewarmConfig
 from ._local_workspace_manager import LocalWorkspaceManager
@@ -16,6 +21,9 @@ from ._applecontainer_workspace_manager import (
 from ._bubblewrap_workspace_manager import BubblewrapWorkspaceManager
 
 __all__ = [
+    "WorkspaceLifecycle",
+    "LocalWorkspaceLifecycle",
+    "RedisWorkspaceLifecycle",
     "IsolationPolicy",
     "PrewarmConfig",
     "WorkspaceManagerBase",

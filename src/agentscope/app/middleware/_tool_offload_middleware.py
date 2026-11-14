@@ -22,7 +22,10 @@ bus/wakeup infrastructure, which works correctly across processes.
 import asyncio
 import json
 from copy import deepcopy
+from contextlib import AsyncExitStack
 from typing import AsyncGenerator, Callable
+
+from ..workspace_manager import WorkspaceManagerBase
 
 from .._manager import BackgroundTaskManager
 from ...middleware import MiddlewareBase
@@ -77,6 +80,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         user_id: str,
         agent_id: str,
         timeout_secs: float = 10.0,
+        workspace_manager: WorkspaceManagerBase | None = None,
+        workspace_id: str | None = None,
     ) -> None:
         """Bind dependencies.
 
@@ -89,6 +94,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 User id of the current request.
             agent_id (`str`):
                 Agent record id (not the display name).
+            workspace_manager (`WorkspaceManagerBase | None`, optional):
+                Manager used to protect tools that outlive their turn.
+            workspace_id (`str | None`, optional):
+                Workspace binding of the originating turn.
             timeout_secs (`float`, defaults to ``10.0``):
                 Tool execution timeout before offloading to background.
         """
@@ -97,6 +106,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         self._user_id = user_id
         self._agent_id = agent_id
         self._timeout_secs = timeout_secs
+        self._workspace_manager = workspace_manager
+        self._workspace_id = workspace_id
 
     # ------------------------------------------------------------------
     # Middleware hooks
@@ -169,8 +180,18 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         async def _drain_to_queue() -> None:
             """Drain next_handler output into *queue*."""
             try:
-                async for item in next_handler(**input_kwargs):
-                    await queue.put(item)
+                async with AsyncExitStack() as scope:
+                    if self._workspace_manager is not None:
+                        await scope.enter_async_context(
+                            self._workspace_manager.acquire_workspace(
+                                self._user_id,
+                                self._agent_id,
+                                agent.state.session_id,
+                                self._workspace_id,
+                            ),
+                        )
+                    async for item in next_handler(**input_kwargs):
+                        await queue.put(item)
             except Exception as exc:  # pylint: disable=broad-except
                 await queue.put(exc)
             finally:
