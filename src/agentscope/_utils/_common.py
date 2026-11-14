@@ -10,7 +10,7 @@ import os
 import types
 import uuid
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Final
 
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
@@ -341,6 +341,73 @@ def _map_text_to_uuid(text: str) -> str:
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))
 
 
+_MISSING: Final = object()
+
+
+def _has_definition_block(node: Any) -> bool:
+    """Whether any level of the schema declares ``$defs`` or ``definitions``.
+
+    A nested block is reachable through a local pointer such as
+    ``#/properties/conf/$defs/Entry``; checking only the root left such a
+    schema unflattened, and once a root block existed the walk dropped the
+    nested one while keeping its pointer.
+    """
+    if isinstance(node, dict):
+        if isinstance(node.get("$defs"), dict) or isinstance(
+            node.get("definitions"),
+            dict,
+        ):
+            return True
+        return any(
+            _has_definition_block(value)
+            for key, value in node.items()
+            if key not in _INSTANCE_VALUE_KEYWORDS
+        )
+    if isinstance(node, list):
+        return any(_has_definition_block(item) for item in node)
+    return False
+
+
+def _lookup_pointer(root: Any, pointer: str) -> Any:
+    """Resolve a local JSON Pointer against the schema as given.
+
+    Only ``#/...`` pointers are handled. Anything else, and any path that does
+    not resolve, answers `_MISSING` so the caller can leave the node untouched.
+    """
+    if pointer == "#":
+        return root
+    if not pointer.startswith("#/"):
+        return _MISSING
+    node = root
+    for raw in pointer[2:].split("/"):
+        token = raw.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict):
+            if token not in node:
+                return _MISSING
+            node = node[token]
+        elif isinstance(node, list):
+            if not token.isdigit() or int(token) >= len(node):
+                return _MISSING
+            node = node[int(token)]
+        else:
+            return _MISSING
+    return node
+
+
+def _points_into_definition_block(pointer: str) -> bool:
+    """Whether a local pointer addresses an entry of a definition block.
+
+    The walk removes every ``$defs`` / ``definitions`` block it meets, at any
+    depth, so a discriminator mapping that resolves into one of them is left
+    pointing at nothing. Only ``#`` pointers can address a block at all.
+    """
+    if not pointer.startswith("#/"):
+        return False
+    return any(
+        token in ("$defs", "definitions") for token in pointer[2:].split("/")
+    )
+
+
 def _flatten_json_schema(schema: dict) -> dict:
     """Flatten a JSON schema by resolving all local ``$ref`` references.
 
@@ -371,22 +438,20 @@ def _flatten_json_schema(schema: dict) -> dict:
         `dict`:
             A flattened JSON schema with all references resolved inline.
     """
-    has_defs = isinstance(schema.get("$defs"), dict) or isinstance(
-        schema.get("definitions"),
-        dict,
-    )
-    if not has_defs:
+    if not isinstance(schema, dict):
+        return schema
+    if not _has_definition_block(schema):
         return schema
 
+    # Pointers resolve against the schema as given: a nested `$defs` block
+    # lives below a property, and the walk drops that block while it
+    # descends, so it is gone by the time the reference is reached.
+    source: Final[dict[str, Any]] = copy.deepcopy(schema)
     schema = copy.deepcopy(schema)
-    defs: dict[str, Any] = {}
     if isinstance(schema.get("$defs"), dict):
-        defs.update(schema.pop("$defs"))
+        schema.pop("$defs")
     if isinstance(schema.get("definitions"), dict):
-        defs.update(schema.pop("definitions"))
-
-    if not defs:
-        return schema
+        schema.pop("definitions")
 
     def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
         if isinstance(obj, list):
@@ -397,28 +462,27 @@ def _flatten_json_schema(schema: dict) -> dict:
         resolved: dict[str, Any] = {}
         if "$ref" in obj:
             ref_path = obj["$ref"]
-            if not isinstance(ref_path, str) or not ref_path.startswith(
-                ("#/$defs/", "#/definitions/"),
-            ):
+            if not isinstance(ref_path, str) or not ref_path.startswith("#"):
                 return obj
 
-            def_name = ref_path.split("/")[-1]
+            ref_name = ref_path.rsplit("/", 1)[-1]
             # JSON Pointer tokens decode ~1 before ~0 (RFC 6901).
-            def_name = def_name.replace("~1", "/").replace("~0", "~")
-            if def_name in visited:
+            ref_name = ref_name.replace("~1", "/").replace("~0", "~")
+            if ref_path in visited:
                 logger.warning(
                     "Circular reference detected for '%s' in tool schema",
-                    def_name,
+                    ref_name,
                 )
                 return {
                     "type": "object",
-                    "description": f"(circular: {def_name})",
+                    "description": f"(circular: {ref_name})",
                 }
-            if def_name not in defs:
+            target = _lookup_pointer(source, ref_path)
+            if target is _MISSING:
                 return obj
 
-            visited = visited | {def_name}
-            resolved = _resolve_ref(defs[def_name], visited)
+            visited = visited | {ref_path}
+            resolved = _resolve_ref(target, visited)
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):
@@ -429,8 +493,8 @@ def _flatten_json_schema(schema: dict) -> dict:
                 mapping = value.get("mapping")
                 if isinstance(mapping, dict) and any(
                     isinstance(ref, str)
-                    and ref.startswith(("#/$defs/", "#/definitions/"))
-                    and ref.rsplit("/", 1)[-1] in defs
+                    and _points_into_definition_block(ref)
+                    and _lookup_pointer(source, ref) is not _MISSING
                     for ref in mapping.values()
                 ):
                     continue

@@ -2215,3 +2215,120 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         identity)."""
         schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
         self.assertIs(_flatten_json_schema(schema), schema)
+
+
+class TestGeminiSchemaUtilsNestedDefs(unittest.TestCase):
+    """Local pointers that reach into a nested ``$defs`` block."""
+
+    def test_flatten_resolves_pointer_into_a_nested_defs_block(self) -> None:
+        """A `$ref` below a property is inlined instead of left dangling.
+
+        The walk drops every `$defs` block it meets, so a pointer such as
+        `#/properties/conf/$defs/Entry` used to survive with its target gone.
+        """
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Root": {"type": "string"}},
+                    "properties": {
+                        "conf": {
+                            "$defs": {
+                                "Entry": {
+                                    "type": "object",
+                                    "properties": {"k": {"type": "string"}},
+                                },
+                            },
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {
+                        "type": "object",
+                        "properties": {"k": {"type": "string"}},
+                    },
+                },
+            },
+        )
+
+    def test_flatten_nested_defs_without_a_root_block(self) -> None:
+        """A schema whose only definitions are nested is flattened too."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "properties": {
+                        "conf": {
+                            "$defs": {"Entry": {"type": "integer"}},
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {"type": "integer"},
+                },
+            },
+        )
+
+    def test_flatten_resolves_pointer_escapes_and_array_indexes(self) -> None:
+        """`~1` / `~0` escapes and numeric tokens resolve like any pointer."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"a/b": {"type": "string"}},
+                    "anyOf": [{"type": "null"}, {"$ref": "#/$defs/a~1b"}],
+                    "properties": {"x": {"$ref": "#/$defs/a~1b"}},
+                },
+            ),
+            {
+                "anyOf": [{"type": "null"}, {"type": "string"}],
+                "properties": {"x": {"type": "string"}},
+            },
+        )
+
+    def test_flatten_leaves_an_unresolvable_pointer_alone(self) -> None:
+        """A pointer that does not resolve keeps the node as written."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Real": {"type": "string"}},
+                    "properties": {"x": {"$ref": "#/$defs/Missing"}},
+                },
+            ),
+            {"properties": {"x": {"$ref": "#/$defs/Missing"}}},
+        )
+
+    def test_flatten_removes_a_discriminator_nested_in_a_property(
+        self,
+    ) -> None:
+        """A mapping into a nested definition block goes with that block."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "properties": {
+                        "conf": {
+                            "$defs": {"Entry": {"type": "object"}},
+                            "type": "object",
+                        },
+                        "e": {"$ref": "#/properties/conf/$defs/Entry"},
+                    },
+                    "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {"a": "#/properties/conf/$defs/Entry"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "conf": {"type": "object"},
+                    "e": {"type": "object"},
+                },
+            },
+        )
