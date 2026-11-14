@@ -28,6 +28,14 @@ from ._utils import (
     _table_to_markdown,
 )
 
+_MC_NS = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+# The shape elements python-pptx has a shape class for. It also lists
+# ``p:contentPart`` (ink) as a shape, but has no class for it.
+_SHAPE_TAGS = frozenset(
+    "{http://schemas.openxmlformats.org/presentationml/2006/main}" + tag
+    for tag in ("sp", "grpSp", "graphicFrame", "cxnSp", "pic")
+)
+
 
 def _iter_shapes(shapes: Any) -> Iterator[Any]:
     """Yield every shape on a slide, descending into groups.
@@ -36,6 +44,11 @@ def _iter_shapes(shapes: Any) -> Iterator[Any]:
     children do. Iterating ``slide.shapes`` alone therefore never reaches
     what is inside one, and the text is dropped without an error.
 
+    python-pptx also skips every shape wrapped in ``mc:AlternateContent``,
+    which is how PowerPoint saves content older readers cannot show, such
+    as a text box holding an equation. Such content is read from its first
+    branch with readable shapes, so it is read once, not once per branch.
+
     Args:
         shapes (`Any`):
             A python-pptx shape collection.
@@ -43,12 +56,82 @@ def _iter_shapes(shapes: Any) -> Iterator[Any]:
     Yields:
         `Any`: Each leaf shape, in depth-first shape-tree order.
     """
-    for shape in shapes:
-        # A group is the only shape with its own ``shapes`` collection.
-        if hasattr(shape, "shapes"):
-            yield from _iter_shapes(shape.shapes)
-        else:
-            yield shape
+    yield from _iter_children(shapes, shapes.element)
+
+
+def _iter_children(shapes: Any, parent: Any) -> Iterator[Any]:
+    """Yield the leaf shapes among the children of an XML element.
+
+    Args:
+        shapes (`Any`):
+            The python-pptx shape collection the element belongs to.
+        parent (`Any`):
+            A shape tree, a group, or a branch of ``mc:AlternateContent``.
+
+    Yields:
+        `Any`: Each leaf shape, in document order. Children that are not
+        shapes python-pptx can represent, such as ink, are skipped.
+    """
+    for element in parent.iterchildren():
+        if element.tag == _MC_NS + "AlternateContent":
+            yield from _iter_alternate_content(shapes, element)
+        elif element.tag in _SHAPE_TAGS:
+            # pylint: disable-next=protected-access
+            shape = shapes._shape_factory(element)
+            # A group is the only shape with its own ``shapes`` collection.
+            if hasattr(shape, "shapes"):
+                yield from _iter_shapes(shape.shapes)
+            else:
+                yield shape
+
+
+def _iter_alternate_content(shapes: Any, alternate: Any) -> Iterator[Any]:
+    """Yield the leaf shapes of the first readable branch of ``alternate``.
+
+    The ``mc:Choice`` branches come first and hold what PowerPoint shows.
+    ``mc:Fallback`` is a copy for older readers, often a picture, and is
+    used only when no choice has readable shapes.
+
+    Args:
+        shapes (`Any`):
+            The python-pptx shape collection that holds ``alternate``.
+        alternate (`Any`):
+            An ``mc:AlternateContent`` element.
+
+    Yields:
+        `Any`: The leaf shapes of the chosen branch, in document order.
+    """
+    branches = alternate.iterchildren(
+        _MC_NS + "Choice",
+        _MC_NS + "Fallback",
+    )
+    for branch in branches:
+        leaves = list(_iter_children(shapes, branch))
+        if any(_has_readable_content(leaf) for leaf in leaves):
+            yield from leaves
+            return
+
+
+def _has_readable_content(shape: Any) -> bool:
+    """Return whether the parser can read text, a table or a picture.
+
+    Args:
+        shape (`Any`):
+            A python-pptx leaf shape.
+
+    Returns:
+        `bool`:
+            ``True`` if ``shape`` holds non-blank text or a table, or is
+            a picture.
+    """
+    from pptx.shapes.picture import Picture
+
+    if getattr(shape, "has_table", False) or isinstance(shape, Picture):
+        return True
+    return bool(
+        getattr(shape, "has_text_frame", False)
+        and shape.text_frame.text.strip(),
+    )
 
 
 def _normalise_breaks(text: str) -> str:
