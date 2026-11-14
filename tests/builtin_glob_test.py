@@ -182,6 +182,42 @@ class GlobToolTest(IsolatedAsyncioTestCase):
                     ],
                 )
 
+    async def test_parent_directory_segments(self) -> None:
+        """``..`` segments resolve to the parent directory instead of
+        silently matching nothing."""
+        for pattern, expected in (
+            ("subdir/../*.py", ["test1.py", "test2.py"]),
+            ("./subdir/../subdir/*.py", ["subdir/test3.py"]),
+            (r".\subdir\..\*.py", ["test1.py", "test2.py"]),
+        ):
+            with self.subTest(pattern=pattern):
+                chunk = await self.glob_tool(
+                    pattern=pattern,
+                    path=self.temp_dir,
+                )
+                self.assertListEqual(
+                    sorted(chunk.content[0].text.splitlines()),
+                    [
+                        os.path.join(self.temp_dir, *name.split("/"))
+                        for name in expected
+                    ],
+                )
+
+    async def test_parent_directory_segment_from_nested_path(self) -> None:
+        """A relative ``path`` with ``..`` keeps working, and a ``..``
+        pattern segment can climb out of it."""
+        chunk = await self.glob_tool(
+            pattern="../*.py",
+            path=os.path.join(self.temp_dir, "subdir"),
+        )
+        self.assertListEqual(
+            sorted(chunk.content[0].text.splitlines()),
+            [
+                os.path.join(self.temp_dir, "test1.py"),
+                os.path.join(self.temp_dir, "test2.py"),
+            ],
+        )
+
     async def test_dot_prefixed_names_are_preserved(self) -> None:
         """Normalizing '.' must not strip dots from hidden names."""
         directory = os.path.join(self.temp_dir, ".config")
