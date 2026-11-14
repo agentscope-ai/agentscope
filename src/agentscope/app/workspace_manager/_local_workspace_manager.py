@@ -18,7 +18,10 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
     Workspaces are keyed by ``workspace_id`` in the cache. On cache miss
     the manager reconstructs the workspace from ``basedir/agent_id`` — the
     workdir is deterministic for local workspaces so no storage lookup is
-    needed.
+    needed. The derived workdir is always kept strictly inside the base
+    directory (the same containment check
+    :class:`DockerWorkspaceManager` applies to ``workspace_id``), so a
+    hostile ``agent_id`` cannot point it at an arbitrary host directory.
     """
 
     def __init__(
@@ -84,6 +87,10 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         runs ``initialize()`` while holding the lock so two concurrent
         cache misses for the same ``workspace_id`` cannot create two
         workspaces.
+
+        Raises:
+            `ValueError`:
+                If ``agent_id`` resolves outside the base directory.
         """
         if not workspace_id:
             workspace_id = await self.assign_workspace_id(
@@ -126,7 +133,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 return ws
 
             # Workdir is deterministic for local workspaces — no storage needed
-            workdir = os.path.join(self._basedir, agent_id)
+            workdir = self._workdir_for(agent_id)
             ws = LocalWorkspace(
                 workspace_id=workspace_id,
                 workdir=workdir,
@@ -157,7 +164,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         """
         del user_id, session_id  # accepted for interface parity
 
-        workdir = os.path.join(self._basedir, agent_id)
+        workdir = self._workdir_for(agent_id)
         os.makedirs(workdir, exist_ok=True)
         ws = LocalWorkspace(
             workdir=workdir,
@@ -194,6 +201,59 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         await asyncio.gather(
             *(self._safe_close(ws) for ws, _ in entries),
             return_exceptions=True,
+        )
+
+    def _workdir_for(self, agent_id: str) -> str:
+        """Resolve the workdir for *agent_id* under the base directory.
+
+        Raises:
+            `ValueError`:
+                If ``agent_id`` resolves outside the base directory —
+                the same containment check
+                :class:`DockerWorkspaceManager` applies to
+                ``workspace_id`` (a value that escapes ``basedir`` would
+                hand the agent the host filesystem).
+        """
+        root = os.path.realpath(self._basedir)
+        workdir = os.path.realpath(os.path.join(root, agent_id))
+        if not self._is_strictly_inside(root, workdir):
+            raise ValueError(
+                f"agent_id {agent_id!r} escapes the workspace "
+                f"base directory",
+            )
+        return workdir
+
+    @staticmethod
+    def _is_strictly_inside(root: str, path: str) -> bool:
+        """Whether ``path`` is an entry strictly below ``root``.
+
+        ``path.startswith(root + os.sep)`` cannot decide this: when
+        ``root`` is a filesystem root the separator doubles (``"/"``
+        becomes ``"//"`` and ``"D:\\"`` becomes ``"D:\\\\"``), so no path
+        ever matches and every workspace id is rejected. The relative
+        path carries the same relation and stays valid for every root.
+
+        Args:
+            root (`str`):
+                The absolute, resolved directory expected to contain
+                ``path``.
+            path (`str`):
+                The absolute, resolved candidate entry.
+
+        Returns:
+            `bool`:
+                `True` if ``path`` lies below ``root`` rather than at or
+                above it.
+        """
+        try:
+            relative = os.path.relpath(path, root)
+        except ValueError:
+            # Different drives on Windows: nothing is below the root.
+            return False
+        return (
+            relative != os.curdir
+            and relative != os.pardir
+            and not relative.startswith(os.pardir + os.sep)
         )
 
     @staticmethod
