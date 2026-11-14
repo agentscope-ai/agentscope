@@ -806,7 +806,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
           ``_LOCK_RETRY_DELAY_SECS`` until acquired.
         - A heartbeat task renews the TTL every ``ttl_secs / 2``
           seconds while the body runs, so a long-running holder
-          does not lose the lease.
+          does not lose the lease. A transient renewal error is
+          logged and the heartbeat keeps running.
         - Renewal and release compare the ownership token atomically.
         - Acquisition cancellation resolves an outstanding SET and releases
           its token within the configured cleanup deadline. If Redis remains
@@ -837,17 +838,28 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 break
             await asyncio.sleep(self._LOCK_RETRY_DELAY_SECS)
 
-        # Heartbeat: renew TTL every ttl/2 seconds.
+        # Heartbeat: renew TTL every ttl/2 seconds. One Redis error
+        # must not end the task; the body would keep running after
+        # the lease expired (#3751).
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(max(1.0, ttl_secs / 2))
-                await self._client.eval(
-                    _LOCK_RENEW_LUA,
-                    1,
-                    key,
-                    token,
-                    ttl_secs,
-                )
+                try:
+                    await self._client.eval(
+                        _LOCK_RENEW_LUA,
+                        1,
+                        key,
+                        token,
+                        ttl_secs,
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.warning(
+                        "Lock heartbeat renewal failed for %s: %s; "
+                        "retrying.",
+                        key,
+                        exc,
+                    )
+                    continue
 
         hb_task = asyncio.create_task(
             _heartbeat(),
