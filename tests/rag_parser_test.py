@@ -10,6 +10,7 @@ import io
 import json
 import os
 import zipfile
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -122,6 +123,81 @@ def _make_pptx_with_image(image_bytes: bytes) -> bytes:
     slide.shapes.add_picture(io.BytesIO(image_bytes), 0, 0)
     buffer = io.BytesIO()
     presentation.save(buffer)
+    return buffer.getvalue()
+
+
+def _make_pptx_with_alternate_content(kind: str = "text") -> bytes:
+    """Build a PPTX with content wrapped in ``mc:AlternateContent`` between
+    two plain text boxes, the way PowerPoint saves content older readers
+    cannot show.
+
+    Args:
+        kind (`str`, defaults to ``"text"``):
+            What is wrapped. ``"text"``: a text box, with a differently
+            worded copy as the fallback (the shape of a text box holding an
+            equation). ``"picture"``: an empty text box, with a picture as
+            the fallback. ``"ink"``: an ink ``p:contentPart``, with a
+            picture as the fallback. ``"group"``: the ``"text"`` case inside
+            a group.
+
+    Returns:
+        `bytes`: The PPTX file.
+    """
+    from lxml import etree
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+    pml = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    a14 = "http://schemas.microsoft.com/office/drawing/2010/main"
+    p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    def add_text_box(text: str) -> Any:
+        box = slide.shapes.add_textbox(
+            Inches(0.5),
+            Inches(0.5),
+            Inches(4),
+            Inches(0.5),
+        )
+        box.text_frame.text = text
+        return box.element
+
+    add_text_box("Before")
+    if kind == "ink":
+        choice = etree.SubElement(
+            slide.shapes.element,
+            f"{{{pml}}}contentPart",
+        )
+        choice.set(f"{{{rel}}}id", "rId99")
+        requires = ("p14", p14)
+    else:
+        choice = add_text_box("" if kind == "picture" else "Growth rate")
+        requires = ("a14", a14)
+    if kind in ("picture", "ink"):
+        picture = slide.shapes.add_picture(io.BytesIO(_PNG_PIXEL), 0, 0)
+        fallback = picture.element
+    else:
+        fallback = add_text_box("Fallback copy")
+    if kind == "group":
+        members = [s for s in slide.shapes if s.element in (choice, fallback)]
+        slide.shapes.add_group_shape(members)
+    add_text_box("After")
+
+    alternate = etree.Element(f"{{{mc}}}AlternateContent", nsmap={"mc": mc})
+    choice.addprevious(alternate)
+    etree.SubElement(
+        alternate,
+        f"{{{mc}}}Choice",
+        nsmap={requires[0]: requires[1]},
+        Requires=requires[0],
+    ).append(choice)
+    etree.SubElement(alternate, f"{{{mc}}}Fallback").append(fallback)
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
     return buffer.getvalue()
 
 
@@ -1737,6 +1813,99 @@ class PPTParserTest(IsolatedAsyncioTestCase):
                     "source": "demo.pptx",
                     "metadata": {"slide": 1},
                 },
+            ],
+        )
+
+
+class PPTParserAlternateContentTest(IsolatedAsyncioTestCase):
+    """Content wrapped in ``mc:AlternateContent``, which python-pptx skips."""
+
+    @staticmethod
+    def _text_section(text: str) -> dict:
+        """Return the dump of a text section on slide 1 of ``demo.pptx``."""
+        return {
+            "content": {
+                "type": "text",
+                "text": text,
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
+            "source": "demo.pptx",
+            "metadata": {"slide": 1},
+        }
+
+    @staticmethod
+    def _picture_section() -> dict:
+        """Return the dump of the one-pixel PNG as a section on slide 1."""
+        return {
+            "content": {
+                "type": "data",
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "source": {
+                    "type": "base64",
+                    "data": _PNG_PIXEL_B64,
+                    "media_type": "image/png",
+                },
+                "name": "demo.pptx",
+            },
+            "source": "demo.pptx",
+            "metadata": {"slide": 1, "media_type": "image/png"},
+        }
+
+    async def _parse(self, kind: str, **kwargs: Any) -> list[dict]:
+        """Parse a deck from ``_make_pptx_with_alternate_content``."""
+        sections = await PPTParser(**kwargs).parse(
+            _make_pptx_with_alternate_content(kind),
+            "demo.pptx",
+        )
+        return [section.model_dump() for section in sections]
+
+    async def test_wrapped_shape_is_read_once(self) -> None:
+        """A wrapped shape is read from its choice, in place, and its
+        fallback copy is not read as well."""
+        self.assertEqual(
+            await self._parse("text", include_image=False),
+            [
+                self._text_section(
+                    "<slide index=1>\nBefore\nGrowth rate\nAfter\n</slide>",
+                ),
+            ],
+        )
+
+    async def test_wrapped_shape_inside_a_group_is_read_once(self) -> None:
+        """Content wrapped inside a group is read the same way."""
+        self.assertEqual(
+            await self._parse("group", include_image=False),
+            [
+                self._text_section(
+                    "<slide index=1>\nBefore\nGrowth rate\nAfter\n</slide>",
+                ),
+            ],
+        )
+
+    async def test_fallback_is_read_when_no_choice_is_readable(self) -> None:
+        """When no choice holds anything readable, the fallback is read."""
+        self.assertEqual(
+            await self._parse("picture", slide_prefix=None, slide_suffix=None),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
+            ],
+        )
+
+    async def test_ink_falls_back_to_its_picture(self) -> None:
+        """python-pptx has no shape class for ink, so the parser reads the
+        ink's fallback picture instead of failing on the slide."""
+        self.assertEqual(
+            await self._parse("ink", slide_prefix=None, slide_suffix=None),
+            [
+                self._text_section("Before"),
+                self._picture_section(),
+                self._text_section("After"),
             ],
         )
 
