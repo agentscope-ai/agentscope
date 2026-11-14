@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from service_message_bus_test import _make_bus
 from service_wakeup_dispatcher_test import _FakeChatService, _FakeStorage
 
+from agentscope.app import _bus_ops
 from agentscope.app._bus_ops import (
     _count_user_chat_inputs,
     delete_chat_input,
@@ -22,6 +23,7 @@ from agentscope.app._bus_ops import (
     reorder_chat_inputs,
     update_chat_input,
 )
+from agentscope.app._client_external_tool import ClientExternalToolDefinition
 from agentscope.app._manager import (
     CancelDispatcher,
     ChatRunRegistry,
@@ -41,15 +43,29 @@ from agentscope.app.deps import (
     get_storage,
 )
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
+from agentscope.event import UserConfirmResultEvent
 from agentscope.message import (
     AssistantMsg,
     Base64Source,
     DataBlock,
+    Msg,
     ToolCallBlock,
     ToolResultBlock,
     UserMsg,
 )
 from agentscope.state import AgentState
+
+
+def _deep_tool_definition(depth: int = 120) -> dict:
+    """Build a small schema that exceeds recursive validator stack limits."""
+    schema: dict = {"type": "string"}
+    for _ in range(depth):
+        schema = {"type": "object", "properties": {"child": schema}}
+    return {
+        "name": "client__nested",
+        "description": "Nested input.",
+        "input_schema": schema,
+    }
 
 
 class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
@@ -65,8 +81,25 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
             with self.subTest(backend=type(backend).__name__):
                 async with backend as bus:
                     original = UserMsg("user", "claimed input")
+                    definition = ClientExternalToolDefinition(
+                        name="client__choose_option",
+                        description="Ask the user to choose.",
+                        input_schema={"type": "object", "properties": {}},
+                    )
                     items = [
-                        await enqueue_chat_input(bus, "u", "s", "a", msg)
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            msg,
+                            client_external_tools=(
+                                [definition] if msg is original else []
+                            ),
+                            client_builtin_tools=(
+                                ["AskUser"] if msg is original else []
+                            ),
+                        )
                         for msg in (
                             original,
                             UserMsg("user", "second"),
@@ -173,13 +206,22 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                             await restarted.drain_chat_inputs("u", "s", "a"),
                         )
                     self.assertEqual(
+                        chat.calls,
                         [
-                            call["input_msg"].model_dump(mode="json")
-                            for call in chat.calls
-                        ],
-                        [
-                            original.model_dump(mode="json"),
-                            replacement.model_dump(mode="json"),
+                            {
+                                "user_id": "u",
+                                "session_id": "s",
+                                "agent_id": "a",
+                                "input_msg": original,
+                                "client_external_tools": [definition],
+                                "client_builtin_tools": ["AskUser"],
+                            },
+                            {
+                                "user_id": "u",
+                                "session_id": "s",
+                                "agent_id": "a",
+                                "input_msg": replacement,
+                            },
                         ],
                     )
                     self.assertEqual(await list_chat_inputs(bus, "s"), [])
@@ -189,6 +231,103 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
                         ),
                         {},
                     )
+
+    async def test_invalid_capabilities_preserve_queued_input(self) -> None:
+        """Invalid optional metadata cannot discard messages or valid tools."""
+        definition = ClientExternalToolDefinition(
+            name="client__choose_option",
+            description="Ask the user to choose.",
+            input_schema={"type": "object", "properties": {}},
+        )
+        cases = (
+            ("client_external_tools", ["invalid"]),
+            ("client_builtin_tools", ["invalid"]),
+            ("client_external_tools", [_deep_tool_definition()]),
+        )
+        for index, (invalid_key, invalid_value) in enumerate(cases):
+            with self.subTest(case=index):
+                async with InMemoryMessageBus() as bus:
+                    message = UserMsg("user", "Keep this message.")
+                    await enqueue_chat_input(
+                        bus,
+                        "u",
+                        "s",
+                        "a",
+                        message,
+                        client_external_tools=[definition],
+                        client_builtin_tools=["AskUser"],
+                    )
+                    entries = await bus.queue_read(
+                        MessageBusKeys.chat_inputs("s"),
+                    )
+                    payload = entries[0][1]
+                    payload[invalid_key] = invalid_value
+                    await bus.queue_replace(
+                        MessageBusKeys.chat_inputs("s"),
+                        [payload],
+                    )
+                    chat = _FakeChatService()
+                    queue = ChatInputQueue(bus, _FakeStorage(), chat)
+                    self.addAsyncCleanup(queue.close)
+                    self.assertTrue(
+                        await queue.drain_chat_inputs("u", "s", "a"),
+                    )
+                    expected = {
+                        "user_id": "u",
+                        "session_id": "s",
+                        "agent_id": "a",
+                        "input_msg": message,
+                        "client_external_tools": [definition],
+                        "client_builtin_tools": ["AskUser"],
+                    }
+                    del expected[invalid_key]
+                    self.assertEqual(chat.calls, [expected])
+                    self.assertEqual(await list_chat_inputs(bus, "s"), [])
+
+    async def test_resume_lock_retry_preserves_client_capabilities(
+        self,
+    ) -> None:
+        """Dispatch-lock contention retains the resuming client's tools."""
+        async with InMemoryMessageBus() as bus:
+            chat = _FakeChatService()
+            queue = ChatInputQueue(bus, _FakeStorage(), chat)
+            self.addAsyncCleanup(queue.close)
+            event = UserConfirmResultEvent(reply_id="r", confirm_results=[])
+            definition = ClientExternalToolDefinition(
+                name="client__choose_option",
+                description="Ask the user to choose.",
+                input_schema={"type": "object", "properties": {}},
+            )
+            lock = SimpleNamespace(
+                __aenter__=AsyncMock(side_effect=TimeoutError),
+            )
+            with patch.object(bus, "acquire_lock_bounded", return_value=lock):
+                await queue.run_resume_serialized(
+                    "u",
+                    "s",
+                    "a",
+                    event,
+                    client_external_tools=[definition],
+                    client_builtin_tools=["AskUser"],
+                )
+            self.assertEqual(chat.calls, [])
+            triggers = await bus.queue_read(MessageBusKeys.wakeup_queue())
+            self.assertEqual(
+                [payload for _, payload in triggers],
+                [
+                    {
+                        "user_id": "u",
+                        "session_id": "s",
+                        "agent_id": "a",
+                        "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                        "input": event.model_dump(mode="json"),
+                        "client_external_tools": [
+                            definition.model_dump(mode="json"),
+                        ],
+                        "client_builtin_tools": ["AskUser"],
+                    },
+                ],
+            )
 
     async def test_large_attachment_roundtrip_and_cleanup(self) -> None:
         """Base64 bytes survive edits and execution without global copies."""
@@ -530,6 +669,218 @@ class TestQueueStorageAndRecovery(IsolatedAsyncioTestCase):
 class TestQueueFailureScope(IsolatedAsyncioTestCase):
     """Match existing agent-state and queue-event contracts."""
 
+    async def test_mutations_wake_dispatcher_without_recovery(self) -> None:
+        """Editing or deleting wakes the FIFO without bypassing failures."""
+        original = ChatInputQueue.drain_chat_inputs
+        for operation, next_failed in (
+            ("edit", False),
+            ("delete", False),
+            ("delete", True),
+        ):
+            with self.subTest(operation=operation, next_failed=next_failed):
+                async with (
+                    InMemoryMessageBus() as bus,
+                    ChatRunRegistry() as registry,
+                ):
+                    messages = [
+                        UserMsg(name="u", content=text)
+                        for text in ("first", "second", "third")
+                    ]
+                    items = [
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            message,
+                        )
+                        for message in messages
+                    ]
+                    entries = await bus.queue_read(
+                        MessageBusKeys.chat_inputs("s"),
+                    )
+                    entries[0][1]["state"] = "failed"
+                    if next_failed:
+                        entries[1][1]["state"] = "failed"
+                    await bus.queue_replace(
+                        MessageBusKeys.chat_inputs("s"),
+                        [entry for _, entry in entries],
+                    )
+                    service = _FakeChatService()
+                    dispatcher = WakeupDispatcher(
+                        bus,
+                        _FakeStorage(),
+                        service,
+                        registry,
+                    )
+                    outcomes: asyncio.Queue[bool] = asyncio.Queue()
+
+                    async def record_drain(
+                        queue: ChatInputQueue,
+                        user_id: str,
+                        session_id: str,
+                        agent_id: str,
+                        *,
+                        results: asyncio.Queue[bool] = outcomes,
+                    ) -> bool:
+                        result = await original(
+                            queue,
+                            user_id,
+                            session_id,
+                            agent_id,
+                        )
+                        results.put_nowait(result)
+                        return result
+
+                    with (
+                        patch.object(
+                            ChatInputQueue,
+                            "schedule_recovery",
+                        ),
+                        patch.object(
+                            WakeupDispatcher,
+                            "_fallback_loop",
+                        ),
+                        patch.object(
+                            ChatInputQueue,
+                            "drain_chat_inputs",
+                            record_drain,
+                        ),
+                    ):
+                        async with dispatcher:
+                            self.assertFalse(
+                                await asyncio.wait_for(outcomes.get(), 1),
+                            )
+                            self.assertEqual(service.calls, [])
+                            task = registry.get("s")
+                            if task is not None:
+                                await task
+                            if operation == "edit":
+                                messages[0] = UserMsg(
+                                    name="u",
+                                    content="fixed",
+                                )
+                                snapshot = await update_chat_input(
+                                    bus,
+                                    "u",
+                                    "s",
+                                    "a",
+                                    items[0]["id"],
+                                    messages[0],
+                                )
+                                selected = list(zip(items, messages))
+                            else:
+                                snapshot = await delete_chat_input(
+                                    bus,
+                                    "u",
+                                    "s",
+                                    "a",
+                                    items[0]["id"],
+                                )
+                                selected = list(zip(items[1:], messages[1:]))
+                            if next_failed:
+                                selected = []
+                            expected = [
+                                {
+                                    "user_id": "u",
+                                    "session_id": "s",
+                                    "agent_id": "a",
+                                    "input_msg": message,
+                                }
+                                for _, message in selected
+                            ]
+                            for _ in range(max(1, len(expected))):
+                                self.assertEqual(
+                                    await asyncio.wait_for(outcomes.get(), 1),
+                                    bool(expected),
+                                )
+                            self.assertEqual(service.calls, expected)
+                            self.assertEqual(
+                                await list_chat_inputs(bus, "s"),
+                                snapshot if next_failed else [],
+                            )
+
+    async def test_mutation_survives_wakeup_failure(self) -> None:
+        """A failed wakeup never rolls back a committed queue mutation."""
+        for operation in ("edit", "delete"):
+            with self.subTest(operation=operation):
+                async with InMemoryMessageBus() as bus:
+                    items = [
+                        await enqueue_chat_input(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            UserMsg(name="u", content=text),
+                        )
+                        for text in ("first", "second")
+                    ]
+                    replacement = UserMsg(
+                        name="u",
+                        content="fixed",
+                    )
+                    with patch.object(
+                        _bus_ops,
+                        "enqueue_run_trigger",
+                        side_effect=RuntimeError("bus unavailable"),
+                    ) as wakeup:
+                        if operation == "edit":
+                            snapshot = await update_chat_input(
+                                bus,
+                                "u",
+                                "s",
+                                "a",
+                                items[0]["id"],
+                                replacement,
+                            )
+                            expected = [
+                                {
+                                    **items[0],
+                                    "input": replacement.model_dump(
+                                        mode="json",
+                                    ),
+                                },
+                                items[1],
+                            ]
+                        else:
+                            snapshot = await delete_chat_input(
+                                bus,
+                                "u",
+                                "s",
+                                "a",
+                                items[0]["id"],
+                            )
+                            expected = items[1:]
+                    wakeup.assert_awaited_once()
+                    self.assertEqual(snapshot, expected)
+                    self.assertEqual(
+                        await list_chat_inputs(bus, "s"),
+                        expected,
+                    )
+
+    async def test_deleting_last_item_does_not_wake_dispatcher(self) -> None:
+        """An empty queue needs no execution trigger."""
+        async with InMemoryMessageBus() as bus:
+            item = await enqueue_chat_input(
+                bus,
+                "u",
+                "s",
+                "a",
+                UserMsg(name="u", content="last"),
+            )
+            with patch.object(_bus_ops, "enqueue_run_trigger") as wakeup:
+                self.assertEqual(
+                    await delete_chat_input(
+                        bus,
+                        "u",
+                        "s",
+                        "a",
+                        item["id"],
+                    ),
+                    [],
+                )
+            wakeup.assert_not_awaited()
+
     async def test_shared_agent_waits_before_claiming_input(self) -> None:
         """Shared agents retain queued input until pending tools finish."""
         for state in ("asking", "submitted", None):
@@ -564,6 +915,7 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                             ],
                         ),
                     )
+                    session.state.reply_id = session.state.context[0].id
                     storage.get_session = AsyncMock(return_value=session)
                     policy = SimpleNamespace(
                         list_accessible=AsyncMock(
@@ -614,6 +966,8 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                         input_msg=message,
                         queue_item_id=item["id"],
                         input_persisted=True,
+                        client_external_tools=None,
+                        client_builtin_tools=None,
                     )
 
     async def test_parked_detection_uses_owning_agent_and_results(
@@ -648,6 +1002,7 @@ class TestQueueFailureScope(IsolatedAsyncioTestCase):
                     context=[AssistantMsg(name=name, content=blocks)],
                 ),
             )
+            session.state.reply_id = session.state.context[0].id
             self.assertEqual(
                 await queue._is_session_parked(session, "u", "a"),
                 expected,
@@ -953,6 +1308,72 @@ class TestTerminalChatClaims(IsolatedAsyncioTestCase):
 class TestChatInputPayloads(IsolatedAsyncioTestCase):
     """Preserve large input compatibility and read only referenced payloads."""
 
+    async def test_deep_client_schema_returns_422_without_queuing(
+        self,
+    ) -> None:
+        """Small but deeply nested schemas fail validation before dispatch."""
+        async with InMemoryMessageBus() as bus:
+            storage = _FakeStorage()
+            chat = _FakeChatService()
+            registry = ChatRunRegistry()
+            app = FastAPI()
+            app.include_router(chat_router)
+            app.dependency_overrides = {
+                get_current_user_id: lambda: "u",
+                get_storage: lambda: storage,
+                get_message_bus: lambda: bus,
+                get_chat_service: lambda: chat,
+                get_chat_run_registry: lambda: registry,
+            }
+            async with AsyncClient(
+                transport=ASGITransport(
+                    app=app,
+                    raise_app_exceptions=False,
+                ),
+                base_url="http://test",
+            ) as client:
+                for depth in (120, 200):
+                    with self.subTest(depth=depth):
+                        definition = _deep_tool_definition(depth)
+                        self.assertLess(
+                            len(json.dumps(definition).encode("utf-8")),
+                            64 * 1024,
+                        )
+                        response = await client.post(
+                            "/chat/",
+                            json={
+                                "agent_id": "a",
+                                "session_id": "s",
+                                "input": UserMsg("u", "Hello").model_dump(
+                                    mode="json",
+                                ),
+                                "client_external_tools": [definition],
+                            },
+                        )
+                        self.assertEqual(response.status_code, 422)
+                        self.assertEqual(
+                            response.json(),
+                            {
+                                "detail": [
+                                    {
+                                        "type": "value_error",
+                                        "loc": [
+                                            "body",
+                                            "client_external_tools",
+                                            0,
+                                            "input_schema",
+                                        ],
+                                        "msg": "Value error, Tool "
+                                        "input_schema is nested too deeply.",
+                                        "input": definition["input_schema"],
+                                        "ctx": {"error": {}},
+                                    },
+                                ],
+                            },
+                        )
+            self.assertEqual(chat.calls, [])
+            self.assertEqual(await list_chat_inputs(bus, "s"), [])
+
     async def test_large_attachment_can_be_enqueued_and_edited(self) -> None:
         """Inputs exceeding the removed attachment budget remain accepted."""
         message = UserMsg(
@@ -1001,10 +1422,17 @@ class TestChatInputPayloads(IsolatedAsyncioTestCase):
                 get_chat_service: lambda: chat,
                 get_chat_run_registry: lambda: registry,
             }
+            definition = ClientExternalToolDefinition(
+                name="client__choose_option",
+                description="Ask the user to choose.",
+                input_schema={"type": "object", "properties": {}},
+            )
             body = {
                 "agent_id": "a",
                 "session_id": "s",
                 "input": UserMsg("u", "x" * 1_000_001).model_dump(mode="json"),
+                "client_external_tools": [definition.model_dump(mode="json")],
+                "client_builtin_tools": ["AskUser"],
             }
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1037,6 +1465,22 @@ class TestChatInputPayloads(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(await list_chat_inputs(bus, "s"), items)
             self.assertEqual(chat.calls, [])
+            queue = ChatInputQueue(bus, storage, chat)
+            self.addAsyncCleanup(queue.close)
+            self.assertTrue(await queue.drain_chat_inputs("u", "s", "a"))
+            self.assertEqual(
+                chat.calls,
+                [
+                    {
+                        "user_id": "u",
+                        "session_id": "s",
+                        "agent_id": "a",
+                        "input_msg": Msg.model_validate(body["input"]),
+                        "client_external_tools": [definition],
+                        "client_builtin_tools": ["AskUser"],
+                    },
+                ],
+            )
 
     async def test_list_uses_one_hmget_for_only_pending_references(
         self,

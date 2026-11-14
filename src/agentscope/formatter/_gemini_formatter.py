@@ -20,6 +20,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     URLSource,
     Base64Source,
 )
@@ -308,13 +309,20 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         multimodal_data,
                     ) = self.convert_tool_result_to_string(block.output)
 
+                    # Gemini reads a failed call from the "error" key of the
+                    # response, and a successful one from "output".
+                    response_key = (
+                        "error"
+                        if block.state == ToolResultState.ERROR
+                        else "output"
+                    )
                     tool_result_parts.append(
                         {
                             "function_response": {
                                 "id": block.id,
                                 "name": block.name,
                                 "response": {
-                                    "output": textual_output,
+                                    response_key: textual_output,
                                 },
                             },
                         },

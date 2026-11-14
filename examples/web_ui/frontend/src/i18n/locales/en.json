@@ -140,6 +140,78 @@
 		"toConfirm": "to confirm",
 		"yesWithRule": "Yes, and allow {{toolName}} to execute {{ruleContent}} for this session"
 	},
+	"askUser": {
+		"multiSelect": "Select one or more options. Space toggles a choice; Enter continues.",
+		"back": "Back",
+		"next": "Next",
+		"other": "Other",
+		"otherPlaceholder": "Enter a different answer",
+		"cancel": "Cancel",
+		"invalidDescription": "Cancel this request and ask the agent to try again.",
+		"historyAsked": "Asked",
+		"historyAnswered": "Selected",
+		"submit": "Continue"
+	},
+	"clientTools": {
+		"trigger": "Tools",
+		"triggerLabel": "{{enabled}} of {{total}} client tools enabled",
+		"title": "Client tools",
+		"description": "Choose the browser tools this Web UI provides to the agent.",
+		"builtInBadge": "Built-in",
+		"customBadge": "Custom",
+		"add": "Add tool",
+		"selectionNote": "Enabled tools are sent on the next turn in this conversation.",
+		"noSessionNote": "Open a conversation to choose enabled tools.",
+		"toggleLabel": "Toggle {{name}}",
+		"inputSchema": "Input schema",
+		"availabilityNote": "Custom tools are completed manually in this browser. No custom code is executed.",
+		"deleteTitle": "Delete custom tool \"{{name}}\"?",
+		"deleteDescription": "The tool will be removed from every conversation in this browser. A call already waiting for a result can still be completed.",
+		"cancel": "Cancel request",
+		"cancelling": "Cancelling",
+		"editor": {
+			"addTitle": "Add custom tool",
+			"editTitle": "Edit custom tool",
+			"description": "Describe a tool the agent can call. You will enter its result manually when it is requested.",
+			"displayName": "Display name",
+			"displayNamePlaceholder": "Enter a display name",
+			"toolName": "Tool name",
+			"toolNamePlaceholder": "Enter a tool name",
+			"toolNameHint": "Use letters, numbers, underscores, or hyphens. The client__ namespace is added automatically.",
+			"modelDescription": "Description for the agent",
+			"descriptionPlaceholder": "Explain when the agent should call this tool and what result it expects.",
+			"schemaHint": "The root must be an object with a properties map. Only local JSON Schema references are allowed.",
+			"permissionHint": "Custom tools are treated as potentially effectful and require confirmation before each call."
+		},
+		"validation": {
+			"required": "This field is required.",
+			"displayNameTooLong": "Display name must be 80 characters or fewer.",
+			"invalidName": "Enter a valid name up to 56 characters using letters, numbers, underscores, or hyphens.",
+			"duplicateName": "A client tool already uses this name.",
+			"descriptionTooLong": "Description must be 2,000 characters or fewer.",
+			"invalidJson": "Enter valid JSON.",
+			"invalidSchema": "Enter a valid JSON Schema using the Draft 2020-12 vocabulary.",
+			"schemaMustBeObject": "The schema must define an object at its root.",
+			"schemaPropertiesRequired": "The schema must include a properties object.",
+			"remoteReference": "Only local schema references beginning with # are allowed.",
+			"schemaTooLarge": "The schema must be 64 KiB or smaller.",
+			"toolLimit": "A browser can provide at most 16 client tools."
+		},
+		"manual": {
+			"eyebrow": "Manual tool result",
+			"description": "Review the arguments and return the result the agent should receive.",
+			"arguments": "Arguments",
+			"text": "Text",
+			"textPlaceholder": "Enter the tool result",
+			"jsonPlaceholder": "Enter a JSON value",
+			"invalidJson": "Enter a valid JSON value before continuing.",
+			"submit": "Return result"
+		},
+		"askUser": {
+			"name": "Request user input",
+			"description": "Ask you to choose from structured options or enter another answer."
+		}
+	},
 	"messageBubble": {
 		"thinking": "Thinking",
 		"thinkingFor": "Thinking for {{duration}}",
@@ -175,6 +247,18 @@
 		"inputPlaceholder": "Type a message...",
 		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
+		"askUser": {
+			"title": "Your input is needed",
+			"other": "Other",
+			"otherPlaceholder": "Enter your answer",
+			"submit": "Submit answers",
+			"invalid": "This question could not be displayed."
+		},
+		"externalExecution": {
+			"title": "{{name}} is waiting for an external executor",
+			"rejected": "The result was not accepted. Please check your answer and submit again.",
+			"description": "This tool must be completed by an integration provided by the host application."
+		},
 		"newSession": "New Session",
 		"greeting": "Where should we start?",
 		"maxItersExceeded": {
@@ -485,6 +569,9 @@
 		"noModels": "No realtime voice models are available.",
 		"disable": "Disable voice model",
 		"selectFirst": "Realtime voice is off. Select a model from Voice model (the waveform icon) at the top.",
+		"backendFollows": "Task backend follows Chat model · {{model}}",
+		"backendMissing": "Select a Chat model before starting GPT Live",
+		"pendingChatInteraction": "Complete the pending Chat confirmation or external execution before starting GPT Live.",
 		"start": "Start voice conversation",
 		"stop": "End voice conversation"
 	},
@@ -663,6 +750,31 @@
 		"blockedBy": "blocked by"
 	},
 	"panel": {
+		"background": {
+			"title": "Background tools",
+			"runningCount": "Running: {{count}}",
+			"refresh": "Refresh background tools",
+			"duration": "Background duration: {{duration}}",
+			"totalDuration": "Total duration: {{duration}}",
+			"backgroundDuration": "Of which in background: {{duration}}",
+			"copyId": "Copy task ID",
+			"copied": "Task ID copied",
+			"errorDetails": "Failure details",
+			"noSession": "Select a conversation to view background tools",
+			"emptyTitle": "No background tools",
+			"emptyDescription": "Tools that continue running in the background will appear here.",
+			"noRunning": "No tools are running in the background.",
+			"recent": "Recently finished ({{count}})",
+			"retention": "Recent results are kept temporarily. This is not a complete history.",
+			"loadError": "Could not load background tools. Try again.",
+			"stale": "Could not refresh. Showing the last known status; tasks may have changed.",
+			"status": {
+				"running": "Running",
+				"completed": "Completed",
+				"failed": "Failed",
+				"cancelled": "Cancelled"
+			}
+		},
 		"plan": {
 			"title": "Plan",
 			"completed": "Completed: {{count}}",

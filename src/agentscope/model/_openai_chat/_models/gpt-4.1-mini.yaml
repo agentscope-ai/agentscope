@@ -1,6 +1,8 @@
 name: gpt-4.1-mini
 label: GPT-4.1 Mini
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2025-04-14
 
 input_types:
   - text/plain

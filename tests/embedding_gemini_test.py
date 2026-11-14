@@ -2,11 +2,14 @@
 # pylint: disable=protected-access
 """Unit tests for GeminiEmbeddingModel."""
 from dataclasses import asdict
+import os
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Callable
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx2
+from google import genai
 from google.genai import types
 from utils import AnyValue
 
@@ -79,6 +82,90 @@ class GeminiListModelsTest(IsolatedAsyncioTestCase):
         self.assertIn("application/pdf", card.input_types)
         self.assertEqual(card.context_size, 8192)
         self.assertEqual(card.supported_dimensions, [3072, 1536, 768])
+
+
+class GeminiApiVersionTest(IsolatedAsyncioTestCase):
+    """Verify embedding routes using the real SDK and httpx2 transport."""
+
+    async def test_request_versions(self) -> None:
+        """Respect explicit versions and SDK-selected Vertex endpoints."""
+        real_client = genai.Client
+        for name in ("gemini-embedding-001", "gemini-embedding-2"):
+            for env, version, expected in (
+                ({}, None, "v1beta"),
+                ({}, "v1", "v1"),
+                ({"GOOGLE_GENAI_API_VERSION": "v1"}, None, "v1"),
+                ({"GOOGLE_GENAI_API_VERSION": "beta"}, None, "v1beta"),
+                ({"GOOGLE_GENAI_API_VERSION": "v1"}, "v1beta", "v1beta"),
+                ({"GOOGLE_GENAI_USE_VERTEXAI": "true"}, None, "v1beta1"),
+                ({"GOOGLE_GENAI_USE_ENTERPRISE": "true"}, None, "v1beta1"),
+            ):
+                with self.subTest(model=name, env=env, version=version):
+                    captured: list[str] = []
+
+                    def handle(
+                        request: httpx2.Request,
+                        record: Callable[[str], None] = captured.append,
+                    ) -> httpx2.Response:
+                        record(request.url.path.split("/")[1])
+                        if "aiplatform.googleapis.com" in request.url.host:
+                            return httpx2.Response(
+                                200,
+                                json={
+                                    "predictions": [
+                                        {"embeddings": {"values": [1.0, 2.0]}},
+                                    ],
+                                },
+                            )
+                        return httpx2.Response(
+                            200,
+                            json={
+                                "embeddings": [{"values": [1.0, 2.0]}],
+                            },
+                        )
+
+                    def create_client(
+                        handler: Any = handle,
+                        **kwargs: Any,
+                    ) -> Any:
+                        return real_client(
+                            **kwargs,
+                            http_options={
+                                "async_client_args": {
+                                    "transport": httpx2.MockTransport(handler),
+                                },
+                            },
+                        )
+
+                    options = types.HttpOptions(api_version=version)
+                    before = options.model_dump(exclude_none=True)
+                    with patch.dict(os.environ, env, clear=True), patch(
+                        "google.genai.Client",
+                        side_effect=create_client,
+                    ):
+                        model = GeminiEmbeddingModel(
+                            credential=GeminiCredential(api_key="test"),
+                            model=name,
+                            dimensions=2,
+                        )
+                        try:
+                            response = await model(
+                                ["hello"],
+                                http_options=options,
+                            )
+                        finally:
+                            try:
+                                await model.client.aio.aclose()
+                            finally:
+                                model.client.close()
+                    self.assertEqual(
+                        (captured, response.embeddings),
+                        ([expected], [[1.0, 2.0]]),
+                    )
+                    self.assertEqual(
+                        options.model_dump(exclude_none=True),
+                        before,
+                    )
 
 
 class GeminiTextCallTest(IsolatedAsyncioTestCase):

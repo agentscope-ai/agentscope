@@ -33,6 +33,7 @@ from agentscope.app.message_bus import (
 from agentscope.app.middleware._tool_offload_middleware import (
     _make_summary,
 )
+from agentscope.app._router._schema._background_task import to_info
 
 _MANAGER_MODULE = BackgroundTaskManager.__module__
 
@@ -66,6 +67,7 @@ class TestBackgroundTaskCompatibility(IsolatedAsyncioTestCase):
             "completed_at": None,
             "status": TaskStatus.RUNNING,
             "error_summary": None,
+            "execution_started_at": None,
         }
         self.assertTrue(is_dataclass(positional))
         self.assertEqual(
@@ -109,6 +111,7 @@ class TestBackgroundTaskCompatibility(IsolatedAsyncioTestCase):
             "completed_at": None,
             "status": "running",
             "error_summary": None,
+            "execution_started_at": None,
         }
         self.assertEqual(json.loads(record.model_dump_json()), expected)
         local.status = TaskStatus.COMPLETED
@@ -116,6 +119,44 @@ class TestBackgroundTaskCompatibility(IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(record.model_dump_json()), expected)
         record.summary = "Changed"
         self.assertEqual(local.summary, "Tool(x=1)")
+
+    async def test_api_preserves_execution_and_background_times(self) -> None:
+        """Total time includes the foreground interval for every outcome."""
+        for status in TaskStatus:
+            with self.subTest(status=status):
+                completed_at = None if status == TaskStatus.RUNNING else 130
+                record = BackgroundTaskRecord(
+                    id="id",
+                    session_id="s1",
+                    agent_id="a1",
+                    user_id="alice",
+                    tool_name="Bash",
+                    summary="Bash(command=sleep 30)",
+                    started_at=110,
+                    execution_started_at=100,
+                    completed_at=completed_at,
+                    status=status,
+                    error_summary=None,
+                )
+                self.assertEqual(
+                    to_info(record).model_dump(mode="json"),
+                    {
+                        "task_id": "id",
+                        "session_id": "s1",
+                        "agent_id": "a1",
+                        "tool_name": "Bash",
+                        "summary": "Bash(command=sleep 30)",
+                        "status": status.value,
+                        "started_at": "1970-01-01T00:01:50Z",
+                        "execution_started_at": "1970-01-01T00:01:40Z",
+                        "completed_at": (
+                            "1970-01-01T00:02:10Z"
+                            if completed_at is not None
+                            else None
+                        ),
+                        "error_summary": None,
+                    },
+                )
 
 
 class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
@@ -142,6 +183,7 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
         manager: BackgroundTaskManager,
         user_id: str = "alice",
         session_id: str = "s1",
+        execution_started_at: float | None = None,
     ) -> tuple[asyncio.Event, asyncio.Task, str]:
         """Register a tool that finishes only when explicitly released."""
         gate = asyncio.Event()
@@ -153,6 +195,7 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
             user_id,
             "Tool",
             summary="Tool(x=1)",
+            execution_started_at=execution_started_at,
         )
         return gate, task, task_id
 
@@ -193,6 +236,54 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
 
         self.assertEqual(self.owner._completion_tasks, set())
         self.assertEqual(self.reader._completion_tasks, set())
+
+    async def test_execution_start_survives_renewal_and_completion(
+        self,
+    ) -> None:
+        """Preserve the supplied start through shared lifecycle writes."""
+        gate, task, task_id = await self._register(
+            self.owner,
+            execution_started_at=123.0,
+        )
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        expected["execution_started_at"] = 123.0
+        await self._renew_once()
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.model_dump(), expected)
+        gate.set()
+        await self._settle(task)
+        record = await self.reader.get_task(task_id, user_id="alice")
+        expected.update(
+            status=TaskStatus.COMPLETED,
+            completed_at=record.completed_at,
+        )
+        self.assertEqual(record.model_dump(), expected)
+
+    async def test_old_snapshot_has_unknown_execution_start(self) -> None:
+        """Old snapshots remain readable without inventing a total duration."""
+        gate, task, task_id = await self._register(self.owner)
+        namespace = MessageBusKeys.bg_task_records("alice")
+        payload = json.loads(
+            await self.bus.registry_get(namespace, task_id),
+        )
+        del payload["execution_started_at"]
+        await self.bus.registry_set(
+            namespace,
+            task_id,
+            json.dumps(payload),
+            ttl_secs=MessageBusKeys.BG_TASKS_TTL_SECS,
+        )
+        expected = BackgroundTaskRecord.model_validate(
+            self.owner.tasks[task_id],
+        ).model_dump()
+        expected["execution_started_at"] = None
+        record = await self.reader.get_task(task_id, user_id="alice")
+        self.assertEqual(record.model_dump(), expected)
+        self.assertIsNone(to_info(record).execution_started_at)
+        gate.set()
+        await self._settle(task)
 
     async def test_shared_lifecycle_and_isolation(self) -> None:
         """Running and completed records are identical on either worker."""
@@ -1036,6 +1127,48 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
             self.assertEqual(active, set())
             self.assertTrue(self.owner._renewal_task.done())
 
+    async def test_renewal_stops_after_io_swallows_cancellation(self) -> None:
+        """A cancelled worker must not start another queued record."""
+        for _ in range(2):
+            await self._register(self.owner)
+        task_ids = list(self.owner.tasks)
+        original_get = self.bus.registry_get
+        reading = asyncio.Event()
+        seen: list[str] = []
+
+        async def finish_cancelled_read(
+            namespace: str,
+            field: str,
+        ) -> str | None:
+            value = await original_get(namespace, field)
+            seen.append(field)
+            if field == task_ids[0]:
+                reading.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    # Model a response winning a Python 3.11 wait_for race.
+                    return value
+            return value
+
+        with (
+            patch(f"{_MANAGER_MODULE}._RENEWAL_CONCURRENCY", 1),
+            patch.object(
+                self.bus,
+                "registry_get",
+                side_effect=finish_cancelled_read,
+            ),
+        ):
+            scheduler = asyncio.create_task(self._renew_once())
+            try:
+                await asyncio.wait_for(reading.wait(), timeout=2)
+                scheduler.cancel()
+                await asyncio.wait_for(scheduler, timeout=2)
+                self.assertEqual(seen, task_ids[:1])
+            finally:
+                scheduler.cancel()
+                await asyncio.gather(scheduler, return_exceptions=True)
+
     async def test_registration_during_round_timeout_keeps_one_scheduler(
         self,
     ) -> None:
@@ -1247,7 +1380,10 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
 
     async def test_http_routes_read_another_workers_records(self) -> None:
         """The actual app exposes filtered lists, details and isolated 404s."""
-        gate, task, task_id = await self._register(self.owner)
+        gate, task, task_id = await self._register(
+            self.owner,
+            execution_started_at=100.0,
+        )
         record = await self.reader.get_task(task_id, user_id="alice")
         expected = {
             "task_id": task_id,
@@ -1262,6 +1398,7 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
             )
             .isoformat()
             .replace("+00:00", "Z"),
+            "execution_started_at": "1970-01-01T00:01:40Z",
             "completed_at": None,
             "error_summary": None,
         }

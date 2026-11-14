@@ -413,6 +413,31 @@ export interface SessionView {
 	team: TeamDetailResponse | null;
 }
 
+// ─── Background tools ─────────────────────────────────────────────────────────
+
+export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface BackgroundTaskInfo {
+	task_id: string;
+	session_id: string;
+	agent_id: string;
+	tool_name: string;
+	summary: string;
+	status: BackgroundTaskStatus;
+	/** UTC date-time when the tool was registered for background execution. */
+	started_at: string;
+	/** Actual execution start, absent or null in records created by older servers. */
+	execution_started_at?: string | null;
+	completed_at: string | null;
+	error_summary: string | null;
+}
+
+export interface ListBackgroundTasksResponse {
+	tasks: BackgroundTaskInfo[];
+	/** Includes retained terminal tasks; this is not the running count. */
+	total: number;
+}
+
 // ─── JSON Schema ──────────────────────────────────────────────────────────────
 
 /**
@@ -501,10 +526,19 @@ import type {
 } from '@agentscope-ai/agentscope/event';
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
+export interface ClientExternalToolDefinition {
+	name: string;
+	description: string;
+	read_only: boolean;
+	input_schema: Record<string, unknown>;
+}
+
 export interface ChatRequest {
 	agent_id: string;
 	session_id: string;
 	input: Msg | Msg[] | UserConfirmResultEvent | ExternalExecutionResultEvent | null;
+	client_external_tools?: ClientExternalToolDefinition[];
+	client_builtin_tools?: Array<'AskUser'>;
 }
 
 // ─── MCP ──────────────────────────────────────────────────────────────────────
@@ -833,6 +867,7 @@ export interface ModelCard {
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';
 	deprecated_at: string | null;
+	release_date: string | null;
 	input_types: string[];
 	output_types: string[];
 	context_size: number;
@@ -863,6 +898,8 @@ export interface RealtimeModelCard {
 	input_sample_rate: number;
 	output_sample_rate: number;
 	supports_tools: boolean;
+	interaction_mode: 'turn_based' | 'full_duplex';
+	delegation_backend: 'none' | 'session_chat';
 	max_context_tokens: number | null;
 	max_audio_turns: number | null;
 	max_audio_duration_s: number | null;

@@ -9,14 +9,17 @@ import base64
 import copy
 import json
 from functools import partial
+import os
 from types import SimpleNamespace
-from typing import Any, Annotated, Literal
+from typing import Any, Annotated, Callable, Literal
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 
+import httpx2
+from google.genai.types import HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
 
 from utils import AnyString
@@ -25,11 +28,11 @@ from agentscope.formatter import GeminiChatFormatter
 from agentscope.message import (
     AssistantMsg,
     Msg,
+    UserMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
-    UserMsg,
 )
 from agentscope.message._base import Usage
 from agentscope.model import ChatResponse, GeminiChatModel
@@ -137,6 +140,534 @@ class _MockAsyncStream:
 
 
 # ---------------------------------------------------------------------------
+# Gemini 4 configuration tests
+# ---------------------------------------------------------------------------
+
+
+class TestGemini4Argon(IsolatedAsyncioTestCase):
+    """Verify Gemini 4 requests and configuration without network access."""
+
+    model_name = "gemini-4-argon"
+    model_label = "Gemini 4 Argon"
+    thinking_levels = ("low", "medium", "high")
+    default_thinking_level = "medium"
+
+    def setUp(self) -> None:
+        with patch("google.genai.Client"):
+            self.model = GeminiChatModel(
+                credential=GeminiCredential(api_key="test"),
+                model=self.model_name,
+                stream=False,
+            )
+
+    async def test_request_parameters(self) -> None:
+        """Check defaults, levels, summaries, and per-call overrides."""
+        cases: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = [
+            ({}, {}, {}),
+            (
+                {"thinking_enable": False},
+                {},
+                {"thinking_config": {"include_thoughts": False}},
+            ),
+        ]
+        for level in self.thinking_levels:
+            cases.append(
+                (
+                    {"thinking_level": level, "thinking_enable": True},
+                    {},
+                    {
+                        "thinking_config": {
+                            "thinking_level": level.upper(),
+                            "include_thoughts": True,
+                        },
+                    },
+                ),
+            )
+        cases.append(
+            (
+                {"thinking_budget": 1024, "max_tokens": 100_000},
+                {
+                    "thinking_config": ThinkingConfig(thinking_level="LOW"),
+                    "max_output_tokens": 65_536,
+                    "temperature": 0.2,
+                    "top_p": 0.3,
+                    "top_k": 20,
+                },
+                {
+                    "thinking_config": {"thinking_level": "LOW"},
+                    "max_output_tokens": 65_536,
+                },
+            ),
+        )
+        cases.extend(
+            [
+                (
+                    {"thinking_budget": 1024, "max_tokens": 100_000},
+                    {"thinkingConfig": None, "maxOutputTokens": None},
+                    {"thinking_config": None, "max_output_tokens": None},
+                ),
+                (
+                    {"thinking_level": "high", "max_tokens": 100_000},
+                    {
+                        "thinkingConfig": {"thinkingLevel": "LOW"},
+                        "maxOutputTokens": 65_536,
+                        "topP": 0.3,
+                        "topK": 20,
+                    },
+                    {
+                        "thinking_config": {"thinking_level": "LOW"},
+                        "max_output_tokens": 65_536,
+                    },
+                ),
+            ],
+        )
+        for stream in (False, True):
+            for parameters, overrides, expected in cases:
+                with self.subTest(stream=stream, parameters=parameters):
+                    self.model.stream = stream
+                    self.model.parameters = GeminiChatModel.Parameters(
+                        **parameters,
+                    )
+                    api = AsyncMock(return_value=_mock_completion([]))
+                    stream_api = AsyncMock(return_value=_MockAsyncStream([]))
+                    self.model.client.aio.models.generate_content = api
+                    self.model.client.aio.models.generate_content_stream = (
+                        stream_api
+                    )
+                    response = await self.model([], **overrides)
+                    if stream:
+                        async for _ in response:
+                            pass
+                    expected_calls = [
+                        call(
+                            model=self.model_name,
+                            contents=[],
+                            config=expected,
+                        ),
+                    ]
+                    self.assertEqual(
+                        api.await_args_list,
+                        [] if stream else expected_calls,
+                    )
+                    self.assertEqual(
+                        stream_api.await_args_list,
+                        expected_calls if stream else [],
+                    )
+
+    async def test_ignored_sampling_parameters_warn(self) -> None:
+        """Warn for non-null sampling values from either config source."""
+        cases = [
+            (
+                {"temperature": 0.2, "top_p": 0.3},
+                {},
+                ["temperature", "top_p"],
+            ),
+            (
+                {},
+                {"temperature": 0, "topP": 0.3, "topK": 20},
+                ["temperature", "top_p", "top_k"],
+            ),
+            (
+                {"temperature": 0.2, "top_p": 0.3},
+                {"temperature": None, "topP": None, "topK": None},
+                [],
+            ),
+        ]
+        for parameters, overrides, ignored in cases:
+            with self.subTest(parameters=parameters, overrides=overrides):
+                self.model.parameters = GeminiChatModel.Parameters(
+                    **parameters,
+                )
+                api = AsyncMock(return_value=_mock_completion([]))
+                self.model.client.aio.models.generate_content = api
+                with patch(
+                    "agentscope.model._gemini._model.logger.warning",
+                ) as warning:
+                    await self.model([], **overrides)
+                self.assertEqual(
+                    warning.call_args_list,
+                    [
+                        call(
+                            "Gemini 4 models ignore %s; "
+                            "the parameter will not be sent.",
+                            key,
+                        )
+                        for key in ignored
+                    ],
+                )
+                self.assertEqual(
+                    api.await_args_list,
+                    [call(model=self.model_name, contents=[], config={})],
+                )
+
+    async def test_invalid_config_never_reaches_api(self) -> None:
+        """Reject unsupported budgets, reasoning levels, and long decode."""
+        level_message = (
+            f"{self.model_name} thinking_level must be one of "
+            f"{', '.join(self.thinking_levels)}."
+        )
+        cases: list[tuple[dict[str, Any], dict[str, Any], str]] = [
+            ({"thinking_budget": 1024}, {}, "thinking_budget"),
+            ({}, {"thinking_config": {"thinking_budget": 0}}, "budget"),
+            ({}, {"thinking_config": {"thinkingBudget": 100}}, "budget"),
+            ({}, {"thinkingConfig": {"thinkingBudget": 100}}, "budget"),
+            (
+                {},
+                {"thinking_config": {"thinking_level": "MINIMAL"}},
+                level_message,
+            ),
+            ({"max_tokens": 65_537}, {}, "65536"),
+            ({}, {"max_output_tokens": 65_537}, "65536"),
+            ({}, {"maxOutputTokens": 65_537}, "65536"),
+            (
+                {},
+                {"thinkingConfig": {"thinkingLevel": "MINIMAL"}},
+                level_message,
+            ),
+        ]
+        if "xhigh" not in self.thinking_levels:
+            cases.extend(
+                [
+                    ({"thinking_level": "xhigh"}, {}, level_message),
+                    (
+                        {},
+                        {"thinkingConfig": {"thinkingLevel": "XHIGH"}},
+                        level_message,
+                    ),
+                ],
+            )
+        for alias, name in (
+            ("thinkingConfig", "thinking_config"),
+            ("maxOutputTokens", "max_output_tokens"),
+            ("topP", "top_p"),
+            ("topK", "top_k"),
+        ):
+            cases.append(({}, {alias: None, name: None}, name))
+        for alias, name, value in (
+            ("thinkingBudget", "thinking_budget", 1024),
+            ("thinkingLevel", "thinking_level", "LOW"),
+            ("includeThoughts", "include_thoughts", True),
+        ):
+            cases.append(
+                ({}, {"thinking_config": {alias: value, name: value}}, name),
+            )
+        self.model.formatter = MagicMock()
+        self.model.formatter.format = AsyncMock(return_value=[])
+        for stream in (False, True):
+            self.model.stream = stream
+            for parameters, kwargs, message in cases:
+                with self.subTest(
+                    stream=stream,
+                    parameters=parameters,
+                    **kwargs,
+                ):
+                    self.model.parameters = GeminiChatModel.Parameters(
+                        **parameters,
+                    )
+                    self.model.client.reset_mock()
+                    with self.assertRaisesRegex(ValueError, message) as error:
+                        await self.model([], **kwargs)
+                    if message == level_message:
+                        self.assertEqual(
+                            str(error.exception),
+                            level_message,
+                        )
+                    self.assertEqual(self.model.client.mock_calls, [])
+                    self.assertEqual(self.model.formatter.mock_calls, [])
+
+    def test_timeout_does_not_mutate_shared_client_options(self) -> None:
+        """Keep model defaults local for dict and SDK HTTP options."""
+        cases: list[tuple[dict[str, Any] | HttpOptions, int]] = [
+            ({"timeout": None}, 900_000),
+            (HttpOptions(), 900_000),
+            ({"timeout": 1234}, 1234),
+            ({"timeout": 0}, 0),
+            (HttpOptions(timeout=0), 0),
+        ]
+        for options, expected_timeout in cases:
+            with self.subTest(options=options):
+                shared = {"http_options": options}
+                before = copy.deepcopy(shared)
+                with patch("google.genai.Client") as client:
+                    model = GeminiChatModel(
+                        credential=GeminiCredential(api_key="test"),
+                        model=f"models/{self.model_name}",
+                        client_kwargs=shared,
+                    )
+                    self.assertEqual(
+                        client.call_args.kwargs,
+                        {
+                            "api_key": "test",
+                            "http_options": HttpOptions(
+                                timeout=expected_timeout,
+                            ),
+                        },
+                    )
+                    self.assertEqual(shared, before)
+                    self.assertIsNot(model.client_kwargs, shared)
+                    GeminiChatModel(
+                        credential=GeminiCredential(api_key="test"),
+                        model="gemini-2.5-flash",
+                        client_kwargs=shared,
+                    )
+                    self.assertEqual(
+                        client.call_args.kwargs,
+                        {"api_key": "test", **before},
+                    )
+                    self.assertEqual(shared, before)
+
+    def test_model_card_parameters(self) -> None:
+        """Expose supported controls and hide legacy reasoning settings."""
+        cards = {card.name: card for card in GeminiChatModel.list_models()}
+        card = cards[self.model_name]
+        properties = card.parameter_schema["properties"]
+        self.assertEqual(
+            {
+                "name": card.name,
+                "label": card.label,
+                "context_size": card.context_size,
+                "output_size": card.output_size,
+                "parameters": sorted(properties),
+                "max_tokens": properties["max_tokens"]["maximum"],
+                "thinking_level": properties["thinking_level"]["default"],
+                "levels": properties["thinking_level"]["anyOf"],
+                "summary_title": properties["thinking_enable"]["title"],
+            },
+            {
+                "name": self.model_name,
+                "label": self.model_label,
+                "context_size": 1_048_576,
+                "output_size": 65_536,
+                "parameters": [
+                    "max_tokens",
+                    "thinking_enable",
+                    "thinking_level",
+                ],
+                "max_tokens": 65_536,
+                "thinking_level": self.default_thinking_level,
+                "levels": [
+                    {"enum": list(self.thinking_levels), "type": "string"},
+                    {"type": "null"},
+                ],
+                "summary_title": "Thought Summaries",
+            },
+        )
+        self.assertEqual(
+            {
+                name: "thinking_level" in item.parameter_schema["properties"]
+                for name, item in cards.items()
+                if not GeminiChatModel._is_gemini_4(name)
+            },
+            {
+                name: False
+                for name in cards
+                if name
+                not in (
+                    "gemini-4-argon",
+                    "gemini-4-carbon",
+                    "gemini-4-hydrogen",
+                )
+            },
+        )
+
+
+class TestGeminiApiVersion(IsolatedAsyncioTestCase):
+    """Exercise SDK routing and the httpx2 transport without network calls."""
+
+    async def test_request_versions_and_transport(self) -> None:
+        """Preserve version precedence and SDK platform selection."""
+        cases: list[
+            tuple[dict[str, Any], dict[str, str], str | None, str | None, str]
+        ] = [
+            ({}, {}, None, None, "v1beta"),
+            ({}, {}, "v1", None, "v1"),
+            ({}, {}, "v1", "v1beta", "v1beta"),
+            ({}, {}, None, "v1", "v1"),
+            ({}, {"GOOGLE_GENAI_API_VERSION": "v1"}, None, None, "v1"),
+            ({}, {"GOOGLE_GENAI_API_VERSION": "beta"}, None, None, "v1beta"),
+            ({}, {"GOOGLE_GENAI_API_VERSION": "v1"}, "v1beta", None, "v1beta"),
+            ({"vertexai": True}, {}, None, None, "v1beta1"),
+            ({"enterprise": True}, {}, None, None, "v1beta1"),
+            ({}, {"GOOGLE_GENAI_USE_VERTEXAI": "true"}, None, None, "v1beta1"),
+            (
+                {},
+                {"GOOGLE_GENAI_USE_ENTERPRISE": "true"},
+                None,
+                None,
+                "v1beta1",
+            ),
+        ]
+        for stream in (False, True):
+            for (
+                platform,
+                env,
+                client_version,
+                request_version,
+                expected,
+            ) in cases:
+                with self.subTest(
+                    stream=stream,
+                    platform=platform,
+                    env=env,
+                    client=client_version,
+                    request=request_version,
+                ):
+                    captured: list[str] = []
+
+                    def handle(
+                        request: httpx2.Request,
+                        record: Callable[[str], None] = captured.append,
+                        streaming: bool = stream,
+                    ) -> httpx2.Response:
+                        record(request.url.path.split("/")[1])
+                        if streaming:
+                            return httpx2.Response(
+                                200,
+                                headers={"content-type": "text/event-stream"},
+                                text='data: {"candidates": []}\n\n',
+                            )
+                        return httpx2.Response(200, json={"candidates": []})
+
+                    client_options = {
+                        "api_version": client_version,
+                        "async_client_args": {
+                            "transport": httpx2.MockTransport(handle),
+                        },
+                    }
+                    request_options = HttpOptions(
+                        api_version=request_version,
+                        timeout=12345,
+                    )
+                    before = request_options.model_dump(exclude_none=True)
+                    with patch.dict(os.environ, env, clear=True):
+                        model = GeminiChatModel(
+                            credential=GeminiCredential(api_key="test"),
+                            model="gemini-4-hydrogen"
+                            if stream
+                            else "gemini-2.5-flash",
+                            stream=stream,
+                            client_kwargs={
+                                **platform,
+                                "http_options": client_options
+                                if stream
+                                else HttpOptions(**client_options),
+                            },
+                        )
+                        try:
+                            backend = model.client._api_client
+                            is_httpx2 = isinstance(
+                                backend._async_httpx_client,
+                                httpx2.AsyncClient,
+                            )
+                            response = await model(
+                                [UserMsg(name="user", content="Hello")],
+                                **{
+                                    "httpOptions"
+                                    if stream
+                                    else "http_options": request_options
+                                    if stream
+                                    else before.copy(),
+                                },
+                            )
+                            if stream:
+                                async for _ in response:
+                                    pass
+                        finally:
+                            try:
+                                await model.client.aio.aclose()
+                            finally:
+                                model.client.close()
+                    self.assertEqual((captured, is_httpx2), ([expected], True))
+                    self.assertEqual(
+                        request_options.model_dump(exclude_none=True),
+                        before,
+                    )
+                    self.assertEqual(
+                        client_options["api_version"],
+                        client_version,
+                    )
+
+
+class TestGemini4Carbon(TestGemini4Argon):
+    """Run the shared Gemini 4 contract against Carbon as well."""
+
+    model_name = "gemini-4-carbon"
+    model_label = "Gemini 4 Carbon"
+
+
+class TestGemini4Hydrogen(TestGemini4Argon):
+    """Verify Hydrogen's fourth thinking level and shared API contract."""
+
+    model_name = "gemini-4-hydrogen"
+    model_label = "Gemini 4 Hydrogen"
+    thinking_levels = ("low", "medium", "high", "xhigh")
+    default_thinking_level = "high"
+
+    async def test_xhigh_serialized_by_sdk(self) -> None:
+        """Verify the installed SDK sends xhigh in the actual JSON body."""
+        captured = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json={"candidates": []})
+
+        model = GeminiChatModel(
+            credential=GeminiCredential(api_key="test"),
+            model=self.model_name,
+            stream=False,
+            parameters=GeminiChatModel.Parameters(thinking_level="xhigh"),
+            client_kwargs={
+                "http_options": {
+                    "async_client_args": {
+                        "transport": httpx.MockTransport(handle),
+                    },
+                },
+            },
+        )
+        try:
+            await model([UserMsg(name="user", content="Hello")])
+        finally:
+            try:
+                await model.client.aio.aclose()
+            finally:
+                model.client.close()
+        self.assertEqual(
+            captured,
+            [
+                {
+                    "contents": [
+                        {"role": "user", "parts": [{"text": "Hello"}]},
+                    ],
+                    "generationConfig": {
+                        # The SDK emits the original proto field name.
+                        "thinkingConfig": {"thinking_level": "XHIGH"},
+                    },
+                },
+            ],
+        )
+
+    async def test_qualified_model_with_sdk_thinking_config(self) -> None:
+        """Accept xhigh for qualified IDs and normalize SDK aliases."""
+        self.model.model = "models/gemini-4-hydrogen"
+        api = AsyncMock(return_value=_mock_completion([]))
+        self.model.client.aio.models.generate_content = api
+        await self.model(
+            [],
+            thinkingConfig=ThinkingConfig(thinking_level="XHIGH"),
+        )
+        self.assertEqual(
+            api.await_args_list,
+            [
+                call(
+                    model="models/gemini-4-hydrogen",
+                    contents=[],
+                    config={"thinking_config": {"thinking_level": "XHIGH"}},
+                ),
+            ],
+        )
+
+
+# ---------------------------------------------------------------------------
 # Non-streaming tests
 # ---------------------------------------------------------------------------
 
@@ -150,6 +681,16 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         # instance so generate_content() hits it instead of the network.
         self.mock_client = MagicMock()
         self.model.client = self.mock_client
+
+    async def test_thinking_level_rejected_for_legacy_models(self) -> None:
+        """Keep the Gemini 4 reasoning control scoped to supported IDs."""
+        self.model.parameters.thinking_level = "low"
+        for name in ("gemini-2.5-flash", "gemini-4-carbon-unknown"):
+            with self.subTest(model=name):
+                self.model.model = name
+                with self.assertRaisesRegex(ValueError, "thinking_level"):
+                    await self.model([])
+                self.assertEqual(self.mock_client.mock_calls, [])
 
     async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""

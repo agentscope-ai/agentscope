@@ -1,6 +1,8 @@
 name: gpt-4.1-nano
 label: GPT-4.1 Nano (Responses API)
 status: deprecated
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2025-04-14
 deprecated_at: "2026-10-23T00:00:00"
 
 input_types:

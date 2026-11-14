@@ -35,6 +35,7 @@ import asyncio
 import secrets
 from typing import Any
 
+import anyio
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 
@@ -54,7 +55,8 @@ async def _build_client(
     runtime_headers: dict[str, str] | None = None,
 ) -> MCPClient:
     """Validate a spec into an ``MCPClient``, connect if stateful,
-    and prime its tool cache.
+    and prime its tool cache. Failed or cancelled discovery closes the
+    acquired stateful connection before propagating the error.
 
     ``runtime_headers`` are applied before connecting: a rotated
     credential has to be in place for the handshake below, and it is
@@ -65,7 +67,14 @@ async def _build_client(
         await client.set_runtime_headers(runtime_headers)
     if client.is_stateful:
         await client.connect()
-    await client.list_raw_tools()
+    try:
+        await client.list_raw_tools()
+    except BaseException:
+        # Until discovery succeeds the registry cannot close this client.
+        if client.is_stateful and client.is_connected:
+            with anyio.CancelScope(shield=True):
+                await client.close()
+        raise
     return client
 
 

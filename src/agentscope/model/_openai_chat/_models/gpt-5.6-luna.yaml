@@ -1,6 +1,8 @@
 name: gpt-5.6-luna
 label: GPT-5.6 Luna
 status: active
+# Release date source: https://developers.openai.com/api/docs/changelog
+release_date: 2026-07-09
 
 input_types:
   - text/plain

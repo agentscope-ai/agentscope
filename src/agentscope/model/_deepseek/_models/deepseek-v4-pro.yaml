@@ -1,6 +1,8 @@
 name: deepseek-v4-pro
 label: DeepSeek V4 Pro
 status: active
+# Release date source: https://api-docs.deepseek.com/updates/
+release_date: 2026-04-24
 
 input_types:
   - text/plain

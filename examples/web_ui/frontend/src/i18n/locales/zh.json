@@ -140,6 +140,78 @@
 		"toConfirm": "确认",
 		"yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}"
 	},
+	"askUser": {
+		"multiSelect": "可选择多项。空格切换选项，回车继续。",
+		"back": "上一题",
+		"next": "下一题",
+		"other": "其他",
+		"otherPlaceholder": "请输入其他方案",
+		"cancel": "取消",
+		"invalidDescription": "请取消本次请求，并让智能体重新发起选择。",
+		"historyAsked": "已询问",
+		"historyAnswered": "已选择",
+		"submit": "继续"
+	},
+	"clientTools": {
+		"trigger": "工具",
+		"triggerLabel": "已启用 {{enabled}} 个客户端工具，共 {{total}} 个",
+		"title": "客户端工具",
+		"description": "选择此 Web UI 在当前对话中向智能体提供的浏览器工具。",
+		"builtInBadge": "内置",
+		"customBadge": "自定义",
+		"add": "添加工具",
+		"selectionNote": "启用的工具会在当前对话的下一轮请求中发送。",
+		"noSessionNote": "打开一个对话后即可选择启用的工具。",
+		"toggleLabel": "启用或停用 {{name}}",
+		"inputSchema": "输入 Schema",
+		"availabilityNote": "自定义工具由你在此浏览器中手动返回结果，不会执行自定义代码。",
+		"deleteTitle": "删除自定义工具“{{name}}”？",
+		"deleteDescription": "该工具会从此浏览器的所有对话中移除；已经在等待结果的调用仍可继续完成。",
+		"cancel": "取消请求",
+		"cancelling": "正在取消",
+		"editor": {
+			"addTitle": "添加自定义工具",
+			"editTitle": "编辑自定义工具",
+			"description": "描述一个可供智能体调用的工具；智能体调用后，由你手动输入返回结果。",
+			"displayName": "显示名称",
+			"displayNamePlaceholder": "请输入显示名称",
+			"toolName": "工具名称",
+			"toolNamePlaceholder": "请输入工具名称",
+			"toolNameHint": "可使用字母、数字、下划线和连字符；系统会自动添加 client__ 命名空间。",
+			"modelDescription": "提供给智能体的描述",
+			"descriptionPlaceholder": "说明智能体应在何时调用此工具，以及期望获得什么结果。",
+			"schemaHint": "根节点必须是包含 properties 的 object，仅允许本地 JSON Schema 引用。",
+			"permissionHint": "自定义工具默认按可能产生副作用处理，每次调用前都需要你确认。"
+		},
+		"validation": {
+			"required": "此项不能为空。",
+			"displayNameTooLong": "显示名称不能超过 80 个字符。",
+			"invalidName": "请输入不超过 56 个字符的有效名称，仅使用字母、数字、下划线或连字符。",
+			"duplicateName": "已有客户端工具使用该名称。",
+			"descriptionTooLong": "描述不能超过 2000 个字符。",
+			"invalidJson": "请输入有效的 JSON。",
+			"invalidSchema": "请输入符合 Draft 2020-12 词汇的有效 JSON Schema。",
+			"schemaMustBeObject": "Schema 根节点必须定义为 object。",
+			"schemaPropertiesRequired": "Schema 必须包含 properties 对象。",
+			"remoteReference": "仅允许以 # 开头的本地 Schema 引用。",
+			"schemaTooLarge": "Schema 不能超过 64 KiB。",
+			"toolLimit": "一个浏览器最多可提供 16 个客户端工具。"
+		},
+		"manual": {
+			"eyebrow": "手动返回工具结果",
+			"description": "检查调用参数，并输入需要返回给智能体的结果。",
+			"arguments": "调用参数",
+			"text": "文本",
+			"textPlaceholder": "输入工具结果",
+			"jsonPlaceholder": "输入 JSON 值",
+			"invalidJson": "请输入有效的 JSON 值后再继续。",
+			"submit": "返回结果"
+		},
+		"askUser": {
+			"name": "请求用户输入",
+			"description": "让智能体提供结构化选项，也允许你输入其他答案。"
+		}
+	},
 	"messageBubble": {
 		"thinking": "思考中",
 		"thinkingFor": "思考 {{duration}}",
@@ -175,6 +247,18 @@
 		"inputPlaceholder": "输入消息...",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
+		"askUser": {
+			"title": "需要你的选择",
+			"other": "其他",
+			"otherPlaceholder": "输入你的回答",
+			"submit": "提交回答",
+			"invalid": "无法显示这个问题。"
+		},
+		"externalExecution": {
+			"title": "{{name}} 正在等待外部执行器",
+			"rejected": "提交的结果未被接受，请检查回答后重新提交。",
+			"description": "该工具需要由宿主应用提供的集成完成。"
+		},
 		"newSession": "新会话",
 		"greeting": "我们从哪儿开始？",
 		"maxItersExceeded": {
@@ -485,6 +569,9 @@
 		"noModels": "暂无可用的实时语音模型。",
 		"disable": "停用语音模型",
 		"selectFirst": "实时语音未开启。请在顶部的「语音模型」（声波图标）中选择模型。",
+		"backendFollows": "任务后端跟随 Chat 模型 · {{model}}",
+		"backendMissing": "请先选择 Chat 模型，再启动 GPT Live",
+		"pendingChatInteraction": "请先完成 Chat 中待处理的工具确认或外部执行，再启动 GPT Live。",
 		"start": "开始语音对话",
 		"stop": "结束语音对话"
 	},
@@ -663,6 +750,31 @@
 		"blockedBy": "依赖"
 	},
 	"panel": {
+		"background": {
+			"title": "后台工具",
+			"runningCount": "运行中：{{count}}",
+			"refresh": "刷新后台工具",
+			"duration": "后台运行时长：{{duration}}",
+			"totalDuration": "总执行时长：{{duration}}",
+			"backgroundDuration": "其中后台运行：{{duration}}",
+			"copyId": "复制任务 ID",
+			"copied": "已复制任务 ID",
+			"errorDetails": "失败详情",
+			"noSession": "选择会话以查看后台工具",
+			"emptyTitle": "暂无后台工具",
+			"emptyDescription": "转入后台继续执行的工具会显示在这里。",
+			"noRunning": "当前没有正在后台运行的工具。",
+			"recent": "最近结束（{{count}}）",
+			"retention": "最近结果仅临时保留，这里不包含完整历史记录。",
+			"loadError": "无法加载后台工具，请重试。",
+			"stale": "刷新失败，当前显示上次获取的状态，任务可能已发生变化。",
+			"status": {
+				"running": "运行中",
+				"completed": "已完成",
+				"failed": "失败",
+				"cancelled": "已取消"
+			}
+		},
 		"plan": {
 			"title": "计划",
 			"completed": "已完成：{{count}}",

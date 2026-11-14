@@ -1,6 +1,8 @@
 name: MiniMax-M2.7
 label: MiniMax M2.7
 status: active
+# Release date source: https://platform.minimax.io/docs/release-notes/models
+release_date: 2026-03-18
 
 input_types:
   - text/plain

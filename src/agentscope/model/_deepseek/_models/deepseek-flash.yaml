@@ -1,6 +1,8 @@
 name: deepseek-flash
 label: DeepSeek Flash
 status: active
+# Release date source: https://api-docs.deepseek.com/updates/
+release_date: 2026-09-10
 
 input_types:
   - text/plain

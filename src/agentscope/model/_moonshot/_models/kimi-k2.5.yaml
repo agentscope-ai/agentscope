@@ -1,6 +1,8 @@
 name: kimi-k2.5
 label: Kimi K2.5
 status: deprecated
+# Release date source: https://www.kimi.com/en/help/agent/agent-overview
+release_date: 2026-01-27
 deprecated_at: "2026-08-31T00:00:00"
 
 input_types:

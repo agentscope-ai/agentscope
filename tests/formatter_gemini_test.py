@@ -1232,6 +1232,89 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         ][0]["function_call"]
         self.assertIsInstance(function_call["args"], dict)
 
+    async def test_chat_formatter_failed_tool_result_uses_error_key(
+        self,
+    ) -> None:
+        """A failed tool call reaches Gemini under the ``error`` key of the
+        function response, a successful one under ``output``."""
+        res = await GeminiChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="get_weather",
+                            input='{"city": "Paris"}',
+                        ),
+                        ToolCallBlock(
+                            id="call_2",
+                            name="get_weather",
+                            input='{"city": "Atlantis"}',
+                        ),
+                        ToolResultBlock(
+                            id="call_1",
+                            name="get_weather",
+                            output=[TextBlock(text="sunny")],
+                            state=ToolResultState.SUCCESS,
+                        ),
+                        ToolResultBlock(
+                            id="call_2",
+                            name="get_weather",
+                            output=[TextBlock(text="Unknown city: Atlantis")],
+                            state=ToolResultState.ERROR,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            res,
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "call_1",
+                                "name": "get_weather",
+                                "args": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function_call": {
+                                "id": "call_2",
+                                "name": "get_weather",
+                                "args": {"city": "Atlantis"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_1",
+                                "name": "get_weather",
+                                "response": {"output": "sunny"},
+                            },
+                        },
+                        {
+                            "function_response": {
+                                "id": "call_2",
+                                "name": "get_weather",
+                                "response": {
+                                    "error": "Unknown city: Atlantis",
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
+
 
 class GeminiMultiAgentSystemMessageTest(IsolatedAsyncioTestCase):
     """A system message must never emit a ``text: None`` part."""

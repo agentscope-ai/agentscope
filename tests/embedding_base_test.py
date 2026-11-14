@@ -1,17 +1,48 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for EmbeddingModelBase."""
+import asyncio
 from dataclasses import asdict
-from typing import Literal
-from unittest import TestCase
+from typing import Any, Literal
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
+from agentscope.credential import CredentialBase, OpenAICredential
 from agentscope.embedding import (
     EmbeddingModelBase,
     EmbeddingResponse,
     EmbeddingUsage,
 )
+
+
+class _RecordingEmbedding(EmbeddingModelBase[str]):
+    """Offline embedding model that records provider calls."""
+
+    def __init__(self, batch_size: int) -> None:
+        super().__init__(
+            credential=CredentialBase(),
+            model="test",
+            dimensions=1,
+            parameters=None,
+            context_size=10,
+            batch_size=batch_size,
+            max_retries=0,
+            retry_delay=0,
+        )
+        self.calls: list[list[str]] = []
+
+    async def _call_api(
+        self,
+        inputs: list[str],
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
+        self.calls.append(inputs)
+        return EmbeddingResponse(
+            embeddings=[[float(value)] for value in inputs],
+            usage=EmbeddingUsage(tokens=len(inputs), time=0),
+        )
 
 
 def _resp(
@@ -29,7 +60,17 @@ def _resp(
 
 
 class EmbeddingModelBaseTest(TestCase):
-    """Test response merging across cached and API batches."""
+    """Test construction and response merging across batches."""
+
+    def test_batch_size_must_be_positive(self) -> None:
+        """Reject invalid batches before any provider call can be made."""
+        for batch_size in (-1, 0):
+            with self.subTest(batch_size=batch_size):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "batch_size must be a positive integer",
+                ):
+                    _RecordingEmbedding(batch_size)
 
     def test_merge_single_batch_preserves_cache_source(self) -> None:
         """Preserve the complete response for a single cached batch."""
@@ -119,3 +160,296 @@ class EmbeddingModelBaseTest(TestCase):
                 ),
             ),
         )
+
+
+class EmbeddingModelBaseBatchingTest(IsolatedAsyncioTestCase):
+    """Exercise valid batch sizes without contacting a provider."""
+
+    async def test_positive_batch_sizes_preserve_inputs_and_embeddings(
+        self,
+    ) -> None:
+        """Small, partial, and oversized batches keep provider input order."""
+        expected_batches = {
+            1: [["0"], ["1"], ["2"]],
+            2: [["0", "1"], ["2"]],
+            5: [["0", "1", "2"]],
+        }
+        for batch_size, batches in expected_batches.items():
+            with self.subTest(batch_size=batch_size):
+                model = _RecordingEmbedding(batch_size)
+
+                response = await model(["0", "1", "2"])
+
+                self.assertEqual(model.calls, batches)
+                self.assertEqual(
+                    response.embeddings,
+                    [[0.0], [1.0], [2.0]],
+                )
+
+    async def test_empty_inputs_skip_provider_call(self) -> None:
+        """An empty request returns empty vectors and zero usage."""
+        model = _RecordingEmbedding(batch_size=2)
+
+        response = await model([])
+
+        self.assertEqual(model.calls, [])
+        self.assertEqual(response.embeddings, [])
+        self.assertEqual(response.usage, EmbeddingUsage(tokens=0, time=0))
+
+
+class _RetryableError(RuntimeError):
+    """A provider error eligible for retry."""
+
+
+class _LocalEmbedding(EmbeddingModelBase[str]):
+    """Exercise the base implementation without a provider connection."""
+
+    def __init__(self, max_retries: int = 0) -> None:
+        super().__init__(
+            credential=OpenAICredential(api_key="unused-test-key"),
+            model="local",
+            dimensions=1,
+            parameters=None,
+            context_size=100,
+            batch_size=1,
+            max_retries=max_retries,
+            retry_delay=0,
+        )
+
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[type[Exception], ...]:
+        return (_RetryableError,)
+
+    async def _call_api(
+        self,
+        inputs: list[str],
+        **_kwargs: Any,
+    ) -> EmbeddingResponse:
+        raise NotImplementedError
+
+
+class EmbeddingBatchLifecycleTest(IsolatedAsyncioTestCase):
+    """A failed call must finish its cooperative batch tasks."""
+
+    async def test_batch_failure_waits_for_sibling_cleanup(self) -> None:
+        """Join async cleanup and preserve the original provider error."""
+        for retryable in (False, True):
+            for inputs in (["fail", "slow"], ["slow", "fail"]):
+                with self.subTest(retryable=retryable, inputs=inputs):
+                    model = _LocalEmbedding(max_retries=1 if retryable else 0)
+                    started = asyncio.Event()
+                    cleaning = asyncio.Event()
+                    release = asyncio.Event()
+                    finished = asyncio.Event()
+                    error = (
+                        _RetryableError("failed")
+                        if retryable
+                        else ValueError("failed")
+                    )
+                    attempts = 0
+
+                    async def call_api(
+                        batch: list[str],
+                        *,
+                        call_started: asyncio.Event = started,
+                        call_error: Exception = error,
+                        call_cleaning: asyncio.Event = cleaning,
+                        call_release: asyncio.Event = release,
+                        call_finished: asyncio.Event = finished,
+                        **_kwargs: Any,
+                    ) -> None:
+                        nonlocal attempts
+                        if batch == ["fail"]:
+                            await call_started.wait()
+                            attempts += 1
+                            raise call_error
+                        call_started.set()
+                        try:
+                            await asyncio.Event().wait()
+                        finally:
+                            call_cleaning.set()
+                            await call_release.wait()
+                            call_finished.set()
+
+                    with patch.object(
+                        model,
+                        "_call_api",
+                        side_effect=call_api,
+                    ):
+                        call = asyncio.create_task(model(inputs))
+                        try:
+                            await asyncio.wait_for(cleaning.wait(), 1)
+                            self.assertFalse(call.done())
+                            release.set()
+                            with self.assertRaises(type(error)) as caught:
+                                await asyncio.wait_for(call, 1)
+                            self.assertIs(caught.exception, error)
+                            self.assertTrue(finished.is_set())
+                            self.assertEqual(attempts, 2 if retryable else 1)
+                        finally:
+                            release.set()
+                            call.cancel()
+                            await asyncio.gather(call, return_exceptions=True)
+
+    async def test_parent_cancellation_joins_batches(self) -> None:
+        """Repeated cancellation waits for all batch cleanup to finish."""
+        model = _LocalEmbedding()
+        started = [asyncio.Event(), asyncio.Event()]
+        finished = []
+        cleaning = asyncio.Event()
+        release = asyncio.Event()
+
+        async def call_api(batch: list[str], **_kwargs: Any) -> None:
+            index = int(batch[0])
+            started[index].set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                if index == 1:
+                    cleaning.set()
+                await release.wait()
+                finished.append(index)
+
+        with patch.object(model, "_call_api", side_effect=call_api):
+            call = asyncio.create_task(model(["0", "1"]))
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(event.wait() for event in started)),
+                    1,
+                )
+                call.cancel()
+                await asyncio.wait_for(cleaning.wait(), 1)
+                await asyncio.sleep(0)
+                self.assertFalse(call.done())
+                for _ in range(2):
+                    call.cancel()
+                    await asyncio.sleep(0)
+                    self.assertFalse(call.done())
+                release.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(call, 1)
+                self.assertCountEqual(finished, [0, 1])
+            finally:
+                release.set()
+                call.cancel()
+                await asyncio.gather(call, return_exceptions=True)
+
+    async def test_cancelled_batch_joins_sibling(self) -> None:
+        """A child cancellation also cleans up the other batch."""
+        model = _LocalEmbedding()
+        started = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def call_api(batch: list[str], **_kwargs: Any) -> None:
+            if batch == ["cancel"]:
+                await started.wait()
+                raise asyncio.CancelledError
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                finished.set()
+
+        with patch.object(model, "_call_api", side_effect=call_api):
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(model(["cancel", "slow"]), 1)
+        self.assertTrue(finished.is_set())
+
+    async def test_success_preserves_input_order(self) -> None:
+        """Merge in input order even when batches finish in reverse order."""
+        model = _LocalEmbedding()
+        second_finished = asyncio.Event()
+
+        async def call_api(
+            batch: list[str],
+            **_kwargs: Any,
+        ) -> EmbeddingResponse:
+            if batch == ["first"]:
+                await second_finished.wait()
+                return EmbeddingResponse(embeddings=[[1.0]])
+            second_finished.set()
+            return EmbeddingResponse(embeddings=[[2.0]])
+
+        with patch.object(model, "_call_api", side_effect=call_api):
+            response = await asyncio.wait_for(model(["first", "second"]), 1)
+        self.assertEqual(
+            asdict(response),
+            asdict(
+                EmbeddingResponse(
+                    embeddings=[[1.0], [2.0]],
+                    id=AnyString(),
+                    created_at=AnyString(),
+                    usage=EmbeddingUsage(tokens=0, time=0),
+                ),
+            ),
+        )
+
+    async def test_empty_input_does_not_call_provider(self) -> None:
+        """Empty input creates no batch work."""
+        model = _LocalEmbedding()
+        with patch.object(model, "_call_api", new_callable=AsyncMock) as call:
+            response = await model([])
+        self.assertEqual(
+            asdict(response),
+            asdict(
+                EmbeddingResponse(
+                    embeddings=[],
+                    id=AnyString(),
+                    created_at=AnyString(),
+                    usage=EmbeddingUsage(tokens=0, time=0),
+                ),
+            ),
+        )
+        call.assert_not_awaited()
+
+    async def test_parent_cancellation_during_failure_cleanup(self) -> None:
+        """Finish sibling cleanup despite repeated caller cancellation."""
+        for cancel_count in (1, 3):
+            with self.subTest(cancel_count=cancel_count):
+                model = _LocalEmbedding()
+                started = asyncio.Event()
+                cleaning = asyncio.Event()
+                release = asyncio.Event()
+                finished = asyncio.Event()
+
+                async def call_api(
+                    batch: list[str],
+                    *,
+                    call_started: asyncio.Event = started,
+                    call_cleaning: asyncio.Event = cleaning,
+                    call_release: asyncio.Event = release,
+                    call_finished: asyncio.Event = finished,
+                    **_kwargs: Any,
+                ) -> None:
+                    if batch == ["fail"]:
+                        await call_started.wait()
+                        raise ValueError("failed")
+                    call_started.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        call_cleaning.set()
+                        await call_release.wait()
+                        call_finished.set()
+
+                with patch.object(model, "_call_api", side_effect=call_api):
+                    call = asyncio.create_task(model(["fail", "slow"]))
+                    try:
+                        await asyncio.wait_for(cleaning.wait(), 1)
+                        for _ in range(cancel_count):
+                            call.cancel()
+                            await asyncio.sleep(0)
+                            self.assertFalse(call.done())
+                        self.assertFalse(finished.is_set())
+                        release.set()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await asyncio.wait_for(call, 1)
+                        self.assertEqual(
+                            (cleaning.is_set(), finished.is_set()),
+                            (True, True),
+                        )
+                    finally:
+                        release.set()
+                        call.cancel()
+                        await asyncio.gather(call, return_exceptions=True)

@@ -1,6 +1,8 @@
 name: grok-4.20-multi-agent-0309
 label: Grok 4.20 Multi-Agent
 status: active
+# Release date source: https://docs.x.ai/developers/release-notes
+release_date: 2026-03-10
 
 input_types:
   - text/plain

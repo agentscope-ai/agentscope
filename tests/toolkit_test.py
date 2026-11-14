@@ -3,6 +3,7 @@
 """Toolkit test case."""
 import base64
 import json
+from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -597,6 +598,27 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
+
+    def test_callable_object_default_name(self) -> None:
+        """Infer callable names while preserving explicit names."""
+
+        class Echo:
+            """Echo a value asynchronously."""
+
+            async def __call__(self, value: str) -> str:
+                return value
+
+        renamed = partial(Echo())
+        renamed.__name__ = "renamed_echo"
+        for func, name, expected in (
+            (Echo(), None, "Echo"),
+            (partial(Echo()), None, "Echo"),
+            (renamed, None, "renamed_echo"),
+            (Echo(), "custom_echo", "custom_echo"),
+        ):
+            with self.subTest(expected=expected):
+                tool = FunctionTool(func, name=name)
+                self.assertEqual(tool.name, expected)
 
     async def test_sync_function_returning_awaitable(self) -> None:
         """Await the coroutine returned by a sync function."""
