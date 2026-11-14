@@ -100,6 +100,13 @@ class _Question(BaseModel):
         labels = [option.label for option in self.options]
         if len(labels) != len(set(labels)):
             raise ValueError("option labels must be unique within a question")
+        if self.multi_select and any(
+            option.preview is not None for option in self.options
+        ):
+            raise ValueError(
+                "option preview is only supported for single-select "
+                "questions (multi_select=false)",
+            )
         return self
 
 
