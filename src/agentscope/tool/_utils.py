@@ -182,13 +182,22 @@ def _extract_func_description(docstring: str) -> str:
     return "\n".join(descriptions)
 
 
-def _build_param_field(description: str | None, default: Any) -> Any:
+def _build_param_field(
+    description: str | None,
+    default: Any,
+    alias: str | None = None,
+) -> Any:
     """Build the pydantic ``Field`` for a parameter, omitting an absent
     description so it doesn't override metadata carried by
     ``Annotated[..., Field(...)]`` annotations."""
-    if description is None:
+    if description is None and alias is None:
         return Field(default=default)
-    return Field(description=description, default=default)
+    kwargs = {}
+    if description is not None:
+        kwargs["description"] = description
+    if alias is not None:
+        kwargs["alias"] = alias
+    return Field(default=default, **kwargs)
 
 
 def _extract_input_schema(
@@ -220,20 +229,34 @@ def _extract_input_schema(
     type_hints = _resolve_type_hints(tool_func)
 
     # Create a dynamic model with the function signature
+    signature = inspect.signature(tool_func)
+    all_names = set(signature.parameters)
     fields = {}
-    for name, param in inspect.signature(tool_func).parameters.items():
+    for name, param in signature.parameters.items():
         # Skip `self`, `cls` and the toolkit-injected `_agent_state`
         if name in ["self", "cls", "_agent_state"]:
             continue
 
         annotation = type_hints.get(name, param.annotation)
 
+        # Pydantic rejects model field names starting with an underscore
+        # (they read as private attributes), but such parameter names are
+        # legal Python and the tool is invoked with ``**kwargs``, so they
+        # can still arrive at call time. Build the model under a safe key
+        # and re-expose the original name as the JSON-schema alias.
+        model_name = name
+        if name.startswith("_"):
+            model_name = f"arg{name}"
+            while model_name in all_names or model_name in fields:
+                model_name += "_"
+        alias = name if model_name != name else None
+
         # Handle `**kwargs`
         if param.kind == inspect.Parameter.VAR_KEYWORD:
             if not include_var_keyword:
                 continue
 
-            fields[name] = (
+            fields[model_name] = (
                 Dict[str, Any]
                 if annotation == inspect.Parameter.empty
                 else Dict[str, annotation],  # type: ignore
@@ -245,6 +268,7 @@ def _extract_input_schema(
                     default={}
                     if param.default is param.empty
                     else param.default,
+                    alias=alias,
                 ),
             )
 
@@ -252,7 +276,7 @@ def _extract_input_schema(
             if not include_var_positional:
                 continue
 
-            fields[name] = (
+            fields[model_name] = (
                 list[Any]
                 if annotation == inspect.Parameter.empty
                 else list[annotation],  # type: ignore
@@ -264,17 +288,19 @@ def _extract_input_schema(
                     default=[]
                     if param.default is param.empty
                     else param.default,
+                    alias=alias,
                 ),
             )
 
         else:
-            fields[name] = (
+            fields[model_name] = (
                 Any if annotation == inspect.Parameter.empty else annotation,
                 _build_param_field(
                     description=params_docstring.get(name, None),
                     default=...
                     if param.default is param.empty
                     else param.default,
+                    alias=alias,
                 ),
             )
 
