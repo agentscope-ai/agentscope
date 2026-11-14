@@ -5,12 +5,11 @@ import re
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
-from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import FormatterBase, file_url_to_path
 from .._logging import logger
 from ..message import (
     Msg,
@@ -142,7 +141,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = url2pathname(url_str.removeprefix("file://"))
+                local_path = file_url_to_path(url_str)
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
@@ -212,7 +211,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 # Local file
-                local_path = url2pathname(url_str.removeprefix("file://"))
+                local_path = file_url_to_path(url_str)
                 with open(local_path, "rb") as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
@@ -262,7 +261,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url_str = str(source.url)
             if url_str.startswith("file://"):
                 with open(
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                     "rb",
                 ) as f:
                     data = base64.b64encode(f.read()).decode("utf-8")
