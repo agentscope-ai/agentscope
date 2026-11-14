@@ -35,6 +35,9 @@ class _AccTextBlock(TextBlock):
                 The delta block to collect.
         """
         self.text.append(block.text)
+        for key, value in (block.model_extra or {}).items():
+            if value is not None:
+                setattr(self, key, value)
 
     def build(self) -> TextBlock:
         """Join the fragments into a plain ``TextBlock``."""
@@ -75,6 +78,8 @@ class _AccToolCallBlock(ToolCallBlock):
     """The accumulating counterpart of ``ToolCallBlock``, whose ``input``
     field holds the incremental JSON fragments until they are joined in
     ``build``."""
+
+    name: str
 
     input: list[str] = Field(  # type: ignore[assignment]
         default_factory=list,

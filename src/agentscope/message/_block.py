@@ -9,7 +9,13 @@ from ..permission import PermissionRule
 
 
 class TextBlock(BaseModel):
-    """The text block."""
+    """The text block, retaining optional provider-specific extra fields.
+
+    Extras are preserved during serialization, as on ``ThinkingBlock``.
+    Ordinary text blocks keep their existing serialized shape.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     type: Literal["text"] = "text"
     """The type of the text block, which is always 'text'."""

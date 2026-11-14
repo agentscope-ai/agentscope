@@ -258,6 +258,9 @@ class ChatResponse(DictMixin):
 
                 elif isinstance(block, TextBlock):
                     block.text += delta_block.text
+                    for key, value in (delta_block.model_extra or {}).items():
+                        if value is not None:
+                            setattr(block, key, value)
 
                 elif isinstance(block, ToolCallBlock):
                     block.input += delta_block.input
