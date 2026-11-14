@@ -190,6 +190,9 @@ class ReplyContext(BaseModel):
     """The current iteration of the agent's reasoning-acting loop in this
     reply."""
 
+    tool_call_counts: dict[str, int] = Field(default_factory=dict)
+    """Dispatch counts for tools with a configured limit in this reply."""
+
     structured_schema: Type[BaseModel] | dict | None = None
     """The reply's structured output requirement, a pydantic model class in
     process and serialized as its JSON schema dict."""

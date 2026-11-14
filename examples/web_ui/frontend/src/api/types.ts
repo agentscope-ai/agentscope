@@ -46,6 +46,7 @@ export interface ContextConfig {
 
 export interface ReActConfig {
 	max_iters?: number;
+	tool_call_limits?: Record<string, number>;
 	stop_on_reject?: boolean;
 }
 

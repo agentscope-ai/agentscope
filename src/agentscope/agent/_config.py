@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, NonNegativeInt, field_validator
 
 from ..model import ChatModelBase
 
@@ -398,6 +398,17 @@ class ReActConfig(BaseModel):
         "one reply",
     )
     """The maximum number of iterations for the reasoning-acting loop."""
+
+    tool_call_limits: dict[str, NonNegativeInt] = Field(
+        default_factory=dict,
+        description="Maximum executions per tool name in a single reply.",
+    )
+    """Set a per-reply limit for selected tools, e.g. ``{"notify": 1}``.
+    Omitted tools are unlimited. Each allowed dispatch consumes one call,
+    including external dispatches and attempts that later fail. Parallel
+    calls share the limit, as do calls made after resuming a paused reply.
+    Excess calls return a tool error and the agent can continue reasoning.
+    """
 
     structured_output_grace_iters: int = Field(
         title="Grace Iters for Structured Output",
