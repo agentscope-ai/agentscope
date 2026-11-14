@@ -40,6 +40,7 @@ from ._session import (
     TeamOrigin,
     SOPOrigin,
 )
+from ._session_list import SessionListItem
 from ._skill import SkillRecord
 from ._sop import (
     AgentVerifier,
@@ -84,6 +85,7 @@ __all__ = [
     "SessionNaming",
     "SessionKnowledgeConfig",
     "SessionRecord",
+    "SessionListItem",
     "SessionOrigin",
     "SessionSource",
     "UserOrigin",

@@ -244,9 +244,16 @@ class SessionService:
         tool_calls = last_msg.get_content_blocks("tool_call")
         if not tool_calls:
             return SessionStatus.IDLE
-        if any(tc.state == ToolCallState.ASKING for tc in tool_calls):
+        return SessionService.derive_tool_call_status(
+            [tc.state for tc in tool_calls],
+        )
+
+    @staticmethod
+    def derive_tool_call_status(states: list[str]) -> SessionStatus:
+        """Resolve tail tool states with permission taking precedence."""
+        if ToolCallState.ASKING in states:
             return SessionStatus.AWAITING_PERMISSION
-        if any(tc.state == ToolCallState.SUBMITTED for tc in tool_calls):
+        if ToolCallState.SUBMITTED in states:
             return SessionStatus.AWAITING_EXTERNAL_RESULT
         return SessionStatus.IDLE
 
