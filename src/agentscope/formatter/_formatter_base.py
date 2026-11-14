@@ -6,6 +6,8 @@ import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
 from typing import Any, AsyncGenerator, Awaitable, Callable, List
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,34 @@ from ..message import (
     TextBlock,
     URLSource,
 )
+
+
+def file_url_to_path(url: str) -> str:
+    """Resolve a ``file://`` URL to a local filesystem path.
+
+    The URL is parsed with :func:`urllib.parse.urlsplit` so the URL
+    *authority* is preserved: per RFC 8089, ``file://host/share/x.png`` is
+    a network path and must resolve to the UNC share
+    ``//host/share/x.png``, while ``file:///x.png`` addresses the local
+    filesystem. An authority of ``localhost`` is dropped, as RFC 8089
+    requires it to be equivalent to the empty authority.
+
+    Args:
+        url (`str`):
+            A ``file://`` URL, e.g. ``file:///tmp/x.png`` or
+            ``file://server/share/x.png``.
+
+    Returns:
+        `str`:
+            The platform filesystem path for the URL, suitable for
+            ``open()``.
+    """
+    parsed = urlsplit(url)
+    path = parsed.path
+    if parsed.netloc and parsed.netloc != "localhost":
+        path = "//" + parsed.netloc + path
+    return url2pathname(path)
+
 
 
 class FormatterBase(BaseModel):
