@@ -275,8 +275,11 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             return
 
         self._create_client()
-        self._tts_client.connect()
-        self._tts_client.update_session(
+        # The synchronous SDK polls connection readiness and sends frames.
+        # Keep both operations off the event loop shared by other sessions.
+        await asyncio.to_thread(self._tts_client.connect)
+        await asyncio.to_thread(
+            self._tts_client.update_session,
             voice=self.parameters.voice,
             mode="server_commit",
         )
@@ -288,14 +291,14 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
             return
         self._connected = False
         try:
-            self._tts_client.close()
+            await asyncio.to_thread(self._tts_client.close)
         except Exception:
             pass
 
     async def _reconnect(self) -> None:
         """Reconnect by recreating the client."""
         try:
-            self._tts_client.close()
+            await asyncio.to_thread(self._tts_client.close)
         except Exception:
             pass
         self._connected = False
@@ -349,14 +352,17 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
                 ready = False
             if ready:
                 try:
-                    self._tts_client.append_text(self._cold_start_buffer)
+                    await asyncio.to_thread(
+                        self._tts_client.append_text,
+                        self._cold_start_buffer,
+                    )
                 except WebSocketConnectionClosedException:
                     return TTSResponse(content=None)
                 self._cold_start_buffer = ""
                 self._cold_start_done = True
         else:
             try:
-                self._tts_client.append_text(text)
+                await asyncio.to_thread(self._tts_client.append_text, text)
             except WebSocketConnectionClosedException:
                 return TTSResponse(content=None)
 
@@ -406,10 +412,13 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
         for attempt in range(self.max_retries):
             try:
                 if unsent:
-                    self._tts_client.append_text(unsent)
+                    await asyncio.to_thread(
+                        self._tts_client.append_text,
+                        unsent,
+                    )
 
-                self._tts_client.commit()
-                self._tts_client.finish()
+                await asyncio.to_thread(self._tts_client.commit)
+                await asyncio.to_thread(self._tts_client.finish)
 
                 await asyncio.to_thread(
                     self._callback.finish_event.wait,
@@ -457,7 +466,10 @@ class DashScopeRealtimeTTSModel(TTSModelBase):
         if self.stream:
             return self._callback.get_audio_chunks()
 
-        response = self._callback.get_audio_response(block=True)
+        response = await asyncio.to_thread(
+            self._callback.get_audio_response,
+            block=True,
+        )
         self._callback.reset()
         return response
 

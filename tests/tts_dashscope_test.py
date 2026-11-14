@@ -15,8 +15,11 @@ Covers:
   * ``DashScopeCosyVoiceTTSModel`` realtime connect / close / push /
     synthesize lifecycle over a mocked SpeechSynthesizer.
 """
+import asyncio
 import base64
+import functools
 import io
+import threading
 import wave
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
@@ -872,6 +875,68 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
         )
 
     # -- connect / close --
+
+    async def test_sdk_io_keeps_event_loop_responsive(self) -> None:
+        """Slow SDK operations must let the shared event loop progress."""
+        loop = asyncio.get_running_loop()
+
+        def slow_io(
+            acknowledged: threading.Event,
+            observations: list[bool],
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> TTSResponse:
+            """Wait for a callback on the shared event loop."""
+            loop.call_soon_threadsafe(acknowledged.set)
+            observations.append(acknowledged.wait(1))
+            return TTSResponse(content=None)
+
+        cases = (
+            ("connect", "connect"),
+            ("connect", "update_session"),
+            ("close", "close"),
+            ("_reconnect", "close"),
+            ("push", "append_text"),
+            ("warm_push", "append_text"),
+            ("synthesize", "append_text"),
+            ("synthesize", "commit"),
+            ("synthesize", "finish"),
+            ("synthesize", "get_audio_response"),
+        )
+        for operation, method in cases:
+            with self.subTest(operation=operation, method=method):
+                with patch.dict("sys.modules", self.mock_modules):
+                    self.mock_client = self._create_mock_tts_client()
+                    self.mock_modules[
+                        "dashscope.audio.qwen_tts_realtime"
+                    ].QwenTtsRealtime = Mock(return_value=self.mock_client)
+                    model = self._make_model(stream=False)
+                    if operation != "connect":
+                        await model.connect()
+                        self._mock_synthesize_callback(model)
+                    if operation == "warm_push":
+                        await model.push("First")
+
+                    acknowledged = threading.Event()
+                    observations = []
+
+                    target = (
+                        model._callback
+                        if method == "get_audio_response"
+                        else self.mock_client
+                    )
+                    getattr(target, method).side_effect = functools.partial(
+                        slow_io,
+                        acknowledged,
+                        observations,
+                    )
+                    if operation in ("push", "warm_push"):
+                        await model.push("Hello")
+                    elif operation == "synthesize":
+                        await model.synthesize("Hello")
+                    else:
+                        await getattr(model, operation)()
+                    self.assertEqual(observations, [True])
 
     async def test_async_context_manager(self) -> None:
         """``async with`` triggers connect on enter and close on exit."""
