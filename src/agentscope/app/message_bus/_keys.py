@@ -558,6 +558,9 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
 
+    CHANNEL_APPROVAL_CLAIM_TTL_SECS = 86400
+    """Maximum lifetime of a one-shot approval decision claim."""
+
     @classmethod
     def channel_lifecycle(cls) -> str:
         """Pub/sub channel that nudges every node to reconcile its
@@ -587,3 +590,21 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def channel_seen_chats(cls, channel_id: str) -> str:
         """Registry namespace of chat_ids the bot has been messaged in."""
         return cls._CHANNEL_SEEN_CHATS.format(cid=channel_id)
+
+    @classmethod
+    def channel_session_requesters(cls, session_id: str) -> str:
+        """Registry mapping reply IDs to their platform requester."""
+        return f"agentscope:channel:requesters:{session_id}"
+
+    @classmethod
+    def channel_session_approvals(cls, session_id: str) -> str:
+        """Map approval tokens to complete records within one session."""
+        return f"agentscope:channel:approvals:{session_id}"
+
+    @classmethod
+    def channel_approval_claim(
+        cls,
+        approval_id: str,
+    ) -> str:
+        """Atomic decision claim for one opaque approval id."""
+        return f"agentscope:channel:approval-claim:{approval_id}"

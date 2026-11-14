@@ -10,9 +10,10 @@ heartbeat.
 import asyncio
 import time
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -30,6 +31,17 @@ from agentscope.app.channel import (
     ChannelTypeRegistry,
 )
 from agentscope.app.channel._base import LIVENESS_TTL_SECS
+from agentscope.app.channel._approval import (
+    ChannelApprovalRecord,
+    forget_approval,
+    new_approval_id,
+    purge_session_approvals,
+    store_approval,
+    load_approval,
+    load_reply_requester,
+    prune_session_approvals,
+    remember_reply_requester,
+)
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app.storage import (
     ChannelBinding,
@@ -37,6 +49,20 @@ from agentscope.app.storage import (
     RoutingConfig,
     SessionSettings,
 )
+from agentscope.event import (
+    EventType,
+    ReplyStartEvent,
+    RequireUserConfirmEvent,
+    UserInterruptEvent,
+)
+from agentscope.message import (
+    AssistantMsg,
+    TextBlock,
+    ToolCallBlock,
+    ToolCallState,
+    UserMsg,
+)
+from agentscope.state import AgentState
 
 
 class _FakeChannel(ChannelBase):
@@ -103,6 +129,31 @@ class _Storage:
     def __init__(self, record: ChannelRecord | None) -> None:
         self.record = record
         self.calls = 0
+        self.state = AgentState(
+            reply_id="reply-1",
+            context=[
+                AssistantMsg(
+                    id="reply-1",
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(
+                            id="tool-1",
+                            name="Bash",
+                            input="{}",
+                            state="asking",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+    async def get_session(self, **_: Any) -> Any:
+        """Return the latest persisted session, or a deleted session."""
+        return SimpleNamespace(state=self.state) if self.state else None
+
+    async def get_agent(self, **_: Any) -> Any:
+        """Return the agent owning the persisted state."""
+        return SimpleNamespace(data=SimpleNamespace(name="assistant"))
 
     async def get_channel(
         self,
@@ -239,6 +290,9 @@ class ChannelClientsTest(IsolatedAsyncioTestCase):
 class ChannelDeliveryTest(IsolatedAsyncioTestCase):
     """Deliveries run in the background but stay owned."""
 
+    # These tests exercise the client's internal delivery and storage paths.
+    # pylint: disable=protected-access
+
     def _clients(self, bus: InMemoryMessageBus) -> ChannelClients:
         return ChannelClients(
             storage=_Storage(_record()),
@@ -289,6 +343,345 @@ class ChannelDeliveryTest(IsolatedAsyncioTestCase):
             type_registry=ChannelTypeRegistry([_FakeChannel]),
         ) as clients:
             await self._deliver(clients)
+
+    async def test_approval_state_is_server_backed_and_keeps_requester(
+        self,
+    ) -> None:
+        """Cards carry only opaque ids, while requester and routing stay
+        in the bus and survive a continuation of the same reply."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+
+        async def events() -> AsyncIterator[dict]:
+            for event in (
+                ReplyStartEvent(
+                    session_id="s-1",
+                    reply_id="reply-1",
+                    name="assistant",
+                ),
+                RequireUserConfirmEvent(
+                    reply_id="reply-1",
+                    tool_calls=[
+                        ToolCallBlock(
+                            id="tool-1",
+                            name="Bash",
+                            input="{}",
+                        ),
+                    ],
+                ),
+            ):
+                yield event.model_dump(mode="json")
+
+        first = [
+            raw
+            async for raw in clients._approval_events(  # pylint: disable=W0212
+                events(),
+                requester_id="requester-1",
+                channel_id="chan-1",
+                chat_id="chat-1",
+                agent_id="agent-x",
+                session_id="s-1",
+            )
+        ]
+        approval_id = first[1]["metadata"]["channel_approval_ids"]["tool-1"]
+        self.assertRegex(approval_id, r"^s-1:[0-9a-f]{32}$")
+        approval = await load_approval(bus, approval_id)
+        self.assertIsNotNone(approval)
+        self.assertDictEqual(
+            approval.model_dump(),
+            {
+                "channel_id": "chan-1",
+                "chat_id": "chat-1",
+                "agent_id": "agent-x",
+                "session_id": "s-1",
+                "reply_id": "reply-1",
+                "tool_call_id": "tool-1",
+                "requester_id": "requester-1",
+            },
+        )
+
+        continued = [
+            raw
+            async for raw in clients._approval_events(  # pylint: disable=W0212
+                events(),
+                requester_id="",
+                channel_id="chan-1",
+                chat_id="chat-1",
+                agent_id="agent-x",
+                session_id="s-1",
+            )
+        ]
+        continued_id = continued[1]["metadata"]["channel_approval_ids"][
+            "tool-1"
+        ]
+        continued_approval = await load_approval(bus, continued_id)
+        self.assertIsNotNone(continued_approval)
+        self.assertDictEqual(
+            continued_approval.model_dump(),
+            {
+                "channel_id": "chan-1",
+                "chat_id": "chat-1",
+                "agent_id": "agent-x",
+                "session_id": "s-1",
+                "reply_id": "reply-1",
+                "tool_call_id": "tool-1",
+                "requester_id": "requester-1",
+            },
+        )
+
+    async def test_approval_creation_uses_saved_state_under_session_lock(
+        self,
+    ) -> None:
+        """Create approvals only from saved state under the session lock."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+        calls = [
+            ToolCallBlock(id=call_id, name="Bash", input="{}", state="asking")
+            for call_id in ("resolved", "pending")
+        ]
+        clients._storage.state = AgentState(
+            reply_id="reply-1",
+            context=[
+                AssistantMsg(id="reply-1", name="assistant", content=calls),
+            ],
+        )
+
+        async def deliver() -> list[dict]:
+            async def events() -> AsyncIterator[dict]:
+                yield RequireUserConfirmEvent(
+                    reply_id="reply-1",
+                    tool_calls=calls,
+                ).model_dump(mode="json")
+
+            return [
+                raw
+                async for raw in clients._approval_events(
+                    events(),
+                    requester_id="requester-1",
+                    channel_id="chan-1",
+                    chat_id="chat-1",
+                    agent_id="agent-x",
+                    session_id="s-1",
+                )
+            ]
+
+        [first] = await deliver()
+        ids = first["metadata"]["channel_approval_ids"]
+        async with bus.acquire_lock(MessageBusKeys.session_lock("s-1")):
+            late = asyncio.create_task(deliver())
+            await asyncio.sleep(0)
+            self.assertFalse(late.done())
+            clients._storage.state = AgentState(
+                reply_id="reply-1",
+                context=[
+                    AssistantMsg(
+                        id="reply-1",
+                        name="assistant",
+                        content=[calls[1]],
+                    ),
+                ],
+            )
+            await prune_session_approvals(
+                bus,
+                "s-1",
+                clients._storage.state,
+                "assistant",
+            )
+        [delivered] = await late
+        self.assertIsNone(await load_approval(bus, ids["resolved"]))
+        self.assertIsNotNone(await load_approval(bus, ids["pending"]))
+        self.assertListEqual(
+            [tool["id"] for tool in delivered["tool_calls"]],
+            ["pending"],
+        )
+
+        # A delivery delayed until after deletion cannot recreate records.
+        clients._storage.state = None
+        self.assertListEqual(await deliver(), [])
+
+    async def test_external_pause_keeps_requester_for_later_approval(
+        self,
+    ) -> None:
+        """Retain the requester while waiting for external execution."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+        clients._storage.state.context[-1].content[
+            0
+        ].state = ToolCallState.SUBMITTED
+
+        async def events() -> AsyncIterator[dict]:
+            yield {
+                "type": EventType.REQUIRE_EXTERNAL_EXECUTION,
+                "reply_id": "reply-1",
+            }
+
+        async for _ in clients._approval_events(
+            events(),
+            requester_id="requester-1",
+            channel_id="chan-1",
+            chat_id="chat-1",
+            agent_id="agent-x",
+            session_id="s-1",
+        ):
+            pass
+        await prune_session_approvals(
+            bus,
+            "s-1",
+            clients._storage.state,
+            "assistant",
+        )
+        self.assertEqual(
+            await load_reply_requester(
+                bus,
+                session_id="s-1",
+                reply_id="reply-1",
+            ),
+            "requester-1",
+        )
+
+    async def test_reply_end_waits_for_persistence_to_remove_requester(
+        self,
+    ) -> None:
+        """Leave completion cleanup to the state persistence path."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+        await remember_reply_requester(
+            bus,
+            session_id="s-1",
+            reply_id="reply-1",
+            requester_id="requester-1",
+        )
+
+        async def events() -> AsyncIterator[dict]:
+            yield {"type": EventType.REPLY_END, "reply_id": "reply-1"}
+
+        async for _ in clients._approval_events(
+            events(),
+            requester_id="requester-1",
+            channel_id="chan-1",
+            chat_id="chat-1",
+            agent_id="agent-x",
+            session_id="s-1",
+        ):
+            pass
+
+        self.assertEqual(
+            await load_reply_requester(
+                bus,
+                session_id="s-1",
+                reply_id="reply-1",
+            ),
+            "requester-1",
+        )
+        await prune_session_approvals(
+            bus,
+            "s-1",
+            AgentState(),
+            "assistant",
+            completed_reply_ids=["reply-1"],
+        )
+        self.assertEqual(
+            await load_reply_requester(
+                bus,
+                session_id="s-1",
+                reply_id="reply-1",
+            ),
+            "",
+        )
+
+    async def test_web_and_background_inputs_have_no_channel_requester(
+        self,
+    ) -> None:
+        """Web UI and background runs have no platform requester identity."""
+        clients = self._clients(InMemoryMessageBus())
+        message = UserMsg(name="user", content="hello")
+        for run_input in (None, message, [message], []):
+            with self.subTest(run_input=run_input):
+                self.assertEqual(
+                    await clients._requester_for_input("s-1", run_input),
+                    "",
+                )
+
+    async def test_missing_requester_creates_no_approval_records(self) -> None:
+        """Deliver identity-free confirmations without approval records."""
+        clients = self._clients(InMemoryMessageBus())
+        raw = RequireUserConfirmEvent(
+            reply_id="reply-1",
+            tool_calls=[ToolCallBlock(id="tool-1", name="Bash", input="{}")],
+        ).model_dump(mode="json")
+
+        async def events() -> AsyncIterator[dict]:
+            yield raw
+
+        with patch(
+            "agentscope.app.channel._clients.store_approval",
+            new_callable=AsyncMock,
+        ) as store:
+            delivered = [
+                event
+                async for event in clients._approval_events(
+                    events(),
+                    requester_id="",
+                    channel_id="chan-1",
+                    chat_id="chat-1",
+                    agent_id="agent-x",
+                    session_id="s-1",
+                )
+            ]
+        store.assert_not_awaited()
+        self.assertListEqual(
+            delivered,
+            [
+                {
+                    **raw,
+                    "metadata": {
+                        **raw["metadata"],
+                        "channel_approval_ids": {},
+                    },
+                },
+            ],
+        )
+
+    async def test_requester_is_resolved_from_run_input(self) -> None:
+        """Fresh messages name the requester; resume events recover it."""
+        bus = InMemoryMessageBus()
+        clients = self._clients(bus)
+        message = UserMsg(
+            name="requester-1",
+            content=[TextBlock(text="hello")],
+        )
+        self.assertEqual(
+            await clients._requester_for_input(  # pylint: disable=W0212
+                "s-1",
+                message,
+            ),
+            "requester-1",
+        )
+        await remember_reply_requester(
+            bus,
+            session_id="s-1",
+            reply_id="reply-1",
+            requester_id="requester-1",
+        )
+        self.assertDictEqual(
+            await bus.registry_getall(
+                MessageBusKeys.channel_session_requesters("s-1"),
+            ),
+            {"reply-1": "requester-1"},
+        )
+        self.assertDictEqual(
+            await bus.registry_getall(
+                MessageBusKeys.channel_session_approvals("s-1"),
+            ),
+            {},
+        )
+        self.assertEqual(
+            await clients._requester_for_input(  # pylint: disable=W0212
+                "s-1",
+                UserInterruptEvent(reply_id="reply-1"),
+            ),
+            "requester-1",
+        )
 
 
 class ChannelUpdateTest(IsolatedAsyncioTestCase):
@@ -478,3 +871,78 @@ class ChannelStatusTest(IsolatedAsyncioTestCase):
             await self._service(bus).get_status("chan-1"),
             ChannelStatus(state="connected"),
         )
+
+
+class ApprovalTokenStorageTest(IsolatedAsyncioTestCase):
+    """Session tokens locate one record without a reverse index."""
+
+    async def test_session_namespace_contains_the_complete_record(
+        self,
+    ) -> None:
+        """Store each complete approval once within its session."""
+        bus = InMemoryMessageBus()
+        session_id = "session:with/slash.中文"
+        token = new_approval_id(session_id)
+        record = ChannelApprovalRecord(
+            channel_id="channel",
+            chat_id="chat",
+            agent_id="agent",
+            session_id=session_id,
+            reply_id="reply",
+            tool_call_id="call",
+            requester_id="requester",
+        )
+        await store_approval(bus, token, record)
+        self.assertDictEqual(
+            await bus.registry_getall(
+                MessageBusKeys.channel_session_approvals(session_id),
+            ),
+            {token: record.model_dump_json()},
+        )
+        self.assertEqual(await load_approval(bus, token), record)
+        self.assertNotEqual(new_approval_id(session_id), token)
+        with self.assertRaises(ValueError):
+            await store_approval(
+                bus,
+                token,
+                record.model_copy(update={"session_id": "other"}),
+            )
+        await forget_approval(bus, token)
+        self.assertIsNone(await load_approval(bus, token))
+
+    async def test_malformed_tokens_are_rejected(self) -> None:
+        """Reject malformed tokens without reading another namespace."""
+        bus = InMemoryMessageBus()
+        for token in (
+            "old-random-token",
+            ":",
+            "session:abc",
+            "%GG:" + "a" * 32,
+        ):
+            with self.subTest(token=token):
+                self.assertIsNone(await load_approval(bus, token))
+                await forget_approval(bus, token)
+
+    async def test_purge_keeps_other_sessions(self) -> None:
+        """Purging one session preserves approvals in other sessions."""
+        bus = InMemoryMessageBus()
+        tokens = {}
+        for session_id in ("session-a", "session-b"):
+            token = new_approval_id(session_id)
+            tokens[session_id] = token
+            await store_approval(
+                bus,
+                token,
+                ChannelApprovalRecord(
+                    channel_id="channel",
+                    chat_id="chat",
+                    agent_id="agent",
+                    session_id=session_id,
+                    reply_id="reply",
+                    tool_call_id="call",
+                    requester_id="requester",
+                ),
+            )
+        await purge_session_approvals(bus, "session-a")
+        self.assertIsNone(await load_approval(bus, tokens["session-a"]))
+        self.assertIsNotNone(await load_approval(bus, tokens["session-b"]))
