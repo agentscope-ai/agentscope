@@ -2569,7 +2569,34 @@ class Agent:
         # Step 3: Handle the permission and execute the tool call if allowed
         # ===================================================================
 
-        # Case 1: Ask for user confirmation if needed
+        if decision.behavior == PermissionBehavior.DENY:
+            async for evt in self._handle_error_tool_call(
+                tool_call,
+                decision.message,
+                state=ToolResultState.DENIED,
+            ):
+                yield evt
+            return
+
+        limit = self.react_config.tool_call_limits.get(tool_call.name)
+        if limit is not None:
+            counts = self.state.reply_context.tool_call_counts
+            used = counts.get(tool_call.name, 0)
+            if used >= limit:
+                async for evt in self._handle_error_tool_call(
+                    tool_call,
+                    f"Tool '{tool_call.name}' has reached its call limit "
+                    f"of {limit} for this reply. Continue without "
+                    "calling it again in this reply.",
+                    state=ToolResultState.ERROR,
+                ):
+                    yield evt
+                return
+            if decision.behavior == PermissionBehavior.ALLOW:
+                # Reserve before yielding so parallel calls share the limit.
+                counts[tool_call.name] = used + 1
+
+        # Ask for user confirmation if needed.
         if decision.behavior in [
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
@@ -2618,19 +2645,7 @@ class Agent:
             )
             return
 
-        # Case 2: Denied by the permission system
-        if decision.behavior == PermissionBehavior.DENY:
-            async for evt in self._handle_error_tool_call(
-                tool_call,
-                decision.message,
-                state=ToolResultState.DENIED,
-            ):
-                yield evt
-
-            return
-
-        # Case 3: Allowed by the permission system, execute the tool call and
-        #  yield the events
+        # Execute the allowed tool call and yield its events.
         if decision.behavior == PermissionBehavior.ALLOW:
             self._update_tool_call_state(
                 tool_call.id,

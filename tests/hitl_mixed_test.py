@@ -8,6 +8,7 @@ from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
+from agentscope.state import AgentState
 from agentscope.tool import (
     ToolBase,
     Toolkit,
@@ -440,10 +441,10 @@ class AgentMixTest(IsolatedAsyncioTestCase):
     async def test_single_user_confirmation_and_external_execution(
         self,
     ) -> None:
-        """Test one tool call that needs confirmation and external
-        execution."""
+        """A confirmed external dispatch counts once across a parked reply."""
         mixed_tool = MockMixedSequentialTool()
         self.agent.toolkit = Toolkit(tools=[mixed_tool])
+        self.agent.react_config.tool_call_limits = {mixed_tool.name: 1}
 
         self._set_model_tool_call_responses(
             [
@@ -527,6 +528,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             ],
         )
 
+        self.assertEqual(self.agent.state.reply_context.tool_call_counts, {})
         events = []
         async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
@@ -570,12 +572,32 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             ],
         )
 
+        # A new agent handles the callback after loading the parked session.
+        self.agent = Agent(
+            name=self.agent.name,
+            system_prompt="You are a helpful assistant.",
+            model=self.model,
+            toolkit=self.agent.toolkit,
+            state=AgentState.model_validate_json(
+                self.agent.state.model_dump_json(),
+            ),
+            react_config=self.agent.react_config,
+            injection_config=self.agent.injection_config,
+        )
+        self.assertEqual(
+            self.agent.state.reply_context.tool_call_counts,
+            {mixed_tool.name: 1},
+        )
         events = []
         async for event in self.agent.reply_stream(
             inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
+        self.assertEqual(
+            self.agent.state.reply_context.tool_call_counts,
+            {mixed_tool.name: 1},
+        )
         expected_events_after_result = [
             *self._get_tool_result_events(
                 self.tool_call_id_1,

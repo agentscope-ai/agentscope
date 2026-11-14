@@ -39,6 +39,9 @@ const NESTED_SECTIONS: Array<{ key: Exclude<AgentSection, 'identity'>; i18n: str
 /** Top-level `AgentData` properties that group one mode's settings. */
 const MODE_BLOCKS = ['chat_config'];
 
+// The scalar form preserves API-configured per-tool limits when editing an agent.
+const REACT_SKIP_FIELDS = new Set(['id', 'type', 'tool_call_limits']);
+
 const IDENTITY_I18N = 'identity';
 
 const toKebab = (s: string) => s.replace(/_/g, '-');
@@ -113,6 +116,7 @@ export function AgentFormFields({ schema, values, onChange }: Props) {
 							<SchemaForm
 								schema={sectionSchema}
 								values={values[sectionKey]}
+								skipFields={sectionKey === 'react_config' ? REACT_SKIP_FIELDS : undefined}
 								onChange={(k, v) => onChange(sectionKey, k, v)}
 								idPrefix={`agent-form-${sectionI18n}`}
 								labelFor={(k, prop) =>

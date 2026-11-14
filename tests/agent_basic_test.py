@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+import asyncio
 import base64
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+
+from pydantic import ValidationError
 
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent, ContextConfig, InjectionConfig, ReActConfig
 from agentscope.model import ChatResponse, ChatUsage, FinishedReason
 from agentscope.tool import (
+    FunctionTool,
     ToolBase,
     Toolkit,
     ToolChunk,
@@ -25,6 +29,7 @@ from agentscope.message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
+    ToolResultState,
     UserMsg,
 )
 from agentscope.types import ReplyFinishedReason
@@ -1550,6 +1555,122 @@ class AgentBasicTest(  # pylint: disable=too-many-public-methods
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
         self.assertEqual(self.agent.state.cur_iter, 2)
+
+    async def test_tool_call_limits_apply_per_reply(self) -> None:
+        """A capped tool runs once across parallel calls and later steps."""
+        executions: list[str] = []
+
+        async def record(label: str) -> str:
+            """Keep the invocation in flight while sibling calls start."""
+            executions.append(label)
+            await asyncio.sleep(0)
+            return label
+
+        allow = PermissionDecision(PermissionBehavior.ALLOW, "Test tool")
+        self.agent.toolkit = Toolkit(
+            tools=[
+                FunctionTool(record, name="notify", permission=allow),
+                FunctionTool(record, name="lookup", permission=allow),
+                FunctionTool(record, name="disabled"),
+            ],
+        )
+        self.agent.react_config = ReActConfig(
+            tool_call_limits={"notify": 1, "disabled": 0},
+        )
+
+        def call(name: str, label: str) -> ToolCallBlock:
+            """Build a tool call with a distinct ID and side effect."""
+            return ToolCallBlock(
+                id=label,
+                name=name,
+                input=f'{{"label": "{label}"}}',
+            )
+
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        call("notify", "first"),
+                        call("notify", "second"),
+                        call("lookup", "other"),
+                        call("disabled", "zero"),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(content=[call("notify", "retry")], is_last=True),
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        await self.agent.reply(UserMsg(name="user", content="Send it"))
+
+        self.assertEqual(len(executions), 2)
+        self.assertIn("other", executions)
+        self.assertNotIn("retry", executions)
+        self.assertNotIn("zero", executions)
+        results = self.agent.state.context[-1].get_content_blocks(
+            "tool_result",
+        )
+        self.assertEqual(
+            {r.id for r in results},
+            {"first", "second", "other", "retry", "zero"},
+        )
+        for result in results:
+            self.assertEqual(
+                result.state,
+                ToolResultState.SUCCESS
+                if result.id in executions
+                else ToolResultState.ERROR,
+            )
+
+        self.model.set_responses(
+            [
+                ChatResponse(content=[call("notify", "next")], is_last=True),
+                ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+            ],
+        )
+        await self.agent.reply(UserMsg(name="user", content="Send it again"))
+        self.assertEqual(len(executions), 3)
+        self.assertEqual(executions[-1], "next")
+
+    async def test_failed_call_uses_tool_call_limit(self) -> None:
+        """A failed tool may already have produced side effects."""
+        attempts = []
+
+        def notify() -> str:
+            """Simulate a notification failure after the tool was invoked."""
+            attempts.append("notify")
+            raise RuntimeError("delivery failed")
+
+        self.agent.toolkit = Toolkit(
+            tools=[
+                FunctionTool(
+                    notify,
+                    permission=PermissionDecision(
+                        PermissionBehavior.ALLOW,
+                        "Test tool",
+                    ),
+                ),
+            ],
+        )
+        self.agent.react_config = ReActConfig(tool_call_limits={"notify": 1})
+        responses = [
+            ChatResponse(
+                content=[ToolCallBlock(id=call_id, name="notify", input="{}")],
+                is_last=True,
+            )
+            for call_id in ("first", "retry")
+        ]
+        responses.append(
+            ChatResponse(content=[TextBlock(text="Done")], is_last=True),
+        )
+        self.model.set_responses(responses)
+        await self.agent.reply(UserMsg(name="user", content="Send it"))
+        self.assertEqual(attempts, ["notify"])
+
+    def test_negative_tool_call_limit_is_invalid(self) -> None:
+        """Negative values are invalid even for just one configured tool."""
+        with self.assertRaises(ValidationError):
+            ReActConfig(tool_call_limits={"notify": -1})
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
