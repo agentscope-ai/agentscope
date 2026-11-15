@@ -7,7 +7,13 @@ from pydantic import BaseModel
 
 from utils import MockModel
 from agentscope.agent import Agent, ReActConfig
-from agentscope.message import UserMsg, TextBlock, ToolCallBlock, HintBlock
+from agentscope.message import (
+    UserMsg,
+    TextBlock,
+    ToolCallBlock,
+    HintBlock,
+    Msg,
+)
 from agentscope.middleware import MiddlewareBase, ReplyBudgetControlMiddleware
 from agentscope.model import ChatResponse, ChatUsage
 from agentscope.permission import (
@@ -207,6 +213,61 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
             if _has_hint_block(m, middleware.hint_message)
         ]
         self.assertGreater(len(hint_msgs), 0)
+
+    async def test_hint_does_not_join_the_previous_reply_message(
+        self,
+    ) -> None:
+        """A wrap-up hint belongs to the current reply message."""
+        middleware = ReplyBudgetControlMiddleware(token_budget=0)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="you are helpful",
+            model=MockModel(),
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+        middleware_key = await middleware.get_middleware_key()
+        old_reply = Msg(
+            id="previous-reply",
+            role="assistant",
+            name=agent.name,
+            content=[TextBlock(text="Earlier answer")],
+        )
+        agent.state.context.append(old_reply)
+        agent.state.middle_context[middleware_key] = {
+            agent.state.reply_id: 100,
+        }
+
+        async def next_handler(**_: Any) -> AsyncGenerator:
+            yield None
+            raise AssertionError("the stub must not be advanced twice")
+
+        chain = middleware.on_reasoning(
+            agent=agent,
+            input_kwargs={},
+            next_handler=next_handler,
+        )
+        event = await anext(chain)
+        self.assertIsNone(event)
+        with self.assertRaises(AssertionError):
+            await anext(chain)
+
+        self.assertFalse(
+            _has_hint_block(old_reply, middleware.hint_message),
+            "the previous reply must not receive the current hint",
+        )
+        hint_msgs = [
+            message
+            for message in agent.state.context
+            if _has_hint_block(message, middleware.hint_message)
+        ]
+        self.assertEqual(len(hint_msgs), 1)
+        self.assertEqual(hint_msgs[0].id, agent.state.reply_id)
+        self.assertIs(hint_msgs[0], agent.state.context[-1])
+        self.assertListEqual(
+            [isinstance(block, HintBlock) for block in hint_msgs[0].content],
+            [True],
+        )
 
     async def test_budget_exceeded_forces_tool_choice_none(self) -> None:
         """When budget is exceeded, tool_choice forwarded to model is none.
