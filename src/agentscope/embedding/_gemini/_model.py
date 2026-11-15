@@ -14,7 +14,6 @@ Text payloads may be passed either as bare ``str`` or as
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -216,11 +215,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 self.model,
             )
 
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
-
-        return self._merge_responses(results)
+        return await self._call_batches(batches, **kwargs)
 
     def _split_multimodal_batches(
         self,
