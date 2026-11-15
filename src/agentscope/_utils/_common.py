@@ -419,6 +419,9 @@ def _flatten_json_schema(schema: dict) -> dict:
 
             visited = visited | {def_name}
             resolved = _resolve_ref(defs[def_name], visited)
+            if not isinstance(resolved, dict):
+                # A boolean schema has no keywords for siblings to merge into
+                return resolved
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):

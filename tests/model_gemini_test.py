@@ -1874,6 +1874,25 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_flatten_boolean_schema_definition(self) -> None:
+        """A boolean definition is inlined as-is, dropping its siblings."""
+        for keyword in ("$defs", "definitions"):
+            for definition in (True, False):
+                with self.subTest(keyword=keyword, definition=definition):
+                    schema = {
+                        keyword: {"Anything": definition},
+                        "properties": {
+                            "value": {
+                                "$ref": f"#/{keyword}/Anything",
+                                "description": "Any value",
+                            },
+                        },
+                    }
+                    self.assertIs(
+                        _flatten_json_schema(schema)["properties"]["value"],
+                        definition,
+                    )
+
     def test_flatten_escaped_definition_names(self) -> None:
         """JSON Pointer escapes are decoded once and in the correct order."""
         for keyword in ("$defs", "definitions"):
