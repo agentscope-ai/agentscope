@@ -31,7 +31,9 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestGeminiFormatter(IsolatedAsyncioTestCase):
+class TestGeminiFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for Gemini Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -1231,6 +1233,44 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             if "function_call" in part
         ][0]["function_call"]
         self.assertIsInstance(function_call["args"], dict)
+
+    async def test_malformed_thought_signature_keeps_tool_call(
+        self,
+    ) -> None:
+        """An invalid encoded signature does not discard the tool call."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="gemini_ts:not-valid-base64!",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertEqual(
+            res,
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "gemini_ts:not-valid-base64!",
+                                "name": "get_weather",
+                                "args": {"city": "Tokyo"},
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
 
     async def test_chat_formatter_failed_tool_result_uses_error_key(
         self,
