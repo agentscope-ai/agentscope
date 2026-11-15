@@ -29,7 +29,7 @@ Differences from the Docker manager:
 
 import asyncio
 import time
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, cast
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -39,7 +39,7 @@ from ...workspace._opensandbox._constants import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
 )
-from ...workspace import OpenSandboxWorkspace
+from ...workspace import OpenSandboxWorkspace, WorkspaceBase
 
 from ._base import IsolationPolicy, WorkspaceManagerBase
 
@@ -193,8 +193,43 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # ``close`` only pauses the sandbox; a paused sandbox still
+            # bills, and this one never entered the cache.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
+
+    async def _dispose_uninitialized(
+        self,
+        workspace: WorkspaceBase,
+    ) -> None:
+        """Kill, rather than pause, an unclaimed sandbox.
+
+        OpenSandbox's ``close`` pauses the remote sandbox so a later
+        ``initialize`` can reattach to it by metadata. A workspace that
+        failed to initialize was never cached, so nothing will ever
+        reattach; the sandbox would keep billing. ``kill`` terminates
+        it, then ``close`` releases the local resources.
+        """
+        ws = cast(OpenSandboxWorkspace, workspace)
+        sandbox = ws._sandbox  # pylint: disable=protected-access
+        if sandbox is not None:
+            try:
+                await sandbox.kill()
+                await sandbox.close()
+                # pylint: disable-next=protected-access
+                ws._sandbox = None
+            except Exception as e:
+                logger.warning(
+                    "OpenSandboxWorkspaceManager: failed to kill "
+                    "unclaimed sandbox %s: %s",
+                    ws.workspace_id,
+                    e,
+                )
+        await super()._dispose_uninitialized(ws)
 
     async def get_workspace(
         self,

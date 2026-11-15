@@ -24,11 +24,11 @@ Daytona-specific behavior:
 
 import asyncio
 import time
-from typing import Self
+from typing import Self, cast
 
 from ..._logging import logger
 from ...mcp import MCPClient
-from ...workspace import DaytonaWorkspace
+from ...workspace import DaytonaWorkspace, WorkspaceBase
 from ...workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_SWEEP_INTERVAL,
@@ -171,8 +171,43 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             skill_paths=self._skill_paths,
             os_user=self._os_user,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # ``close`` only stops the sandbox; a stopped sandbox still
+            # bills, and this one never entered the cache.
+            await self._dispose_uninitialized(ws)
+            raise
         return ws
+
+    async def _dispose_uninitialized(
+        self,
+        workspace: WorkspaceBase,
+    ) -> None:
+        """Delete, rather than stop, an unclaimed sandbox.
+
+        Daytona's ``close`` stops the sandbox and keeps it around so a
+        later ``initialize`` can reattach. A workspace that failed to
+        initialize was never cached, so nothing will ever reattach and
+        the stopped sandbox would keep billing. Delete it through the
+        per-workspace client before closing that client.
+        """
+        ws = cast(DaytonaWorkspace, workspace)
+        sandbox = ws._sandbox  # pylint: disable=protected-access
+        client = ws._daytona  # pylint: disable=protected-access
+        if sandbox is not None and client is not None:
+            try:
+                await client.delete(sandbox)
+                # pylint: disable-next=protected-access
+                ws._sandbox = None
+            except Exception as e:
+                logger.warning(
+                    "DaytonaWorkspaceManager: failed to delete unclaimed "
+                    "sandbox %s: %s",
+                    ws.workspace_id,
+                    e,
+                )
+        await super()._dispose_uninitialized(ws)
 
     # ── public API ────────────────────────────────────────────────
 
