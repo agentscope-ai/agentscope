@@ -106,7 +106,7 @@ class GeminiTTSModel(TTSModelBase):
     def __init__(
         self,
         credential: GeminiCredential,
-        model: str = "gemini-2.5-flash-preview-tts",
+        model: str = "gemini-3.8-flash-tts",
         parameters: "GeminiTTSModel.Parameters | None" = None,
         stream: bool = True,
         client_kwargs: dict[str, Any] | None = None,
@@ -121,11 +121,12 @@ class GeminiTTSModel(TTSModelBase):
             credential (`GeminiCredential`):
                 The Google Gemini credential used to authenticate the API
                 call.
-            model (`str`, defaults to ``"gemini-2.5-flash-preview-tts"``):
+            model (`str`, defaults to ``"gemini-3.8-flash-tts"``):
                 The TTS model name. Supported models include
                 ``gemini-3.8-flash-tts``, ``gemini-3.8-flash-lite-tts``,
                 ``gemini-2.5-flash-preview-tts``, and
-                ``gemini-2.5-pro-preview-tts``.
+                ``gemini-2.5-pro-preview-tts``. The two ``2.5`` preview
+                models are shut down on 2026-11-17.
             parameters (`GeminiTTSModel.Parameters | None`, defaults to \
             `None`):
                 The TTS parameters (voice, etc.). When ``None``, the default

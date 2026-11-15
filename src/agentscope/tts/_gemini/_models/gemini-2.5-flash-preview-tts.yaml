@@ -1,6 +1,8 @@
 name: gemini-2.5-flash-preview-tts
 label: Gemini 2.5 Flash Preview TTS
-status: active
+status: deprecated
+# Shutdown date source: https://ai.google.dev/gemini-api/docs/deprecations
+deprecated_at: "2026-11-17T00:00:00"
 
 input_types:
   - text/plain
