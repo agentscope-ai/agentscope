@@ -193,8 +193,40 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The remote sandbox may already exist — initialize also
+            # bootstraps the gateway, and that half can fail on its
+            # own. Nothing else holds this workspace, and a paused
+            # sandbox would keep billing.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
+
+    @staticmethod
+    async def _dispose_prewarmed(ws: OpenSandboxWorkspace) -> None:
+        """Kill a sandbox nobody will come looking for.
+
+        ``close`` only pauses, so that the next ``initialize`` can
+        reattach via metadata. An unclaimed sandbox has no such
+        future: its id was never persisted, nothing will look it up,
+        and a paused sandbox bills for its claim indefinitely.
+        """
+        sandbox = ws._sandbox  # pylint: disable=protected-access
+        if sandbox is not None:
+            try:
+                await sandbox.kill()
+                # pylint: disable-next=protected-access
+                ws._sandbox = None
+            except Exception as e:
+                logger.warning(
+                    "OpenSandboxWorkspaceManager: failed to kill "
+                    "unclaimed sandbox %s: %s",
+                    ws.workspace_id,
+                    e,
+                )
+        await ws.close()
 
     async def get_workspace(
         self,

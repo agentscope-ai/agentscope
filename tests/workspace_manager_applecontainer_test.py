@@ -5,7 +5,7 @@
 
 import asyncio
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from agentscope.app.workspace_manager import (
     AppleContainerWorkspaceManager,
@@ -225,3 +225,19 @@ class TestAppleContainerWorkspaceManager(IsolatedAsyncioTestCase):
         )
         # Different session → different id.
         self.assertNotEqual(id1, id2)
+
+    async def test_failed_initialize_closes_the_workspace(self) -> None:
+        """A workspace whose ``initialize`` fails is closed, not leaked."""
+        manager = AppleContainerWorkspaceManager()
+        with patch.object(
+            _FakeWorkspace,
+            "initialize",
+            AsyncMock(side_effect=RuntimeError("gateway failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "gateway failed"):
+                await manager.get_workspace("u1", "a1", "s1", "ws-id")
+
+        self.assertListEqual(
+            [ws.closed for ws in _FakeWorkspace.created],
+            [True],
+        )

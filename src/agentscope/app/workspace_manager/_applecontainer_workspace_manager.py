@@ -141,8 +141,27 @@ class AppleContainerWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The container may already be running and nothing holds
+            # it — close() stops and removes it.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
+
+    @staticmethod
+    async def _dispose_prewarmed(ws: AppleContainerWorkspace) -> None:
+        """Remove a container nobody will come looking for."""
+        try:
+            await ws.close()
+        except Exception as e:
+            logger.warning(
+                "AppleContainerWorkspaceManager: failed to dispose "
+                "workspace %s: %s",
+                ws.workspace_id,
+                e,
+            )
 
     # ── public API ────────────────────────────────────────────────
 

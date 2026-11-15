@@ -24,6 +24,9 @@ class _FakeWorkspace:
         self.workspace_id = str(kwargs.get("workspace_id") or "new-id")
         self.initialized = False
         self.closed = False
+        self.timeout_seconds = 60
+        self._daytona = SimpleNamespace(delete=AsyncMock())
+        self._sandbox = object()
         _FakeWorkspace.created.append(self)
 
     async def initialize(self) -> None:
@@ -215,6 +218,38 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         await DaytonaWorkspaceManager._safe_close(  # type: ignore[arg-type]
             workspace,
         )
+
+    async def test_failed_initialize_deletes_and_closes(self) -> None:
+        """A failed initialize deletes the sandbox and closes the ws."""
+        manager = DaytonaWorkspaceManager()
+        with patch.object(
+            _FakeWorkspace,
+            "initialize",
+            AsyncMock(side_effect=RuntimeError("gateway failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "gateway failed"):
+                await manager.get_workspace(
+                    "u1",
+                    "a1",
+                    "s1",
+                    workspace_id="ws-id",
+                )
+
+        ws = _FakeWorkspace.created[0]
+        ws._daytona.delete.assert_awaited_once()
+        self.assertTrue(ws.closed)
+
+    async def test_successful_initialize_leaves_the_sandbox(self) -> None:
+        """A healthy initialize neither deletes nor closes."""
+        manager = DaytonaWorkspaceManager()
+        ws = await manager.get_workspace(
+            "u1",
+            "a1",
+            "s1",
+            workspace_id="ws-id",
+        )
+        ws._daytona.delete.assert_not_called()
+        self.assertFalse(ws.closed)
 
 
 if __name__ == "__main__":

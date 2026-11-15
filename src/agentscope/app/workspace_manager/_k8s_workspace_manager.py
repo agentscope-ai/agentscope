@@ -165,7 +165,12 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The Pod may already be running and nothing holds it.
+            await self._safe_close(ws)
+            raise
         return ws
 
     # ── public API ────────────────────────────────────────────────

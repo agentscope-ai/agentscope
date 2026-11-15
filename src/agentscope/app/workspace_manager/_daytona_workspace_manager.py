@@ -171,8 +171,38 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             skill_paths=self._skill_paths,
             os_user=self._os_user,
         )
-        await ws.initialize()
+        try:
+            await ws.initialize()
+        except BaseException:
+            # The remote sandbox may already exist — initialize also
+            # bootstraps the gateway, and that half can fail on its
+            # own. Nothing else holds this workspace, and a stopped
+            # sandbox would keep billing.
+            await self._dispose_prewarmed(ws)
+            raise
         return ws
+
+    @staticmethod
+    async def _dispose_prewarmed(ws: DaytonaWorkspace) -> None:
+        """Delete a sandbox nobody will come looking for.
+
+        ``close`` only stops (``force=False``) so the next
+        ``initialize`` can reattach via labels. An unclaimed sandbox
+        has no such future and keeps billing, so it is deleted.
+        """
+        client = ws._daytona  # pylint: disable=protected-access
+        sandbox = ws._sandbox  # pylint: disable=protected-access
+        if client is not None and sandbox is not None:
+            try:
+                await client.delete(sandbox, timeout=ws.timeout_seconds)
+            except Exception as e:
+                logger.warning(
+                    "DaytonaWorkspaceManager: failed to delete "
+                    "unclaimed sandbox %s: %s",
+                    ws.workspace_id,
+                    e,
+                )
+        await ws.close()
 
     # ── public API ────────────────────────────────────────────────
 
