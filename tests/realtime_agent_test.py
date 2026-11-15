@@ -354,6 +354,31 @@ class GatedTransport(FakeTransport):
             yield frame
 
 
+class ReplyAwareTransport(FakeTransport):
+    """Emit ``frames`` chunks of silence, then hold the session open
+    until the agent's active reply finishes.
+
+    ``reply_stream`` interrupts any reply still in flight when the
+    transport ends, so ending on a fixed frame budget races the
+    scripted reply completion on slow event loops. Ending only after
+    the reply is done makes the stream-end barge-in a no-op.
+    """
+
+    def __init__(self, frames: int, agent: RealtimeAgent) -> None:
+        super().__init__(frames)
+        self._agent = agent
+
+    async def incoming(self) -> AsyncIterator[AudioFrame]:
+        """Emit the frames, then wait out the active reply."""
+        async for frame in super().incoming():
+            yield frame
+        # pylint: disable=protected-access
+        for _ in range(5000):
+            if not self._agent._reply_id:
+                return
+            await asyncio.sleep(0.005)
+
+
 class BlockingClearTransport(GatedTransport):
     """Hold ``clear_audio`` open while a response completion arrives."""
 
@@ -852,7 +877,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
             self.assertFalse(agent._connected)  # pylint: disable=W0212
             self.assertEqual(model.sessions, 1)
 
-            summary = await self._collect(agent, FakeTransport(frames=2))
+            summary = await self._collect(
+                agent,
+                ReplyAwareTransport(frames=2, agent=agent),
+            )
 
         self.assertEqual(model.sessions, 2)
         # Reconnection starts with the context available when the previous
@@ -908,7 +936,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 agent._downlink is None or agent._downlink.done(),
             )  # pylint: disable=W0212
 
-            summary = await self._collect(agent, FakeTransport(frames=2))
+            summary = await self._collect(
+                agent,
+                ReplyAwareTransport(frames=2, agent=agent),
+            )
 
             # The pump must be live again: not the finished, crashed task.
             self.assertIsNotNone(agent._downlink)  # pylint: disable=W0212
