@@ -4,6 +4,7 @@
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
@@ -72,6 +73,22 @@ class TestOpenSandboxWorkspaceManager(IsolatedAsyncioTestCase):
             usage_lease_seconds=0.15,
             **kwargs,
         )
+
+    async def test_exact_ttl_boundary_evicts_only_idle_handles(self) -> None:
+        """Equal clock readings expire zero TTL without closing users."""
+        clock = SimpleNamespace(monotonic=lambda: 100.0)
+        with patch(
+            "agentscope.app.workspace_manager."
+            "_opensandbox_workspace_manager.time",
+            clock,
+        ):
+            manager = self.manager()
+            async with manager.acquire_workspace("u", "a", "s", "x") as ws:
+                await manager._sweep_once()
+                self.assertFalse(ws.detached)
+            # Release and sweep deliberately observe the same clock tick.
+            await manager._sweep_once()
+            self.assertTrue(ws.detached)
 
     async def test_long_turn_renews_and_pins_local_handle(self) -> None:
         """An active turn survives several lease periods and TTL ticks."""

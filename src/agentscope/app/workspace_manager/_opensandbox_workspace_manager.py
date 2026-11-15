@@ -581,7 +581,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
                 raise
         now = time.monotonic()
         for workspace_id, (_, accessed) in list(self._cache.items()):
-            if now - accessed > self._ttl:
+            if now - accessed >= self._ttl:
                 await self.close(workspace_id)
 
     async def _pause_claimed(self, workspace_id: str, token: str) -> None:
