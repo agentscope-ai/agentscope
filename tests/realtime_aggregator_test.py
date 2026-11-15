@@ -44,6 +44,29 @@ class TurnAggregatorTest(unittest.TestCase):
             [None, None, None, "对的"],
         )
 
+    def test_dropped_transcript_clears_merge_state(self) -> None:
+        """A bare acknowledgement did not continue the previous turn."""
+        aggregator = TurnAggregator(
+            merge_window_ms=10_000,
+            backchannels=frozenset({"嗯"}),
+        )
+        aggregator.take("第一句")
+        aggregator.take("第二句")
+        self.assertTrue(aggregator.merges_with_previous())
+
+        self.assertIsNone(aggregator.take("嗯。"))
+        self.assertFalse(aggregator.merges_with_previous())
+
+    def test_min_chars_drop_clears_merge_state(self) -> None:
+        """A transcript below min_chars did not continue the turn."""
+        aggregator = TurnAggregator(merge_window_ms=10_000, min_chars=3)
+        aggregator.take("第一句")
+        aggregator.take("第二句")
+        self.assertTrue(aggregator.merges_with_previous())
+
+        self.assertIsNone(aggregator.take("ok"))
+        self.assertFalse(aggregator.merges_with_previous())
+
     def test_reset_forgets_previous_turn(self) -> None:
         """After a reset the next transcript never merges."""
         aggregator = TurnAggregator(merge_window_ms=10_000)
