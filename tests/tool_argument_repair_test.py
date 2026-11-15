@@ -150,6 +150,59 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             ),
             {"items": [{"unit": "C", "verbse": True}]},
         )
+        # A shortened list would drop its elements, so keep the original
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"items": [1, 2, 3], "name": "x"}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "prefixItems": [{"type": "integer"}],
+                            "items": False,
+                        },
+                    },
+                },
+            ),
+            {"items": [1, 2, 3], "name": "x"},
+        )
+        # ...also when the shortened list is nested
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"rows": [[1, 2, 3]]}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "rows": {
+                            "type": "array",
+                            "items": {
+                                "type": "array",
+                                "prefixItems": [{"type": "integer"}],
+                                "items": False,
+                            },
+                        },
+                    },
+                },
+            ),
+            {"rows": [[1, 2, 3]]},
+        )
+        # A list of the same length is still repaired element-wise
+        self.assertDictEqual(
+            _json_loads_with_repair(
+                '{"items": ["1"]}',
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                        },
+                    },
+                },
+            ),
+            {"items": [1]},
+        )
         # Type repairs inside a nested object still happen
         self.assertDictEqual(
             _json_loads_with_repair(

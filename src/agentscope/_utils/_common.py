@@ -93,7 +93,7 @@ def _normalize_local_path(path: str) -> str:
 
 
 def _has_dropped_keys(original: Any, repaired: Any) -> bool:
-    """Whether any dict in ``repaired`` lost a key it has in ``original``."""
+    """Whether ``repaired`` lost a key or a list element from ``original``."""
     if isinstance(original, dict) and isinstance(repaired, dict):
         return bool(original.keys() - repaired.keys()) or any(
             _has_dropped_keys(original[key], value)
@@ -101,7 +101,8 @@ def _has_dropped_keys(original: Any, repaired: Any) -> bool:
             if key in original
         )
     if isinstance(original, list) and isinstance(repaired, list):
-        return any(
+        # zip stops at the shorter list, so check the length first
+        return len(repaired) < len(original) or any(
             _has_dropped_keys(item, fixed)
             for item, fixed in zip(original, repaired)
         )
