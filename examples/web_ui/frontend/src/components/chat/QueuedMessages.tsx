@@ -1,5 +1,15 @@
 import { getTextContent } from '@agentscope-ai/agentscope/message';
-import { ArrowDown, ArrowUp, Check, GripVertical, Loader2, Pencil, Trash2, X } from 'lucide-react';
+import {
+	ArrowDown,
+	ArrowUp,
+	Check,
+	CornerDownRight,
+	GripVertical,
+	Loader2,
+	Pencil,
+	Trash2,
+	X,
+} from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import type { ChatQueueItem } from '@/api/chat';
@@ -12,8 +22,10 @@ import { cn } from '@/lib/utils';
 interface QueuedMessagesProps {
 	items: ChatQueueItem[];
 	reorderDisabled: boolean;
+	activeReplyId: string | null;
 	onUpdate: (itemId: string, text: string) => Promise<void>;
 	onDelete: (itemId: string) => Promise<void>;
+	onSteer: (itemId: string, replyId: string) => Promise<void>;
 	onMove: (itemId: string, direction: -1 | 1) => Promise<void>;
 	onReorder: (itemIds: string[]) => Promise<void>;
 }
@@ -58,8 +70,10 @@ function QueueActionButton({ label, disabled, onClick, children }: QueueActionBu
 export function QueuedMessages({
 	items,
 	reorderDisabled,
+	activeReplyId,
 	onUpdate,
 	onDelete,
+	onSteer,
 	onMove,
 	onReorder,
 }: QueuedMessagesProps) {
@@ -108,7 +122,8 @@ export function QueuedMessages({
 					// Optimistic ids are local-only and cannot be sent to mutation
 					// endpoints until POST /chat returns the stable server id.
 					const busy = busyId === item.id || item.id.startsWith('optimistic:');
-					const reorderBusy = busy || reorderDisabled;
+					const steering = item.state === 'steering';
+					const reorderBusy = busy || reorderDisabled || steering;
 					const editable = !Array.isArray(item.input);
 					return (
 						<div
@@ -175,6 +190,21 @@ export function QueuedMessages({
 									{itemText(item) || t('chatQueue.attachmentOnly')}
 								</p>
 							)}
+							<span
+								className={cn(
+									'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
+									item.state === 'steering' && 'bg-primary/10 text-primary',
+									item.state === 'failed' && 'bg-destructive/10 text-destructive',
+									item.state === 'queued' && 'bg-muted text-muted-foreground',
+								)}
+								title={item.error ?? undefined}
+							>
+								{item.state === 'steering'
+									? t('chatQueue.stateSteering')
+									: item.state === 'failed'
+										? t('chatQueue.stateFailed')
+										: t('chatQueue.stateQueued')}
+							</span>
 
 							{busy ? (
 								<Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
@@ -201,6 +231,19 @@ export function QueuedMessages({
 								</>
 							) : (
 								<>
+									{activeReplyId && (
+										<QueueActionButton
+											disabled={steering}
+											label={t('chatQueue.steer')}
+											onClick={() =>
+												void run(item.id, () =>
+													onSteer(item.id, activeReplyId),
+												)
+											}
+										>
+											<CornerDownRight className="size-3.5" />
+										</QueueActionButton>
+									)}
 									<QueueActionButton
 										disabled={reorderBusy || index === 0}
 										label={t('chatQueue.moveUp')}
@@ -216,7 +259,7 @@ export function QueuedMessages({
 										<ArrowDown className="size-3.5" />
 									</QueueActionButton>
 									<QueueActionButton
-										disabled={!editable}
+										disabled={!editable || steering}
 										label={t('chatQueue.edit')}
 										onClick={() => {
 											setDraft(itemText(item));
@@ -226,6 +269,7 @@ export function QueuedMessages({
 										<Pencil className="size-3.5" />
 									</QueueActionButton>
 									<QueueActionButton
+										disabled={steering}
 										label={t('chatQueue.delete')}
 										onClick={() => void run(item.id, () => onDelete(item.id))}
 									>

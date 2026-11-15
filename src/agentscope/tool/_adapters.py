@@ -72,7 +72,8 @@ class FunctionTool(ToolBase):
             func (`Callable`):
                 The Python function to wrap.
             name (`str | None`, optional):
-                Custom tool name. If None, uses the function name.
+                Custom tool name. If None, uses the function name or the
+                callable object's class name when it has no function name.
             description (`str | None`, optional):
                 Custom tool description. If None, extracts from docstring.
             input_schema (`dict | type[BaseModel] | None`, optional):

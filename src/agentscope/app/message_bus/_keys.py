@@ -263,6 +263,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHAT_INPUT_MUTATION_LOCK = "agentscope:chat:inputs:mutation:{sid}"
     _CHAT_INPUT_PENDING_REGISTRY = "agentscope:chat:pending"
     _CHAT_INPUT_INFLIGHT_REGISTRY = "agentscope:chat:inflight"
+    _CHAT_ACTIVE_REPLY_REGISTRY = "agentscope:chat:active_reply"
     _CHAT_INPUT_RECOVERY_LOCK = "agentscope:chat:recovery:lock"
     _CHAT_INPUT_RECOVERY_STATE = "agentscope:chat:recovery:state"
     _CHAT_INPUT_USER_QUOTA_LOCK = "agentscope:chat:quota:lock:{uid}"
@@ -369,6 +370,16 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return cls._CHAT_INPUT_INFLIGHT_REGISTRY
 
     @classmethod
+    def chat_active_reply_registry(cls) -> str:
+        """Return the registry containing each session's active reply id.
+
+        Returns:
+            `str`:
+                Global registry mapping session ids to active reply ids.
+        """
+        return cls._CHAT_ACTIVE_REPLY_REGISTRY
+
+    @classmethod
     def chat_input_user_quota_lock(cls, user_id: str) -> str:
         """Return the per-user pending-turn quota mutex key.
 
@@ -461,6 +472,16 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     def bg_tasks(cls, session_id: str) -> str:
         """Per-session background task registry key."""
         return cls._BG_TASKS.format(sid=session_id)
+
+    @staticmethod
+    def bg_task_records(user_id: str) -> str:
+        """Shared running and terminal background task metadata per user."""
+        return f"agentscope:bg_task_records:{user_id}"
+
+    @staticmethod
+    def bg_task_records_lock(user_id: str) -> str:
+        """Serialize terminal-state retention across a user's workers."""
+        return f"agentscope:bg_task_records_lock:{user_id}"
 
     # ------------------------------------------------------------------
     # Knowledge-base indexing pipeline

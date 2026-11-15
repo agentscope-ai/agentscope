@@ -254,6 +254,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                     worker_session.id,
                     worker_agent.id,
                     message,
+                    client_builtin_tools=["AskUser"],
                 )
                 self.assertTrue(
                     await queue.drain_chat_inputs(
@@ -268,6 +269,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                     worker_session.id,
                     worker_agent.id,
                     message,
+                    client_builtin_tools=["AskUser"],
                 )
             if message is not None:
                 save.assert_awaited_once_with(
@@ -311,6 +313,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": storage.get_team_calls,
                 "team_role": toolkit_kwargs["team_role"],
                 "channel_tools": toolkit_kwargs["channel_tools"],
+                "client_builtin_tools": toolkit_kwargs["client_builtin_tools"],
                 "replies": replies,
                 "tts_models": [
                     mw.tts
@@ -329,6 +332,7 @@ class TestRunContextResolution(IsolatedAsyncioTestCase):
                 "get_team_calls": 1,
                 "team_role": "worker",
                 "channel_tools": [],
+                "client_builtin_tools": ["AskUser"],
                 "replies": [message],
                 "tts_models": (
                     [get_tts_model.return_value] if tts_available else []

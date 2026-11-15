@@ -1,6 +1,8 @@
 name: glm-5.3
 label: GLM 5.3
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-08-28
 
 input_types:
   - text/plain

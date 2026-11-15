@@ -145,7 +145,9 @@ def _tts_parameters(
         voice = values.get("voice")
         if isinstance(voice, str) and voice not in _get_preset_voices(card):
             values["voice"] = {"id": voice}
-    return tts_cls.Parameters(**values)
+    parameters = tts_cls.Parameters(**values)
+    tts_cls.validate_parameters(config.model, parameters)
+    return parameters
 
 
 def validate_voice_profile_model(

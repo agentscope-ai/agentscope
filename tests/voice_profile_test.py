@@ -49,6 +49,8 @@ from agentscope.app.storage._model._voice_profile import (
 )
 from agentscope.tts import (
     DashScopeCosyVoiceTTSModel,
+    GeminiTTSModel,
+    MiniMaxTTSModel,
     TTSModelCard,
     VoiceCloningError,
     VoiceCloningClientBase,
@@ -57,6 +59,7 @@ from agentscope.credential import (
     CredentialBase,
     CredentialFactory,
     DashScopeCredential,
+    GeminiCredential,
     OpenAICredential,
 )
 
@@ -632,6 +635,170 @@ class TestVoiceProfileTenantIsolation(IsolatedAsyncioTestCase):
             "user-a",
             "profile-a",
         )
+
+
+class TestMiniMaxSharedPresets(IsolatedAsyncioTestCase):
+    """Validate real MiniMax cards at configuration time and runtime."""
+
+    async def test_presets_work_for_owners_and_shared_users(self) -> None:
+        """System presets stay usable without a custom voice profile."""
+        access, storage = AsyncMock(), AsyncMock()
+        access.resolve_credential.return_value = CredentialRecord(
+            id="credential-a",
+            user_id="owner",
+            data={
+                "type": "minimax_credential",
+                "api_key": "test",
+            },
+        )
+        voices = [
+            "English_expressive_narrator",
+            "male-qn-qingse",
+            "English_Graceful_Lady",
+        ]
+        for card in MiniMaxTTSModel.list_models():
+            for user in ("owner", "viewer"):
+                for voice in voices:
+                    with self.subTest(model=card.name, user=user, voice=voice):
+                        config = TTSModelConfig(
+                            type="minimax_credential",
+                            model=card.name,
+                            credential_id="credential-a",
+                            parameters={"voice": voice},
+                        )
+                        await validate_tts_model_config(
+                            user,
+                            config,
+                            access,
+                            storage,
+                        )
+                        model = await get_tts_model(
+                            user,
+                            config,
+                            access,
+                            storage,
+                        )
+                        self.assertIsInstance(model, MiniMaxTTSModel)
+                        self.assertEqual(
+                            (model.model, model.parameters.voice),
+                            (card.name, voice),
+                        )
+            schema = card.parameter_schema["properties"]["voice"]
+            self.assertEqual(
+                (schema["default"], schema["enum"]),
+                (voices[0], voices),
+            )
+
+    async def test_shared_unknown_voice_remains_forbidden(self) -> None:
+        """Adding presets never grants access to arbitrary account voices."""
+        access, storage = AsyncMock(), AsyncMock()
+        access.resolve_credential.return_value = CredentialRecord(
+            id="credential-a",
+            user_id="owner",
+            data={
+                "type": "minimax_credential",
+                "api_key": "test",
+            },
+        )
+        for card in MiniMaxTTSModel.list_models():
+            with self.subTest(model=card.name):
+                config = TTSModelConfig(
+                    type="minimax_credential",
+                    model=card.name,
+                    credential_id="credential-a",
+                    parameters={"voice": "private-account-voice"},
+                )
+                with self.assertRaises(HTTPException) as raised:
+                    await validate_tts_model_config(
+                        "viewer",
+                        config,
+                        access,
+                        storage,
+                    )
+                self.assertEqual(raised.exception.status_code, 403)
+                with patch("agentscope.app._service._tts_model.logger"):
+                    self.assertIsNone(
+                        await get_tts_model(
+                            "viewer",
+                            config,
+                            access,
+                            storage,
+                        ),
+                    )
+
+
+class TestGeminiTTSRuntime(IsolatedAsyncioTestCase):
+    """New Gemini TTS models work through the application service."""
+
+    async def test_gemini_style_validation_matches_construction(self) -> None:
+        """Reject unsupported style before saving; valid configs still run."""
+        access = AsyncMock()
+        storage = AsyncMock()
+        access.resolve_credential.return_value = CredentialRecord(
+            id="credential-a",
+            user_id="user-a",
+            data={"type": "gemini_credential", "api_key": "test"},
+        )
+        for name, style, valid, streaming in (
+            ("gemini-2.5-flash-preview-tts", "warm", False, False),
+            ("gemini-2.5-pro-preview-tts", "warm", False, False),
+            ("gemini-2.5-flash-preview-tts", None, True, True),
+            ("gemini-2.5-pro-preview-tts", "", True, True),
+            ("gemini-3.8-flash-tts", "warm", True, True),
+            ("gemini-3.8-flash-lite-tts", "warm", True, True),
+        ):
+            with self.subTest(model=name, style=style):
+                parameters = {"voice": "Kore"}
+                if style is not None:
+                    parameters["style"] = style
+                config = TTSModelConfig(
+                    type="gemini_credential",
+                    credential_id="credential-a",
+                    model=name,
+                    parameters=parameters,
+                )
+                if not valid:
+                    with self.assertRaises(HTTPException) as error:
+                        await validate_tts_model_config(
+                            "user-a",
+                            config,
+                            access,
+                            storage,
+                        )
+                    self.assertEqual(
+                        (error.exception.status_code, error.exception.detail),
+                        (
+                            400,
+                            "Invalid TTS parameters for the selected model.",
+                        ),
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Structured style requires",
+                    ):
+                        GeminiTTSModel(
+                            credential=GeminiCredential(api_key="test"),
+                            model=name,
+                            parameters=GeminiTTSModel.Parameters(**parameters),
+                        )
+                    continue
+                await validate_tts_model_config(
+                    "user-a",
+                    config,
+                    access,
+                    storage,
+                )
+                model = await get_tts_model(
+                    "user-a",
+                    config,
+                    access,
+                    storage,
+                )
+                self.assertIsInstance(model, GeminiTTSModel)
+                self.assertEqual(
+                    (model.model, model.stream, model.parameters.model_dump()),
+                    (name, streaming, {"voice": "Kore", "style": style or ""}),
+                )
 
 
 class TestVoiceProfileRuntime(IsolatedAsyncioTestCase):

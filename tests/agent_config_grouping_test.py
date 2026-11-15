@@ -152,6 +152,136 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_create_rejects_context_ratios_that_make_agent_unusable(
+        self,
+    ) -> None:
+        """POST rejects settings that Agent construction would reject."""
+        invalid_configs = (
+            {"trigger_ratio": 0.1},
+            {"trigger_ratio": 0.15},
+            {"context_buffer_ratio": 0.8},
+        )
+
+        for context_config in invalid_configs:
+            config = {"context_config": context_config}
+            payloads: tuple[dict[str, Any], ...] = (
+                config,
+                {"chat_config": config},
+            )
+            for payload in payloads:
+                with self.subTest(payload=payload):
+                    response = self.client.post(
+                        "/agent/",
+                        headers=HEADERS,
+                        json={"name": "invalid", **payload},
+                    )
+                    self.assertEqual(response.status_code, 422)
+
+        self.assertEqual(
+            self.client.get("/agent/", headers=HEADERS).json(),
+            {"agents": [], "total": 0},
+        )
+
+        valid = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "valid-default"},
+        )
+        self.assertEqual(valid.status_code, 201)
+
+    def test_update_rejects_invalid_context_ratio_without_mutating_record(
+        self,
+    ) -> None:
+        """PATCH rejects and does not persist a context ratio violation."""
+        agent_id = self.client.post(
+            "/agent/",
+            headers=HEADERS,
+            json={"name": "valid-agent"},
+        ).json()["agent_id"]
+
+        before = self.client.get("/agent/", headers=HEADERS).json()
+        config = {"context_config": {"trigger_ratio": 0.15}}
+        for payload in (config, {"chat_config": config}):
+            with self.subTest(payload=payload):
+                response = self.client.patch(
+                    f"/agent/{agent_id}",
+                    headers=HEADERS,
+                    json=payload,
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(
+                    response.json(),
+                    {
+                        "detail": (
+                            "The 'context_buffer_ratio' of the context "
+                            "config must be smaller than its "
+                            "'trigger_ratio', so that the context length "
+                            "is injected and the compression tool takes "
+                            "effect before the hard compression, got "
+                            "0.2 and 0.15."
+                        ),
+                    },
+                )
+                saved = self.client.get("/agent/", headers=HEADERS)
+                self.assertEqual(saved.status_code, 200)
+                self.assertEqual(saved.json(), before)
+
+    async def test_invalid_stored_ratios_allow_listing_repair_and_delete(
+        self,
+    ) -> None:
+        """Old invalid ratios remain readable and manageable after upgrade."""
+        record = AgentRecord(user_id="alice", data=AgentData(name="old"))
+        valid_data = record.data.model_dump(mode="json")
+        # Simulate an invalid record persisted by an older app version.
+        record.data.chat_config.context_config.trigger_ratio = 0.15
+        await self.storage.upsert_agent("alice", record)
+        healthy = AgentRecord(user_id="alice", data=AgentData(name="healthy"))
+        await self.storage.upsert_agent("alice", healthy)
+
+        listed = self.client.get("/agent/", headers=HEADERS)
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(
+            {
+                **listed.json(),
+                "agents": sorted(
+                    listed.json()["agents"],
+                    key=lambda a: a["id"],
+                ),
+            },
+            {
+                "agents": sorted(
+                    [
+                        {**item.model_dump(mode="json"), "editable": True}
+                        for item in (record, healthy)
+                    ],
+                    key=lambda a: a["id"],
+                ),
+                "total": 2,
+            },
+        )
+        repaired = self.client.patch(
+            f"/agent/{record.id}",
+            headers=HEADERS,
+            json={"chat_config": {"context_config": {"trigger_ratio": 0.8}}},
+        )
+        self.assertEqual(repaired.status_code, 200)
+        self.assertEqual(repaired.json()["data"], valid_data)
+        stored = await self.storage.get_agent("alice", record.id)
+        self.assertEqual(stored.data.model_dump(mode="json"), valid_data)
+
+        await self.storage.upsert_agent("alice", record)
+        deleted = self.client.delete(f"/agent/{record.id}", headers=HEADERS)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(
+            self.client.get("/agent/", headers=HEADERS).json(),
+            {
+                "agents": [
+                    {**healthy.model_dump(mode="json"), "editable": True},
+                ],
+                "total": 1,
+            },
+        )
+
     def test_update_keeps_untouched_sub_configs(self) -> None:
         """A legacy PATCH replaces its own sub-config and nothing else."""
         agent_id = self.client.post(
@@ -251,7 +381,10 @@ class AgentConfigGroupingTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
             json={
                 "chat_config": {
-                    "context_config": {"max_image_num": 7},
+                    "context_config": {
+                        "max_image_num": 7,
+                        "trigger_ratio": 0.15,
+                    },
                     "react_config": {"max_iters": 11},
                 },
                 "context_config": {"max_image_num": 3},

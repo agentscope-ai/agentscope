@@ -2,6 +2,10 @@ import type { Msg } from '@agentscope-ai/agentscope/message';
 
 import { client } from './client';
 import type { ChatRequest } from './types';
+import {
+	getEnabledClientBuiltinTools,
+	getEnabledClientExternalToolDefinitions,
+} from '@/lib/client-external-tool-store';
 
 export interface ChatQueueItem {
 	/** Stable business id used by queue mutation endpoints. */
@@ -10,6 +14,10 @@ export interface ChatQueueItem {
 	created_at: string;
 	/** One message or an ordered message group executed as one turn. */
 	input: Msg | Msg[];
+	/** Current deferred-send or steering lifecycle state. */
+	state: 'queued' | 'steering' | 'failed';
+	/** Visible preparation failure for a failed steering attempt. */
+	error: string | null;
 }
 
 export interface ChatQueueResponse {
@@ -41,7 +49,15 @@ export const chatApi = {
 			status: 'started' | 'queued';
 			session_id: string;
 			queue_item_id: string | null;
-		}>('/chat/', body),
+		}>('/chat/', {
+			...body,
+			client_builtin_tools:
+				body.client_builtin_tools ??
+				getEnabledClientBuiltinTools(body.agent_id, body.session_id),
+			client_external_tools:
+				body.client_external_tools ??
+				getEnabledClientExternalToolDefinitions(body.agent_id, body.session_id),
+		}),
 
 	/**
 	 * Read the complete editable pending queue.
@@ -85,6 +101,22 @@ export const chatApi = {
 		client.delete<ChatQueueResponse>(`/chat/queue/${encodeURIComponent(itemId)}`, {
 			agent_id: agentId,
 			session_id: sessionId,
+		}),
+
+	/**
+	 * Reserve one pending item for the reply that is currently active.
+	 *
+	 * @param itemId - Stable id of the pending item.
+	 * @param agentId - Agent that owns the target session.
+	 * @param sessionId - Session whose reply should be steered.
+	 * @param replyId - Active reply observed by the client.
+	 * @returns Complete queue snapshot with the item marked as steering.
+	 */
+	steerQueued: (itemId: string, agentId: string, sessionId: string, replyId: string) =>
+		client.post<ChatQueueResponse>(`/chat/queue/${encodeURIComponent(itemId)}/steer`, {
+			agent_id: agentId,
+			session_id: sessionId,
+			reply_id: replyId,
 		}),
 
 	/**

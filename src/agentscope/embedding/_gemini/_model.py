@@ -15,6 +15,7 @@ Text payloads may be passed either as bare ``str`` or as
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -90,12 +91,25 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
     #: limit; we use a conservative default.
     _TEXT_BATCH_SIZE: int = 100
 
+    def _apply_default_api_version(self, config: Any) -> None:
+        """Keep Developer API on beta unless a version is explicitly set."""
+        from google.genai.types import HttpOptions
+
+        if not self.client.vertexai and not os.getenv(
+            "GOOGLE_GENAI_API_VERSION",
+        ):
+            options = config.http_options or HttpOptions()
+            if not options.api_version:
+                config.http_options = options.model_copy(
+                    update={"api_version": "v1beta"},
+                )
+
     def __init__(
         self,
         credential: CredentialBase,
         model: str,
         dimensions: int | None,
-        parameters: "GeminiEmbeddingModel.Parameters | None" = None,
+        parameters: "EmbeddingModelBase.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
         max_retries: int = 3,
@@ -333,6 +347,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             **kwargs,
         }
         config = types.EmbedContentConfig(**config_kwargs)
+        self._apply_default_api_version(config)
 
         cache_key = {
             "model": self.model,
@@ -423,6 +438,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
             **kwargs,
         }
         config = types.EmbedContentConfig(**config_kwargs)
+        self._apply_default_api_version(config)
 
         # Serialize content only for stable cache keys, excluding block
         # IDs and timestamps.

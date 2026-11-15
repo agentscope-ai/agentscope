@@ -3,6 +3,7 @@
 """Unit tests for DashScopeEmbeddingModel."""
 import tempfile
 from dataclasses import asdict
+from tempfile import TemporaryDirectory
 from threading import get_ident
 from types import SimpleNamespace
 from typing import Any
@@ -169,6 +170,126 @@ class DashScopeListModelsTest(IsolatedAsyncioTestCase):
 
 class DashScopeTextCallTest(IsolatedAsyncioTestCase):
     """Test DashScope text embedding API calls."""
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_configured_text_parameters(self, mock_api: Any) -> None:
+        """Configured options reach every batch; per-call options win."""
+        mock_api.side_effect = lambda **kw: _text_resp(
+            [[0.1]] * len(kw["input"]),
+        )
+        parameters = DashScopeEmbeddingModel.Parameters(
+            text_type="query",
+            instruct="Find relevant documents",
+            output_type=None,
+        )
+        model = DashScopeEmbeddingModel(
+            credential=_cred(),
+            model="text-embedding-v4",
+            dimensions=1,
+            parameters=parameters,
+        )
+        texts = [str(i) for i in range(11)]
+        result = await model(texts)
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1]] * 11,
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 20, "time": A, "type": "embedding"},
+                "source": "api",
+            },
+        )
+        self.assertEqual(mock_api.call_count, 2)
+        self.assertCountEqual(
+            [request.kwargs for request in mock_api.call_args_list],
+            [
+                {
+                    "api_key": "k",
+                    "input": batch,
+                    "model": "text-embedding-v4",
+                    "dimension": 1,
+                    "text_type": "query",
+                    "instruct": "Find relevant documents",
+                }
+                for batch in [texts[:10], texts[10:]]
+            ],
+        )
+        result = await model(["override"], text_type="document")
+        self.assertDictEqual(
+            asdict(result),
+            {
+                "embeddings": [[0.1]],
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 10, "time": A, "type": "embedding"},
+                "source": "api",
+            },
+        )
+        self.assertDictEqual(
+            mock_api.call_args.kwargs,
+            {
+                "api_key": "k",
+                "input": ["override"],
+                "model": "text-embedding-v4",
+                "dimension": 1,
+                "text_type": "document",
+                "instruct": "Find relevant documents",
+            },
+        )
+        self.assertDictEqual(
+            parameters.model_dump(),
+            {
+                "text_type": "query",
+                "instruct": "Find relevant documents",
+                "output_type": None,
+            },
+        )
+
+    @patch("dashscope.embeddings.TextEmbedding.call")
+    async def test_configured_text_parameters_cache(
+        self,
+        mock_api: Any,
+    ) -> None:
+        """A real file cache separates roles and reuses equivalent options."""
+        with TemporaryDirectory() as directory:
+            cache = FileEmbeddingCache(cache_dir=directory)
+            for configured, overrides, vector, source in [
+                ("query", {}, [0.1], "api"),
+                ("document", {}, [0.2], "api"),
+                ("query", {"text_type": "document"}, [0.2], "cache"),
+                ("query", {}, [0.1], "cache"),
+            ]:
+                with self.subTest(configured=configured, overrides=overrides):
+                    model = DashScopeEmbeddingModel(
+                        credential=_cred(),
+                        model="text-embedding-v4",
+                        dimensions=1,
+                        parameters=DashScopeEmbeddingModel.Parameters(
+                            text_type=configured,
+                        ),
+                        embedding_cache=cache,
+                    )
+                    mock_api.return_value = _text_resp([vector])
+                    result = await model(["same input"], **overrides)
+                    self.assertDictEqual(
+                        asdict(result),
+                        {
+                            "embeddings": [vector],
+                            "id": A,
+                            "created_at": A,
+                            "type": "embedding",
+                            "usage": {
+                                "tokens": 10 if source == "api" else 0,
+                                "time": A if source == "api" else 0,
+                                "type": "embedding",
+                            },
+                            "source": source,
+                        },
+                    )
+            self.assertEqual(mock_api.call_count, 2)
 
     @patch("dashscope.embeddings.TextEmbedding.call")
     async def test_text_call(self, mock_api: Any) -> None:

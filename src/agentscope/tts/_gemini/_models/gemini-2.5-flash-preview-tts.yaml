@@ -41,4 +41,6 @@ voices:
   - Sadaltager
   - Sulafat
 
-parameter_overrides: {}
+parameter_overrides:
+  style:
+    hidden: true

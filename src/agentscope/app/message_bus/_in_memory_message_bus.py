@@ -36,7 +36,7 @@ class InMemoryMessageBus(
     Mapping of bus modes to in-memory structures:
 
     - **Mode A (drain queue)** — each key maps to
-      ``(entry_id, payload, expire_at)`` tuples. ``queue_push`` appends;
+      ``(entry_id, payload)`` tuples. ``queue_push`` appends;
       ``queue_drain`` pops from the front (FIFO) and deletes the returned
       entries.
     - **Mode C (replay log)** — same underlying list structure, but
@@ -61,12 +61,10 @@ class InMemoryMessageBus(
         # Global auto-increment counter for entry ids.
         self._seq: int = 0
 
-        # Mode A — drain queues: key -> [(entry_id, payload), ...]
-        # (entry_id, payload, expire_at | None) — expire_at is monotonic.
-        self._queues: dict[
-            str,
-            list[tuple[str, dict, float | None]],
-        ] = defaultdict(list)
+        # Mode A — drain queues. Expiry belongs to the whole key, as in
+        # Redis Streams, and is checked lazily on push, read, or drain.
+        self._queues: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+        self._queue_expires_at: dict[str, float] = {}
 
         # Mode C — replay logs: key -> [(entry_id, payload), ...]
         self._logs: dict[str, list[tuple[str, dict]]] = defaultdict(list)
@@ -128,6 +126,20 @@ class InMemoryMessageBus(
     # Mode A — drain queue
     # ------------------------------------------------------------------
 
+    def _drop_expired_queue(self, key: str, now: float) -> None:
+        """Remove ``key`` if its queue lifetime has elapsed.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            now (`float`):
+                Current monotonic time.
+        """
+        expires_at = self._queue_expires_at.get(key)
+        if expires_at is not None and expires_at <= now:
+            self._queues.pop(key, None)
+            self._queue_expires_at.pop(key, None)
+
     async def queue_push(
         self,
         key: str,
@@ -137,9 +149,8 @@ class InMemoryMessageBus(
     ) -> str:
         """Append ``payload`` to the in-memory drain queue at ``key``.
 
-        When ``ttl_secs`` is set the entry expires after that many
-        seconds; expired entries are dropped here and on drain, so a
-        never-drained key stays bounded.
+        When ``ttl_secs`` is set, refresh the whole queue's expiry.
+        Expired queues are removed on the next push, read, or drain.
 
         Args:
             key (`str`):
@@ -147,18 +158,22 @@ class InMemoryMessageBus(
             payload (`dict`):
                 JSON-serializable dict to enqueue.
             ttl_secs (`int | None`, optional):
-                Entry lifetime in seconds; ``None`` never expires.
+                Queue lifetime in seconds. ``None`` leaves the current
+                expiry unchanged, if one exists.
 
         Returns:
             `str`:
                 The synthetic entry id assigned to this entry.
         """
         entry_id = self._next_id()
-        queue = self._queues[key]
         now = time.monotonic()
-        queue[:] = [e for e in queue if e[2] is None or e[2] > now]
-        expire_at = now + ttl_secs if ttl_secs is not None else None
-        queue.append((entry_id, deepcopy(payload), expire_at))
+        self._drop_expired_queue(key, now)
+        if ttl_secs is not None and ttl_secs <= 0:
+            await self.queue_delete(key)
+            return entry_id
+        self._queues[key].append((entry_id, deepcopy(payload)))
+        if ttl_secs is not None:
+            self._queue_expires_at[key] = now + ttl_secs
         return entry_id
 
     async def queue_drain(
@@ -180,16 +195,13 @@ class InMemoryMessageBus(
             `list[tuple[str, dict]]`:
                 ``(entry_id, payload)`` pairs in arrival order.
         """
+        self._drop_expired_queue(key, time.monotonic())
         q = self._queues.get(key)
         if not q:
             return []
-        now = time.monotonic()
-        alive = [e for e in q if e[2] is None or e[2] > now]
-        drained = alive[:max_count]
-        self._queues[key] = alive[max_count:]
-        return deepcopy(
-            [(entry_id, payload) for entry_id, payload, _ in drained],
-        )
+        drained = q[:max_count]
+        self._queues[key] = q[max_count:]
+        return deepcopy(drained)
 
     async def queue_read(
         self,
@@ -208,17 +220,8 @@ class InMemoryMessageBus(
             `list[tuple[str, dict]]`:
                 Deep-copied ``(entry_id, payload)`` pairs.
         """
-        q = self._queues.get(key, [])
-        now = time.monotonic()
-        alive = [entry for entry in q if entry[2] is None or entry[2] > now]
-        if q:
-            self._queues[key] = alive
-        return deepcopy(
-            [
-                (entry_id, payload)
-                for entry_id, payload, _expire_at in alive[:max_count]
-            ],
-        )
+        self._drop_expired_queue(key, time.monotonic())
+        return deepcopy(self._queues.get(key, [])[:max_count])
 
     async def queue_replace(
         self,
@@ -238,13 +241,14 @@ class InMemoryMessageBus(
                 Fresh transport-level ids assigned to the new entries.
         """
         entries = [
-            (self._next_id(), deepcopy(payload), None) for payload in payloads
+            (self._next_id(), deepcopy(payload)) for payload in payloads
         ]
         if entries:
             self._queues[key] = entries
         else:
             self._queues.pop(key, None)
-        return [entry_id for entry_id, _payload, _expire_at in entries]
+        self._queue_expires_at.pop(key, None)
+        return [entry_id for entry_id, _payload in entries]
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -254,6 +258,7 @@ class InMemoryMessageBus(
                 Queue identifier.
         """
         self._queues.pop(key, None)
+        self._queue_expires_at.pop(key, None)
 
     # ------------------------------------------------------------------
     # Mode C — replay log
@@ -506,7 +511,7 @@ class InMemoryMessageBus(
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one field; ``ttl_secs`` ignored. See base."""
@@ -514,6 +519,20 @@ class InMemoryMessageBus(
         if self._registries.get(namespace, {}).get(field) != expected:
             return False
         self._registries.setdefault(namespace, {})[field] = value
+        return True
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete without yielding between the two operations."""
+        registry = self._registries.get(namespace, {})
+        if registry.get(field) != expected:
+            return False
+        del registry[field]
         return True
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:

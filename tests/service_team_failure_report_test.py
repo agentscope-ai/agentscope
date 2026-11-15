@@ -461,6 +461,7 @@ class TeamFailureReportTest(IsolatedAsyncioTestCase):
                 self.state.context.append(
                     AssistantMsg(
                         name=self.name,
+                        id=self.state.reply_id,
                         content=[
                             ToolCallBlock(
                                 id="call-1",

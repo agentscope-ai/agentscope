@@ -362,6 +362,15 @@ class IndexWorker:
             )
             return
 
+        if record.status == "ready":
+            # The lease prevents concurrent work, not late duplicates.
+            # Re-indexing requires resetting the status to pending.
+            logger.debug(
+                "Skipping %s — already indexed; ignoring duplicate task.",
+                document_id,
+            )
+            return
+
         kb_record = await self._manager.get_knowledge_base(
             user_id,
             knowledge_base_id,

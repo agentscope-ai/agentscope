@@ -639,6 +639,27 @@ class TextParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await parser.parse(b"\xff\xfe", "bad.txt")
 
+    async def test_leading_byte_order_mark_is_dropped(self) -> None:
+        """A UTF-8 byte order mark is not part of the decoded text."""
+        import tempfile
+
+        parser = TextParser()
+        for raw, text in (
+            (b"\xef\xbb\xbfname,age\n", "name,age\n"),
+            (b"\xef\xbb\xbf", ""),
+            (b"name,age\n", "name,age\n"),
+        ):
+            with self.subTest(raw=raw):
+                sections = await parser.parse(raw, "x.csv")
+                self.assertEqual(sections[0].content.text, text)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "x.csv")
+            with open(path, "wb") as f:
+                f.write(b"\xef\xbb\xbfname,age\n")
+            sections = await parser.parse(path, "x.csv")
+        self.assertEqual(sections[0].content.text, "name,age\n")
+
 
 class PDFParserTest(IsolatedAsyncioTestCase):
     """Behavioural coverage for :class:`PDFParser`."""
