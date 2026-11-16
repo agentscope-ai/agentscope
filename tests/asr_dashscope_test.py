@@ -121,6 +121,64 @@ class DashScopeASRModelTest(IsolatedAsyncioTestCase):
             format="wav",
         )
 
+    async def test_model_override_is_local_to_one_call(self) -> None:
+        """Use the effective model for dispatch and parameter filtering."""
+        models = (
+            "qwen-audio-3.0-asr-flash",
+            "qwen-audio-3.1-asr-flash",
+        )
+        for default_model, override in (models, models[::-1]):
+            with self.subTest(default=default_model, override=override):
+                model = DashScopeASRModel(
+                    credential=DashScopeCredential(api_key="test-key"),
+                    model=default_model,
+                    parameters=DashScopeASRModel.Parameters(
+                        keep_dialect=True,
+                        speaker_diarization_enabled=True,
+                    ),
+                )
+                response = SimpleNamespace(
+                    status_code=200,
+                    output={"text": "recognized"},
+                )
+                with patch(
+                    "dashscope.MultiModalConversation.call",
+                    return_value=response,
+                ) as call:
+                    result = await model.transcribe(
+                        b"audio",
+                        model=override,
+                        language_hints=["en"],
+                    )
+                    await model.transcribe(b"audio")
+
+                self.assertEqual(result.content.text, "recognized")
+                self.assertEqual(model.model, default_model)
+                self.assertTrue(model.parameters.keep_dialect)
+                self.assertTrue(model.parameters.speaker_diarization_enabled)
+                self.assertEqual(call.call_count, 2)
+                for request, expected_model in zip(
+                    call.call_args_list,
+                    (override, default_model),
+                ):
+                    options = request.kwargs
+                    self.assertEqual(options["model"], expected_model)
+                    self.assertFalse(options["stream"])
+                    self.assertEqual(options["format"], "wav")
+                    for key in ("keep_dialect", "speaker_diarization_enabled"):
+                        if expected_model == models[0]:
+                            self.assertNotIn(key, options)
+                        else:
+                            self.assertIs(options[key], True)
+                self.assertEqual(
+                    call.call_args_list[0].kwargs["language_hints"],
+                    ["en"],
+                )
+                self.assertNotIn(
+                    "language_hints",
+                    call.call_args_list[1].kwargs,
+                )
+
     async def test_surfaces_provider_error(self) -> None:
         """Raise a useful error when the provider rejects the request."""
         model = DashScopeASRModel(
