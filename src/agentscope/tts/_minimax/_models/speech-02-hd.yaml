@@ -1,6 +1,8 @@
 name: speech-02-hd
 label: MiniMax Speech 02 HD
 status: active
+# Release date source: https://platform.minimax.io/docs/release-notes/models
+release_date: 2025-04-02
 voice_cloning: true
 
 input_types:

@@ -1,6 +1,8 @@
 name: gemini-3.8-flash-lite-tts
 label: Gemini 3.8 Flash-Lite TTS
 status: active
+# Release date source: https://ai.google.dev/gemini-api/docs/changelog
+release_date: 2026-09-22
 
 input_types:
   - text/plain
