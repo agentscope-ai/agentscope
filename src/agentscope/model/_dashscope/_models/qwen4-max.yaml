@@ -1,6 +1,8 @@
 name: qwen4-max
 label: Qwen4-Max
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-11-16
 # Model specifications: https://help.aliyun.com/zh/model-studio/qwen4-max
 
 input_types:
