@@ -42,6 +42,15 @@ if TYPE_CHECKING:
 # file in memory at once even when the parser is byte-oriented.
 _READ_CHUNK = 1 << 20  # 1 MiB
 
+# What a multipart client sends when it has no opinion about the type.
+_GENERIC_MEDIA_TYPE = "application/octet-stream"
+
+
+def _filename_extension(filename: str) -> str:
+    """Return the lower-cased extension of ``filename``, ``""`` if none."""
+    _, dot, suffix = filename.rpartition(".")
+    return f".{suffix}".lower() if dot and suffix else ""
+
 
 def _build_parser_registry(
     parsers: "list[ParserBase] | dict[str, ParserBase]",
@@ -385,16 +394,45 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
-        media_type = (
-            data.content_type or mimetypes.guess_type(data.filename)[0]
-        )
+        media_type = data.content_type or None
         if media_type:
-            media_type = media_type.split(";", 1)[0].strip().lower()
+            media_type = media_type.split(";", 1)[0].strip().lower() or None
+        parser = (
+            self._parsers_by_media_type.get(media_type) if media_type else None
+        )
+        if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
+            guessed_type = mimetypes.guess_type(data.filename)[0]
+            parser = (
+                self._parsers_by_media_type.get(guessed_type)
+                if guessed_type
+                else None
+            )
+            if parser is not None:
+                media_type = guessed_type
+            else:
+                # Platform MIME tables may lack Office formats. Only
+                # infer a type from declarations when it is unambiguous.
+                extension = _filename_extension(data.filename)
+                matches = []
+                for known, candidate in self._parsers_by_media_type.items():
+                    extensions = getattr(
+                        candidate,
+                        "supported_extensions",
+                        None,
+                    )
+                    if (
+                        extension
+                        and extensions
+                        and extension in extensions()
+                        and candidate.supported_media_types == [known]
+                    ):
+                        matches.append((known, candidate))
+                if len(matches) == 1:
+                    media_type, parser = matches[0]
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",
             )
-        parser = self._parsers_by_media_type.get(media_type)
         if parser is None:
             raise ValueError(
                 f"No parser registered for media type {media_type!r}.",
