@@ -1,0 +1,32 @@
+name: qwen4-max
+label: Qwen4-Max
+status: active
+# Model specifications: https://help.aliyun.com/zh/model-studio/qwen4-max
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/bmp
+  - image/jpeg
+  - image/png
+  - image/tiff
+  - image/webp
+  - image/heic
+  - video/mp4
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+# Thinking and the final answer share the output budget.
+output_size: 262144
+
+parameter_overrides:
+  max_tokens:
+    maximum: 262144
+    description: >-
+      Maximum tokens for thinking and the final answer combined.
+      Non-thinking mode supports at most 131072 tokens.
+  voice:
+    hidden: true
