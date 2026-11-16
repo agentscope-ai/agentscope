@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import math
 from contextlib import AsyncExitStack
+from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from utils import AnyString
 
@@ -477,6 +478,132 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_mongodb_delete_filter(self) -> None:
+        """MongoDB combines the source document with metadata equality."""
+        store = self.store
+        collection = SimpleNamespace(delete_many=AsyncMock())
+        with patch.object(store, "_col", return_value=collection):
+            await store.delete(
+                "shared",
+                "doc",
+                metadata_filter={"tenant": "alpha", "project": 2},
+            )
+        collection.delete_many.assert_awaited_once_with(
+            {
+                "document_id": "doc",
+                "$and": [
+                    {"chunk.metadata.tenant": {"$eq": "alpha"}},
+                    {"chunk.metadata.project": {"$eq": 2}},
+                ],
+            },
+        )
+        for scope in (None, {}):
+            with self.subTest(scope=scope):
+                collection.delete_many.reset_mock()
+                with patch.object(store, "_col", return_value=collection):
+                    await store.delete("shared", "doc", metadata_filter=scope)
+                collection.delete_many.assert_awaited_once_with(
+                    {"document_id": "doc"},
+                )
+
+    async def test_search_candidate_limits(self) -> None:
+        """Search caps candidates while preserving the requested limit."""
+        await self.store.create_collection("kb-1", dimensions=3)
+        record = _make_record("A", [1.0, 0.0, 0.0], document_id="doc-1")
+        record.chunk.metadata["kb_scope"] = "kb-a"
+        await self.store.insert("kb-1", [record])
+        col = self._fake_client["test-db"]["kb-1"]
+
+        for top_k, num_candidates, metadata_filter in [
+            (None, 100, None),
+            (500, 10_000, None),
+            (501, 10_000, {"kb_scope": "kb-a"}),
+            (10_000, 10_000, None),
+        ]:
+            with self.subTest(top_k=top_k):
+                search_kwargs: dict[str, Any] = {}
+                if top_k is not None:
+                    search_kwargs["top_k"] = top_k
+                if metadata_filter is not None:
+                    search_kwargs["metadata_filter"] = metadata_filter
+
+                with patch.object(
+                    col,
+                    "aggregate",
+                    wraps=col.aggregate,
+                ) as aggregate:
+                    results = await self.store.search(
+                        "kb-1",
+                        query_vector=[1.0, 0.0, 0.0],
+                        **search_kwargs,
+                    )
+
+                vector_search: dict[str, Any] = {
+                    "index": "vector_index",
+                    "path": "vector",
+                    "queryVector": [1.0, 0.0, 0.0],
+                    "numCandidates": num_candidates,
+                    "limit": 5 if top_k is None else top_k,
+                }
+                if metadata_filter is not None:
+                    vector_search["filter"] = {
+                        "$and": [{"chunk.metadata.kb_scope": {"$eq": "kb-a"}}],
+                    }
+                aggregate.assert_awaited_once_with(
+                    [
+                        {"$vectorSearch": vector_search},
+                        {
+                            "$project": {
+                                "document_id": 1,
+                                "chunk": 1,
+                                "score": {"$meta": "vectorSearchScore"},
+                            },
+                        },
+                    ],
+                )
+                self.assertEqual(
+                    _dump_results(results),
+                    [
+                        {
+                            "score": 1.0,
+                            "document_id": "doc-1",
+                            "chunk": {
+                                "content": {
+                                    "type": "text",
+                                    "text": "A",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                                "source": "doc-1.txt",
+                                "chunk_index": 0,
+                                "total_chunks": 1,
+                                "metadata": {"kb_scope": "kb-a"},
+                            },
+                        },
+                    ],
+                )
+
+    async def test_search_top_k_exceeds_limit(self) -> None:
+        """An oversized search is rejected before accessing MongoDB."""
+        store = MongoDBStore(uri="mongodb://mock", database="test-db")
+        with (
+            patch.object(store, "_ensure_index_ready") as ensure_index_ready,
+            patch.object(
+                store,
+                "get_client",
+                return_value=self._fake_client,
+            ) as get_client,
+        ):
+            with self.assertRaisesRegex(ValueError, "top_k.*10000"):
+                await store.search(
+                    "kb-1",
+                    query_vector=[1.0, 0.0, 0.0],
+                    top_k=10_001,
+                )
+            ensure_index_ready.assert_not_awaited()
+            get_client.assert_not_called()
 
     async def test_delete_by_document_id(self) -> None:
         """delete removes all records of one document only."""

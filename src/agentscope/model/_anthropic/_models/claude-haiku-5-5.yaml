@@ -1,0 +1,37 @@
+# Source: https://platform.claude.com/docs/en/models/haiku-5-5/overview
+name: claude-haiku-5-5
+label: Claude Haiku 5.5
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - application/pdf
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 128000
+
+parameter_overrides:
+  thinking_enable:
+    hidden: true
+  thinking_budget:
+    hidden: true
+  # Adaptive works at every effort level; older modes do not.
+  thinking_mode:
+    default: adaptive
+    anyOf:
+      - enum: [adaptive]
+        type: string
+      - type: "null"
+  thinking_display:
+    default: summarized
+  reasoning_effort:
+    default: medium

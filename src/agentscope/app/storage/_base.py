@@ -743,14 +743,31 @@ class StorageBase(ABC):
     ) -> None:
         """Persist a message to the session's message list.
 
-        If the last message in the list has the same ``id`` as *msg*, it is
-        replaced (merge/overwrite for the same reply_id across continuation
-        calls).  Otherwise, *msg* is appended as a new entry.
+        If a message in the list has the same ``id`` as *msg*, it is replaced
+        in place. Otherwise, *msg* is appended as a new entry.
 
         Args:
             user_id (`str`): The owner user id.
             session_id (`str`): The session id.
             msg (`Msg`): The message to persist.
+        """
+
+    @abstractmethod
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete one message from a session.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            message_id (`str`): The message id to delete.
+
+        Returns:
+            `bool`: Whether a matching message was deleted.
         """
 
     @abstractmethod

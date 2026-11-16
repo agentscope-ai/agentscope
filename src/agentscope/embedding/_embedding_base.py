@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any, Generic, TypeVar, Type, Union
+from typing import Any, Generic, Literal, TypeVar, Type, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -283,13 +283,21 @@ class EmbeddingModelBase(Generic[InputT]):
         all_embeddings: list = []
         total_tokens = 0
         total_time = 0.0
+        sources: set[str] = set()
 
         for resp in responses:
             all_embeddings.extend(resp.embeddings)
+            if resp.source:
+                sources.add(resp.source)
             if resp.usage:
-                total_time += resp.usage.time
+                total_time = max(total_time, resp.usage.time)
                 if resp.usage.tokens:
                     total_tokens += resp.usage.tokens
+
+        # Mark the merged response as cached only if every batch is cached.
+        merged_source: Literal["cache", "api"] = (
+            "cache" if sources and sources == {"cache"} else "api"
+        )
 
         return EmbeddingResponse(
             embeddings=all_embeddings,
@@ -297,7 +305,7 @@ class EmbeddingModelBase(Generic[InputT]):
                 tokens=total_tokens,
                 time=total_time,
             ),
-            source="api",
+            source=merged_source,
         )
 
     # ------------------------------------------------------------------

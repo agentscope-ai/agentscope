@@ -2,7 +2,6 @@ import { ApiError, client, getBaseUrl, getUserId } from './client';
 import type { UploadProgress } from './knowledgeBase';
 import type {
 	AddFromLibraryResponse,
-	AddSkillRequest,
 	DirectoryListing,
 	WorkspaceStatus,
 	MCPClient,
@@ -162,16 +161,6 @@ export const workspaceApi = {
 	skill: {
 		list: (agentId: string, sessionId: string) =>
 			client.get<Skill[]>('/workspace/skill', { agent_id: agentId, session_id: sessionId }),
-
-		/**
-		 * @deprecated The path is resolved on the server. Use `upload`
-		 * for a local folder or `addFromLibrary` for an installed skill.
-		 */
-		add: (agentId: string, sessionId: string, body: AddSkillRequest) =>
-			client.post<void>('/workspace/skill', body, {
-				agent_id: agentId,
-				session_id: sessionId,
-			}),
 
 		/** Uploads a picked folder as a skill, reporting send progress. */
 		upload: (agentId: string, sessionId: string, files: File[], options: UploadOptions = {}) =>

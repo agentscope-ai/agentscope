@@ -3,8 +3,9 @@
 
 Subscribes to two bus channels:
 
-1. **Session cancel** — cancel all local work for a session (chat run
-   + all BG tasks). Triggered by session deletion or explicit abort.
+1. **Session cancel** — cancel all local work for a session (chat run,
+   realtime run, and all BG tasks). Triggered by session deletion or
+   explicit abort.
 2. **Task cancel** — cancel a single BG task by task_id. Triggered by
    the :class:`ToolStop` agent tool when the target task lives on a
    different worker.
@@ -14,6 +15,7 @@ or task simply do no work — the publisher does not need to know which
 worker holds what; it broadcasts and lets each holder self-select.
 """
 import asyncio
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
@@ -21,6 +23,7 @@ from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
+    from .._service._webrtc_session import WebRTCSession
     from ._background_task_manager import BackgroundTaskManager
     from ._chat_run_registry import ChatRunRegistry
 
@@ -37,6 +40,10 @@ class CancelDispatcher:
             cancelled.
         bg_manager (`BackgroundTaskManager`):
             The per-process background task manager.
+        realtime_connections (`Mapping`, optional):
+            The per-process browser realtime sessions. The shared cancel
+            broadcast closes matching runners on whichever process owns
+            them.
     """
 
     def __init__(
@@ -44,6 +51,11 @@ class CancelDispatcher:
         message_bus: "MessageBus",
         registry: "ChatRunRegistry",
         bg_manager: "BackgroundTaskManager",
+        realtime_connections: Mapping[
+            tuple[str, str],
+            "WebRTCSession",
+        ]
+        | None = None,
     ) -> None:
         """Bind dependencies.
 
@@ -54,10 +66,15 @@ class CancelDispatcher:
                 The per-process chat-run registry.
             bg_manager (`BackgroundTaskManager`):
                 The per-process background task manager.
+            realtime_connections (`Mapping`, optional):
+                The per-process browser realtime sessions.
         """
         self._bus = message_bus
         self._registry = registry
         self._bg_manager = bg_manager
+        self._realtime_connections = (
+            realtime_connections if realtime_connections is not None else {}
+        )
         self._session_task: asyncio.Task | None = None
         self._task_cancel_task: asyncio.Task | None = None
         self._interrupt_task: asyncio.Task | None = None
@@ -159,6 +176,21 @@ class CancelDispatcher:
                 "CancelDispatcher: cancelled %d local BG task(s) for "
                 "session %s",
                 bg_cancelled,
+                session_id,
+            )
+
+        realtime_cancelled = 0
+        for (_, candidate_session_id), runner in list(
+            self._realtime_connections.items(),
+        ):
+            if candidate_session_id == session_id:
+                runner.request_close()
+                realtime_cancelled += 1
+        if realtime_cancelled:
+            logger.info(
+                "CancelDispatcher: closing %d local realtime run(s) for "
+                "session %s",
+                realtime_cancelled,
                 session_id,
             )
 

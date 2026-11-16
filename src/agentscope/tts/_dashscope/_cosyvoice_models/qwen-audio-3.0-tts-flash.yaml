@@ -1,0 +1,27 @@
+# Source: https://help.aliyun.com/zh/model-studio/tts-model
+# Uses tts_v2.SpeechSynthesizer, not the Qwen3-TTS protocol.
+name: qwen-audio-3.0-tts-flash
+label: Qwen Audio 3.0 TTS Flash
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+# Source: https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list
+# Curated system voices; explicitly pass voice when constructing the model.
+voices:
+  - longanfengyue
+  - longanyuanfei
+  - longanlingxi
+  - longanxiaoxin
+  - longanhuan_v3.6
+  - longjielidou_v3.6
+  - longpaopao_v3.6
+  - longhuohuo_v3.6
+  - longchuanshu_v3.6
+  - loongmary
+  - loongeva_v3.6
+  - loongjohn

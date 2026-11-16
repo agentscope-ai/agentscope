@@ -285,7 +285,7 @@ class GeminiChatModel(ChatModelBase):
         """
         formatted_messages = await self.formatter.format(messages)
 
-        config: dict[str, Any] = {**config_kwargs}
+        config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
             config["max_output_tokens"] = self.parameters.max_tokens
@@ -306,6 +306,9 @@ class GeminiChatModel(ChatModelBase):
                 "include_thoughts": False,
                 "thinking_budget": 0,
             }
+
+        # Per-call config takes precedence over model-level defaults.
+        config.update(config_kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -395,7 +398,8 @@ class GeminiChatModel(ChatModelBase):
                     # Tool call
                     if part.function_call:
                         if part.thought_signature:
-                            call_id = base64.b64encode(
+                            # Mark signature IDs for the history formatter.
+                            call_id = "gemini_ts:" + base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
@@ -452,7 +456,8 @@ class GeminiChatModel(ChatModelBase):
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
                     if part.thought_signature:
-                        call_id = base64.b64encode(
+                        # Mark signature IDs for the history formatter.
+                        call_id = "gemini_ts:" + base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
                     else:
@@ -526,7 +531,8 @@ class GeminiChatModel(ChatModelBase):
                     usage_metadata,
                     "cached_content_token_count",
                     0,
-                ),
+                )
+                or 0,
             )
         return None
 

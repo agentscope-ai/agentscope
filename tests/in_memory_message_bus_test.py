@@ -81,6 +81,12 @@ class TestQueuePrimitive(IsolatedAsyncioTestCase):
         self.assertEqual([p for _id, p in a], [{"x": 1}])
         self.assertEqual([p for _id, p in b], [{"x": 2}])
 
+    async def test_zero_ttl_expires_immediately(self) -> None:
+        """A zero TTL expires the entry instead of disabling expiry."""
+        await self.bus.queue_push("k", {"x": 1}, ttl_secs=0)
+
+        self.assertEqual(await self.bus.queue_drain("k"), [])
+
 
 class TestLogPrimitive(IsolatedAsyncioTestCase):
     """Mode C — replay log: append / read with cursor / trim."""

@@ -116,6 +116,111 @@ class TestOpenAITTSModel(IsolatedAsyncioTestCase):
 
         self.assertEqual(result.content.source.media_type, _MEDIA_TYPE_WAV)
 
+    async def test_per_call_format_controls_media_type(self) -> None:
+        """Both output modes label audio using the effective API format."""
+        for stream in (False, True):
+            model = self._make_model(stream=stream)
+            client = _make_mock_client(b"AAAABBBB", [b"AAAA", b"BBBB"])
+            model.client = client
+            create = (
+                client.audio.speech.with_streaming_response.create
+                if stream
+                else client.audio.speech.create
+            )
+            for response_format, media_type in (
+                ("wav", "audio/wav"),
+                ("pcm", "audio/pcm"),
+                ("opus", "audio/opus"),
+            ):
+                with self.subTest(stream=stream, format=response_format):
+                    result = await model.synthesize(
+                        "Hello",
+                        response_format=response_format,
+                    )
+                    responses = (
+                        [chunk async for chunk in result]
+                        if stream
+                        else [result]
+                    )
+                    self.assertEqual(
+                        create.call_args.kwargs["response_format"],
+                        response_format,
+                    )
+                    self.assertEqual(
+                        [r.content.source.media_type for r in responses],
+                        [media_type] * len(responses),
+                    )
+                    self.assertEqual(
+                        b"".join(
+                            base64.b64decode(r.content.source.data)
+                            for r in responses
+                        ),
+                        b"AAAABBBB",
+                    )
+                    self.assertEqual(model.parameters.response_format, "mp3")
+
+            # A one-off format override must not change the next call.
+            result = await model.synthesize("Next call")
+            responses = (
+                [chunk async for chunk in result] if stream else [result]
+            )
+            self.assertEqual(create.call_args.kwargs["response_format"], "mp3")
+            self.assertEqual(
+                [r.content.source.media_type for r in responses],
+                [_MEDIA_TYPE_MP3] * len(responses),
+            )
+
+    async def test_per_call_instructions_override_default(self) -> None:
+        """Per-call instructions win without mutating the default."""
+        for stream in (False, True):
+            for default in ("Speak cheerfully", ""):
+                model = self._make_model(
+                    stream=stream,
+                    parameters=OpenAITTSModel.Parameters(
+                        instructions=default,
+                    ),
+                )
+                client = _make_mock_client(b"AAAA", [b"AAAA"])
+                model.client = client
+                create = (
+                    client.audio.speech.with_streaming_response.create
+                    if stream
+                    else client.audio.speech.create
+                )
+                for override in ("Speak quietly", ""):
+                    with self.subTest(
+                        stream=stream,
+                        default=default,
+                        override=override,
+                    ):
+                        result = await model.synthesize(
+                            "Hello",
+                            instructions=override,
+                        )
+                        if stream:
+                            async for _ in result:
+                                pass
+                        self.assertEqual(
+                            create.call_args.kwargs["instructions"],
+                            override,
+                        )
+                        self.assertEqual(
+                            model.parameters.instructions,
+                            default,
+                        )
+
+                result = await model.synthesize("Next call")
+                if stream:
+                    async for _ in result:
+                        pass
+                if default:
+                    self.assertEqual(
+                        create.call_args.kwargs["instructions"],
+                        default,
+                    )
+                else:
+                    self.assertNotIn("instructions", create.call_args.kwargs)
+
     async def test_incremental_chunks(self) -> None:
         """Each streamed byte chunk yields one TTSResponse."""
         client = _make_mock_client(b"", [b"AAAA", b"BBBB", b"CCCC"])

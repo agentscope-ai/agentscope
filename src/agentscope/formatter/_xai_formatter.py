@@ -10,6 +10,7 @@ other formatter, the ``format()`` method returns a list of
 import base64
 from fnmatch import fnmatch
 from typing import Any, List
+from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -74,7 +75,7 @@ def _xai_user_args_from_blocks(
             if isinstance(sub.source, URLSource):
                 url_str = str(sub.source.url)
                 if url_str.startswith("file://"):
-                    local_path = url_str.removeprefix("file://")
+                    local_path = url2pathname(url_str.removeprefix("file://"))
                     with open(local_path, "rb") as f:
                         encoded = base64.b64encode(f.read()).decode(
                             "utf-8",
@@ -200,8 +201,16 @@ class XAIChatFormatter(FormatterBase):
             elif msg.role == "assistant":
                 pending_text: list[TextBlock] = []
                 pending_tool_calls: list[ToolCallBlock] = []
+                pending_media: list[Any] = []
 
                 for block in blocks:
+                    if pending_media and not isinstance(
+                        block,
+                        ToolResultBlock,
+                    ):
+                        xai_messages.extend(pending_media)
+                        pending_media = []
+
                     if isinstance(block, ToolResultBlock):
                         # Convert each ToolResultBlock to a tool_result
                         # message.
@@ -232,15 +241,33 @@ class XAIChatFormatter(FormatterBase):
                                 xai_messages.append(assistant(text))
                             pending_text = []
 
-                        output_text = self._extract_result_text(
+                        (
+                            textual_output,
+                            multimodal_data,
+                        ) = self.convert_tool_result_to_string(
                             block.output,
                         )
                         xai_messages.append(
                             tool_result(
-                                output_text,
+                                textual_output,
                                 tool_call_id=block.id,
                             ),
                         )
+
+                        # Promote media that came back inside the tool
+                        # result into a following user message, which is what
+                        # the other formatters do via the same shared helper.
+                        # ``xai_sdk`` re-hydrates binary tool results and
+                        # ``input_types`` already advertises images, so the
+                        # textual hint alone would lose the picture.
+                        if multimodal_data:
+                            promo_args = _xai_user_args_from_blocks(
+                                multimodal_data,
+                                image,
+                                self.supported_input_media_types,
+                            )
+                            if promo_args:
+                                pending_media.append(user(*promo_args))
 
                     elif isinstance(block, ToolCallBlock):
                         pending_tool_calls.append(block)
@@ -292,6 +319,8 @@ class XAIChatFormatter(FormatterBase):
                             if hint_args:
                                 xai_messages.append(user(*hint_args))
 
+                xai_messages.extend(pending_media)
+
                 if pending_tool_calls:
                     # Assistant turn that triggered tool calls (history).
                     msg_proto = chat_pb2.Message()
@@ -324,39 +353,6 @@ class XAIChatFormatter(FormatterBase):
                 )
 
         return xai_messages
-
-    def _extract_result_text(self, output: Any) -> str:
-        """Extract a plain-text string from a ``ToolResultBlock`` output.
-
-        Args:
-            output (`Any`):
-                The raw output of a ``ToolResultBlock``, which may be a
-                string, a list of blocks, or another type.
-
-        Returns:
-            `str`:
-                A plain-text representation of the output.
-        """
-        if output is None:
-            return ""
-        if isinstance(output, str):
-            return output
-        if isinstance(output, list):
-            parts = []
-            for item in output:
-                if isinstance(item, TextBlock):
-                    parts.append(item.text)
-                elif isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, DataBlock):
-                    # Tool results are text-only here; media becomes a hint.
-                    parts.append(
-                        self._convert_unsupported_data_block_to_string(item),
-                    )
-                else:
-                    parts.append(str(item))
-            return "\n".join(parts)
-        return str(output)
 
 
 class XAIMultiAgentFormatter(FormatterBase):

@@ -21,7 +21,7 @@ from sqlalchemy.dialects import mysql
 from utils import AnyString
 
 from agentscope.app.storage._sql._mappers import _to_record
-from agentscope.app.storage._sql._tables import SessionRow
+from agentscope.app.storage._sql._tables import AgentRow, SessionRow
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -266,16 +266,58 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
     # ------------------------------------------------------------------
 
     async def test_agents_round_trip_and_source_filter(self) -> None:
-        """``list_agents`` filters out ``source='team'`` workers."""
-        user_agent = _agent_record("user-1", "usr")
+        """Legacy agent rows load grouped and team workers stay hidden."""
+        record_id = "agent-legacy"
+        data_id = "agent-data-legacy"
+        now = datetime.now()
+        # Insert at the row layer so AgentData cannot normalize the legacy
+        # payload before it reaches SQL storage.
+        # pylint: disable=protected-access
+        async with self.storage._session() as sess:
+            sess.add(
+                AgentRow(
+                    id=record_id,
+                    created_at=now,
+                    updated_at=now,
+                    user_id="user-1",
+                    source="user",
+                    payload={
+                        "data": {
+                            "id": data_id,
+                            "name": "usr",
+                            "system_prompt": "You are usr.",
+                            "context_config": {"max_image_num": 3},
+                            "react_config": {"max_iters": 7},
+                        },
+                    },
+                ),
+            )
+            await sess.commit()
+
         team_agent = _agent_record("user-1", "team-worker")
         team_agent.source = "team"
-
-        await self.storage.upsert_agent("user-1", user_agent)
         await self.storage.upsert_agent("user-1", team_agent)
 
         listed = await self.storage.list_agents("user-1")
-        self.assertEqual([a.id for a in listed], [user_agent.id])
+        self.assertEqual([agent.id for agent in listed], [record_id])
+        self.assertDictEqual(
+            listed[0].model_dump(mode="json", exclude_defaults=True),
+            {
+                "id": record_id,
+                "updated_at": now.isoformat(),
+                "created_at": now.isoformat(),
+                "user_id": "user-1",
+                "data": {
+                    "id": data_id,
+                    "name": "usr",
+                    "system_prompt": "You are usr.",
+                    "chat_config": {
+                        "context_config": {"max_image_num": 3},
+                        "react_config": {"max_iters": 7},
+                    },
+                },
+            },
+        )
         # But direct get works for the team-spawned worker
         self.assertEqual(
             (await self.storage.get_agent("user-1", team_agent.id)).id,
@@ -504,6 +546,43 @@ class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
             long_session,
         )
         self.assertEqual([m.id for m in listed], [long_msg_id])
+
+    async def test_delete_message(self) -> None:
+        """Deleting by id removes only the matching persisted message."""
+        first = UserMsg(name="u", content="first")
+        second = AssistantMsg(name="a", content="second")
+        await self.storage.upsert_message("user-1", "sess-1", first)
+        await self.storage.upsert_message("user-1", "sess-1", second)
+
+        deleted = await self.storage.delete_message(
+            "user-1",
+            "sess-1",
+            first.id,
+        )
+        deleted_again = await self.storage.delete_message(
+            "user-1",
+            "sess-1",
+            first.id,
+        )
+        messages, has_more = await self.storage.list_messages(
+            "user-1",
+            "sess-1",
+        )
+
+        self.assertDictEqual(
+            {
+                "deleted": deleted,
+                "deleted_again": deleted_again,
+                "messages": [message.model_dump() for message in messages],
+                "has_more": has_more,
+            },
+            {
+                "deleted": True,
+                "deleted_again": False,
+                "messages": [second.model_dump()],
+                "has_more": False,
+            },
+        )
 
     # ------------------------------------------------------------------
     # SOPs

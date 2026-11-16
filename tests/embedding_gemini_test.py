@@ -2,17 +2,21 @@
 # pylint: disable=protected-access
 """Unit tests for GeminiEmbeddingModel."""
 from dataclasses import asdict
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.genai import types
 from utils import AnyValue
 
 from agentscope.embedding import (
     GeminiEmbeddingModel,
     EmbeddingResponse,
     EmbeddingUsage,
+    FileEmbeddingCache,
 )
+from agentscope.credential import GeminiCredential
 from agentscope.message import DataBlock, Base64Source
 
 A = AnyValue()
@@ -85,6 +89,7 @@ class GeminiTextCallTest(IsolatedAsyncioTestCase):
         model = GeminiEmbeddingModel.__new__(GeminiEmbeddingModel)
         model.model = "gemini-embedding-001"
         model.dimensions = 2
+        model.parameters = GeminiEmbeddingModel.Parameters()
         model.context_size = 2048
         model.batch_size = 100
         model.max_retries = 3
@@ -127,6 +132,133 @@ class GeminiTextCallTest(IsolatedAsyncioTestCase):
         model = self._make_text_model()
         with self.assertRaises(ValueError):
             await GeminiEmbeddingModel._call_text(model, [_img()])
+
+    def _make_configured_model(
+        self,
+        task_type: str,
+        cache: FileEmbeddingCache | None = None,
+    ) -> GeminiEmbeddingModel:
+        """Use the public constructor with only the SDK client mocked."""
+        with patch("google.genai.Client") as client:
+            client.return_value.aio.models.embed_content = AsyncMock(
+                return_value=MagicMock(
+                    embeddings=[MagicMock(values=[0.1, 0.2])],
+                ),
+            )
+            return GeminiEmbeddingModel(
+                credential=GeminiCredential(api_key="offline-placeholder"),
+                model="gemini-embedding-001",
+                dimensions=2,
+                parameters=GeminiEmbeddingModel.Parameters(
+                    task_type=task_type,
+                ),
+                embedding_cache=cache,
+                max_retries=0,
+            )
+
+    async def test_configured_parameters_and_call_precedence(self) -> None:
+        """Configured text options reach the SDK; call options win."""
+        model = self._make_configured_model("RETRIEVAL_QUERY")
+        sdk = model.client.aio.models.embed_content
+        for overrides, task_type, dimensions in (
+            ({}, "RETRIEVAL_QUERY", 2),
+            ({"task_type": "RETRIEVAL_DOCUMENT"}, "RETRIEVAL_DOCUMENT", 2),
+            ({"output_dimensionality": 4}, "RETRIEVAL_QUERY", 4),
+        ):
+            with self.subTest(task_type=task_type, dimensions=dimensions):
+                await model(["hello"], **overrides)
+                request = sdk.call_args.kwargs
+                self.assertEqual(
+                    {
+                        **request,
+                        "config": request["config"].model_dump(
+                            exclude_none=True,
+                        ),
+                    },
+                    {
+                        "model": "gemini-embedding-001",
+                        "contents": ["hello"],
+                        "config": {
+                            "task_type": task_type,
+                            "output_dimensionality": dimensions,
+                        },
+                    },
+                )
+                self.assertEqual(
+                    model.parameters.model_dump(),
+                    {"task_type": "RETRIEVAL_QUERY"},
+                )
+        self.assertEqual(sdk.await_count, 3)
+
+    async def test_file_cache_uses_effective_parameters(self) -> None:
+        """Cache by effective task and dimensions, reusing matching vectors."""
+        with TemporaryDirectory() as directory:
+            cache = FileEmbeddingCache(cache_dir=directory)
+            query = self._make_configured_model("RETRIEVAL_QUERY", cache)
+            document = self._make_configured_model("RETRIEVAL_DOCUMENT", cache)
+            query.client.aio.models.embed_content.side_effect = [
+                MagicMock(embeddings=[MagicMock(values=[0.1, 0.2])]),
+                MagicMock(
+                    embeddings=[MagicMock(values=[0.1, 0.2, 0.3, 0.4])],
+                ),
+            ]
+            document.client.aio.models.embed_content.return_value = MagicMock(
+                embeddings=[MagicMock(values=[0.3, 0.4])],
+            )
+            cases = (
+                (query, {}, "api", [[0.1, 0.2]]),
+                (
+                    query,
+                    {"output_dimensionality": 4},
+                    "api",
+                    [[0.1, 0.2, 0.3, 0.4]],
+                ),
+                (
+                    query,
+                    {"output_dimensionality": 4},
+                    "cache",
+                    [[0.1, 0.2, 0.3, 0.4]],
+                ),
+                (document, {}, "api", [[0.3, 0.4]]),
+                (
+                    query,
+                    {"task_type": "RETRIEVAL_DOCUMENT"},
+                    "cache",
+                    [[0.3, 0.4]],
+                ),
+                (query, {}, "cache", [[0.1, 0.2]]),
+                (
+                    query,
+                    {"output_dimensionality": 2},
+                    "cache",
+                    [[0.1, 0.2]],
+                ),
+            )
+            for index, (model, overrides, source, embeddings) in enumerate(
+                cases,
+            ):
+                with self.subTest(case=index):
+                    result = await model(["hello"], **overrides)
+                    self.assertEqual(
+                        asdict(result),
+                        {
+                            "embeddings": embeddings,
+                            "id": A,
+                            "created_at": A,
+                            "type": "embedding",
+                            "usage": {
+                                "tokens": None if source == "api" else 0,
+                                "time": A if source == "api" else 0,
+                                "type": "embedding",
+                            },
+                            "source": source,
+                        },
+                    )
+            self.assertEqual(
+                query.client.aio.models.embed_content.await_count,
+                2,
+            )
+            document.client.aio.models.embed_content.assert_awaited_once()
 
 
 class GeminiMultimodalCallTest(IsolatedAsyncioTestCase):
@@ -171,6 +303,130 @@ class GeminiMultimodalCallTest(IsolatedAsyncioTestCase):
                 "usage": {"tokens": 2, "time": 0.01, "type": "embedding"},
                 "source": "api",
             },
+        )
+
+    async def test_multimodal_call_accepts_per_call_dimensions(self) -> None:
+        """Multimodal mode forwards the override into the request config."""
+        model = self._make_multimodal_model()
+        model.client = MagicMock()
+        model.client.aio.models.embed_content = AsyncMock(
+            return_value=MagicMock(
+                embeddings=[MagicMock(values=[0.1, 0.2, 0.3, 0.4])],
+            ),
+        )
+        await model(["hello"], output_dimensionality=4)
+
+        request = model.client.aio.models.embed_content.call_args.kwargs
+        self.assertEqual(
+            {
+                **request,
+                "contents": [
+                    item.model_dump(exclude_none=True)
+                    for item in request["contents"]
+                ],
+                "config": request["config"].model_dump(exclude_none=True),
+            },
+            {
+                "model": "gemini-embedding-2",
+                "contents": [{"parts": [{"text": "hello"}]}],
+                "config": {"output_dimensionality": 4},
+            },
+        )
+
+    async def test_multimodal_uses_embedding_cache(self) -> None:
+        """Multimodal results are cached and reused on repeat calls."""
+        model = self._make_multimodal_model()
+        with TemporaryDirectory() as directory:
+            model.embedding_cache = FileEmbeddingCache(cache_dir=directory)
+            model.client = MagicMock()
+            model.client.aio.models.embed_content = AsyncMock(
+                return_value=MagicMock(
+                    embeddings=[MagicMock(values=[0.1, 0.2])],
+                ),
+            )
+
+            first = await model([_img()])
+            second = await model([_img()])
+
+        self.assertEqual(first.source, "api")
+        self.assertEqual(
+            asdict(second),
+            {
+                "embeddings": [[0.1, 0.2]],
+                "id": A,
+                "created_at": A,
+                "type": "embedding",
+                "usage": {"tokens": 0, "time": 0, "type": "embedding"},
+                "source": "cache",
+            },
+        )
+        self.assertEqual(
+            model.client.aio.models.embed_content.await_count,
+            1,
+        )
+
+    async def test_multimodal_cache_ignores_http_options(self) -> None:
+        """Cache by dimensions while forwarding HTTP options to the SDK."""
+        model = self._make_multimodal_model()
+        model.dimensions = 2
+        short = [0.1, 0.2]
+        long = [0.1, 0.2, 0.3, 0.4]
+        model.client = MagicMock()
+        sdk = AsyncMock(
+            side_effect=[
+                MagicMock(embeddings=[MagicMock(values=short)]),
+                MagicMock(embeddings=[MagicMock(values=long)]),
+            ],
+        )
+        model.client.aio.models.embed_content = sdk
+        cases = (
+            (types.HttpOptions(timeout=10000), 2, "api", short),
+            (types.HttpOptions(timeout=20000), 2, "cache", short),
+            ({"timeout": 30000}, 2, "cache", short),
+            (types.HttpOptions(timeout=40000), 4, "api", long),
+            ({"timeout": 50000}, 4, "cache", long),
+        )
+        with TemporaryDirectory() as directory:
+            model.embedding_cache = FileEmbeddingCache(cache_dir=directory)
+            for index, (options, dimensions, source, vector) in enumerate(
+                cases,
+            ):
+                with self.subTest(case=index):
+                    result = await model(
+                        [_img()],
+                        http_options=options,
+                        output_dimensionality=dimensions,
+                    )
+                    self.assertEqual(
+                        asdict(result),
+                        {
+                            "embeddings": [vector],
+                            "id": A,
+                            "created_at": A,
+                            "type": "embedding",
+                            "usage": {
+                                "tokens": None if source == "api" else 0,
+                                "time": A if source == "api" else 0,
+                                "type": "embedding",
+                            },
+                            "source": source,
+                        },
+                    )
+        self.assertEqual(
+            [
+                call.kwargs["config"].model_dump(exclude_none=True)
+                for call in sdk.await_args_list
+            ],
+            [
+                {
+                    "http_options": {"timeout": 10000},
+                    "output_dimensionality": 2,
+                },
+                {
+                    "http_options": {"timeout": 40000},
+                    "output_dimensionality": 4,
+                },
+            ],
         )
 
     async def test_multimodal_batching_by_image_limit(self) -> None:

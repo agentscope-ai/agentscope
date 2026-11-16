@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the :class:`RAGMiddleware` class."""
-from contextlib import AsyncExitStack
+import asyncio
+from contextlib import AsyncExitStack, aclosing
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -12,6 +13,7 @@ from agentscope.event import EventType, HintBlockEvent
 from agentscope.message import (
     Base64Source,
     DataBlock,
+    HintBlock,
     Msg,
     TextBlock,
     UserMsg,
@@ -238,7 +240,9 @@ async def _drain(generator: AsyncGenerator) -> list:
     return [item async for item in generator]
 
 
-class RAGMiddlewareTest(IsolatedAsyncioTestCase):
+class RAGMiddlewareTest(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """The test cases for the :class:`RAGMiddleware` class."""
 
     async def asyncSetUp(self) -> None:
@@ -461,6 +465,83 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(events[1], "reasoning-evt")
+
+    async def test_static_hint_cleanup_after_hint_event(self) -> None:
+        """Closing or throwing at the hint event respects persistence
+        and preserves blocks supplied by other middlewares."""
+
+        async def check_exit(exit_mode: str, persist_hint: bool) -> None:
+            middleware = self._middleware(
+                mode="static",
+                top_k=1,
+                persist_hint=persist_hint,
+            )
+            agent = _make_agent()
+            reasoning_started = []
+
+            async def reasoning_next(**_kwargs: Any) -> AsyncGenerator:
+                reasoning_started.append(True)
+                yield "reasoning-evt"
+
+            async def reply_next(**_kwargs: Any) -> AsyncGenerator:
+                async with aclosing(
+                    middleware.on_reasoning(
+                        agent=agent,
+                        input_kwargs={"tool_choice": None},
+                        next_handler=reasoning_next,
+                    ),
+                ) as stream:
+                    event = await anext(stream)
+                    self.assertIsInstance(event, HintBlockEvent)
+                    carrier = agent.state.context[-1]
+                    injected_hint = carrier.content[0]
+                    self.assertEqual(injected_hint.id, event.block_id)
+                    other_hint = HintBlock(hint="Another middleware")
+                    carrier.content.append(other_hint)
+
+                    if exit_mode == "close":
+                        await stream.aclose()
+                    else:
+                        error = (
+                            RuntimeError("consumer failed")
+                            if exit_mode == "error"
+                            else asyncio.CancelledError()
+                        )
+                        with self.assertRaises(type(error)) as caught:
+                            await stream.athrow(error)
+                        self.assertIs(caught.exception, error)
+
+                    self.assertEqual(
+                        carrier.content,
+                        [injected_hint, other_hint]
+                        if persist_hint
+                        else [other_hint],
+                    )
+                    yield "reply-evt"
+
+            events = await _drain(
+                middleware.on_reply(
+                    agent=agent,
+                    input_kwargs={
+                        "inputs": UserMsg(
+                            name="user",
+                            content="Where is Paris?",
+                        ),
+                    },
+                    next_handler=reply_next,
+                ),
+            )
+            self.assertEqual(events, ["reply-evt"])
+            self.assertEqual(reasoning_started, [])
+
+        for exit_mode, persist_hint in [
+            ("close", False),
+            ("close", True),
+            ("error", False),
+            ("cancel", False),
+        ]:
+            with self.subTest(exit_mode=exit_mode, persist_hint=persist_hint):
+                await check_exit(exit_mode, persist_hint)
 
     async def test_static_skips_event_inputs(self) -> None:
         """Non-message inputs (resumption events / ``None``) skip the

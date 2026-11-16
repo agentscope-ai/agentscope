@@ -19,7 +19,6 @@ from ._hub_skill import SkillView
 from ._workspace import (
     AddFromLibraryRequest,
     AddFromLibraryResponse,
-    AddSkillRequest,
     AddSkillsFromLibraryRequest,
     DirectoryEntry,
     DirectoryListing,
@@ -32,6 +31,13 @@ from ._embedding_model import (
     ListEmbeddingModelsRequest,
 )
 from ._model import ListModelsResponse, ListModelsRequest
+from ._realtime import (
+    ListRealtimeModelsRequest,
+    ListRealtimeModelsResponse,
+    RealtimeConfigResponse,
+    RealtimeOfferRequest,
+    RealtimeOfferResponse,
+)
 from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
 from ._schedule import (
     CreateScheduleRequest,
@@ -112,7 +118,6 @@ __all__ = [
     # Workspace
     "AddFromLibraryRequest",
     "AddFromLibraryResponse",
-    "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
     "DirectoryEntry",
     "DirectoryListing",
@@ -177,6 +182,11 @@ __all__ = [
     "ListEmbeddingModelsResponse",
     "ListModelsRequest",
     "ListModelsResponse",
+    "ListRealtimeModelsRequest",
+    "ListRealtimeModelsResponse",
+    "RealtimeConfigResponse",
+    "RealtimeOfferRequest",
+    "RealtimeOfferResponse",
     # TTS Model
     "ListTTSModelsRequest",
     "ListTTSModelsResponse",

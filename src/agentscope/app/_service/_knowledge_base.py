@@ -159,7 +159,7 @@ class KnowledgeBaseService:
         chunker_cls = self._chunkers_by_type.get(chunker_config.type)
         if chunker_cls is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Unknown chunker type: {chunker_config.type!r}, "
                     f"available: {sorted(self._chunkers_by_type)}"
@@ -169,7 +169,7 @@ class KnowledgeBaseService:
             chunker_cls.Parameters(**chunker_config.parameters)
         except (TypeError, ValueError, ValidationError) as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid chunker parameters: {exc}",
             ) from exc
 

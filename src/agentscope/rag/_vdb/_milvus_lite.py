@@ -260,12 +260,27 @@ class MilvusLiteStore(VectorStoreBase):
         self,
         collection: str,
         document_id: str,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> None:
-        """Delete all records belonging to one source document."""
+        """Delete all records belonging to one source document.
+
+        Args:
+            collection (`str`):
+                The target collection name.
+            document_id (`str`):
+                The source document ID whose records should be removed.
+            metadata_filter (`dict[str, Any] | None`, optional):
+                Restrict deletion to records matching every metadata pair
+                in addition to the document ID. ``None`` disables filtering.
+        """
+        clauses = [self._build_document_filter(document_id)]
+        meta_expr = self._build_metadata_filter(metadata_filter)
+        if meta_expr:
+            clauses.append(meta_expr)
         await asyncio.to_thread(
             self.get_client().delete,
             collection_name=collection,
-            filter=self._build_document_filter(document_id),
+            filter=" and ".join(clauses),
         )
 
     # ------------------------------------------------------------------

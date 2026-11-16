@@ -21,13 +21,15 @@ requires-python = ">=3.11"
 dependencies = [
     "aioitertools",
     "anthropic",
+    "certifi>=2026.10.19",
     "dashscope",
     "docstring_parser",
     "filetype",
     "json5",
     "json_repair[schema]>=0.63.4",
-    "mcp<2.0.0",
+    "mcp>=2.0.0",
     "httpx",
+    "httpx2>=2.5.0",
     "numpy",
     "openai",
     "python-datauri",
@@ -67,6 +69,7 @@ service = [
     "uvicorn",
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
+    "aiortc>=1.14",
 ]
 # ------------ Storage backends ------------
 storage-redis = ["redis"]
@@ -111,8 +114,8 @@ tools = [
 # ------------ Realtime voice ------------
 realtime = [
     "websockets>=13",
-    "sounddevice",
 ]
+realtime-local = ["sounddevice"]
 # ------------ Terminal UI ------------
 tui = [
     "textual>=8.2,<9",
@@ -174,6 +177,7 @@ full = [
     "agentscope[models]",
     "agentscope[classifiers]",
     "agentscope[service]",
+    "agentscope[realtime]",
     "agentscope[storage-redis]",
     "agentscope[storage-sql]",
     "agentscope[storage-s3]",

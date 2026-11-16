@@ -550,6 +550,9 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"mcp_progress"`` — transient MCP tool progress, with
+              ``reply_id``, ``tool_call_id``, ``progress``, ``total`` and
+              ``message`` in ``value``. Not part of the final tool result.
 
         value (`dict`):
             Arbitrary JSON-serializable payload whose schema depends

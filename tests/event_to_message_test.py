@@ -22,13 +22,16 @@ Coverage
 * Wrong reply_id → event silently skipped
 * Missing block  → warning, no crash
 """
+import base64
 from typing import Any
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
 from agentscope.event import (
     ConfirmResult,
+    CustomEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -54,6 +57,7 @@ from agentscope.event import (
     UserConfirmResultEvent,
 )
 from agentscope.message import (
+    AssistantMsg,
     Msg,
     ToolCallBlock,
     ToolResultBlock,
@@ -989,6 +993,27 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 msg=f"Mismatch after event[{idx}] ({event.type})",
             )
 
+    async def test_custom_events_are_skipped(self) -> None:
+        """Custom notifications must not modify the accumulated message."""
+        original_dump = self.msg.model_dump()
+        events = [
+            CustomEvent(name="state_updated"),
+            CustomEvent(
+                name="mcp_progress",
+                value={
+                    "reply_id": _REPLY_ID,
+                    "tool_call_id": _TC_ALLOW,
+                    "progress": 1,
+                    "total": 2,
+                    "message": "Processing",
+                },
+            ),
+        ]
+        for event in events:
+            with self.subTest(name=event.name):
+                self.assertIs(self.msg.append_event(event), self.msg)
+                self.assertDictEqual(self.msg.model_dump(), original_dump)
+
     async def test_wrong_reply_id_is_skipped(self) -> None:
         """An event whose reply_id does not match msg.id must be ignored."""
         original_dump = self.msg.model_dump()
@@ -1058,3 +1083,158 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """No teardown needed."""
+
+
+class ToolResultDataDeltaMergeTest(TestCase):
+    """Msg.append_event groups same-id Base64 deltas into one DataBlock."""
+
+    def test_same_block_id_deltas_merge_into_one_block(self) -> None:
+        """Same-id deltas merge; the payload decodes to concatenated bytes."""
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="audio",
+            ),
+        )
+        for payload in (b"hello", b"world"):
+            msg.append_event(
+                ToolResultDataDeltaEvent(
+                    reply_id=msg.id,
+                    tool_call_id="tc-1",
+                    block_id="audio-1",
+                    media_type="audio/wav",
+                    data=base64.b64encode(payload).decode("ascii"),
+                ),
+            )
+        msg.append_event(
+            ToolResultEndEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                state="success",
+            ),
+        )
+
+        tool_blocks = [b for b in msg.content if b.type == "tool_result"]
+        self.assertEqual(len(tool_blocks), 1)
+        # b"hello" + b"world" -> base64("helloworld") = "aGVsbG93b3JsZA=="
+        self.assertListEqual(
+            [b.model_dump() for b in tool_blocks[0].output],
+            [
+                {
+                    "type": "data",
+                    "id": "audio-1",
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG93b3JsZA==",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
+
+    def test_different_block_ids_stay_separate(self) -> None:
+        """Different block ids still produce separate DataBlocks."""
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="audio",
+            ),
+        )
+        for block_id, payload in (("a", b"hello"), ("b", b"world")):
+            msg.append_event(
+                ToolResultDataDeltaEvent(
+                    reply_id=msg.id,
+                    tool_call_id="tc-1",
+                    block_id=block_id,
+                    media_type="audio/wav",
+                    data=base64.b64encode(payload).decode("ascii"),
+                ),
+            )
+        msg.append_event(
+            ToolResultEndEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                state="success",
+            ),
+        )
+
+        tool_blocks = [b for b in msg.content if b.type == "tool_result"]
+        self.assertEqual(len(tool_blocks), 1)
+        self.assertListEqual(
+            [b.model_dump() for b in tool_blocks[0].output],
+            [
+                {
+                    "type": "data",
+                    "id": "a",
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG8=",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+                {
+                    "type": "data",
+                    "id": "b",
+                    "source": {
+                        "type": "base64",
+                        "data": "d29ybGQ=",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )
+
+    def test_empty_media_type_does_not_clear_existing_type(self) -> None:
+        """An empty media type does not replace a prior non-empty type."""
+        msg = AssistantMsg(name="assistant", content=[])
+        msg.append_event(
+            ToolResultStartEvent(
+                reply_id=msg.id,
+                tool_call_id="tc-1",
+                tool_call_name="audio",
+            ),
+        )
+        for media_type, payload in (
+            ("audio/wav", b"hello"),
+            ("", b"world"),
+        ):
+            msg.append_event(
+                ToolResultDataDeltaEvent(
+                    reply_id=msg.id,
+                    tool_call_id="tc-1",
+                    block_id="audio-1",
+                    media_type=media_type,
+                    data=base64.b64encode(payload).decode("ascii"),
+                ),
+            )
+
+        self.assertListEqual(
+            [block.model_dump() for block in msg.content[0].output],
+            [
+                {
+                    "type": "data",
+                    "id": "audio-1",
+                    "source": {
+                        "type": "base64",
+                        "data": "aGVsbG93b3JsZA==",
+                        "media_type": "audio/wav",
+                    },
+                    "name": None,
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                },
+            ],
+        )

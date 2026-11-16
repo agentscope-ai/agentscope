@@ -16,7 +16,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from utils import MockModel
 
 from agentscope.agent import Agent, InjectionConfig
-from agentscope.credential import OpenAICredential, VolcengineCredential
+from agentscope.credential import (
+    MiniMaxCredential,
+    OpenAICredential,
+    VolcengineCredential,
+)
 from agentscope.event import (
     ConfirmResult,
     ExternalExecutionResultEvent,
@@ -40,6 +44,7 @@ from agentscope.model import (
     ChatResponse,
     ChatUsage,
     FinishedReason,
+    MiniMaxChatModel,
     OpenAIChatModel,
     VolcengineChatModel,
 )
@@ -161,6 +166,17 @@ class TracingExtractorTest(TestCase):
         )
 
         self.assertEqual(_get_provider_name(model), "volcengine")
+
+    def test_minimax_provider_name_from_model_class(self) -> None:
+        """MiniMax models should use the MiniMax provider name, not
+        ``unknown`` — MiniMax subclasses the Anthropic model, so its class
+        name is the only thing that identifies it."""
+        model = MiniMaxChatModel(
+            credential=MiniMaxCredential(api_key="test"),
+            model="abab6.5s-chat",
+        )
+
+        self.assertEqual(_get_provider_name(model), "minimax")
 
     def test_volcengine_provider_name_from_openai_base_url(self) -> None:
         """Ark's OpenAI-compatible endpoint should map to Volcengine."""

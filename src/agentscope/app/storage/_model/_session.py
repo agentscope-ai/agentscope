@@ -120,6 +120,10 @@ class ChatModelConfig(BaseModel):
     model: str
     """The model name."""
 
+    model_class: str = ""
+    """The model implementation class type (e.g. ``openai_chat``,
+    ``openai_response``). Empty string means use default resolution."""
+
     parameters: dict
     """The model parameters."""
 
@@ -138,6 +142,22 @@ class TTSModelConfig(BaseModel):
 
     parameters: dict
     """TTS parameters (voice, language, etc.)."""
+
+
+class RealtimeModelConfig(BaseModel):
+    """The realtime voice model configuration class."""
+
+    type: str
+    """The realtime adapter type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The realtime model name."""
+
+    parameters: dict
+    """Realtime model parameters (voice, turn detection, etc.)."""
 
 
 class EmbeddingModelConfig(BaseModel):
@@ -286,6 +306,9 @@ class SessionConfig(BaseModel):
 
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
+
+    realtime_model_config: RealtimeModelConfig | None = None
+    """The realtime voice model config. None disables voice mode."""
 
     knowledge_config: SessionKnowledgeConfig | None = None
     """Knowledge bases attached to this session and the corresponding

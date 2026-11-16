@@ -2,6 +2,8 @@ type: realtime_model
 name: gemini-3.1-flash-live-preview
 label: Gemini 3.1 Flash Live
 status: active
+# Release date: https://ai.google.dev/gemini-api/docs/changelog
+release_date: 2026-03-26
 
 input_types:
   - audio/pcm

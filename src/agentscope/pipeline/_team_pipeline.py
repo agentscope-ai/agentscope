@@ -104,6 +104,7 @@ _RESULT_STATES = {
     ReplyFinishedReason.EXCEED_MAX_ITERS: ToolResultState.SUCCESS,
     ReplyFinishedReason.INTERRUPTED: ToolResultState.INTERRUPTED,
     ReplyFinishedReason.ERROR: ToolResultState.ERROR,
+    ReplyFinishedReason.TOOL_REJECTED: ToolResultState.DENIED,
 }
 
 
@@ -338,9 +339,19 @@ class TeamPipeline:
 
         async def run_all() -> None:
             """Run every group and mark the end of the stream."""
+            tasks = [
+                asyncio.create_task(run_group(*group))
+                for group in groups.items()
+            ]
             try:
-                await asyncio.gather(*[run_group(*_) for _ in groups.items()])
+                await asyncio.gather(*tasks)
             finally:
+                # gather propagates a member failure without stopping siblings.
+                # Join them before ending the round, preserving the exception.
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 await queue.put(sentinel)
 
         gather_task = asyncio.create_task(run_all())

@@ -97,6 +97,9 @@ class RedisStorage(StorageBase):
         messages: str = (
             "agentscope:user:{user_id}:session:{session_id}:messages"
         )
+        message_index: str = (
+            "agentscope:user:{user_id}:session:{session_id}:message_ids"
+        )
 
         schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
         schedule_index: str = "agentscope:user:{user_id}:schedules"
@@ -1112,9 +1115,14 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             session_id=session_id,
         )
+        msg_index_key = self._key(
+            self.key_config.message_index,
+            user_id=user_id,
+            session_id=session_id,
+        )
         await self._client.delete(key)
         await self._client.srem(index_key, session_id)
-        await self._client.delete(msg_key)
+        await self._client.delete(msg_key, msg_index_key)
 
         if isinstance(record.origin, ScheduleOrigin):
             schedule_session_key = self._key(
@@ -1441,6 +1449,14 @@ class RedisStorage(StorageBase):
             session_id=session_id,
         )
 
+    def _message_index_key(self, user_id: str, session_id: str) -> str:
+        """Return the Redis Set key for a session's message IDs."""
+        return self._key(
+            self.key_config.message_index,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
     async def upsert_message(
         self,
         user_id: str,
@@ -1449,15 +1465,66 @@ class RedisStorage(StorageBase):
     ) -> None:
         """Persist a message to the session's message list."""
         key = self._message_key(user_id, session_id)
-        last_raw = await self._client.lindex(key, -1)
-        if last_raw:
-            last_msg = Msg.model_validate_json(last_raw)
-            if last_msg.id == msg.id:
-                await self._client.lset(key, -1, msg.model_dump_json())
-                await self._refresh_key_ttl(key)
+        index_key = self._message_index_key(user_id, session_id)
+
+        async with self._client.pipeline(transaction=False) as pipe:
+            pipe.exists(index_key)
+            pipe.sismember(index_key, msg.id)
+            index_exists, message_exists = await pipe.execute()
+        message_exists = bool(message_exists)
+        if not index_exists:
+            raw_messages = await self._client.lrange(key, 0, -1)
+            message_ids = {
+                Msg.model_validate_json(raw).id for raw in raw_messages
+            }
+            message_exists = msg.id in message_ids
+            if message_ids:
+                await self._client.sadd(index_key, *message_ids)
+
+        payload = msg.model_dump_json()
+        if message_exists:
+            index = await self._find_message_index(key, msg.id)
+            if index is not None:
+                async with self._client.pipeline(transaction=True) as pipe:
+                    pipe.lset(key, index, payload)
+                    if self.key_ttl is not None:
+                        pipe.expire(key, self.key_ttl)
+                        pipe.expire(index_key, self.key_ttl)
+                    await pipe.execute()
                 return
-        await self._client.rpush(key, msg.model_dump_json())
-        await self._refresh_key_ttl(key)
+
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.rpush(key, payload)
+            pipe.sadd(index_key, msg.id)
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+                pipe.expire(index_key, self.key_ttl)
+            await pipe.execute()
+
+    async def delete_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> bool:
+        """Delete the stored message matching ``message_id``."""
+        key = self._message_key(user_id, session_id)
+        index_key = self._message_index_key(user_id, session_id)
+        index = await self._find_message_index(key, message_id)
+        if index is None:
+            return False
+        raw = await self._client.lindex(key, index)
+        if raw is None:
+            return False
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.lrem(key, 0, raw)
+            pipe.srem(index_key, message_id)
+            if self.key_ttl is not None:
+                pipe.expire(key, self.key_ttl)
+                pipe.expire(index_key, self.key_ttl)
+            results = await pipe.execute()
+        deleted = bool(results[0])
+        return deleted
 
     async def get_message(
         self,

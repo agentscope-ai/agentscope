@@ -121,6 +121,10 @@ def _json_loads_with_repair(
         `ToolJSONDecodeError`:
             If the JSON string cannot be loaded into a dict.
     """
+    # Some providers stream no arguments at all for a no-argument tool call
+    if not json_str.strip():
+        return {}
+
     parsed = None
     error_message = "Error: Failed to parse your tool arguments."
     try:

@@ -1,5 +1,5 @@
 name: gpt-4o
-label: GPT-4o
+label: GPT-4o (Responses API)
 status: active
 
 input_types:

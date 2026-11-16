@@ -250,13 +250,19 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             ):
                 return self._callback.get_audio_response(block=False)
             text_to_send = self._cold_start_buffer
-            self._cold_start_buffer = ""
-            self._cold_start_done = True
 
         try:
             self._synthesizer.streaming_call(text_to_send)
         except Exception:
+            # Send failed: keep the cold-start buffer and flag intact so
+            # the next push retries it, mirroring the realtime model.
             return TTSResponse(content=None)
+
+        if not self._cold_start_done:
+            # The cold-start flush succeeded; only now clear the buffer
+            # and latch the flag.
+            self._cold_start_buffer = ""
+            self._cold_start_done = True
 
         return self._callback.get_audio_response(block=False)
 

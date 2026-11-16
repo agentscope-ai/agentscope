@@ -126,7 +126,9 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
                 Extra keyword arguments forwarded to the OpenAI API.
 
         Returns:
-            `EmbeddingResponse`: Embedding vectors and usage info.
+            `EmbeddingResponse`: Embedding vectors and usage info. The token
+            count is ``None`` when a compatible endpoint omits usage, while
+            the elapsed time is still recorded.
         """
         api_kwargs: dict[str, Any] = {
             "input": inputs,
@@ -135,7 +137,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             **kwargs,
         }
         if self.pass_dimensions:
-            api_kwargs["dimensions"] = self.dimensions
+            api_kwargs.setdefault("dimensions", self.dimensions)
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
@@ -173,7 +175,11 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
         return EmbeddingResponse(
             embeddings=embeddings,
             usage=EmbeddingUsage(
-                tokens=response.usage.total_tokens,
+                tokens=(
+                    response.usage.total_tokens
+                    if response.usage is not None
+                    else None
+                ),
                 time=time,
             ),
         )

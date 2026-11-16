@@ -788,10 +788,11 @@ class BashCommandParser:
                 # consumed as the remainder above.
                 if flag_chars.endswith("i") and i + 1 < len(args):
                     next_arg = args[i + 1]
+                    # A sed script never starts with a dot, e.g. BSD ".bak"
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
-                        and "." not in next_arg
+                        and (next_arg.startswith(".") or "." not in next_arg)
                     ):
                         i += 1
             elif name == "--in-place":
@@ -803,7 +804,7 @@ class BashCommandParser:
                     if (
                         not next_arg.startswith("-")
                         and not next_arg.startswith("s")
-                        and "." not in next_arg
+                        and (next_arg.startswith(".") or "." not in next_arg)
                     ):
                         i += 1
             elif not arg.startswith("-"):

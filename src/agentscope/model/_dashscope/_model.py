@@ -50,10 +50,13 @@ class DashScopeChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_enable: bool = Field(
-            default=False,
+        thinking_enable: bool | None = Field(
+            default=None,
             title="Thinking",
-            description="The thinking enable for the LLM output.",
+            description=(
+                "Whether to enable or disable thinking mode. When unset, "
+                "DashScope uses its default behavior for the model."
+            ),
         )
 
         thinking_budget: int | None = Field(
@@ -386,8 +389,25 @@ class DashScopeChatModel(ChatModelBase):
                     delta_audio = getattr(delta, "audio", None)
                     if isinstance(delta_audio, dict):
                         audio_chunk = delta_audio.get("data", "")
+                        transcript_chunk = (
+                            delta_audio.get("transcript", "") or ""
+                        )
                     else:
                         audio_chunk = getattr(delta_audio, "data", "")
+                        transcript_chunk = (
+                            getattr(delta_audio, "transcript", "") or ""
+                        )
+
+                    # Omni models deliver the spoken text in
+                    # ``delta.audio.transcript`` rather than in
+                    # ``delta.content``. Append it to the same text block id
+                    # so the agent receives the text as well as the audio,
+                    # mirroring the OpenAI Chat model.
+                    if transcript_chunk:
+                        delta_res.append_text(
+                            block_id=text_id,
+                            text=transcript_chunk,
+                        )
 
                     if audio_chunk:
                         pcm_bytes = base64.b64decode(audio_chunk)
@@ -458,8 +478,8 @@ class DashScopeChatModel(ChatModelBase):
             else:
                 cache_read = 0
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.prompt_tokens or 0,
+                output_tokens=u.completion_tokens or 0,
                 time=(datetime.now() - start_datetime).total_seconds(),
                 cache_input_tokens=cache_read,
             )

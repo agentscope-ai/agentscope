@@ -2,7 +2,7 @@
 """The write tool in agentscope."""
 import difflib
 import fnmatch
-from pathlib import Path
+import glob
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -218,7 +218,10 @@ Usage:
         parent = self._backend.dirname(file_path)
         # Glob patterns are POSIX-style strings (matched by fnmatch),
         # not real filesystem paths — do NOT use backend.join_path here.
-        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
+        # ``parent`` is a literal path, so its fnmatch metacharacters must be
+        # escaped, otherwise the suggested rule matches sibling directories.
+        escaped = glob.escape(parent)
+        pattern = (escaped.rstrip("/\\") + "/**") if escaped else "**"
 
         return [
             PermissionRule(
@@ -291,12 +294,6 @@ Usage:
                 # Binary or unreadable file — fall back to empty so we still
                 # render a best-effort "add" diff in the UI.
                 previous_content = ""
-
-        # Create parent directories if they don't exist
-        parent_dir = Path(file_path).parent
-        await self._backend.exec_shell(
-            ["mkdir", "-p", str(parent_dir)],
-        )
 
         # Write content to file (backend handles parent dir creation)
         await self._backend.write_file(

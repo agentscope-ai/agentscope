@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """The Moonshot AI formatter for agentscope."""
+
 import base64
 from fnmatch import fnmatch
 from typing import Any
+from urllib.request import url2pathname
 
 import requests
 from pydantic import Field
@@ -39,7 +41,7 @@ def _moonshot_format_media_source(
     elif isinstance(source, URLSource):
         url_str = str(source.url)
         if url_str.startswith("file://"):
-            local_path = url_str.removeprefix("file://")
+            local_path = url2pathname(url_str.removeprefix("file://"))
             with open(local_path, "rb") as f:
                 encoded = base64.b64encode(f.read()).decode("utf-8")
             url = f"data:{source.media_type};base64,{encoded}"
@@ -138,8 +140,13 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
                 if isinstance(block, ThinkingBlock):
                     # Preserve reasoning_content for multi-turn
-                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
-                    reasoning_parts.append(block.thinking)
+                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking).
+                    # Skip empty thinking: a redacted ThinkingBlock is
+                    # stored with ``thinking=""``, and emitting it
+                    # alone yields an assistant turn whose content is
+                    # null and which the API rejects.
+                    if block.thinking:
+                        reasoning_parts.append(block.thinking)
 
                 elif isinstance(block, TextBlock):
                     content_blocks.append({"type": "text", "text": block.text})
@@ -384,20 +391,19 @@ class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
 
         is_first_agent_message = True
         async for typ, group in self._group_messages(msgs[start_index:]):
-            if typ == "tool_sequence":
-                formatted_msgs.extend(
-                    await MoonshotChatFormatter(
-                        input_types=self.input_types,
-                    ).format(group),
-                )
-            elif typ == "agent_message":
-                formatted_group = await self._format_agent_message(
-                    group,
-                    is_first_agent_message,
-                )
-                formatted_msgs.extend(formatted_group)
-                if formatted_group:
-                    is_first_agent_message = False
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_tool_sequence(group),
+                    )
+                case "agent_message":
+                    formatted_group = await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
+                    )
+                    formatted_msgs.extend(formatted_group)
+                    if formatted_group:
+                        is_first_agent_message = False
 
         return formatted_msgs
 

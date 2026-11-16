@@ -8,6 +8,7 @@ from agentscope.tool import Edit
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
+    PermissionEngine,
     PermissionRule,
 )
 
@@ -37,6 +38,10 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.edit_tool.name, "Edit")
         self.assertIsInstance(self.edit_tool.description, str)
         self.assertIsInstance(self.edit_tool.input_schema, dict)
+        old_string_schema = self.edit_tool.input_schema["properties"][
+            "old_string"
+        ]
+        self.assertEqual(old_string_schema["minLength"], 1)
         self.assertFalse(self.edit_tool.is_mcp)
         self.assertFalse(self.edit_tool.is_read_only)
         self.assertFalse(self.edit_tool.is_concurrency_safe)
@@ -80,6 +85,60 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(chunk.state, "error")
         self.assertIn("not found", chunk.content[0].text)
+
+    async def test_empty_target_preserves_file(self) -> None:
+        """An empty target must not expand between every character."""
+        for original in (b"abc\r\ndef\r\n", b""):
+            for replace_all in (False, True):
+                with self.subTest(original=original, replace_all=replace_all):
+                    with open(self.temp_file.name, "wb") as stream:
+                        stream.write(original)
+                    chunk = await self.edit_tool(
+                        file_path=self.temp_file.name,
+                        old_string="",
+                        new_string="X",
+                        replace_all=replace_all,
+                    )
+                    with open(self.temp_file.name, "rb") as stream:
+                        self.assertEqual(stream.read(), original)
+                    self.assertEqual(
+                        chunk.model_dump(
+                            exclude={
+                                "id": True,
+                                "content": {"__all__": {"id", "created_at"}},
+                            },
+                        ),
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "Error: old_string must not be empty. "
+                                        "Use the Write tool to populate "
+                                        "an empty file."
+                                    ),
+                                    "finished_at": None,
+                                },
+                            ],
+                            "state": "error",
+                            "is_last": True,
+                            "metadata": {},
+                        },
+                    )
+
+    async def test_whitespace_target_can_be_deleted(self) -> None:
+        """A nonempty whitespace target and an empty replacement are valid."""
+        with open(self.temp_file.name, "w", encoding="utf-8") as stream:
+            stream.write("a b c")
+        chunk = await self.edit_tool(
+            file_path=self.temp_file.name,
+            old_string=" ",
+            new_string="",
+            replace_all=True,
+        )
+        self.assertEqual(chunk.state, "running")
+        with open(self.temp_file.name, "r", encoding="utf-8") as stream:
+            self.assertEqual(stream.read(), "abc")
 
     async def test_edit_multiple_occurrences(self) -> None:
         """Test editing with multiple occurrences."""
@@ -180,3 +239,59 @@ class EditToolTest(IsolatedAsyncioTestCase):
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)
+
+    async def test_permission_suggestions_escape_parent(self) -> None:
+        """Test approved suggestions cover only the literal parent."""
+        for parent, escaped, sibling in (
+            ("reports", "reports", "reports-other"),
+            ("reports [2024]", "reports [[]2024]", "reports 2"),
+            ("reports ?", "reports [?]", "reports x"),
+            ("reports *", "reports [*]", "reports other"),
+        ):
+            with self.subTest(parent=parent):
+                tool_input = {
+                    "file_path": f"/tmp/probe/{parent}/out.csv",
+                    "old_string": "a",
+                    "new_string": "b",
+                }
+                engine = PermissionEngine(PermissionContext())
+                first = await engine.check_permission(
+                    self.edit_tool,
+                    tool_input,
+                )
+                self.assertEqual(
+                    first.suggested_rules,
+                    [
+                        PermissionRule(
+                            tool_name="Edit",
+                            rule_content=f"/tmp/probe/{escaped}/**",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                )
+
+                engine.add_rule(first.suggested_rules[0])
+                approved = await engine.check_permission(
+                    self.edit_tool,
+                    tool_input,
+                )
+                unrelated = await engine.check_permission(
+                    self.edit_tool,
+                    {
+                        **tool_input,
+                        "file_path": f"/tmp/probe/{sibling}/out.csv",
+                    },
+                )
+                self.assertEqual(
+                    [
+                        first.behavior,
+                        approved.behavior,
+                        unrelated.behavior,
+                    ],
+                    [
+                        PermissionBehavior.ASK,
+                        PermissionBehavior.ALLOW,
+                        PermissionBehavior.ASK,
+                    ],
+                )

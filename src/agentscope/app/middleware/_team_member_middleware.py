@@ -155,8 +155,9 @@ class TeamMemberLoopMiddleware(MiddlewareBase):
                 ReplyFinishedReason.COMPLETED,
                 ReplyFinishedReason.EXCEED_MAX_ITERS,
             ):
-                # Interrupted / already-failed endings cannot be continued
-                # by swallowing their ReplyEndEvent.  Forward unchanged.
+                # Interrupted / rejected / already-failed endings cannot be
+                # continued by swallowing their ReplyEndEvent.  Forward
+                # unchanged.
                 # TODO: When the subagent fails, the leader should be aware
                 #  of that.
                 yield evt

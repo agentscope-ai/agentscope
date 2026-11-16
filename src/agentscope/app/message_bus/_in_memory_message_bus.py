@@ -156,7 +156,7 @@ class InMemoryMessageBus(
         queue = self._queues[key]
         now = time.monotonic()
         queue[:] = [e for e in queue if e[2] is None or e[2] > now]
-        expire_at = now + ttl_secs if ttl_secs else None
+        expire_at = now + ttl_secs if ttl_secs is not None else None
         queue.append((entry_id, payload, expire_at))
         return entry_id
 

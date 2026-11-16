@@ -6,6 +6,7 @@ import os
 import tempfile
 import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from utils import AnyString
 
 from agentscope.tool import ToolChunk, Read
@@ -295,6 +296,26 @@ class ReadToolTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_default_model_input_types_are_isolated(self) -> None:
+        """Changing one default tool must not affect other instances."""
+        existing = Read()
+        self.read_tool.model_input_types.append("image/bmp")
+        self.addCleanup(self.read_tool.model_input_types.remove, "image/bmp")
+
+        defaults = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        self.assertDictEqual(
+            {
+                "configured": self.read_tool.model_input_types,
+                "existing": existing.model_input_types,
+                "later": Read().model_input_types,
+            },
+            {
+                "configured": defaults + ["image/bmp"],
+                "existing": defaults,
+                "later": defaults,
+            },
+        )
+
     async def test_read_image_unsupported_type(self) -> None:
         """Test images outside ``model_input_types`` return an error."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".bmp") as f:
@@ -421,6 +442,55 @@ class ReadToolTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
             },
         )
+
+    async def test_read_pdf_deferred_errors(self) -> None:
+        """Late extraction and PDF-writing errors become final error chunks."""
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.add_blank_page(width=72, height=72)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as fp:
+            writer.write(fp)
+        self.addCleanup(os.unlink, fp.name)
+
+        # Malformed streams may be tolerated by different pypdf versions.
+        # Inject failures at the actual deferred operations instead.
+        for method, message, native_pdf in (
+            ("PageObject.extract_text", "cannot extract text", False),
+            ("PdfWriter.add_page", "cannot copy page", True),
+            ("PdfWriter.write", "cannot write PDF", True),
+        ):
+            with self.subTest(method=method):
+                tool = Read(
+                    model_input_types=["application/pdf"]
+                    if native_pdf
+                    else [],
+                )
+                with patch(
+                    f"pypdf.{method}",
+                    side_effect=ValueError(message),
+                ) as failure:
+                    chunk = await tool(file_path=fp.name, pages="1")
+                failure.assert_called_once()
+                self.assertDictEqual(
+                    chunk.model_dump(mode="json"),
+                    {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Error reading PDF: {message}",
+                                "id": AnyString(),
+                                "created_at": AnyString(),
+                                "finished_at": None,
+                            },
+                        ],
+                        "state": "error",
+                        "is_last": True,
+                        "metadata": {},
+                        "id": AnyString(),
+                    },
+                )
 
     async def test_read_pdf_with_pages_param(self) -> None:
         """Test reading a page range and a single page from a PDF."""

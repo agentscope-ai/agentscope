@@ -45,12 +45,14 @@ from ._model import (
     SOPWorkspaceGrain,
     SkillRecord,
     ChatModelConfig,
+    RealtimeModelConfig,
     TTSModelConfig,
     EmbeddingModelConfig,
     TeamData,
     TeamRecord,
     UserRecord,
     TeamMember,
+    AgentChatConfig,
     InviteConfig,
 )
 
@@ -86,6 +88,7 @@ __all__ = [
     "RedisStorage",
     "AsyncSQLAlchemyStorage",
     # The ORM models
+    "AgentChatConfig",
     "InviteConfig",
     "AgentData",
     "AgentRecord",
@@ -124,6 +127,7 @@ __all__ = [
     "SOPWorkspaceGrain",
     "SkillRecord",
     "ChatModelConfig",
+    "RealtimeModelConfig",
     "TTSModelConfig",
     "EmbeddingModelConfig",
     "TeamMember",

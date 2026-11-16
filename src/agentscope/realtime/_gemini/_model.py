@@ -9,11 +9,7 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import Field
 
 from .. import _events as me
-from .._base import (
-    ModelDisconnectedError,
-    RealtimeModelBase,
-    TruncationSupport,
-)
+from .._base import ModelDisconnectedError, RealtimeModelBase
 from .._model_card import RealtimeModelCard
 from ..._logging import logger
 from ..._utils._common import _flatten_json_schema
@@ -39,7 +35,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
       starts the reply, so :meth:`request_response` sends nothing.
     - Interruption is the server's job — it reports
       ``serverContent.interrupted`` and drops the rest of the reply
-      itself — so :meth:`truncate` and :meth:`cancel_response` are no-ops.
+      itself — so :meth:`cancel_response` is a no-op.
       With caller-owned turns the caller silences the reply locally
       instead, and the server is told not to interrupt on its own.
     """
@@ -70,8 +66,12 @@ class GeminiRealtimeModel(RealtimeModelBase):
         )
 
     type = "gemini_realtime"
-    truncation = TruncationSupport.SERVER
     supports_text_input = True
+
+    @property
+    def input_transcription_enabled(self) -> bool:
+        """Whether Gemini input transcription is enabled."""
+        return self.parameters.input_audio_transcription
 
     def __init__(
         self,
@@ -240,14 +240,6 @@ class GeminiRealtimeModel(RealtimeModelBase):
 
     async def cancel_response(self) -> None:
         """No-op: the protocol has no cancel frame."""
-
-    async def truncate(
-        self,
-        item_id: str,
-        played_ms: int,
-        played_text: str,
-    ) -> None:
-        """No-op: the server drops the interrupted reply itself."""
 
     # ------------------------------------------------------------------
     # Wire

@@ -5,16 +5,26 @@
 Tests cover both non-streaming and streaming modes.
 Gemini uses google.genai client with async iterator streaming.
 """
+import base64
 import json
 from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.formatter import GeminiChatFormatter
+from agentscope.message import (
+    AssistantMsg,
+    Msg,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ThinkingBlock,
+)
+from agentscope.message._base import Usage
 from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
@@ -151,6 +161,47 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_call_config_overrides_parameter_defaults(self) -> None:
+        """Per-call config overrides model-level defaults."""
+        self.model.parameters.max_tokens = 1024
+        self.model.parameters.temperature = 0.2
+        self.model.parameters.top_p = 0.3
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion([_make_part(text="ok")]),
+        )
+
+        default_config = {
+            "max_output_tokens": 1024,
+            "temperature": 0.2,
+            "top_p": 0.3,
+            "thinking_config": {
+                "include_thoughts": False,
+                "thinking_budget": 0,
+            },
+        }
+        cases = {
+            "max_output_tokens": 2048,
+            "temperature": 0.8,
+            "top_p": 0.9,
+            "thinking_config": {
+                "include_thoughts": True,
+                "thinking_budget": 8192,
+            },
+        }
+
+        for key, value in cases.items():
+            with self.subTest(key=key):
+                await self.model([], **{key: value})
+
+                call_args = (
+                    self.mock_client.aio.models.generate_content.call_args
+                )
+                sent_config = call_args.kwargs["config"]
+                self.assertEqual(
+                    sent_config,
+                    {**default_config, key: value},
+                )
+
     async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         parts = [
@@ -253,6 +304,49 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
+
+    async def test_usage_normalizes_optional_cache_count(self) -> None:
+        """SDK cache counts remain integer-valued in raw model usage."""
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        for cache_count, expected in [(None, 0), (0, 0), (5, 5)]:
+            with self.subTest(cache_count=cache_count):
+                resp = _mock_completion([_make_part(text="hello")])
+                resp.usage_metadata = GenerateContentResponseUsageMetadata(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                    cached_content_token_count=cache_count,
+                )
+                self.mock_client.aio.models.generate_content = AsyncMock(
+                    return_value=resp,
+                )
+
+                result = await self.model([])
+
+                self.assertEqual(
+                    dict(result.usage),
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "time": result.usage.time,
+                        "cache_creation_input_tokens": 0,
+                        "cache_input_tokens": expected,
+                        "type": "chat",
+                        "metadata": None,
+                    },
+                )
+                self.assertIs(type(result.usage.cache_input_tokens), int)
+                usage = Usage(**dict(result.usage))
+                self.assertEqual(
+                    usage.model_dump(),
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_input_tokens": expected,
+                        "cache_creation_input_tokens": 0,
+                    },
+                )
 
     async def test_usage_classifies_tool_use_tokens_as_input(self) -> None:
         """Usage classifies tool-use tokens as input, not output."""
@@ -381,6 +475,54 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_stream_usage_normalizes_optional_cache_count(self) -> None:
+        """Delta and final usage normalize optional SDK cache counts."""
+        from google.genai.types import GenerateContentResponseUsageMetadata
+
+        for cache_count, expected in [(None, 0), (0, 0), (5, 5)]:
+            with self.subTest(cache_count=cache_count):
+                chunk = _make_stream_chunk([_make_part(text="hello")])
+                chunk.usage_metadata = GenerateContentResponseUsageMetadata(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                    cached_content_token_count=cache_count,
+                )
+                self.mock_client.aio.models.generate_content_stream = (
+                    AsyncMock(
+                        return_value=_MockAsyncStream([chunk]),
+                    )
+                )
+
+                gen = await self.model([])
+                responses = [r async for r in gen]
+
+                self.assertEqual(len(responses), 2)
+                for response in responses:
+                    self.assertEqual(
+                        dict(response.usage),
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "time": response.usage.time,
+                            "cache_creation_input_tokens": 0,
+                            "cache_input_tokens": expected,
+                            "type": "chat",
+                            "metadata": None,
+                        },
+                    )
+                    self.assertIs(type(response.usage.cache_input_tokens), int)
+                    usage = Usage(**dict(response.usage))
+                    self.assertEqual(
+                        usage.model_dump(),
+                        {
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "cache_input_tokens": expected,
+                            "cache_creation_input_tokens": 0,
+                        },
+                    )
 
     async def test_stream_usage_classifies_tool_use_tokens(self) -> None:
         """Streaming usage classifies tool-use tokens as input."""
@@ -548,6 +690,184 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
                 json.dumps({"q": "b"}, ensure_ascii=False),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# Thought signature round-trip tests
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiThoughtSignatures(IsolatedAsyncioTestCase):
+    """Keep signatures in marked IDs without changing message schemas."""
+
+    async def test_tool_call_round_trip(self) -> None:
+        """Preserve parallel and sequential calls across JSON storage."""
+        for streaming in (False, True):
+            for provider_id in (None, "call-original", "Y2FsbA=="):
+                with self.subTest(stream=streaming, id=provider_id):
+                    with patch("google.genai.Client") as client_class:
+                        model = _make_model(stream=streaming)
+                    client = client_class.return_value
+                    history = [
+                        Msg(
+                            name="user",
+                            role="user",
+                            content=[TextBlock(text="Weather?")],
+                        ),
+                    ]
+                    expected_history = [
+                        {"role": "user", "parts": [{"text": "Weather?"}]},
+                    ]
+
+                    # Only the first of the parallel calls has a signature.
+                    # The next step gets a different signature in this turn.
+                    for step, signature in enumerate(
+                        (bytes(range(256)), b"next-step-signature"),
+                    ):
+                        call_id = "gemini_ts:" + base64.b64encode(
+                            signature,
+                        ).decode("ascii")
+                        parts = [
+                            _make_part(
+                                function_call={
+                                    "id": provider_id,
+                                    "name": "get_weather",
+                                    "args": {"city": "Tokyo"},
+                                },
+                                thought_signature=signature,
+                            ),
+                        ]
+                        if step == 0:
+                            parts.append(
+                                _make_part(
+                                    function_call={
+                                        "id": provider_id,
+                                        "name": "get_weather",
+                                        "args": {"city": "Paris"},
+                                    },
+                                ),
+                            )
+                        if streaming:
+                            generate = AsyncMock(
+                                return_value=_MockAsyncStream(
+                                    [_make_stream_chunk([p]) for p in parts],
+                                ),
+                            )
+                            client.aio.models.generate_content_stream = (
+                                generate
+                            )
+                            responses = [r async for r in await model(history)]
+                            result = responses[-1]
+                        else:
+                            generate = AsyncMock(
+                                return_value=_mock_completion(parts),
+                            )
+                            client.aio.models.generate_content = generate
+                            result = await model(history)
+
+                        self.assertEqual(
+                            generate.await_args.kwargs["contents"],
+                            expected_history,
+                        )
+                        expected_blocks = [
+                            ToolCallBlock.model_construct(
+                                id=call_id,
+                                created_at=A,
+                                name="get_weather",
+                                input=json.dumps({"city": "Tokyo"}),
+                            ),
+                        ]
+                        if step == 0:
+                            expected_blocks.append(
+                                ToolCallBlock.model_construct(
+                                    id=provider_id or A,
+                                    created_at=A,
+                                    name="get_weather",
+                                    input=json.dumps({"city": "Paris"}),
+                                ),
+                            )
+                        self.assertEqual(result.content, expected_blocks)
+                        self.assertEqual(
+                            len({b.id for b in result.content}),
+                            len(result.content),
+                        )
+                        message = AssistantMsg(
+                            name="assistant",
+                            content=[
+                                *result.content,
+                                *[
+                                    ToolResultBlock(
+                                        id=b.id,
+                                        name=b.name,
+                                        output="sunny",
+                                    )
+                                    for b in result.content
+                                ],
+                            ],
+                        )
+                        history.append(
+                            Msg.model_validate_json(message.model_dump_json()),
+                        )
+                        expected_parts = []
+                        expected_results = []
+                        for block, part in zip(result.content, parts):
+                            expected_part = {
+                                "function_call": {
+                                    "id": block.id,
+                                    "name": "get_weather",
+                                    "args": part.function_call.args,
+                                },
+                            }
+                            if part.thought_signature:
+                                expected_part["thought_signature"] = signature
+                            expected_parts.append(expected_part)
+                            expected_results.append(
+                                {
+                                    "function_response": {
+                                        "id": block.id,
+                                        "name": "get_weather",
+                                        "response": {"output": "sunny"},
+                                    },
+                                },
+                            )
+                        expected_history.extend(
+                            [
+                                {"role": "model", "parts": expected_parts},
+                                {"role": "user", "parts": expected_results},
+                            ],
+                        )
+                        self.assertEqual(
+                            await GeminiChatFormatter().format(history),
+                            expected_history,
+                        )
+
+    async def test_unmarked_ids_are_not_decoded(self) -> None:
+        """Do not infer signatures from plain or legacy Base64 IDs."""
+        for call_id in ("call-1", "Y2FsbA==", "bGVnYWN5LXNpZ25hdHVyZQ=="):
+            with self.subTest(id=call_id):
+                message = AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolCallBlock(id=call_id, name="search", input="{}"),
+                    ],
+                )
+                self.assertEqual(
+                    await GeminiChatFormatter().format([message]),
+                    [
+                        {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "function_call": {
+                                        "id": call_id,
+                                        "name": "search",
+                                        "args": {},
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                )
 
 
 # ---------------------------------------------------------------------------

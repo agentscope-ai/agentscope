@@ -88,7 +88,26 @@ class GoalPipeline:
         # Rounds already judged. On the instance rather than in
         # ``reply_stream``, so a HITL resume does not restart the budget.
         self._iters = 0
+        # Preserve each participant's retry budget across HITL resumes.
+        self._executor_retries = 0
+        self._verifier_retries = 0
         self._goal: None | list[TextBlock | DataBlock] = None
+
+    def _check_retry_budget(
+        self,
+        retries: int,
+        participant: Literal["executor", "verifier"],
+    ) -> None:
+        """Raise when a participant exhausts its structured-output retries."""
+        if retries > self.max_retries:
+            output_name = {
+                "executor": "execution report",
+                "verifier": "verification result",
+            }[participant]
+            raise RuntimeError(
+                f"The {participant} failed to generate a valid "
+                f"{output_name} after {self.max_retries} retries.",
+            )
 
     async def reply_stream(
         self,
@@ -123,6 +142,8 @@ class GoalPipeline:
             executor_inputs = deepcopy(inputs)
             # A fresh run, so the iteration budget starts over.
             self._iters = 0
+            self._executor_retries = 0
+            self._verifier_retries = 0
 
             hint = (
                 "<system-reminder>When you finish the goal, you should "
@@ -205,6 +226,11 @@ class GoalPipeline:
                         break
 
                     if execution_report is None:
+                        self._executor_retries += 1
+                        self._check_retry_budget(
+                            self._executor_retries,
+                            "executor",
+                        )
                         # Update the instruction
                         executor_inputs = UserMsg(
                             name="system",
@@ -272,8 +298,19 @@ class GoalPipeline:
                     # Escape the loop for hitl events
                     break
                 if final_msg is None:
+                    # Retry without changing the current instruction.
+                    self._verifier_retries += 1
+                    self._check_retry_budget(
+                        self._verifier_retries,
+                        "verifier",
+                    )
                     continue
                 if final_msg.structured_output is None:
+                    self._verifier_retries += 1
+                    self._check_retry_budget(
+                        self._verifier_retries,
+                        "verifier",
+                    )
                     # Update the instruction for valid verification result
                     final_msg = None
                     instruction = UserMsg(
