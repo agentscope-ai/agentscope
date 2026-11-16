@@ -290,6 +290,33 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             res,
         )
 
+    async def test_chat_formatter_assistant_media_skipped(self) -> None:
+        """Skip assistant images without adding user turns."""
+        picture = DataBlock(
+            source=Base64Source(
+                data="SU1HX0RBVEE=",
+                media_type="image/png",
+            ),
+            detail="high",
+        )
+        for text in ("Here is the chart.", ""):
+            with self.subTest(text=text):
+                content = (
+                    [TextBlock(text=text), picture] if text else [picture]
+                )
+                res = await XAIChatFormatter().format(
+                    [
+                        UserMsg(name="user", content="Draw a chart."),
+                        AssistantMsg(name="assistant", content=content),
+                        UserMsg(name="user", content="Explain the chart."),
+                    ],
+                )
+                expected = [user("Draw a chart.")]
+                if text:
+                    expected.append(assistant(text))
+                expected.append(user("Explain the chart."))
+                self.assertListEqual(expected, res)
+
     async def test_chat_formatter_system_message(self) -> None:
         """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
@@ -519,7 +546,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
     async def test_chat_formatter_parallel_tool_media_after_tool_msgs(
         self,
     ) -> None:
-        """Promoted media does not split parallel tool-result messages."""
+        """Skip assistant media; keep result media after all tool results."""
         fmt = XAIChatFormatter()
         picture = DataBlock(
             id="image_1",
@@ -533,6 +560,13 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                 AssistantMsg(
                     name="assistant",
                     content=[
+                        TextBlock(text="Original chart."),
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
                         ToolCallBlock(
                             id="call_shot",
                             name="screenshot",
@@ -558,6 +592,7 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                             output=[TextBlock(text="Example Domain")],
                             state=ToolResultState.SUCCESS,
                         ),
+                        TextBlock(text="New chart analysis."),
                     ],
                 ),
             ],
@@ -565,8 +600,8 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
 
         normalized_res = [
             (
-                res[0].role,
-                [part.text for part in res[0].content],
+                msg.role,
+                [part.text for part in msg.content],
                 [
                     (
                         tool_call.id,
@@ -574,17 +609,19 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                         tool_call.function.name,
                         tool_call.function.arguments,
                     )
-                    for tool_call in res[0].tool_calls
+                    for tool_call in msg.tool_calls
                 ],
-            ),
-            *res[1:],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
         ]
         self.assertListEqual(
             normalized_res,
             [
                 (
                     2,
-                    [],
+                    ["Original chart."],
                     [
                         (
                             "call_shot",
@@ -618,6 +655,64 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
                     image("https://example.com/shot.png"),
                     "</system-reminder>",
                 ),
+                assistant("New chart analysis."),
+            ],
+        )
+
+    async def test_chat_formatter_media_skipped_before_tool_result(
+        self,
+    ) -> None:
+        """Skipping media preserves calls paired with separate results."""
+        res = await XAIChatFormatter().format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        DataBlock(
+                            source=URLSource(
+                                url="https://example.com/original.png",
+                                media_type="image/png",
+                            ),
+                        ),
+                        ToolCallBlock(id="call_1", name="edit", input="{}"),
+                    ],
+                ),
+                AssistantMsg(
+                    name="assistant",
+                    content=[
+                        ToolResultBlock(
+                            id="call_1",
+                            name="edit",
+                            output="Done.",
+                            state=ToolResultState.SUCCESS,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        normalized_res = [
+            (
+                msg.role,
+                [part.text for part in msg.content],
+                [
+                    (
+                        call.id,
+                        call.type,
+                        call.function.name,
+                        call.function.arguments,
+                    )
+                    for call in msg.tool_calls
+                ],
+            )
+            if hasattr(msg, "tool_calls")
+            else msg
+            for msg in res
+        ]
+        self.assertListEqual(
+            normalized_res,
+            [
+                (2, [], [("call_1", 1, "edit", "{}")]),
+                tool_result("Done.", tool_call_id="call_1"),
             ],
         )
 
@@ -1029,6 +1124,50 @@ class TestXAIFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+    async def test_chat_formatter_assistant_media_around_hint(self) -> None:
+        """Skip assistant images while preserving text and hint order."""
+        before = DataBlock(
+            source=URLSource(
+                url="https://example.com/before.png",
+                media_type="image/png",
+            ),
+        )
+        after = DataBlock(
+            source=URLSource(
+                url="https://example.com/after.png",
+                media_type="image/png",
+            ),
+        )
+        for hint in (
+            "Revise the chart.",
+            [TextBlock(text="Revise the chart.")],
+        ):
+            for text in ("Original chart.", ""):
+                with self.subTest(hint=hint, text=text):
+                    content = [TextBlock(text=text)] if text else []
+                    res = await XAIChatFormatter().format(
+                        [
+                            AssistantMsg(
+                                name="assistant",
+                                content=[
+                                    *content,
+                                    before,
+                                    HintBlock(hint=hint),
+                                    TextBlock(text="Revised chart."),
+                                    after,
+                                ],
+                            ),
+                        ],
+                    )
+                    expected = [assistant(text)] if text else []
+                    expected.extend(
+                        [
+                            user("Revise the chart."),
+                            assistant("Revised chart."),
+                        ],
+                    )
+                    self.assertListEqual(expected, res)
 
     async def test_chat_formatter_hint_block_multimodal(self) -> None:
         """Multimodal HintBlock becomes one user() stub carrying text +

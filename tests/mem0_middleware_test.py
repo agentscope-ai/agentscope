@@ -692,6 +692,43 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(fake.search_calls[0]["top_k"], 3)
         self.assertEqual(mw._top_k, 9)
 
+    async def test_search_memory_defaults_to_middleware_top_k(self) -> None:
+        """Omitting ``limit`` must fall back to the middleware's
+        ``top_k``, both in the advertised schema and in the mem0 call.
+
+        The tool used to hardcode ``5``, so a middleware configured
+        with ``top_k=9`` still searched for five memories per keyword.
+        """
+        fake = _FakeAsyncMem0Client(
+            search_return={"results": [{"memory": "found"}]},
+        )
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="agent_control",
+            top_k=9,
+        )
+        agent = await self._agent(mw, system_prompt="base prompt")
+        await agent.reply(UserMsg("user", "hi"))
+
+        search_tool = _find_tool(self.toolkit, "search_memory")
+        await search_tool(keywords=["alice"])
+
+        self.assertEqual(
+            fake.search_calls,
+            [
+                {
+                    "query": "alice",
+                    "filters": {"user_id": "alice"},
+                    "top_k": 9,
+                },
+            ],
+        )
+        self.assertEqual(
+            search_tool.input_schema["properties"]["limit"]["default"],
+            9,
+        )
+
     async def test_tools_auto_allow_permission(self) -> None:
         """Memory tools should be auto-allowed by permission checks."""
         mw = Mem0Middleware(

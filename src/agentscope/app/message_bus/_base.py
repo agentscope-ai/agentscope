@@ -118,9 +118,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 caller's responsibility.
             ttl_secs (`int | None`, optional):
                 If set, refresh the queue key's expiry to this many
-                seconds on every push (sliding TTL). When ``None``, the
-                key never expires and must be drained or deleted
-                explicitly.
+                seconds on every push (sliding TTL). ``None`` leaves an
+                existing expiry unchanged; a new key has no expiry.
 
         Returns:
             `str`:
@@ -202,6 +201,33 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Newly assigned transport-level entry ids.
         """
         raise NotImplementedError("This bus does not support editable queues.")
+
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Atomically remove entries matching the supplied field values.
+
+        Each predicate must match exactly one distinct entry. Check all
+        predicates before deleting anything. Preserve other entries, their
+        transport IDs, order, and the queue's expiry. An empty list is a no-op.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            matches (`list[dict[str, str]]`):
+                Required top-level string field values for each target.
+
+        Returns:
+            `bool`:
+                True when all targets matched and were removed; False when
+                this execution made no change because a predicate failed.
+                Transport failures can leave the outcome unknown.
+        """
+        raise NotImplementedError(
+            "This bus cannot conditionally remove inputs.",
+        )
 
     @abstractmethod
     async def queue_delete(self, key: str) -> None:
@@ -514,7 +540,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Set ``field`` only while it still holds ``expected``.
@@ -531,9 +557,10 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Field name within the registry.
             value (`str`):
                 Serialized value to store.
-            expected (`str`):
+            expected (`str | None`):
                 The value the caller last read. The write is skipped
-                when the stored value differs.
+                when the stored value differs. ``None`` creates the field
+                only if it does not exist.
             ttl_secs (`int | None`, optional):
                 Refresh the namespace expiry when the write happens.
 
@@ -541,6 +568,29 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             `bool`:
                 ``True`` when the value was written.
         """
+
+    async def registry_del_if(  # pylint: disable=unused-argument
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Delete a field atomically only if its value still matches.
+
+        Backends may override this optional operation. The default leaves
+        data intact so existing adapters remain usable without an unsafe
+        read-then-delete fallback.
+
+        Args:
+            namespace (`str`): The registry key.
+            field (`str`): The field to remove.
+            expected (`str`): The previously observed value.
+
+        Returns:
+            `bool`: True if deleted; False if absent, changed, or unsupported.
+        """
+        return False
 
     @abstractmethod
     async def registry_pop(self, namespace: str, field: str) -> str | None:

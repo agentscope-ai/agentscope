@@ -1,6 +1,8 @@
 name: gemini-2.5-flash-preview-tts
 label: Gemini 2.5 Flash Preview TTS
 status: active
+# Release date source: https://ai.google.dev/gemini-api/docs/changelog
+release_date: 2025-05-20
 
 input_types:
   - text/plain
@@ -41,4 +43,6 @@ voices:
   - Sadaltager
   - Sulafat
 
-parameter_overrides: {}
+parameter_overrides:
+  style:
+    hidden: true

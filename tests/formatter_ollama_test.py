@@ -9,6 +9,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
+    Msg,
     UserMsg,
     AssistantMsg,
     SystemMsg,
@@ -262,6 +263,137 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                             "function": {
                                 "name": "search",
                                 "arguments": {"q": "weather"},
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_calls_share_one_message(
+        self,
+    ) -> None:
+        """Parallel tool calls stay on one assistant message. Ollama merges
+        consecutive same-role messages by appending only their content, so
+        a tool call on a second assistant message would be dropped."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Checking both cities."),
+                    ToolCallBlock(
+                        id="call_paris",
+                        name="get_weather",
+                        input='{"city": "Paris"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_london",
+                        name="get_weather",
+                        input='{"city": "London"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_paris",
+                        name="get_weather",
+                        output="Paris: 18C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_london",
+                        name="get_weather",
+                        output="London: 12C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Paris is warmer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Checking both cities.",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": {"city": "London"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_weather",
+                    "content": "Paris: 18C",
+                },
+                {
+                    "role": "tool",
+                    "tool_name": "get_weather",
+                    "content": "London: 12C",
+                },
+                {"role": "assistant", "content": "Paris is warmer."},
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_content_between_parallel_tool_calls(
+        self,
+    ) -> None:
+        """Text and images between two tool calls of one turn join the
+        message that carries the turn's tool calls."""
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="First the forecast."),
+                    ToolCallBlock(
+                        id="c1",
+                        name="forecast",
+                        input='{"city": "Paris"}',
+                    ),
+                    TextBlock(text="Then the map."),
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                    ToolCallBlock(
+                        id="c2",
+                        name="radar",
+                        input='{"city": "Paris"}',
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "First the forecast.\nThen the map.",
+                    "images": [self.image_b64],
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "forecast",
+                                "arguments": {"city": "Paris"},
+                            },
+                        },
+                        {
+                            "function": {
+                                "name": "radar",
+                                "arguments": {"city": "Paris"},
                             },
                         },
                     ],
@@ -525,12 +657,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                     "content": "",
                     "tool_calls": [
                         {"function": {"name": "screenshot", "arguments": {}}},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {"function": {"name": "get_title", "arguments": {}}},
                     ],
                 },
@@ -623,6 +749,131 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         # Empty
         self.assertListEqual([], await fmt.format([]))
 
+    async def test_multiagent_formatter_image_only_message_kept(self) -> None:
+        """An agent message carrying only an image (no text) is preserved.
+
+        Regression test: the image-only turn used to be dropped because the
+        guard only considered text blocks.
+        """
+        fmt = OllamaMultiAgentFormatter()
+        msgs = [
+            Msg(
+                name="",
+                role="user",
+                content=[
+                    DataBlock(
+                        source=Base64Source(
+                            data=self.image_b64,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": "",
+                    "images": [self.image_b64],
+                },
+            ],
+            res,
+        )
+
+    async def test_multiagent_image_history_prompt(self) -> None:
+        """Emit the history prompt once, on the first textual history."""
+        fmt = OllamaMultiAgentFormatter(
+            conversation_history_prompt="Custom history instructions\n",
+        )
+        hint = AssistantMsg(
+            name="assistant",
+            content=[HintBlock(hint="Continue")],
+        )
+        hint_output = [{"role": "user", "content": "Continue"}]
+        tool = AssistantMsg(
+            name="assistant",
+            content=[
+                ToolCallBlock(id="c1", name="inspect", input="{}"),
+                ToolResultBlock(
+                    id="c1",
+                    name="inspect",
+                    output="Done",
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+        tool_output: list[dict] = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "inspect", "arguments": {}}},
+                ],
+            },
+            {"role": "tool", "tool_name": "inspect", "content": "Done"},
+        ]
+        separators: list[tuple[Msg, list[dict]]] = [
+            (hint, hint_output),
+            (tool, tool_output),
+        ]
+        for name in ("", "viewer"):
+            for separator, expected_separator in separators:
+                with self.subTest(name=name, separator=separator.content):
+                    msgs = [
+                        UserMsg(
+                            name=name,
+                            content=[
+                                DataBlock(
+                                    source=Base64Source(
+                                        data=self.image_b64,
+                                        media_type="image/png",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        separator,
+                        UserMsg(name="user", content="Describe the image"),
+                        hint,
+                        UserMsg(name="user", content="More details"),
+                    ]
+                    first_content = (
+                        f"{fmt.conversation_history_prompt}"
+                        f"<history>\n{name}:\n</history>"
+                        if name
+                        else ""
+                    )
+                    later_prompt = (
+                        "" if name else fmt.conversation_history_prompt
+                    )
+                    self.assertListEqual(
+                        [
+                            {
+                                "role": "user",
+                                "content": first_content,
+                                "images": [self.image_b64],
+                            },
+                            *expected_separator,
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{later_prompt}<history>\n"
+                                    "user:\nDescribe the image\n</history>"
+                                ),
+                            },
+                            *hint_output,
+                            {
+                                "role": "user",
+                                "content": (
+                                    "<history>\nuser:\n"
+                                    "More details\n</history>"
+                                ),
+                            },
+                        ],
+                        await fmt.format(msgs),
+                    )
+
     async def test_chat_formatter_complex_multi_step(self) -> None:
         """Complex multi-step sequence with interleaved thinking, text,
         tool calls, and tool results."""
@@ -697,12 +948,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                                 "arguments": {"arg": "value1"},
                             },
                         },
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
                         {
                             "function": {
                                 "name": "func_2",

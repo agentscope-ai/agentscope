@@ -228,11 +228,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
                 self._limits.max_videos,
             )
 
-        results: list[EmbeddingResponse] = await asyncio.gather(
-            *(self._call_with_retry(batch, **kwargs) for batch in batches),
-        )
-
-        return self._merge_responses(results)
+        return await self._call_batches(batches, **kwargs)
 
     def _split_multimodal_batches(
         self,

@@ -2,6 +2,7 @@
 """App routers."""
 from ._asr import asr_router
 from ._agent import agent_router
+from ._background_task import background_task_router
 from ._channel import channel_router
 from ._chat import chat_router
 from ._credential import credential_router
@@ -23,6 +24,7 @@ from ._workspace import workspace_router
 __all__ = [
     "asr_router",
     "agent_router",
+    "background_task_router",
     "channel_router",
     "model_router",
     "realtime_router",

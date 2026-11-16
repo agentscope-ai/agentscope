@@ -7,6 +7,7 @@ other formatter, the ``format()`` method returns a list of
 ``chat_pb2.Message`` proto objects rather than plain dicts, because the
 ``xai_sdk`` chat API accepts proto messages directly.
 """
+
 import base64
 from fnmatch import fnmatch
 from typing import Any, List
@@ -158,6 +159,32 @@ class XAIChatFormatter(FormatterBase):
 
         xai_messages: List[Any] = []
 
+        def flush_assistant(
+            text_blocks: list[TextBlock],
+            tool_calls: list[ToolCallBlock],
+        ) -> None:
+            """Emit one assistant segment before its tool results or hint."""
+            text = "\n".join(block.text for block in text_blocks)
+            if tool_calls:
+                msg_proto = chat_pb2.Message()
+                msg_proto.role = chat_pb2.MessageRole.Value("ROLE_ASSISTANT")
+                if text:
+                    msg_proto.content.add().text = text
+                for call in tool_calls:
+                    proto_call = msg_proto.tool_calls.add()
+                    proto_call.id = call.id
+                    proto_call.type = chat_pb2.ToolCallType.Value(
+                        "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                    )
+                    proto_call.function.name = call.name
+                    proto_call.function.arguments = call.input
+                xai_messages.append(msg_proto)
+            elif text:
+                xai_messages.append(assistant(text))
+
+            text_blocks.clear()
+            tool_calls.clear()
+
         for msg in msgs:
             blocks = msg.get_content_blocks()
 
@@ -220,34 +247,10 @@ class XAIChatFormatter(FormatterBase):
                         pending_media = []
 
                     if isinstance(block, ToolResultBlock):
-                        # Convert each ToolResultBlock to a tool_result
-                        # message.
-                        if pending_tool_calls:
-                            msg_proto = chat_pb2.Message()
-                            msg_proto.role = chat_pb2.MessageRole.Value(
-                                "ROLE_ASSISTANT",
-                            )
-                            if pending_text:
-                                c = msg_proto.content.add()
-                                c.text = "\n".join(
-                                    b.text for b in pending_text
-                                )
-                                pending_text = []
-                            for tc in pending_tool_calls:
-                                proto_tc = msg_proto.tool_calls.add()
-                                proto_tc.id = tc.id
-                                proto_tc.type = chat_pb2.ToolCallType.Value(
-                                    "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
-                                )
-                                proto_tc.function.name = tc.name
-                                proto_tc.function.arguments = tc.input
-                            xai_messages.append(msg_proto)
-                            pending_tool_calls = []
-                        elif pending_text:
-                            text = "\n".join(b.text for b in pending_text)
-                            if text:
-                                xai_messages.append(assistant(text))
-                            pending_text = []
+                        flush_assistant(
+                            pending_text,
+                            pending_tool_calls,
+                        )
 
                         (
                             textual_output,
@@ -262,12 +265,7 @@ class XAIChatFormatter(FormatterBase):
                             ),
                         )
 
-                        # Promote media that came back inside the tool
-                        # result into a following user message, which is what
-                        # the other formatters do via the same shared helper.
-                        # ``xai_sdk`` re-hydrates binary tool results and
-                        # ``input_types`` already advertises images, so the
-                        # textual hint alone would lose the picture.
+                        # Keep tool results together before emitting media.
                         if multimodal_data:
                             promo_args = _xai_user_args_from_blocks(
                                 multimodal_data,
@@ -287,35 +285,10 @@ class XAIChatFormatter(FormatterBase):
                         pass
 
                     elif isinstance(block, HintBlock):
-                        if pending_tool_calls or pending_text:
-                            if pending_tool_calls:
-                                msg_proto = chat_pb2.Message()
-                                msg_proto.role = chat_pb2.MessageRole.Value(
-                                    "ROLE_ASSISTANT",
-                                )
-                                if pending_text:
-                                    c = msg_proto.content.add()
-                                    c.text = "\n".join(
-                                        b.text for b in pending_text
-                                    )
-                                    pending_text = []
-                                for tc in pending_tool_calls:
-                                    proto_tc = msg_proto.tool_calls.add()
-                                    proto_tc.id = tc.id
-                                    proto_tc.type = (
-                                        chat_pb2.ToolCallType.Value(
-                                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
-                                        )
-                                    )
-                                    proto_tc.function.name = tc.name
-                                    proto_tc.function.arguments = tc.input
-                                xai_messages.append(msg_proto)
-                                pending_tool_calls = []
-                            elif pending_text:
-                                text = "\n".join(b.text for b in pending_text)
-                                if text:
-                                    xai_messages.append(assistant(text))
-                                pending_text = []
+                        flush_assistant(
+                            pending_text,
+                            pending_tool_calls,
+                        )
                         if isinstance(block.hint, str):
                             xai_messages.append(user(block.hint))
                         else:
@@ -328,31 +301,10 @@ class XAIChatFormatter(FormatterBase):
                                 xai_messages.append(user(*hint_args))
 
                 xai_messages.extend(pending_media)
-
-                if pending_tool_calls:
-                    # Assistant turn that triggered tool calls (history).
-                    msg_proto = chat_pb2.Message()
-                    msg_proto.role = chat_pb2.MessageRole.Value(
-                        "ROLE_ASSISTANT",
-                    )
-                    if pending_text:
-                        c = msg_proto.content.add()
-                        c.text = "\n".join(b.text for b in pending_text)
-                        pending_text = []
-                    for tc in pending_tool_calls:
-                        proto_tc = msg_proto.tool_calls.add()
-                        proto_tc.id = tc.id
-                        proto_tc.type = chat_pb2.ToolCallType.Value(
-                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
-                        )
-                        proto_tc.function.name = tc.name
-                        proto_tc.function.arguments = tc.input
-                    xai_messages.append(msg_proto)
-                elif pending_text:
-                    # Regular assistant text message.
-                    text = "\n".join(b.text for b in pending_text)
-                    if text:
-                        xai_messages.append(assistant(text))
+                flush_assistant(
+                    pending_text,
+                    pending_tool_calls,
+                )
 
             else:
                 logger.warning(

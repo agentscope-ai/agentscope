@@ -643,6 +643,7 @@ class DashScopeParseTest(unittest.TestCase):
                     "suggested_rules": [],
                     "finished_at": None,
                 },
+                "non_blocking": False,
             },
         )
         self.assertEqual(self.model._tool_names, {})

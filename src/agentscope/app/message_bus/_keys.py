@@ -473,6 +473,16 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         """Per-session background task registry key."""
         return cls._BG_TASKS.format(sid=session_id)
 
+    @staticmethod
+    def bg_task_records(user_id: str) -> str:
+        """Shared running and terminal background task metadata per user."""
+        return f"agentscope:bg_task_records:{user_id}"
+
+    @staticmethod
+    def bg_task_records_lock(user_id: str) -> str:
+        """Serialize terminal-state retention across a user's workers."""
+        return f"agentscope:bg_task_records_lock:{user_id}"
+
     # ------------------------------------------------------------------
     # Knowledge-base indexing pipeline
     # ------------------------------------------------------------------

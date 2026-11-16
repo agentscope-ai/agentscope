@@ -278,11 +278,12 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
                     break
                 await asyncio.sleep(0.01)
 
+            # Other sessions keep running until manager shutdown.
+            self.assertFalse(bg_task_b.cancelled())
+
         self.assertTrue(bg_task_a1.cancelled() or bg_task_a1.done())
         self.assertTrue(bg_task_a2.cancelled() or bg_task_a2.done())
-        # sess-B BG task is left running until shutdown cancels it.
-        self.assertFalse(bg_task_b.cancelled())
-        bg_task_b.cancel()
+        self.assertTrue(bg_task_b.cancelled())
 
     async def test_cancel_signal_closes_local_realtime_run(self) -> None:
         """A session cancel reaches the local WebRTC runner."""

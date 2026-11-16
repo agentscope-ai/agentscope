@@ -234,7 +234,33 @@ class GitHubMCPHub(MCPHubBase):
                     "is_secret": header.get("is_secret", True),
                 }
 
-        config: dict = {"type": "http_mcp", "url": remote["url"]}
+        url = remote["url"]
+        # Rewrite URL placeholders for the renderer and declare inputs.
+        config: dict = {"type": "http_mcp", "url": _substitute(url)}
+        for name, spec in (remote.get("variables") or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            existing = inputs.get(name, {})
+            # Keep header requirements while adding the URL metadata.
+            inputs[name] = {
+                "description": spec.get("description")
+                or existing.get("description", ""),
+                "is_required": spec.get("isRequired", True)
+                or existing.get("is_required", False),
+                "is_secret": spec.get("isSecret", False)
+                or existing.get("is_secret", False),
+                "choices": spec.get("choices"),
+                "default": spec.get("default"),
+            }
+        for match in _PLACEHOLDER.finditer(url):
+            inputs.setdefault(
+                match.group(1),
+                {
+                    "description": "",
+                    "is_required": True,
+                    "is_secret": False,
+                },
+            )
         if headers:
             config["headers"] = headers
         return config, inputs
