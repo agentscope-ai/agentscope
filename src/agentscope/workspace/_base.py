@@ -319,6 +319,10 @@ class WorkspaceBase:
     _skill_lock: asyncio.Lock
     """Guards mutation of the ``skills/`` directory."""
 
+    _offload_lock: asyncio.Lock
+    """Serialises the read-modify-write append in :meth:`offload_context`
+    so concurrent offloads do not overwrite each other's lines."""
+
     @property
     def _glob_helper_path(self) -> str | None:
         """Optional path (backend-side) to the ``Glob`` helper script.
@@ -383,6 +387,7 @@ class WorkspaceBase:
         self._equipped_partitions = set()
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
+        self._offload_lock = asyncio.Lock()
 
     # ── derived paths ──────────────────────────────────────────────
 
@@ -1122,12 +1127,15 @@ class WorkspaceBase:
 
         payload = "\n".join(lines) + "\n"
 
-        existing = b""
-        try:
-            existing = await backend.read_file(path)
-        except (FileNotFoundError, OSError):
-            pass
-        await backend.write_file(path, existing + payload.encode("utf-8"))
+        # The backend has no append, so the read and the write must not
+        # interleave with another offload or one batch overwrites the other.
+        async with self._offload_lock:
+            existing = b""
+            try:
+                existing = await backend.read_file(path)
+            except (FileNotFoundError, OSError):
+                pass
+            await backend.write_file(path, existing + payload.encode("utf-8"))
         return path
 
     async def offload_tool_result(
