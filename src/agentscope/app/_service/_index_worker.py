@@ -22,6 +22,7 @@ know about each other.
 """
 import asyncio
 import contextlib
+import mimetypes
 from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
 from typing import Any, TYPE_CHECKING
@@ -393,30 +394,41 @@ class IndexWorker:
         chunker = self._resolve_chunker_from_record(kb_record)
 
         data = record.data
-        media_type = data.content_type
+        media_type = data.content_type or None
         if media_type:
-            media_type = media_type.split(";", 1)[0].strip().lower()
+            media_type = media_type.split(";", 1)[0].strip().lower() or None
         parser = (
             self._parsers_by_media_type.get(media_type) if media_type else None
         )
         if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
-            # A multipart client that labels its part generically leaves
-            # a valid deck unindexed even though the filename says what
-            # it is.  Match on what each parser declares rather than on
-            # ``mimetypes.guess_type``, whose table is incomplete on some
-            # platforms — on Windows ``.pptx`` often resolves to nothing
-            # on a stock image, which is exactly the upload this fallback
-            # has to serve.
-            extension = _filename_extension(data.filename)
-            for known, candidate in self._parsers_by_media_type.items():
-                extensions = getattr(
-                    candidate,
-                    "supported_extensions",
-                    None,
-                )
-                if extension and extensions and extension in extensions():
-                    parser, media_type = candidate, known
-                    break
+            guessed_type = mimetypes.guess_type(data.filename)[0]
+            parser = (
+                self._parsers_by_media_type.get(guessed_type)
+                if guessed_type
+                else None
+            )
+            if parser is not None:
+                media_type = guessed_type
+            else:
+                # Platform MIME tables may lack Office formats. Only
+                # infer a type from declarations when it is unambiguous.
+                extension = _filename_extension(data.filename)
+                matches = []
+                for known, candidate in self._parsers_by_media_type.items():
+                    extensions = getattr(
+                        candidate,
+                        "supported_extensions",
+                        None,
+                    )
+                    if (
+                        extension
+                        and extensions
+                        and extension in extensions()
+                        and candidate.supported_media_types == [known]
+                    ):
+                        matches.append((known, candidate))
+                if len(matches) == 1:
+                    media_type, parser = matches[0]
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",

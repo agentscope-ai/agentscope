@@ -2,6 +2,7 @@
 """Regression tests for Content-Type dispatch in ``IndexWorker``."""
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString
 
@@ -40,7 +41,7 @@ class _Storage:
 
     def __init__(
         self,
-        content_type: str,
+        content_type: str | None,
         *,
         filename: str = "README.md",
         size: int = 7,
@@ -253,9 +254,22 @@ class _PptxParser(_Parser):
     extensions = [".pptx"]
 
 
+class _JsonParser(_Parser):
+    """Record calls to a specialized JSON parser."""
+
+    supported_media_types = ["application/json"]
+    extensions = [".json"]
+
+
+class _OtherJsonParser(_JsonParser):
+    """Declare a competing media type for the same extension."""
+
+    supported_media_types = ["application/x-json"]
+
+
 def _worker(
     storage: _Storage,
-    parsers: list[object],
+    parsers: list[object] | dict[str, object],
 ) -> tuple[_TestIndexWorker, _Manager]:
     """Build a worker over the given storage and parser registry."""
     manager = _Manager()
@@ -271,6 +285,122 @@ def _worker(
 
 class IndexWorkerGenericContentTypeTest(IsolatedAsyncioTestCase):
     """A generic multipart Content-Type must not shadow the filename."""
+
+    async def test_filename_routing_preserves_custom_parser(self) -> None:
+        """Use the registered JSON override for inferred media types."""
+        for content_type in (None, "", "application/octet-stream"):
+            for use_dict in (False, True):
+                with self.subTest(
+                    content_type=content_type,
+                    use_dict=use_dict,
+                ):
+                    storage = _Storage(content_type, filename="data.json")
+                    parser = _JsonParser()
+                    parsers: list[object] | dict[str, object] = (
+                        {
+                            "text/plain": TextParser(),
+                            "application/json": parser,
+                        }
+                        if use_dict
+                        else [TextParser(), parser]
+                    )
+                    worker, manager = _worker(storage, parsers)
+
+                    await worker.run_pipeline()
+
+                    self.assertEqual(
+                        {
+                            "calls": parser.calls,
+                            "statuses": storage.statuses,
+                            "metadata": manager.knowledge.inserted_metadata,
+                        },
+                        {
+                            "calls": [(b"# AgentScope", "data.json")],
+                            "statuses": [
+                                "parsing",
+                                "chunking",
+                                "indexing",
+                                "ready",
+                            ],
+                            "metadata": {
+                                "filename": "data.json",
+                                "media_type": "application/json",
+                                "size_bytes": 7,
+                            },
+                        },
+                    )
+
+    async def test_text_fallback_preserves_media_type(self) -> None:
+        """Keep JSON metadata when the parser supports multiple types."""
+        for content_type in (None, "", "application/octet-stream"):
+            with self.subTest(content_type=content_type):
+                storage = _Storage(content_type, filename="data.json")
+                worker, manager = _worker(storage, [TextParser()])
+
+                await worker.run_pipeline()
+
+                self.assertEqual(
+                    manager.knowledge.inserted_metadata,
+                    {
+                        "filename": "data.json",
+                        "media_type": "application/json",
+                        "size_bytes": 7,
+                    },
+                )
+
+    async def test_extension_fallback_without_system_mime_mapping(
+        self,
+    ) -> None:
+        """Resolve PPTX even when the platform MIME table lacks it."""
+        for content_type in (None, "", "application/octet-stream"):
+            with self.subTest(content_type=content_type):
+                storage = _Storage(content_type, filename="LESSON.PPTX")
+                parser = _PptxParser()
+                worker, manager = _worker(storage, [parser])
+
+                with patch("mimetypes.guess_type", return_value=(None, None)):
+                    await worker.run_pipeline()
+
+                self.assertEqual(
+                    {
+                        "calls": parser.calls,
+                        "metadata": manager.knowledge.inserted_metadata,
+                    },
+                    {
+                        "calls": [(b"# AgentScope", "LESSON.PPTX")],
+                        "metadata": {
+                            "filename": "LESSON.PPTX",
+                            "media_type": _PPTX_MEDIA_TYPE,
+                            "size_bytes": 7,
+                        },
+                    },
+                )
+
+    async def test_ambiguous_extension_does_not_invent_media_type(
+        self,
+    ) -> None:
+        """Reject ambiguous declarations without a filename MIME mapping."""
+        for parsers in (
+            [TextParser()],
+            [_JsonParser(), _OtherJsonParser()],
+        ):
+            storage = _Storage(
+                "application/octet-stream",
+                filename="data.json",
+            )
+            worker, manager = _worker(storage, parsers)
+
+            with self.subTest(parsers=parsers):
+                with patch("mimetypes.guess_type", return_value=(None, None)):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "No parser registered for media type "
+                        "'application/octet-stream'",
+                    ):
+                        await worker.run_pipeline()
+
+                self.assertEqual(storage.statuses, [])
+                self.assertEqual(manager.knowledge.inserted_metadata, {})
 
     async def test_generic_octet_stream_routes_by_extension(self) -> None:
         """Index a deck sent as ``application/octet-stream``."""
