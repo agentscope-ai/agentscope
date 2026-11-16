@@ -250,6 +250,33 @@ class InMemoryMessageBus(
         self._queue_expires_at.pop(key, None)
         return [entry_id for entry_id, _payload in entries]
 
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Check all predicates and remove targets without yielding."""
+        self._drop_expired_queue(key, time.monotonic())
+        entries = self._queues.get(key, [])
+        selected: set[str] = set()
+        for expected in matches:
+            candidates = [
+                entry_id
+                for entry_id, payload in entries
+                if all(
+                    payload.get(name) == value
+                    for name, value in expected.items()
+                )
+            ]
+            if len(candidates) != 1 or candidates[0] in selected:
+                return False
+            selected.add(candidates[0])
+        if selected:
+            self._queues[key] = [
+                entry for entry in entries if entry[0] not in selected
+            ]
+        return True
+
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
 
