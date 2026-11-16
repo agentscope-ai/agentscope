@@ -21,6 +21,7 @@ from agentscope.app._manager import (
 )
 from agentscope.app._manager._background_task_manager import (
     _MAX_RETAINED_TASKS,
+    _SHUTDOWN_TIMEOUT_SECS,
     BackgroundTask,
     BackgroundTaskRecord,
 )
@@ -1123,7 +1124,11 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                 self.assertEqual(peak, 2)
                 self.assertGreaterEqual(cancellations, 2)
                 self.assertEqual(seen, set(task_ids))
-                await asyncio.wait_for(self.owner.__aexit__(), timeout=1)
+                # Allow the shutdown budget plus CI scheduling overhead.
+                await asyncio.wait_for(
+                    self.owner.__aexit__(),
+                    timeout=_SHUTDOWN_TIMEOUT_SECS * 2,
+                )
             self.assertEqual(active, set())
             self.assertTrue(self.owner._renewal_task.done())
 
