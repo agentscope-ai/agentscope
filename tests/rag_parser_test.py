@@ -548,6 +548,51 @@ def _make_docx_content_control(*, wrapped: bool) -> bytes:
     return buffer.getvalue()
 
 
+def _make_docx_table_content_control(wrapped: str | None) -> bytes:
+    """Build a DOCX with a 3x2 table, part of it in a content control.
+
+    Args:
+        wrapped (`str | None`):
+            Which part of the table to wrap in a ``w:sdt``: ``"row"`` (the
+            last row, like a repeating section), ``"cell"`` (the first cell
+            of the second row), ``"paragraph"`` (the paragraph of the second
+            cell of the second row), or ``None`` for no content control.
+
+    Returns:
+        `bytes`:
+            The DOCX bytes.
+    """
+    from docx import Document as DocxDocument
+    from docx.oxml import parse_xml
+
+    doc = DocxDocument()
+    table = doc.add_table(rows=3, cols=2)
+    for r, row in enumerate(
+        [["Name", "Role"], ["Alice", "Engineer"], ["Bob", "Manager"]],
+    ):
+        for c, value in enumerate(row):
+            table.cell(r, c).text = value
+
+    rows = table._tbl.tr_lst  # pylint: disable=protected-access
+    element = None
+    if wrapped == "row":
+        element = rows[2]
+    elif wrapped == "cell":
+        element = rows[1].tc_lst[0]
+    elif wrapped == "paragraph":
+        element = rows[1].tc_lst[1].p_lst[0]
+    if element is not None:
+        sdt = parse_xml(
+            f'<w:sdt xmlns:w="{_W_NS}"><w:sdtContent/></w:sdt>',
+        )
+        element.addprevious(sdt)
+        sdt[0].append(element)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def _make_xlsx_simple(
     sheets: dict[str, list[list[str]]],
 ) -> bytes:
@@ -3400,6 +3445,26 @@ class WordParserContentControlTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_table_content_controls_are_transparent(self) -> None:
+        """Rows, cells and cell paragraphs inside ``w:sdt`` are kept."""
+        parser = WordParser(include_image=False)
+        expected = (
+            "| Name | Role |\n"
+            "| --- | --- |\n"
+            "| Alice | Engineer |\n"
+            "| Bob | Manager |\n"
+        )
+        for wrapped in (None, "row", "cell", "paragraph"):
+            with self.subTest(wrapped=wrapped):
+                sections = await parser.parse(
+                    _make_docx_table_content_control(wrapped),
+                    "form.docx",
+                )
+                self.assertEqual(
+                    [s.content.text for s in sections],
+                    [expected],
+                )
 
     async def test_content_control_is_transparent(self) -> None:
         """The same content parses the same wrapped or unwrapped."""
