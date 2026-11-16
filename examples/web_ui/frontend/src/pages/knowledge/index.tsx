@@ -10,6 +10,7 @@ import { CreateKnowledgeBaseDialog } from '@/components/dialog/CreateKnowledgeBa
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { EditKnowledgeBaseDialog } from '@/components/dialog/EditKnowledgeBaseDialog.tsx';
 import { KnowledgeSearchDrawer } from '@/components/drawer/KnowledgeSearchDrawer.tsx';
+import { ChunkerConfigSummary } from '@/components/knowledge/ChunkerConfigSummary';
 import { KnowledgeDocumentsPanel } from '@/components/knowledge/KnowledgeDocumentsPanel.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -141,14 +142,6 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 				})
 			: null;
 
-	const chunkerValue = chunker
-		? Object.keys(chunker.parameters).length > 0
-			? `${chunker.type} · ${Object.entries(chunker.parameters)
-					.map(([k, v]) => `${k}=${String(v)}`)
-					.join(', ')}`
-			: chunker.type
-		: '—';
-
 	return (
 		<div className="flex flex-col gap-y-3">
 			<h3 className="text-[13.5px] font-medium text-foreground">
@@ -164,7 +157,16 @@ function ConfigCard({ knowledgeBase }: { knowledgeBase: KnowledgeBaseView }) {
 					label={t('knowledge.config.credential')}
 					value={knowledgeBase.credential_name ?? embedding.credential_id}
 				/>
-				<ConfigItem label={t('knowledge.config.chunker')} value={chunkerValue} />
+				<div className="col-span-2 min-w-0 space-y-1.5 sm:col-span-3">
+					<span className="text-xs text-muted-foreground">
+						{t('knowledge.config.chunker')}
+					</span>
+					{chunker ? (
+						<ChunkerConfigSummary key={knowledgeBase.id} config={chunker} />
+					) : (
+						<span className="block text-sm">—</span>
+					)}
+				</div>
 				<ConfigItem
 					label={t('knowledge.config.counts')}
 					value={t('knowledge.config.countsValue', {

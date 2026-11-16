@@ -602,6 +602,52 @@
 					"description": "Number of approximate tokens shared between consecutive chunks."
 				}
 			}
+		},
+		"recursive_token": {
+			"label": "Recursive Token",
+			"params": {
+				"chunk_size": {
+					"label": "Chunk Size",
+					"description": "Maximum number of approximate tokens per chunk."
+				},
+				"overlap": {
+					"label": "Overlap",
+					"description": "Number of approximate tokens shared between consecutive chunks."
+				},
+				"separators": {
+					"label": "Separator Priority",
+					"description": "Applied from coarse to fine; use \\n for newlines and \\\\ for a literal backslash."
+				}
+			}
+		}
+	},
+	"chunker-summary": {
+		"automaticFallback": "Oversized text is automatically split at character boundaries.",
+		"enterSeparator": "Enter separator",
+		"separators": "Separators",
+		"count_one": "{{count}} item",
+		"count_other": "{{count}} items",
+		"expand": "Expand",
+		"collapse": "Collapse",
+		"priority": "Listed from highest to lowest priority",
+		"labels": {
+			"paragraph": "Paragraph",
+			"newline": "Newline",
+			"carriageReturn": "Carriage return",
+			"tab": "Tab",
+			"periodSpace": "Period + space",
+			"exclamationSpace": "Exclamation + space",
+			"questionSpace": "Question + space",
+			"semicolonSpace": "Semicolon + space",
+			"commaSpace": "Comma + space",
+			"space": "Space"
+		}
+	},
+	"schema-form": {
+		"array": {
+			"emptyString": "Empty string",
+			"add": "Add item",
+			"remove": "Remove item {{index}}"
 		}
 	},
 	"dimension-select": {

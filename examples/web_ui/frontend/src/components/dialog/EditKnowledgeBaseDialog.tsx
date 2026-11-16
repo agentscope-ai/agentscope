@@ -2,6 +2,7 @@ import { CheckCircle, CircleAlert, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { KnowledgeBaseView } from '@/api';
+import { ChunkerConfigSummary } from '@/components/knowledge/ChunkerConfigSummary';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -72,24 +73,9 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 		? `${knowledgeBase.embedding_model_config.model} · ${knowledgeBase.embedding_model_config.dimensions}d`
 		: '';
 
-	const chunkerLabel = (() => {
-		if (!knowledgeBase?.chunker_config) return null;
-		const cfg = knowledgeBase.chunker_config;
-		const typeLabel = t(`chunker-types.${cfg.type}.label`, { defaultValue: cfg.type });
-		const paramStr = Object.entries(cfg.parameters)
-			.map(([k, v]) => {
-				const paramLabel = t(`chunker-types.${cfg.type}.params.${k}.label`, {
-					defaultValue: k,
-				});
-				return `${paramLabel}=${v}`;
-			})
-			.join(', ');
-		return paramStr ? `${typeLabel} (${paramStr})` : typeLabel;
-	})();
-
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-2rem)] !max-w-[500px] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-knowledge-base-edit.title')}</DialogTitle>
 					<DialogDescription>
@@ -128,12 +114,15 @@ export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onU
 							{embeddingModelLabel}
 						</Badge>
 					</Field>
-					{chunkerLabel && (
-						<Field orientation="horizontal">
+					{knowledgeBase?.chunker_config && (
+						<Field>
 							<FieldLabel>{t('dialog-knowledge-base-edit.chunker.label')}</FieldLabel>
-							<Badge variant="secondary" className="font-mono">
-								{chunkerLabel}
-							</Badge>
+							<div className="min-w-0 rounded-lg border border-border bg-muted/30 p-3">
+								<ChunkerConfigSummary
+									key={knowledgeBase.id}
+									config={knowledgeBase.chunker_config}
+								/>
+							</div>
 						</Field>
 					)}
 					{errorKey && <p className="text-destructive text-sm">{t(errorKey)}</p>}

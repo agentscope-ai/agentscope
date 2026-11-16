@@ -30,7 +30,7 @@ from typing import Any, TYPE_CHECKING
 from pydantic import ValidationError
 
 from ..._logging import logger
-from ...rag import ApproxTokenChunker
+from ...rag import ApproxTokenChunker, RecursiveTokenChunker
 
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
@@ -158,7 +158,7 @@ class IndexWorker:
             chunkers (`list[type[ChunkerBase]] | None`, optional):
                 The chunker classes that can be rebuilt from a knowledge
                 base's ``chunker_config``.  Defaults to
-                ``[ApproxTokenChunker]``.
+                ``[ApproxTokenChunker, RecursiveTokenChunker]``.
             max_concurrency (`int`, defaults to ``4``):
                 Maximum number of documents processed concurrently by
                 this worker.  Higher values trade memory for
@@ -180,7 +180,9 @@ class IndexWorker:
                 still accepted for backward compatibility; only its
                 class is used.
         """
-        chunker_classes = list(chunkers or [ApproxTokenChunker])
+        chunker_classes = list(
+            chunkers or [ApproxTokenChunker, RecursiveTokenChunker],
+        )
         if "chunker" in kwargs:
             logger.warning(
                 "The `chunker` argument of IndexWorker is deprecated, "

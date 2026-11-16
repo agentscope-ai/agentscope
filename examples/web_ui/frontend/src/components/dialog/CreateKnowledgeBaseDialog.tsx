@@ -34,6 +34,7 @@ import { useChunkers } from '@/hooks/useChunkers';
 import { useKbEmbeddingModels } from '@/hooks/useKbEmbeddingModels';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { explicitChunkerSeparators, formatChunkerSeparator } from '@/utils/chunker';
 
 interface Props {
 	open: boolean;
@@ -84,17 +85,31 @@ export function CreateKnowledgeBaseDialog({
 		[chunkers, selectedChunkerType],
 	);
 
-	const chunkerParamSchema = useMemo<JSONSchema | null>(
-		() => selectedChunker?.parameter_schema ?? null,
-		[selectedChunker],
-	);
+	const chunkerParamSchema = useMemo<JSONSchema | null>(() => {
+		const schema = selectedChunker?.parameter_schema;
+		if (!schema) return null;
+		if (selectedChunker.type !== 'recursive_token' || !schema.properties?.separators) {
+			return schema;
+		}
+		return {
+			...schema,
+			properties: {
+				...schema.properties,
+				separators: { ...schema.properties.separators, minItems: 0 },
+			},
+		};
+	}, [selectedChunker]);
 
 	const handleSelectChunker = useCallback(
 		(type: string) => {
 			setSelectedChunkerType(type);
 			const info = chunkers.find((c) => c.type === type);
 			const schema = info?.parameter_schema;
-			setChunkerParams(schema ? defaultValuesFromSchema(schema, NO_SKIP) : {});
+			const values = schema ? defaultValuesFromSchema(schema, NO_SKIP) : {};
+			if (type === 'recursive_token' && Array.isArray(values.separators)) {
+				values.separators = explicitChunkerSeparators(values.separators);
+			}
+			setChunkerParams(values);
 		},
 		[chunkers],
 	);
@@ -174,6 +189,16 @@ export function CreateKnowledgeBaseDialog({
 			for (const [k, v] of Object.entries(chunkerParams)) {
 				if (v !== undefined && v !== null && v !== '') params[k] = v;
 			}
+			if (
+				selectedChunkerType === 'recursive_token' &&
+				Array.isArray(chunkerParams.separators)
+			) {
+				// Empty editor rows are drafts; the fallback is always last.
+				params.separators = [
+					...chunkerParams.separators.filter((value) => value !== ''),
+					'',
+				];
+			}
 			const chunkerConfig: ChunkerConfig = {
 				type: selectedChunkerType,
 				parameters: params,
@@ -196,7 +221,7 @@ export function CreateKnowledgeBaseDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-2rem)] !max-w-[500px] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-knowledge-base-create.title')}</DialogTitle>
 					<DialogDescription>
@@ -314,6 +339,14 @@ export function CreateKnowledgeBaseDialog({
 									schema={chunkerParamSchema}
 									values={chunkerParams}
 									onChange={handleChunkerParamChange}
+									arrayItemDescriptionFor={(key, value) =>
+										selectedChunkerType === 'recursive_token' &&
+										key === 'separators'
+											? value === ''
+												? t('chunker-summary.enterSeparator')
+												: formatChunkerSeparator(value, t)
+											: undefined
+									}
 									skipFields={NO_SKIP}
 									idPrefix="chunker-param"
 									orientation="horizontal"
@@ -335,6 +368,11 @@ export function CreateKnowledgeBaseDialog({
 										undefined
 									}
 								/>
+							)}
+							{selectedChunkerType === 'recursive_token' && (
+								<p className="text-xs text-muted-foreground">
+									{t('chunker-summary.automaticFallback')}
+								</p>
 							)}
 						</>
 					)}
