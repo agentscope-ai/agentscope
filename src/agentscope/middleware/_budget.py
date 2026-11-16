@@ -247,6 +247,7 @@ class ReplyBudgetControlMiddleware(MiddlewareBase):
                 len(agent.state.context) > 0
                 and agent.state.context[-1].role == "assistant"
                 and agent.state.context[-1].name == agent.name
+                and agent.state.context[-1].id == reply_id
             ):
                 agent.state.context[-1].content.append(hint_block)
 
