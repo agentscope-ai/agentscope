@@ -152,11 +152,7 @@ class ModelCard(BaseModel):
                         **override,
                     }
 
-        # Build final parameter schema. Auto-filtering and hidden/null
-        # overrides can drop properties, so ``required`` must only name
-        # properties that survived. Otherwise the schema references fields
-        # that no longer exist, which is both invalid JSON Schema and a
-        # frontend that asks for parameters it cannot render.
+        # Keep required fields consistent with the filtered properties.
         required = [
             name
             for name in base_schema.get("required", [])
