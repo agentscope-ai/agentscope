@@ -21,6 +21,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 from .._document import Chunk
 
@@ -411,6 +412,7 @@ class MongoDBStore(VectorStoreBase):
         """
         if not metadata_filter:
             return None
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
 
         return {
             "$and": [
@@ -446,6 +448,7 @@ class MongoDBStore(VectorStoreBase):
             `list[DocumentSummary]`:
                 One summary per distinct ``document_id``.
         """
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
         pipeline: list[dict[str, Any]] = []
         if metadata_filter:
             pipeline.append(
@@ -515,6 +518,7 @@ class MongoDBStore(VectorStoreBase):
             `list[Chunk]`:
                 At most ``limit`` chunks, ``chunk_index`` ascending.
         """
+        _reject_none_metadata_values("MongoDBStore", metadata_filter)
         if limit <= 0:
             return []
         query: dict[str, Any] = {"document_id": document_id}

@@ -16,6 +16,7 @@ from ._vector_store import (
     VectorRecord,
     VectorSearchResult,
     VectorStoreBase,
+    _reject_none_metadata_values,
 )
 from .._document import Chunk
 
@@ -556,9 +557,14 @@ class MilvusLiteStore(VectorStoreBase):
     def _build_metadata_filter(
         metadata_filter: dict[str, Any] | None,
     ) -> str:
-        """Translate a flat ``{key: value}`` filter into a Milvus expr."""
+        """Translate a flat ``{key: value}`` filter into a Milvus expr.
+
+        ``None`` values are rejected: Milvus cannot tell an explicitly
+        null JSON field from a missing key.
+        """
         if not metadata_filter:
             return ""
+        _reject_none_metadata_values("MilvusLiteStore", metadata_filter)
 
         return " and ".join(
             f"metadata[{json.dumps(key, ensure_ascii=False)}] == "

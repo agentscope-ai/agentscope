@@ -622,6 +622,63 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
             ["v2-chunk0", "v2-chunk1"],
         )
 
+    async def test_none_metadata_filter_value_is_rejected(self) -> None:
+        """None filter values raise instead of a Milvus parse error."""
+        await self.store.create_collection("kb", dimensions=2)
+        await self.store.insert(
+            "kb",
+            [
+                VectorRecord(
+                    vector=[1.0, 0.0],
+                    document_id=doc,
+                    chunk=Chunk(
+                        content=TextBlock(text=doc),
+                        source=doc,
+                        chunk_index=0,
+                        total_chunks=1,
+                        metadata=metadata,
+                    ),
+                )
+                for doc, metadata in (
+                    ("explicit-null", {"reviewer": None}),
+                    ("missing", {}),
+                    ("set", {"reviewer": "alice"}),
+                )
+            ],
+        )
+        scope = {"reviewer": None}
+        calls = {
+            "search": lambda: self.store.search(
+                "kb",
+                [1.0, 0.0],
+                metadata_filter=scope,
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "kb",
+                metadata_filter=scope,
+            ),
+            "list_chunks": lambda: self.store.list_chunks(
+                "kb",
+                "explicit-null",
+                metadata_filter=scope,
+            ),
+            "delete": lambda: self.store.delete(
+                "kb",
+                "explicit-null",
+                metadata_filter=scope,
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(ValueError, "'reviewer'"):
+                    await call_store()
+
+        documents = await self.store.list_documents("kb")
+        self.assertEqual(
+            sorted(document.document_id for document in documents),
+            ["explicit-null", "missing", "set"],
+        )
+
 
 class MilvusDeleteFilterTest(IsolatedAsyncioTestCase):
     """Check delete predicates without starting a Milvus service."""
