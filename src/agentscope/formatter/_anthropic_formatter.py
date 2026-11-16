@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """The Anthropic formatter module."""
+
+import asyncio
 import base64
 import fnmatch
 from abc import ABC
@@ -7,9 +9,13 @@ from typing import Any
 from urllib.request import url2pathname
 
 import requests
+
 from pydantic import Field
 
-from ._formatter_base import FormatterBase
+from ._formatter_base import (
+    FormatterBase,
+    _read_file_as_base64,
+)
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import (
@@ -140,7 +146,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                     )
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = (
-                                    self._format_anthropic_data_block(sub)
+                                    await self._format_anthropic_data_block(
+                                        sub
+                                    )
                                 )
                                 if formatted_sub:
                                     hint_parts.append(formatted_sub)
@@ -158,7 +166,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                         )
 
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_anthropic_data_block(block)
+                    formatted_block = await self._format_anthropic_data_block(
+                        block
+                    )
                     if formatted_block:
                         content_blocks.append(formatted_block)
 
@@ -214,8 +224,10 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                                         },
                                     )
                             elif isinstance(out_block, DataBlock):
-                                fmt_block = self._format_anthropic_data_block(
-                                    out_block,
+                                fmt_block = (
+                                    await self._format_anthropic_data_block(
+                                        out_block,
+                                    )
                                 )
                                 if fmt_block:
                                     tool_result_content.append(fmt_block)
@@ -275,7 +287,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
 
         return messages
 
-    def _format_anthropic_data_block(
+    async def _format_anthropic_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -307,13 +319,13 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
 
         # Anthropic supports images and PDF documents
         if media_type.startswith("image/"):
-            return self._format_source(
+            return await self._format_source(
                 source,
                 "image",
                 block.model_extra,
             )
         if media_type == "application/pdf":
-            return self._format_source(
+            return await self._format_source(
                 source,
                 "document",
                 block.model_extra,
@@ -325,8 +337,8 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         )
         return None
 
-    @staticmethod
-    def _format_source(
+    async def _format_source(
+        self,
         source: URLSource | Base64Source,
         block_type: str,
         extra: dict[str, Any] | None = None,
@@ -357,13 +369,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         elif isinstance(source, URLSource):
             url = str(source.url)
             if url.startswith("file://"):
-                with open(
+                data = await asyncio.to_thread(
+                    _read_file_as_base64,
                     url2pathname(url.removeprefix("file://")),
-                    "rb",
-                ) as f:
-                    data = base64.b64encode(f.read()).decode("utf-8")
+                )
             else:
-                response = requests.get(url, timeout=30)
+                response = await asyncio.to_thread(
+                    requests.get, url, timeout=30
+                )
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
         else:
@@ -511,7 +524,9 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
                 if isinstance(block, TextBlock):
                     agent_text_parts.append(block.text)
                 elif isinstance(block, DataBlock):
-                    formatted_block = self._format_anthropic_data_block(block)
+                    formatted_block = await self._format_anthropic_data_block(
+                        block
+                    )
                     if formatted_block:
                         # Commit this message's pending text first, so a
                         # media part never precedes the caption that

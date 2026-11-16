@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The DeepSeek formatter module."""
+
 from typing import Any
 
 from pydantic import Field
@@ -75,7 +76,7 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
 
                 # DeepSeek only accepts images in user messages
                 elif isinstance(block, DataBlock) and msg.role == "user":
-                    formatted = self._format_openai_data_block(block)
+                    formatted = await self._format_openai_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
 
@@ -119,7 +120,7 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
                                 )
                             elif isinstance(sub, DataBlock):
                                 hint_parts.append(
-                                    self._format_openai_data_block(sub)
+                                    await self._format_openai_data_block(sub)
                                     or {
                                         "type": "text",
                                         "text": f"[{sub.source.media_type} "
@@ -194,8 +195,10 @@ class DeepSeekChatFormatter(_OpenAIFormatterBase):
                                     {"type": "text", "text": item.text},
                                 )
                             elif isinstance(item, DataBlock):
-                                formatted = self._format_openai_data_block(
-                                    item,
+                                formatted = (
+                                    await self._format_openai_data_block(
+                                        item,
+                                    )
                                 )
                                 if formatted is not None:
                                     promo_content.append(formatted)
@@ -360,7 +363,7 @@ class DeepSeekMultiAgentFormatter(_OpenAIFormatterBase):
                     content_blocks[-1]["text"] += f"{msg.name}: {block.text}\n"
                     has_history = True
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(block)
+                    formatted = await self._format_openai_data_block(block)
                     if formatted is not None:
                         content_blocks[-1]["text"] += f"{msg.name}: "
                         content_blocks.extend(

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Formatters for the OpenAI Responses API."""
+
 from abc import ABC
 from copy import deepcopy
 from fnmatch import fnmatch
@@ -37,7 +38,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         ),
     )
 
-    def _format_response_data_block(
+    async def _format_response_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -80,7 +81,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             )
             return None
 
-        base_result = self._format_openai_data_block(block)
+        base_result = await self._format_openai_data_block(block)
         if base_result is None:
             return None
 
@@ -99,7 +100,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
 
         return base_result
 
-    def _format_tool_result_output(
+    async def _format_tool_result_output(
         self,
         output: str | list[TextBlock | DataBlock],
     ) -> str | list[dict[str, Any]]:
@@ -142,7 +143,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             )
 
             if supports_native_output:
-                formatted = self._format_response_data_block(block)
+                formatted = await self._format_response_data_block(block)
                 if formatted is None:
                     raise RuntimeError(
                         "Supported OpenAI Responses tool-result media could "
@@ -220,7 +221,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     )
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(block)
+                    formatted = await self._format_response_data_block(block)
                     if formatted is not None:
                         content_parts.append(formatted)
 
@@ -269,7 +270,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                                 )
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = (
-                                    self._format_response_data_block(
+                                    await self._format_response_data_block(
                                         sub,
                                     )
                                 )
@@ -378,7 +379,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         {
                             "type": "function_call_output",
                             "call_id": block.id,
-                            "output": self._format_tool_result_output(
+                            "output": await self._format_tool_result_output(
                                 block.output,
                             ),
                         },
@@ -542,7 +543,7 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(block)
+                    formatted = await self._format_response_data_block(block)
                     if formatted is not None:
                         media_blocks.append(formatted)
 

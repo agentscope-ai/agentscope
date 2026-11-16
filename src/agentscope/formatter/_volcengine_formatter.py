@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The Volcengine Ark formatter module."""
 
+import asyncio
 import base64
 from fnmatch import fnmatch
 from pathlib import Path
@@ -24,7 +25,6 @@ from ..message import (
     Base64Source,
 )
 
-
 _AUDIO_FORMATS = {
     "audio/mpeg": "mp3",
     "audio/mp3": "mp3",
@@ -37,7 +37,7 @@ _AUDIO_FORMATS = {
 class _VolcengineFormatterBase(_OpenAIFormatterBase):
     """Base formatter with shared Ark multimodal conversion logic."""
 
-    def _format_volcengine_data_block(
+    async def _format_volcengine_data_block(
         self,
         block: DataBlock,
     ) -> dict[str, Any] | None:
@@ -65,11 +65,11 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
 
         main_type = block.source.media_type.split("/")[0]
         if main_type == "image":
-            return self._format_image_source(block.source)
+            return await self._format_image_source(block.source)
         if main_type == "video":
-            return self._format_video_source(block.source)
+            return await self._format_video_source(block.source)
         if main_type == "audio":
-            return self._format_ark_audio_source(block.source)
+            return await self._format_ark_audio_source(block.source)
 
         logger.warning(
             "Unsupported main media type %s for Volcengine Ark API. "
@@ -78,8 +78,8 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         )
         return None
 
-    @staticmethod
-    def _format_ark_audio_source(
+    async def _format_ark_audio_source(
+        self,
         source: URLSource | Base64Source,
     ) -> dict[str, Any]:
         """Convert audio to Ark's URL or raw base64 input_audio payload.
@@ -103,14 +103,16 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
                 path = parsed.path
                 if parsed.netloc and parsed.netloc != "localhost":
                     path = "//" + parsed.netloc + path
-                data = Path(url2pathname(path)).read_bytes()
+                data = await asyncio.to_thread(
+                    lambda: Path(url2pathname(path)).read_bytes(),
+                )
                 payload["data"] = base64.b64encode(data).decode("ascii")
             else:
                 payload["url"] = url
 
         return {"type": "input_audio", "input_audio": payload}
 
-    def _format_video_source(
+    async def _format_video_source(
         self,
         source: URLSource | Base64Source,
     ) -> dict[str, Any]:
@@ -127,7 +129,9 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         """
         return {
             "type": "video_url",
-            "video_url": self._format_image_source(source)["image_url"],
+            "video_url": (await self._format_image_source(source))[
+                "image_url"
+            ],
         }
 
 
@@ -185,7 +189,7 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                     content_blocks.append({"type": "text", "text": block.text})
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_volcengine_data_block(block)
+                    formatted = await self._format_volcengine_data_block(block)
                     if formatted is not None:
                         content_blocks.append(formatted)
 
@@ -234,7 +238,9 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                                 )
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = (
-                                    self._format_volcengine_data_block(sub)
+                                    await self._format_volcengine_data_block(
+                                        sub
+                                    )
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -301,7 +307,9 @@ class VolcengineChatFormatter(_VolcengineFormatterBase):
                                 )
                             elif isinstance(item, DataBlock):
                                 formatted_item = (
-                                    self._format_volcengine_data_block(item)
+                                    await self._format_volcengine_data_block(
+                                        item
+                                    )
                                 )
                                 if formatted_item is not None:
                                     promoted_content.append(formatted_item)
@@ -458,7 +466,7 @@ class VolcengineMultiAgentFormatter(_VolcengineFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_volcengine_data_block(block)
+                    formatted = await self._format_volcengine_data_block(block)
                     if formatted is not None:
                         media_blocks.append(formatted)
 
