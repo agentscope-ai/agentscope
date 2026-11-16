@@ -895,14 +895,17 @@ class BashCommandParser:
     def _chmod_grants_world_rwx(mode: str) -> bool:
         """Whether a chmod mode grants read, write and execute to others.
 
-        Symbolic modes are evaluated per clause: only an explicit ``o`` or
-        ``a`` class can affect the world bits, and an omitted class is
+        Symbolic modes are evaluated across clauses: only an explicit ``o``
+        or ``a`` class can affect the world bits, and an omitted class is
         umask-dependent (``+rwx`` may resolve to 755), so it is not treated
-        as equivalent to 777.
+        as equivalent to 777. Clauses apply left to right, so a later one
+        can revoke bits an earlier one granted (``a=rwx,o-w`` ends at
+        ``o=rx``) or build up world bits one at a time (``o+r,o+w,o+x``).
         """
         if re.fullmatch(r"[0-7]+", mode):
             return int(mode, 8) & 0o777 == 0o777
 
+        world = set()
         for clause in mode.split(","):
             match = re.fullmatch(
                 r"([ugoa]*)((?:[+\-=][rwxXst]*)+)",
@@ -914,21 +917,18 @@ class BashCommandParser:
             if "o" not in who and "a" not in who:
                 continue
 
-            granted = set()
             for operator, permissions in re.findall(
                 r"([+\-=])([rwxXst]*)",
                 match.group(2),
             ):
                 if operator == "=":
-                    granted = set(permissions)
+                    world = set(permissions)
                 elif operator == "+":
-                    granted |= set(permissions)
+                    world |= set(permissions)
                 else:
-                    granted -= set(permissions)
-            if {"r", "w", "x"} <= granted:
-                return True
+                    world -= set(permissions)
 
-        return False
+        return {"r", "w", "x"} <= world
 
     @staticmethod
     def _has_recursive_flag(args: List[str]) -> bool:
