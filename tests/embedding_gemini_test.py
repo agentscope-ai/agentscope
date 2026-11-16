@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for GeminiEmbeddingModel."""
+import asyncio
 from dataclasses import asdict
+import os
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Callable
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx2
+from google import genai
 from google.genai import types
 from utils import AnyValue
 
@@ -79,6 +83,90 @@ class GeminiListModelsTest(IsolatedAsyncioTestCase):
         self.assertIn("application/pdf", card.input_types)
         self.assertEqual(card.context_size, 8192)
         self.assertEqual(card.supported_dimensions, [3072, 1536, 768])
+
+
+class GeminiApiVersionTest(IsolatedAsyncioTestCase):
+    """Verify embedding routes using the real SDK and httpx2 transport."""
+
+    async def test_request_versions(self) -> None:
+        """Respect explicit versions and SDK-selected Vertex endpoints."""
+        real_client = genai.Client
+        for name in ("gemini-embedding-001", "gemini-embedding-2"):
+            for env, version, expected in (
+                ({}, None, "v1beta"),
+                ({}, "v1", "v1"),
+                ({"GOOGLE_GENAI_API_VERSION": "v1"}, None, "v1"),
+                ({"GOOGLE_GENAI_API_VERSION": "beta"}, None, "v1beta"),
+                ({"GOOGLE_GENAI_API_VERSION": "v1"}, "v1beta", "v1beta"),
+                ({"GOOGLE_GENAI_USE_VERTEXAI": "true"}, None, "v1beta1"),
+                ({"GOOGLE_GENAI_USE_ENTERPRISE": "true"}, None, "v1beta1"),
+            ):
+                with self.subTest(model=name, env=env, version=version):
+                    captured: list[str] = []
+
+                    def handle(
+                        request: httpx2.Request,
+                        record: Callable[[str], None] = captured.append,
+                    ) -> httpx2.Response:
+                        record(request.url.path.split("/")[1])
+                        if "aiplatform.googleapis.com" in request.url.host:
+                            return httpx2.Response(
+                                200,
+                                json={
+                                    "predictions": [
+                                        {"embeddings": {"values": [1.0, 2.0]}},
+                                    ],
+                                },
+                            )
+                        return httpx2.Response(
+                            200,
+                            json={
+                                "embeddings": [{"values": [1.0, 2.0]}],
+                            },
+                        )
+
+                    def create_client(
+                        handler: Any = handle,
+                        **kwargs: Any,
+                    ) -> Any:
+                        return real_client(
+                            **kwargs,
+                            http_options={
+                                "async_client_args": {
+                                    "transport": httpx2.MockTransport(handler),
+                                },
+                            },
+                        )
+
+                    options = types.HttpOptions(api_version=version)
+                    before = options.model_dump(exclude_none=True)
+                    with patch.dict(os.environ, env, clear=True), patch(
+                        "google.genai.Client",
+                        side_effect=create_client,
+                    ):
+                        model = GeminiEmbeddingModel(
+                            credential=GeminiCredential(api_key="test"),
+                            model=name,
+                            dimensions=2,
+                        )
+                        try:
+                            response = await model(
+                                ["hello"],
+                                http_options=options,
+                            )
+                        finally:
+                            try:
+                                await model.client.aio.aclose()
+                            finally:
+                                model.client.close()
+                    self.assertEqual(
+                        (captured, response.embeddings),
+                        ([expected], [[1.0, 2.0]]),
+                    )
+                    self.assertEqual(
+                        options.model_dump(exclude_none=True),
+                        before,
+                    )
 
 
 class GeminiTextCallTest(IsolatedAsyncioTestCase):
@@ -443,3 +531,121 @@ class GeminiMultimodalCallTest(IsolatedAsyncioTestCase):
         result = await model([_img() for _ in range(8)])
         self.assertEqual(result["embeddings"], [[0.1]] * 8)
         self.assertEqual(call_count, 2)
+
+    async def test_multimodal_failure_waits_for_sibling_cleanup(self) -> None:
+        """A failed first or last batch joins its sibling's async cleanup."""
+
+        async def check_failure(failing_size: int) -> None:
+            model = self._make_multimodal_model()
+            started = asyncio.Event()
+            cleaning = asyncio.Event()
+            release = asyncio.Event()
+            finished = asyncio.Event()
+            error = ValueError("failed batch")
+            sizes: list[int] = []
+            children: set[asyncio.Task[Any]] = set()
+
+            async def call_multimodal(
+                inputs: list[str | DataBlock],
+                **_kwargs: Any,
+            ) -> EmbeddingResponse:
+                task = asyncio.current_task()
+                assert task is not None
+                children.add(task)
+                sizes.append(len(inputs))
+                if len(inputs) == failing_size:
+                    await started.wait()
+                    raise error
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleaning.set()
+                    await release.wait()
+                    finished.set()
+                return _mock_resp([[0.1]] * len(inputs))
+
+            with patch.object(
+                model,
+                "_call_multimodal",
+                side_effect=call_multimodal,
+            ):
+                call = asyncio.create_task(model(["text"] * 21))
+                cleanup_started = asyncio.create_task(cleaning.wait())
+                try:
+                    await asyncio.wait(
+                        {call, cleanup_started},
+                        timeout=1,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    self.assertTrue(cleaning.is_set())
+                    self.assertFalse(call.done())
+                    release.set()
+                    with self.assertRaises(ValueError) as caught:
+                        await asyncio.wait_for(call, 1)
+                    self.assertIs(caught.exception, error)
+                    self.assertTrue(finished.is_set())
+                    self.assertEqual(sizes, [20, 1])
+                finally:
+                    release.set()
+                    for task in (call, cleanup_started, *children):
+                        if not task.done() and not task.cancelling():
+                            task.cancel()
+                    await asyncio.gather(
+                        call,
+                        cleanup_started,
+                        *children,
+                        return_exceptions=True,
+                    )
+
+        for failing_size in (20, 1):
+            with self.subTest(failing_size=failing_size):
+                await check_failure(failing_size)
+
+    async def test_multimodal_failure_prevents_late_cache_store(self) -> None:
+        """A cancelled SDK await cannot populate the cache after failure."""
+        model = self._make_multimodal_model()
+        model.embedding_cache = MagicMock(spec=FileEmbeddingCache)
+        model.embedding_cache.retrieve = AsyncMock(return_value=None)
+        model.embedding_cache.store = AsyncMock()
+        model.client = MagicMock()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        error = ValueError("failed request")
+        sizes: list[int] = []
+        children: set[asyncio.Task[Any]] = set()
+
+        async def embed_content(
+            *,
+            contents: list[types.Content],
+            **_kwargs: Any,
+        ) -> Any:
+            task = asyncio.current_task()
+            assert task is not None
+            children.add(task)
+            sizes.append(len(contents))
+            if len(contents) == 20:
+                await started.wait()
+                raise error
+            started.set()
+            await release.wait()
+            return MagicMock(embeddings=[MagicMock(values=[0.1])])
+
+        model.client.aio.models.embed_content = AsyncMock(
+            side_effect=embed_content,
+        )
+        call = asyncio.create_task(model(["text"] * 21))
+        try:
+            with self.assertRaises(ValueError) as caught:
+                await asyncio.wait_for(call, 1)
+            self.assertIs(caught.exception, error)
+            release.set()
+            await asyncio.gather(*children, return_exceptions=True)
+            self.assertEqual(sizes, [20, 1])
+            model.embedding_cache.store.assert_not_awaited()
+        finally:
+            release.set()
+            for task in (call, *children):
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await asyncio.gather(call, *children, return_exceptions=True)

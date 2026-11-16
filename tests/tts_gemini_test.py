@@ -11,6 +11,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import wave
 import weakref
 from typing import Any, AsyncIterator
@@ -577,16 +578,32 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
         """Cover both models, unary WAV, and incremental PCM with usage."""
         for name in _NEW_MODELS:
             for streaming in (False, True):
-                for api_version in (None, "v1"):
+                for api_version, env_version, request_version, expected in (
+                    (None, "", None, "v1beta"),
+                    (None, "v1", None, "v1"),
+                    (None, "beta", None, "v1beta"),
+                    (None, "v1beta", None, "v1beta"),
+                    ("v1", "v1beta", None, "v1"),
+                    ("v1beta", "v1", None, "v1beta"),
+                    ("v1beta", "beta", "v1", "v1"),
+                    ("v1", "v1", "v1beta", "v1beta"),
+                ):
                     with self.subTest(
                         model=name,
                         streaming=streaming,
                         api_version=api_version,
+                        env_version=env_version,
+                        request_version=request_version,
+                    ), patch.dict(
+                        os.environ,
+                        {"GOOGLE_GENAI_API_VERSION": env_version},
                     ):
                         await self._check_sdk_roundtrip(
                             name,
                             streaming,
                             api_version,
+                            request_version,
+                            expected,
                         )
 
     async def _check_sdk_roundtrip(
@@ -594,6 +611,8 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
         name: str,
         streaming: bool,
         api_version: str | None,
+        request_version: str | None,
+        expected_version: str,
     ) -> None:
         """Keep each transport capture isolated from the parameter loop."""
         text, style = "你好 <sigh>", "warm and friendly"
@@ -608,7 +627,6 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             },
         }
         operation = "streamGenerateContent" if streaming else "generateContent"
-        version = api_version or "v1beta"
         mime_type = "audio/L16;rate=24000" if streaming else "audio/wav"
 
         def audio_event(data: bytes) -> dict:
@@ -624,7 +642,10 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             """Check the entire request before returning unary or SSE audio."""
             self.assertEqual(
                 (request.url.path, json.loads(request.content)),
-                (f"/{version}/models/{name}:{operation}", expected_body),
+                (
+                    f"/{expected_version}/models/{name}:{operation}",
+                    expected_body,
+                ),
             )
             usage = {
                 "usageMetadata": {
@@ -662,7 +683,10 @@ class TestGeminiTTSSDKTransport(IsolatedAsyncioTestCase):
             )
             result = await model.synthesize(
                 text,
-                http_options={"timeout": 1000},
+                http_options={
+                    "timeout": 1000,
+                    "api_version": request_version,
+                },
             )
             responses = (
                 [chunk async for chunk in result] if streaming else [result]

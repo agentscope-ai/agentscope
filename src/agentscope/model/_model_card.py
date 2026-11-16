@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The model card class."""
 import copy
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Self, Type
 
 import yaml
@@ -39,6 +39,12 @@ class ModelCard(BaseModel):
         title="Deprecation date",
     )
     """The model deprecated at."""
+
+    release_date: date | None = Field(
+        default=None,
+        description="The model release date, if known.",
+    )
+    """The date this model version became available from its provider."""
 
     input_types: list[str] = Field(
         description="The supported model input types.",
@@ -161,6 +167,7 @@ class ModelCard(BaseModel):
             label=config["label"],
             status=config.get("status", "active"),
             deprecated_at=config.get("deprecated_at"),
+            release_date=config.get("release_date"),
             input_types=config.get("input_types", ["text/plain"]),
             output_types=config.get("output_types", ["text/plain"]),
             context_size=config["context_size"],

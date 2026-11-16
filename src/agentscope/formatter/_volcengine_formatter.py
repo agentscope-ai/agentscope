@@ -66,9 +66,15 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
 
         main_type = block.source.media_type.split("/")[0]
         if main_type == "image":
-            return await self._format_image_source(block.source)
+            return await self._format_image_source(
+                block.source,
+                block.model_extra,
+            )
         if main_type == "video":
-            return await self._format_video_source(block.source)
+            return await self._format_video_source(
+                block.source,
+                block.model_extra,
+            )
         if main_type == "audio":
             return await self._format_ark_audio_source(block.source)
 
@@ -116,6 +122,7 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
     async def _format_video_source(
         self,
         source: URLSource | Base64Source,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Convert a video source to Ark's ``video_url`` format. Ark takes
         the same URL / base64 data URI as images, so reuse that conversion.
@@ -123,12 +130,15 @@ class _VolcengineFormatterBase(_OpenAIFormatterBase):
         Args:
             source (`URLSource | Base64Source`):
                 A remote, local, or base64-encoded video source.
+            extra (`dict[str, Any] | None`, optional):
+                Provider-specific video parameters to merge into the nested
+                ``video_url`` object.
 
         Returns:
             `dict[str, Any]`:
                 A video content block accepted by the Ark Chat API.
         """
-        image_block = await self._format_image_source(source)
+        image_block = await self._format_image_source(source, extra)
         return {"type": "video_url", "video_url": image_block["image_url"]}
 
 
