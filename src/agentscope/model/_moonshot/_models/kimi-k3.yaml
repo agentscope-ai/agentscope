@@ -1,6 +1,8 @@
 name: kimi-k3
 label: Kimi K3
 status: active
+# Release date source: https://www.kimi.com/code/docs/en/kimi-code/whats-new.html
+release_date: 2026-07-16
 
 input_types:
   - text/plain

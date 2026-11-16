@@ -24,6 +24,7 @@ from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
+    ASRModelConfig,
     RealtimeModelConfig,
     RedisStorage,
     VoiceProfileData,
@@ -205,6 +206,49 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             {
                 "omitted_status": 200,
                 "omitted_config": realtime_config.model_dump(mode="json"),
+                "cleared_status": 200,
+                "cleared_config": None,
+                "written_states": [None, None],
+            },
+        )
+
+    async def test_asr_config_omission_and_explicit_null(self) -> None:
+        """Omission keeps ASR config while null disables speech input."""
+        record = await self.storage.get_session(
+            "alice",
+            self.agent_id,
+            self.session_id,
+        )
+        asr_config = ASRModelConfig(
+            type="dashscope_credential",
+            credential_id="credential-1",
+            model="qwen-audio-3.1-asr-flash",
+            parameters={"language_hints": ["zh"]},
+        )
+        await self.storage.upsert_session(
+            user_id="alice",
+            agent_id=self.agent_id,
+            config=record.config.model_copy(
+                update={"asr_model_config": asr_config},
+            ),
+            session_id=self.session_id,
+        )
+        self.recorded_states.clear()
+
+        omitted = self._patch({"name": "after"})
+        cleared = self._patch({"asr_model_config": None})
+
+        self.assertDictEqual(
+            {
+                "omitted_status": omitted.status_code,
+                "omitted_config": omitted.json()["config"]["asr_model_config"],
+                "cleared_status": cleared.status_code,
+                "cleared_config": cleared.json()["config"]["asr_model_config"],
+                "written_states": self.recorded_states,
+            },
+            {
+                "omitted_status": 200,
+                "omitted_config": asr_config.model_dump(mode="json"),
                 "cleared_status": 200,
                 "cleared_config": None,
                 "written_states": [None, None],
@@ -404,6 +448,33 @@ class SessionConfigPatchTest(IsolatedAsyncioTestCase):
             params={"agent_id": self.agent_id},
         ).json()
         self.assertIsNone(listed["sessions"][0]["session"]["config"]["cwd"])
+
+    def test_name_null_is_refused_rather_than_crashing(self) -> None:
+        """Reject a null name with 422 and preserve the stored name."""
+        name = self.client.get(
+            "/sessions/",
+            headers=HEADERS,
+            params={"agent_id": self.agent_id},
+        ).json()["sessions"][0]["session"]["config"]["name"]
+
+        response = self._patch({"name": None})
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(
+            [
+                (error["type"], error["loc"])
+                for error in response.json()["detail"]
+            ],
+            [("string_type", ["name"])],
+        )
+        self.assertEqual(
+            self.client.get(
+                "/sessions/",
+                headers=HEADERS,
+                params={"agent_id": self.agent_id},
+            ).json()["sessions"][0]["session"]["config"]["name"],
+            name,
+        )
 
     def test_cwd_is_not_confined_to_the_workspace_root(self) -> None:
         """Absolute paths and ``..`` are ordinary values, not attacks.

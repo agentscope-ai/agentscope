@@ -8,7 +8,8 @@ export { hubApi } from './hub';
 export { mcpApi } from './mcp';
 export { skillApi } from './skill';
 export { scheduleApi } from './schedule';
-export { embeddingModelApi, modelApi, realtimeModelApi, ttsModelApi } from './model';
+export { asrApi } from './asr';
+export { asrModelApi, embeddingModelApi, modelApi, realtimeModelApi, ttsModelApi } from './model';
 export { realtimeApi } from './realtime';
 export { knowledgeBaseApi } from './knowledgeBase';
 export { voiceProfileApi } from './voiceProfile';
@@ -22,3 +23,4 @@ export type {
 export type { TTSModelCard } from './types';
 export { channelApi } from './channel';
 export { healthApi } from './health';
+export { backgroundTaskApi } from './backgroundTask';

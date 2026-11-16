@@ -20,7 +20,7 @@ def _get_callable_name(tool_func: Callable) -> str:
 
         named_func = named_func.func
 
-    return named_func.__name__
+    return getattr(named_func, "__name__", type(named_func).__name__)
 
 
 def _get_callable_docstring(tool_func: Callable) -> str:

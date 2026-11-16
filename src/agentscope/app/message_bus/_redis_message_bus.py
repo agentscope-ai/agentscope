@@ -28,10 +28,53 @@ return entries
 """
 
 
+# Validate every target before deleting, preserving concurrent appends.
+_QUEUE_REMOVE_IF_LUA = """
+local matches = cjson.decode(ARGV[1])
+local entries = redis.call('XRANGE', KEYS[1], '-', '+')
+local payloads = {}
+for index, entry in ipairs(entries) do
+  for field = 1, #entry[2], 2 do
+    if entry[2][field] == 'payload' then
+      payloads[index] = cjson.decode(entry[2][field + 1])
+    end
+  end
+end
+local selected = {}
+local used = {}
+for _, expected in ipairs(matches) do
+  local target = false
+  for index, entry in ipairs(entries) do
+    local payload = payloads[index]
+    local matches_entry = payload ~= nil
+    for field, value in pairs(expected) do
+      if not payload or payload[field] ~= value then
+        matches_entry = false
+        break
+      end
+    end
+    if matches_entry then
+      if target or used[entry[1]] then return 0 end
+      target = entry[1]
+    end
+  end
+  if not target then return 0 end
+  table.insert(selected, target)
+  used[target] = true
+end
+for _, entry_id in ipairs(selected) do
+  redis.call('XDEL', KEYS[1], entry_id)
+end
+return 1
+"""
+
+
 # Compare-and-set on one hash field, so a caller can write back a value
 # it decided on earlier without holding a lock across the think time.
 _REGISTRY_SET_IF_LUA = """
-if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[3] then return 0 end
+local expected = ARGV[3]
+if ARGV[5] == '1' then expected = false end
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= expected then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 if tonumber(ARGV[4]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
 return 1
@@ -43,6 +86,11 @@ _REGISTRY_POP_LUA = """
 local value = redis.call('HGET', KEYS[1], ARGV[1])
 if value then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return value
+"""
+
+_REGISTRY_DEL_IF_LUA = """
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
 """
 
 _LOCK_RELEASE_LUA = """
@@ -263,8 +311,8 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 field of a Redis Stream entry.
             ttl_secs (`int | None`, optional):
                 If set, refresh the key's expiry on every push
-                (sliding TTL). ``None`` means no TTL — the queue
-                persists until drained or deleted explicitly.
+                (sliding TTL). ``None`` leaves an existing expiry
+                unchanged; a new key has no expiry.
 
         Returns:
             `str`:
@@ -365,6 +413,22 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
                 )
             results = await pipe.execute()
         return [str(entry_id) for entry_id in results[1:]]
+
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Check current payload fields and delete targets in one script."""
+        if not matches:
+            return True
+        removed = await self._client.eval(
+            _QUEUE_REMOVE_IF_LUA,
+            1,
+            key,
+            json.dumps(matches, ensure_ascii=False),
+        )
+        return bool(removed)
 
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key``.
@@ -476,8 +540,12 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         if before_id is None:
             await self._client.delete(key)
             return
-        # XTRIM MINID drops entries with id < before_id.
-        await self._client.xtrim(key, minid=before_id)
+        # Approximate trimming can leave entries older than the cursor.
+        await self._client.xtrim(
+            key,
+            minid=before_id,
+            approximate=False,
+        )
 
     # ------------------------------------------------------------------
     # Mode F — registry map (hash-keyed namespace)
@@ -513,7 +581,7 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
         field: str,
         value: str,
         *,
-        expected: str,
+        expected: str | None,
         ttl_secs: int | None = None,
     ) -> bool:
         """Compare-and-set one Hash field via Lua. See base."""
@@ -523,10 +591,28 @@ class RedisMessageBus(MessageBus):  # pylint: disable=too-many-public-methods
             namespace,
             field,
             value,
-            expected,
+            expected if expected is not None else "",
             ttl_secs or 0,
+            int(expected is None),
         )
         return bool(written)
+
+    async def registry_del_if(
+        self,
+        namespace: str,
+        field: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """Compare and delete one Hash field in a single Lua operation."""
+        deleted = await self._client.eval(
+            _REGISTRY_DEL_IF_LUA,
+            1,
+            namespace,
+            field,
+            expected,
+        )
+        return bool(deleted)
 
     async def registry_pop(self, namespace: str, field: str) -> str | None:
         """``HGET`` + ``HDEL`` as one Lua step. See base."""

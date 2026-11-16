@@ -287,6 +287,85 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
     # OpenAIChatFormatter tests
     # -------------------------------------------------------------------
 
+    async def test_chat_formatter_image_extra_params(self) -> None:
+        """DataBlock extra params are nested inside image_url payload."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Inspect this image."),
+                    DataBlock(
+                        source=URLSource(
+                            url=self.image_url,
+                            media_type="image/png",
+                        ),
+                        detail="high",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": self.image_url,
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_audio_extra_params(self) -> None:
+        """DataBlock extra params are nested inside input_audio payload."""
+        fmt = OpenAIChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content=[
+                    TextBlock(text="Transcribe this audio."),
+                    DataBlock(
+                        source=Base64Source(
+                            data="ZmFrZSBhdWRpbyBkYXRh",
+                            media_type="audio/wav",
+                        ),
+                        extra_audio_param="value",
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "name": "user",
+                    "content": [
+                        {"type": "text", "text": "Transcribe this audio."},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "ZmFrZSBhdWRpbyBkYXRh",
+                                "format": "wav",
+                                "extra_audio_param": "value",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = OpenAIChatFormatter()
