@@ -67,7 +67,7 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     text_tag = qn("w:t")
     paragraph_tag = qn("w:p")
     text_box_tag = qn("w:txbxContent")
-    deleted_tag = qn("w:del")
+    removed_tags = {qn("w:del"), qn("w:moveFrom")}
     run_tag = qn("w:r")
     tab_tag = qn("w:tab")
     carriage_return_tag = qn("w:cr")
@@ -76,8 +76,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
 
     def iter_text(element: Any) -> Iterator[Any]:
         """Visit text and inline separators in one readable branch."""
-        if element.tag == deleted_tag:
-            # Deleted runs must not contribute text or inline separators.
+        if element.tag in removed_tags:
+            # Deleted and moved-away runs do not belong to the current text.
             return
         if element.tag == text_tag or (
             element.tag in separator_tags
@@ -207,6 +207,7 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
 
     text_tag = qn("w:t")
     break_tags = {qn("w:br"), qn("w:cr")}
+    move_source_tag = qn("w:moveFrom")
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
         row_data: list[str] = []
@@ -219,6 +220,11 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
             for p_elem in tc.xpath("./w:p | ./w:tbl//w:tc/w:p"):
                 text_parts: list[str] = []
                 for element in p_elem.iter():
+                    if any(
+                        ancestor.tag == move_source_tag
+                        for ancestor in element.iterancestors()
+                    ):
+                        continue
                     if element.tag == text_tag and element.text:
                         text_parts.append(element.text)
                     elif element.tag in break_tags:
