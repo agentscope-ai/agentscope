@@ -1,6 +1,7 @@
 name: speech-2.8-hd
 label: MiniMax Speech 2.8 HD
 status: active
+voice_cloning: true
 
 input_types:
   - text/plain
