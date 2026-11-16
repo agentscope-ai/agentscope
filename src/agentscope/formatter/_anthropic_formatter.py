@@ -449,9 +449,16 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
         formatted_msgs = []
         start_index = 0
         if len(msgs) > 0 and msgs[0].role == "system":
-            formatted_msgs.append(
-                await self._format_system_message(msgs[0]),
-            )
+            # Anthropic rejects empty text blocks with a 400 ("text blocks
+            # must be non-empty"), so an empty system prompt must not be
+            # sent at all. ``AnthropicChatFormatter`` drops the empty
+            # ``TextBlock`` for the same reason, and the agent always sends
+            # a system message, so ``Agent(system_prompt="")`` would
+            # otherwise break every multi-agent request.
+            if msgs[0].get_text_content():
+                formatted_msgs.append(
+                    await self._format_system_message(msgs[0]),
+                )
             start_index = 1
 
         is_first_agent_message = True

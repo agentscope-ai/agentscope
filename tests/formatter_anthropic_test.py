@@ -11,6 +11,7 @@ from unittest import IsolatedAsyncioTestCase
 from agentscope.formatter import (
     AnthropicChatFormatter,
     AnthropicMultiAgentFormatter,
+    MiniMaxMultiAgentFormatter,
 )
 from agentscope.message import (
     UserMsg,
@@ -1563,3 +1564,64 @@ class TestAnthropicFormatter(  # pylint: disable=too-many-public-methods
             ],
             res,
         )
+
+
+class TestAnthropicMultiAgentEmptySystemPrompt(IsolatedAsyncioTestCase):
+    """Regression tests for an empty system prompt.
+
+    Anthropic rejects empty text blocks with a 400 ("text blocks must be
+    non-empty"), so an empty system prompt must produce no system message.
+    See https://github.com/agentscope-ai/agentscope/issues/3993
+    """
+
+    async def test_empty_system_prompt_is_dropped(self) -> None:
+        """No system message is emitted for an empty system prompt."""
+        formatted = await AnthropicMultiAgentFormatter().format(
+            [
+                SystemMsg(name="system", content=""),
+                UserMsg(name="user", content="hi"),
+            ],
+        )
+
+        self.assertEqual([msg["role"] for msg in formatted], ["user"])
+
+    async def test_no_empty_text_block_survives(self) -> None:
+        """No empty text block reaches the API payload."""
+        formatted = await AnthropicMultiAgentFormatter().format(
+            [
+                SystemMsg(name="system", content=""),
+                UserMsg(name="user", content="hi"),
+            ],
+        )
+
+        for msg in formatted:
+            content = msg["content"]
+            if isinstance(content, list):
+                for block in content:
+                    self.assertNotEqual(block.get("text"), "")
+
+    async def test_non_empty_system_prompt_is_unchanged(self) -> None:
+        """A real system prompt is still forwarded verbatim."""
+        formatted = await AnthropicMultiAgentFormatter().format(
+            [
+                SystemMsg(name="system", content="You are helpful."),
+                UserMsg(name="user", content="hi"),
+            ],
+        )
+
+        self.assertEqual(formatted[0]["role"], "system")
+        self.assertEqual(
+            formatted[0]["content"],
+            [{"type": "text", "text": "You are helpful."}],
+        )
+
+    async def test_minimax_multiagent_inherits_the_fix(self) -> None:
+        """MiniMaxMultiAgentFormatter shares this code path."""
+        formatted = await MiniMaxMultiAgentFormatter().format(
+            [
+                SystemMsg(name="system", content=""),
+                UserMsg(name="user", content="hi"),
+            ],
+        )
+
+        self.assertEqual([msg["role"] for msg in formatted], ["user"])
