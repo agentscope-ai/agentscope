@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """Unittests for the schema-guided repair of the tool call arguments."""
+
+import json
 import unittest
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import AnyString, MockModel
 
@@ -183,6 +186,37 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
             ),
             {"opts": {"unit": "123"}},
         )
+
+    def test_keep_arguments_when_repair_truncates_arrays(self) -> None:
+        """Preserve arguments when repair drops array elements."""
+        cases = [
+            (
+                "truncated",
+                {"items": [1, 2, 3], "name": "x"},
+                {"items": [1], "name": "x"},
+            ),
+            (
+                "emptied",
+                {"items": [1]},
+                {"items": []},
+            ),
+            (
+                "nested",
+                {"groups": [{"items": [1, 2]}]},
+                {"groups": [{"items": [1]}]},
+            ),
+        ]
+        for case_name, original, repaired in cases:
+            with self.subTest(case_name=case_name):
+                # Schema repair behavior varies across dependency versions.
+                with patch("json_repair.repair_json", return_value=repaired):
+                    self.assertDictEqual(
+                        _json_loads_with_repair(
+                            json.dumps(original),
+                            {"type": "object"},
+                        ),
+                        original,
+                    )
 
     def test_empty_arguments_are_an_empty_object(self) -> None:
         """Test that an empty argument payload is parsed as no arguments."""
