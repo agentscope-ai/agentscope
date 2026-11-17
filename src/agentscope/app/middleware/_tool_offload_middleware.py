@@ -310,7 +310,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         item = None
 
         # ----------------------------------------------------------------
-        # Timeout path: spawn deliverer, register drain_task, yield synthetic
+        # Timeout path: register drain_task, spawn deliverer, yield synthetic
         # ----------------------------------------------------------------
         session_id = agent.state.session_id
         tool_name = tool_call.name
@@ -324,11 +324,8 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             agent.name,
         )
 
-        # The deliverer starts before registration so a registration failure
-        # cannot strand the result, yet its notification has to name the same
-        # id as the placeholder below. Registration settles this future with
-        # the background task id, or with the tool call id if it fails.
-        announced_id: asyncio.Future[str] = loop.create_future()
+        # Fall back to the tool call id if no placeholder can be yielded.
+        notification_id = tool_call.id
 
         async def _deliver_when_done() -> None:
             """Wait for the offloaded tool to finish, then push its
@@ -366,9 +363,6 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     outcome = "been cancelled"
 
             tool_call_id = tool_call.id
-            # The id the agent was given in the placeholder, which is also
-            # the one ``ToolStop`` accepts.
-            background_id = await announced_id
 
             hint_source = json.dumps(
                 {
@@ -383,7 +377,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     hint=(
                         f"<system-notification>"
                         f"Tool '{tool_name}' running in background "
-                        f"(id={background_id}) has {outcome} with no output."
+                        f"(id={notification_id}) has {outcome} with no output."
                         f"</system-notification>"
                     ),
                     source=hint_source,
@@ -399,7 +393,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 prefix = (
                     f"<system-notification>"
                     f"Tool '{tool_name}' running in background "
-                    f"(id={background_id}) has {outcome}.\n\n"
+                    f"(id={notification_id}) has {outcome}.\n\n"
                     f"Result:\n\n"
                 )
 
@@ -442,7 +436,6 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 payload=hint.model_dump(mode="json"),
             )
 
-        asyncio.create_task(_deliver_when_done())
         try:
             task_id = await self._bg_manager.register_task(
                 asyncio_task=drain_task,
@@ -453,12 +446,11 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 summary=_make_summary(tool_name, tool_call.input),
                 execution_started_at=execution_started_at,
             )
-        except BaseException:
-            # No placeholder is yielded, so the tool call id is the only id
-            # the agent has seen for this call.
-            announced_id.set_result(tool_call.id)
-            raise
-        announced_id.set_result(task_id)
+            notification_id = task_id
+        finally:
+            # Deliver completed results even if registration fails or is
+            # cancelled. The drain task retains any result produced earlier.
+            asyncio.create_task(_deliver_when_done())
 
         logger.info(
             "Synthetic ToolResponse yielded for offloaded tool '%s': "
