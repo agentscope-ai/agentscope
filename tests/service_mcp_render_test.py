@@ -125,6 +125,42 @@ class MCPRenderTest(TestCase):
             ["--config", "$HOME/.config", "sk-secret"],
         )
 
+    def test_double_dollar_survives_in_stdio_args_and_env(self) -> None:
+        """A shell PID expression is not a card placeholder."""
+        card = MCPCard(
+            hub_id="testhub",
+            name="local",
+            inputs_schema=API_KEY_SCHEMA,
+            config_template={
+                "type": "stdio_mcp",
+                "command": "sh",
+                "args": [
+                    "-c",
+                    "echo $$ $$api_key --token ${api_key}",
+                ],
+                "env": {
+                    "PID": "echo $$",
+                    "SHELL": "$$api_key",
+                    "API_KEY": "${api_key}",
+                },
+            },
+        )
+
+        client = render_mcp(card, {"api_key": "sk-secret"})
+
+        self.assertEqual(
+            client.mcp_config.args,
+            ["-c", "echo $$ $$api_key --token sk-secret"],
+        )
+        self.assertEqual(
+            client.mcp_config.env,
+            {
+                "PID": "echo $$",
+                "SHELL": "$$api_key",
+                "API_KEY": "sk-secret",
+            },
+        )
+
     def test_missing_required_value(self) -> None:
         """A missing required input is rejected by the schema."""
         card = _http_card(headers={"Authorization": "Bearer ${api_key}"})
