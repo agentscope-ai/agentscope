@@ -1,22 +1,43 @@
 # -*- coding: utf-8 -*-
 """Tests for the K8s Pod-name sanitiser."""
+
 from unittest import TestCase
 
-from agentscope.workspace._k8s._constants import _k8s_safe_name
+from agentscope.workspace._k8s._constants import (
+    _k8s_legacy_name,
+    _k8s_safe_name,
+)
 
 
 class K8sSafeNameTest(TestCase):
     """Tests for :func:`_k8s_safe_name`."""
 
-    def test_short_ascii_name_is_unchanged(self) -> None:
-        """A short lowercase id keeps its readable name (back-compat)."""
-        self.assertEqual(_k8s_safe_name("reports"), "as-ws-reports")
-
-    def test_case_normalisation_is_stable(self) -> None:
-        """Upper/lower spellings of one id map to the same Pod."""
+    def test_names_include_original_id_digest(self) -> None:
+        """Plain, lossy, and case-variant IDs have distinct names."""
         self.assertEqual(
-            _k8s_safe_name("Reports"),
-            _k8s_safe_name("reports"),
+            {
+                wid: _k8s_safe_name(wid)
+                for wid in ("reports", "Reports", "a.b", "a_b", "a-b-2e7336dc")
+            },
+            {
+                "reports": "as-ws-reports-7f26104f77a7ce47",
+                "Reports": "as-ws-reports-dacca3cba3f346a4",
+                "a.b": "as-ws-a-b-2e7336dc8eba87ef",
+                "a_b": "as-ws-a-b-648fa9b31bc7ff7e",
+                "a-b-2e7336dc": "as-ws-a-b-2e7336dc-e2ae217fec562ab0",
+            },
+        )
+
+    def test_plain_id_cannot_copy_a_hashed_name(self) -> None:
+        """A generated suffix is hashed again when used as a plain ID."""
+        name = _k8s_safe_name("a.b")
+        self.assertNotEqual(name, _k8s_safe_name(name.removeprefix("as-ws-")))
+
+    def test_legacy_names_are_preserved_for_lookup(self) -> None:
+        """Recover the exact names used before workspace ID hashing."""
+        self.assertEqual(
+            [_k8s_legacy_name(wid) for wid in ("Reports", "a_b", "x" * 80)],
+            ["as-ws-reports", "as-ws-a-b", "as-ws-" + "x" * 57],
         )
 
     def test_name_is_rfc1123_compliant(self) -> None:

@@ -39,17 +39,14 @@ def _k8s_safe_name(workspace_id: str, prefix: str = "as-ws-") -> str:
     Rules: lowercase alphanumeric + hyphens, max 63 characters,
     must not end with a hyphen.
     """
-    lowered = workspace_id.lower()
-    sanitized = _K8S_UNSAFE_RE.sub("-", lowered)
-    name = prefix + sanitized
-    # Replacing unsafe characters and truncating are lossy: distinct ids
-    # (long ids sharing a prefix, or ids differing only in characters
-    # replaced by ``-``) would otherwise collapse onto the same Pod name.
-    # When information is lost, append a digest of the original id so
-    # every workspace keeps its own Pod.
-    if sanitized != lowered or len(name) > 63:
-        suffix = hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()[:8]
-        max_head = 63 - len(suffix) - 1
-        head = name[:max_head].rstrip("-")
-        name = f"{head}-{suffix}"
+    name = prefix + _K8S_UNSAFE_RE.sub("-", workspace_id.lower())
+    # Hash every ID so a plain ID cannot impersonate a hashed name.
+    suffix = hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()[:16]
+    head = name[: 63 - len(suffix) - 1].rstrip("-")
+    return f"{head}-{suffix}"
+
+
+def _k8s_legacy_name(workspace_id: str) -> str:
+    """Return the pre-digest name for finding existing Pods and PVCs."""
+    name = "as-ws-" + _K8S_UNSAFE_RE.sub("-", workspace_id.lower())
     return name[:63].rstrip("-")
