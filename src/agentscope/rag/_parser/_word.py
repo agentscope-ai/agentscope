@@ -208,6 +208,7 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     text_tag = qn("w:t")
     tab_tag = qn("w:tab")
     run_tag = qn("w:r")
+    deleted_tag = qn("w:del")
     break_tags = {qn("w:br"), qn("w:cr")}
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
@@ -226,6 +227,10 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                     elif (
                         element.tag == tab_tag
                         and element.getparent().tag == run_tag
+                        and not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        )
                     ):
                         text_parts.append("\t")
                     elif element.tag in break_tags:
