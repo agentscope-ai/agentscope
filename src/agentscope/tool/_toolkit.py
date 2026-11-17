@@ -479,6 +479,11 @@ class Toolkit:
         included. When at least one tool group is registered, the built-in
         meta tool is also included.
 
+        .. note:: The tools of each MCP client are sorted by name, so that
+         the resulting order is deterministic regardless of the order the
+         MCP server lists them in. The order of the tool groups, the Python
+         tools and the MCP clients themselves is preserved.
+
         Args:
             groups (`list[str]`):
                 The list of currently activated tool group names.
@@ -522,7 +527,20 @@ class Toolkit:
             # MCP tools
             for client in group.mcps:
                 try:
-                    cache_tools.extend(await client.list_tools())
+                    # The tool list is re-fetched from the server on every
+                    # call, and a deterministic `tools/list` order is only a
+                    # recommendation of the MCP specification (a SHOULD
+                    # since revision 2026-07-28, absent before). Sort each
+                    # server's tools by name so that the order never leaks
+                    # into the tool schemas: the tools array is the head of
+                    # the prompt prefix, and any reordering invalidates the
+                    # provider-side prompt cache of everything after it.
+                    cache_tools.extend(
+                        sorted(
+                            await client.list_tools(),
+                            key=lambda tool: tool.name,
+                        ),
+                    )
                 except Exception as e:
                     # One unreachable MCP must not take the reply down
                     # with it: an expired token or a server that is

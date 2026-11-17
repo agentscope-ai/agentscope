@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any, AsyncGenerator, Awaitable, Generator, Literal
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 
 from pydantic import BaseModel, Field
@@ -142,6 +143,49 @@ class Tool2(ToolBase):
                 ),
             ],
         )
+
+
+class NamedMCPTool(ToolBase):
+    """A stand-in for a tool listed by an MCP server, whose name is given on
+    construction."""
+
+    description: str = "A tool listed by an MCP server."
+    input_schema: dict = {
+        "type": "object",
+        "properties": {},
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_mcp: bool = True
+
+    def __init__(self, name: str) -> None:
+        """Initialize the tool with the given name.
+
+        Args:
+            name (`str`):
+                The tool name presented to the agent.
+        """
+        self.name = name
+
+    async def check_permissions(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> PermissionDecision:
+        """Check permissions for the tool."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="The MCP tool is allowed.",
+        )
+
+    async def call(self, **kwargs: Any) -> ToolChunk:
+        """Run the tool."""
+        return ToolChunk(content=[TextBlock(text=self.name)])
+
+
+def _tool_names(schemas: list[dict]) -> list[str]:
+    """Extract the tool names from the given tool JSON schemas, in order."""
+    return [schema["function"]["name"] for schema in schemas]
 
 
 class ToolkitTest(IsolatedAsyncioTestCase):
@@ -1868,6 +1912,82 @@ The tool instructions are a collection of suggestions, rules and notifications a
         )
 
         self.assertEqual(await toolkit.get_tool_schemas(), [])
+
+    async def test_mcp_tool_order_is_deterministic(self) -> None:
+        """The tool schemas keep the same order even if the MCP server lists
+        its tools in a different order on each call, so that the head of the
+        prompt prefix stays byte-identical across model calls."""
+        listings = iter(
+            [
+                ["gamma", "alpha", "beta"],
+                ["beta", "gamma", "alpha"],
+            ],
+        )
+
+        async def _list_tools(_: MCPClient) -> list[ToolBase]:
+            """Return the next listing of the server."""
+            return [NamedMCPTool(name) for name in next(listings)]
+
+        toolkit = Toolkit(
+            tools=[Tool1()],
+            mcps=[
+                MCPClient(
+                    name="server",
+                    is_stateful=False,
+                    mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+                ),
+            ],
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_tools",
+            autospec=True,
+            side_effect=_list_tools,
+        ):
+            first = _tool_names(await toolkit.get_tool_schemas())
+            second = _tool_names(await toolkit.get_tool_schemas())
+
+        self.assertListEqual(first, ["tool_1", "alpha", "beta", "gamma"])
+        self.assertListEqual(second, first)
+
+    async def test_mcp_tool_sorting_preserves_client_order(self) -> None:
+        """The tools are sorted within each MCP client only, so the order of
+        the MCP clients, and of the Python tools ahead of them, is kept as
+        configured."""
+        listings = {
+            "server_b": ["zeta", "eta"],
+            "server_a": ["delta", "beta"],
+        }
+
+        async def _list_tools(client: MCPClient) -> list[ToolBase]:
+            """Return the listing of the given server."""
+            return [NamedMCPTool(name) for name in listings[client.name]]
+
+        toolkit = Toolkit(
+            tools=[Tool2(), Tool1()],
+            mcps=[
+                MCPClient(
+                    name=name,
+                    is_stateful=False,
+                    mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+                )
+                for name in listings
+            ],
+        )
+
+        with patch.object(
+            MCPClient,
+            "list_tools",
+            autospec=True,
+            side_effect=_list_tools,
+        ):
+            names = _tool_names(await toolkit.get_tool_schemas())
+
+        self.assertListEqual(
+            names,
+            ["tool_2", "tool_1", "eta", "zeta", "beta", "delta"],
+        )
 
     async def test_check_tool_available_distinguishes_inactive_group(
         self,
