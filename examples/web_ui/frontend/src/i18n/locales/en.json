@@ -595,7 +595,7 @@
 			"params": {
 				"chunk_size": {
 					"label": "Chunk Size",
-					"description": "Maximum number of approximate tokens per chunk."
+					"description": "Maximum approximate tokens per text chunk, with a strict 4× chunk_size UTF-8 byte cap."
 				},
 				"overlap": {
 					"label": "Overlap",

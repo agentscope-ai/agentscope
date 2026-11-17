@@ -3,7 +3,8 @@
 
 The token count is approximated as ``len(text.encode("utf-8")) // 4``,
 which avoids a hard dependency on any tokenizer library while staying
-within the right order of magnitude for most LLM tokenizers.
+within the right order of magnitude for most LLM tokenizers. Each text
+chunk is also capped at ``chunk_size * 4`` UTF-8 bytes.
 """
 from bisect import bisect_right
 from itertools import accumulate
@@ -24,7 +25,9 @@ class ApproxTokenChunker(ChunkerBase):
     approximate tokens, with ``overlap`` approximate tokens shared
     between two consecutive pieces.  The token count of a string is
     approximated as ``len(text.encode("utf-8")) // 4``, so no
-    tokenizer dependency is required.
+    tokenizer dependency is required. Each text chunk is additionally
+    limited to ``chunk_size * 4`` UTF-8 bytes, avoiding the extra bytes
+    that floor division could otherwise allow.
 
     Sections carrying a :class:`~agentscope.message.DataBlock`
     (images, video, etc.) are passed through unchanged as a single
@@ -43,7 +46,10 @@ class ApproxTokenChunker(ChunkerBase):
             default=512,
             ge=1,
             title="Chunk Size",
-            description="Maximum number of approximate tokens per chunk.",
+            description=(
+                "Maximum approximate tokens per chunk; text chunks are "
+                "also limited to 4 times this value in UTF-8 bytes."
+            ),
         )
         overlap: int = Field(
             default=50,
@@ -118,7 +124,9 @@ class ApproxTokenChunker(ChunkerBase):
 
     @property
     def chunk_size(self) -> int:
-        """The maximum number of approximate tokens per chunk."""
+        """Approximate-token limit per text chunk, also capped at
+        ``chunk_size * 4`` UTF-8 bytes.
+        """
         return self.parameters.chunk_size
 
     @property
@@ -172,7 +180,7 @@ class ApproxTokenChunker(ChunkerBase):
         return chunks
 
     def _split_text(self, text: str) -> list[str]:
-        """Split text into pieces of at most ``chunk_size`` approx tokens.
+        """Split text into pieces of at most ``chunk_size * 4`` UTF-8 bytes.
 
         Consecutive pieces share approximately ``overlap`` tokens.
 
@@ -184,14 +192,14 @@ class ApproxTokenChunker(ChunkerBase):
             `list[str]`:
                 The text pieces, in document order.
         """
-        if self._approx_count_tokens(text) <= self.chunk_size:
+        chunk_bytes = self.chunk_size * 4
+        if len(text.encode("utf-8")) <= chunk_bytes:
             return [text]
 
         # Cumulative UTF-8 byte length after each character, so that
         # the byte length of text[i:j] == byte_offsets[j] - byte_offsets[i]
         byte_offsets = [0, *accumulate(len(c.encode("utf-8")) for c in text)]
 
-        chunk_bytes = self.chunk_size * 4
         overlap_bytes = self.overlap * 4
 
         pieces: list[str] = []

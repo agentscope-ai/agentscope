@@ -92,6 +92,33 @@ class ApproxTokenChunkerTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_text_chunks_respect_utf8_byte_limit(self) -> None:
+        """Every text chunk must fit the strict UTF-8 byte budget."""
+        chunker = ApproxTokenChunker(chunk_size=32, overlap=0)
+        cases = [
+            ("a" * 128, [128]),
+            ("a" * 129, [128, 1]),
+            ("a" * 132, [128, 4]),
+            ("光" * 43, [126, 3]),
+            ("😀" * 33, [128, 4]),
+        ]
+
+        for text, expected_byte_lengths in cases:
+            with self.subTest(text=text[:8], length=len(text)):
+                chunks = await chunker.chunk(
+                    [Section(content=TextBlock(text=text), source="test.txt")],
+                )
+                pieces = [chunk.content.text for chunk in chunks]
+
+                self.assertEqual(
+                    [len(piece.encode("utf-8")) for piece in pieces],
+                    expected_byte_lengths,
+                )
+                self.assertTrue(
+                    all(len(piece.encode("utf-8")) <= 128 for piece in pieces),
+                )
+                self.assertEqual("".join(pieces), text)
+
     async def test_data_block_pass_through(self) -> None:
         """DataBlock sections should pass through unchanged."""
         chunker = ApproxTokenChunker(chunk_size=10, overlap=2)
