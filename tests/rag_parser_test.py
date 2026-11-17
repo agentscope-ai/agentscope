@@ -2897,7 +2897,8 @@ class WordParserTest(IsolatedAsyncioTestCase):
 
 
 class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
-    """Regression coverage for inline tabs and breaks in Word paragraphs."""
+    """Regression coverage for inline character elements such as tabs and
+    breaks in Word paragraphs and table cells."""
 
     async def test_inline_tabs_and_soft_breaks_are_preserved(self) -> None:
         """Tabs and consecutive soft breaks remain inside a paragraph."""
@@ -3066,6 +3067,81 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
                 )
 
                 self.assertEqual([s.content.text for s in sections], ["-"])
+
+    async def test_nonbreaking_hyphen_in_table_cells_is_kept(self) -> None:
+        """A ``w:noBreakHyphen`` in a cell survives both table formats."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+
+        document = DocxDocument()
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "ISBN"
+        paragraph = table.cell(1, 0).paragraphs[0]
+        # pylint: disable-next=protected-access
+        paragraph.add_run("ISBN")._r.append(
+            OxmlElement("w:noBreakHyphen"),
+        )
+        paragraph.add_run("978")
+        buffer = io.BytesIO()
+        document.save(buffer)
+
+        for table_format, expected_tail in (
+            ("markdown", "| ISBN-978 |"),
+            ("json", '[["ISBN"], ["ISBN-978"]]'),
+        ):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(len(sections), 1)
+                self.assertIn(expected_tail, sections[0].content.text)
+
+    async def test_table_nonbreaking_hyphens_respect_revisions(self) -> None:
+        """Keep normal and inserted hyphens, but omit deleted ones."""
+        from docx import Document as DocxDocument
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        document = DocxDocument()
+        table = document.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "ISBN"
+        paragraph = parse_xml(
+            f'<w:p {nsdecls("w")}>'
+            "<w:r><w:t>ISBN</w:t><w:noBreakHyphen/>"
+            "<w:t>97</w:t></w:r>"
+            '<w:del w:id="1" w:author="test">'
+            "<w:r><w:noBreakHyphen/></w:r></w:del>"
+            "<w:r><w:t>8</w:t></w:r>"
+            '<w:ins w:id="2" w:author="test">'
+            "<w:r><w:noBreakHyphen/><w:t>1</w:t></w:r></w:ins>"
+            "</w:p>",
+        )
+        cell = table.cell(1, 0)
+        # pylint: disable-next=protected-access
+        cell._tc.replace(cell.paragraphs[0]._p, paragraph)
+        buffer = io.BytesIO()
+        document.save(buffer)
+
+        for table_format, expected in (
+            ("markdown", "| ISBN |\n| --- |\n| ISBN-978-1 |\n"),
+            (
+                "json",
+                "<system-info>A table loaded as a JSON array:</system-info>"
+                '\n[["ISBN"], ["ISBN-978-1"]]',
+            ),
+        ):
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(expected),
+                )
 
 
 class WordParserParagraphTest(IsolatedAsyncioTestCase):
@@ -3311,6 +3387,29 @@ class WordParserParagraphTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [section.model_dump() for section in sections],
             _expected_word_sections("Paragraph text\nCallout\nCallout\nAfter"),
+        )
+
+    async def test_nonbreaking_hyphen_inside_text_is_kept(self) -> None:
+        """A ``w:noBreakHyphen`` between text runs is not dropped."""
+        from docx import Document as DocxDocument
+        from docx.oxml import OxmlElement
+
+        document = DocxDocument()
+        paragraph = document.add_paragraph()
+        # pylint: disable-next=protected-access
+        paragraph.add_run("ISBN")._r.append(
+            OxmlElement("w:noBreakHyphen"),
+        )
+        paragraph.add_run("978")
+        buffer = io.BytesIO()
+        document.save(buffer)
+        sections = await WordParser(include_image=False).parse(
+            buffer.getvalue(),
+            "demo.docx",
+        )
+        self.assertEqual(
+            [section.model_dump() for section in sections],
+            _expected_word_sections("ISBN-978"),
         )
 
     async def test_paragraph_with_only_nonbreaking_hyphens_is_kept(
