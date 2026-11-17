@@ -2072,8 +2072,10 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
 
     async def test_json_preserves_cell_whitespace(self) -> None:
         """Keep cell whitespace in JSON and trim it in Markdown."""
-        value = "  SKU-123  "
-        workbook = _make_xlsx_simple({"Data": [["Code"], [value]]})
+        values = ["  SKU-123  ", "  ", "\tSKU-123\t", ""]
+        workbook = _make_xlsx_simple(
+            {"Data": [["Padded", "Spaces only", "Tabs", "Empty"], values]},
+        )
 
         for coordinates in (False, True):
             with self.subTest(coordinates=coordinates):
@@ -2084,14 +2086,18 @@ class ExcelParserTest(IsolatedAsyncioTestCase):
                 )
                 sections = await parser.parse(workbook, "whitespace.xlsx")
                 row = json.loads(sections[0].content.text.splitlines()[-1])
-                expected = {"A2": value} if coordinates else [value]
+                expected = (
+                    dict(zip(("A2", "B2", "C2", "D2"), values, strict=True))
+                    if coordinates
+                    else values
+                )
                 self.assertEqual(row, expected)
 
         parser = ExcelParser(include_sheet_names=False)
         sections = await parser.parse(workbook, "whitespace.xlsx")
         self.assertEqual(
             sections[0].content.text.splitlines()[-1],
-            "| SKU-123 |",
+            "| SKU-123 |  | SKU-123 |  |",
         )
 
     async def test_native_error_cells_preserved(self) -> None:
