@@ -13,6 +13,9 @@ Differences from the E2B manager:
 * ``close()`` deletes the Pod; PVC deletion is governed by the
   workspace's ``_delete_pvc_on_close`` attribute.
 * Idle workspaces are evicted by a dedicated background sweeper task.
+* One shared ``kubernetes_asyncio`` ``ApiClient`` serves every
+  workspace this manager builds; the kube config is loaded once and
+  the client is closed in :meth:`__aexit__`.
 """
 
 import asyncio
@@ -28,6 +31,7 @@ from ...workspace._k8s._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
 )
+from ...workspace._k8s._k8s_workspace import _load_api_client
 from ._base import WorkspaceManagerBase, IsolationPolicy
 
 DEFAULT_SWEEP_INTERVAL = 300.0
@@ -137,7 +141,30 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task[None] | None = None
 
+        # Shared ApiClient, built lazily on first use and closed in
+        # __aexit__. The kube config load mutates kubernetes_asyncio
+        # globals, so first-use construction is serialized.
+        self._api_client: Any = None
+        self._api_client_lock = asyncio.Lock()
+
     # ── workspace construction ────────────────────────────────────
+
+    async def _ensure_api_client(self) -> Any:
+        """Load the kube config once and return the shared ApiClient.
+
+        Returns:
+            `Any`:
+                The manager-wide ``kubernetes_asyncio`` ``ApiClient``.
+                Built on first use; every workspace this manager
+                produces reuses it.
+        """
+        if self._api_client is not None:
+            return self._api_client
+        async with self._api_client_lock:
+            if self._api_client is not None:
+                return self._api_client
+            self._api_client = await _load_api_client(self._kubeconfig)
+            return self._api_client
 
     async def _build_and_start(
         self,
@@ -147,6 +174,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         """Construct a :class:`K8sWorkspace` and run ``initialize``."""
         ws = K8sWorkspace(
             workspace_id=workspace_id,
+            api_client=await self._ensure_api_client(),
             kubeconfig=self._kubeconfig,
             namespace=self._namespace,
             image=self._image,
@@ -296,7 +324,10 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Stop the TTL sweeper, then close every cached workspace."""
+        """Stop the TTL sweeper, close every workspace, then close the
+        shared ApiClient. The client slot is cleared so a later
+        ``__aenter__`` rebuilds it.
+        """
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             try:
@@ -305,6 +336,15 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
                 pass
             self._sweep_task = None
         await self.close_all()
+        if self._api_client is not None:
+            try:
+                await self._api_client.close()
+            except Exception:
+                logger.warning(
+                    "K8sWorkspaceManager: shared ApiClient close failed",
+                    exc_info=True,
+                )
+            self._api_client = None
 
     # ── background sweeper ───────────────────────────────────────
 

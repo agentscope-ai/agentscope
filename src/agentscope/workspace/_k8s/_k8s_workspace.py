@@ -51,6 +51,36 @@ from ._constants import (
 )
 
 
+async def _load_api_client(kubeconfig: str | None) -> Any:
+    """Load the kube config and return a fresh ``ApiClient``.
+
+    ``load_kube_config`` / ``load_incluster_config`` mutate
+    ``kubernetes_asyncio`` global configuration, so callers must
+    serialize this helper when several clients with different
+    configs are built concurrently.
+
+    Args:
+        kubeconfig (`str | None`):
+            Path to a kubeconfig file. ``None`` prefers the in-cluster
+            config and falls back to the default kubeconfig.
+
+    Returns:
+        `Any`:
+            A fresh ``kubernetes_asyncio`` ``ApiClient``.
+    """
+    from kubernetes_asyncio import client as k8s_client
+    from kubernetes_asyncio import config as k8s_config
+
+    if kubeconfig:
+        await k8s_config.load_kube_config(config_file=kubeconfig)
+    else:
+        try:
+            k8s_config.load_incluster_config()
+        except k8s_config.ConfigException:
+            await k8s_config.load_kube_config()
+    return k8s_client.ApiClient()
+
+
 # ── the workspace ──────────────────────────────────────────────────
 
 
@@ -69,6 +99,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         workspace_id: str | None = None,
         # ── K8s connection ──
         kubeconfig: str | None = None,
+        api_client: Any | None = None,
         namespace: str = "agentscope",
         # ── Pod construction ──
         image: str = DEFAULT_IMAGE,
@@ -103,6 +134,12 @@ class K8sWorkspace(SandboxedWorkspaceBase):
             kubeconfig (`str | None`, optional):
                 Path to kubeconfig file. ``None`` uses in-cluster
                 config.
+            api_client (`Any | None`, optional):
+                A pre-built ``kubernetes_asyncio`` ``ApiClient`` to
+                share across workspaces. When provided, this workspace
+                never closes it — ownership stays with the caller
+                (typically a :class:`K8sWorkspaceManager`). ``None``
+                builds and owns a fresh client per :meth:`initialize`.
             namespace (`str`, defaults to ``"agentscope"``):
                 K8s namespace for the Pod and PVC.
             image (`str`, defaults to ``"python:3.11-slim"``):
@@ -170,25 +207,24 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         self._api_client: Any = None
         self._v1: Any = None  # CoreV1Api
         self._pod_name: str = ""
+        # A caller-supplied client is never closed here; the caller
+        # keeps owning (and eventually closing) it.
+        self._external_api_client = api_client
 
     # ── lifecycle hooks ─────────────────────────────────────────
 
     async def _provision_backend(self) -> None:
-        """Create or reattach to the K8s Pod, bootstrap if needed."""
+        """Create or reattach to the K8s Pod, bootstrap if needed.
+
+        A caller-supplied ``api_client`` is reused as-is; the kube
+        config is loaded only when this workspace owns its client.
+        """
         from kubernetes_asyncio import client as k8s_client
-        from kubernetes_asyncio import config as k8s_config
 
-        if self._kubeconfig:
-            await k8s_config.load_kube_config(
-                config_file=self._kubeconfig,
-            )
+        if self._external_api_client is not None:
+            self._api_client = self._external_api_client
         else:
-            try:
-                k8s_config.load_incluster_config()
-            except k8s_config.ConfigException:
-                await k8s_config.load_kube_config()
-
-        self._api_client = k8s_client.ApiClient()
+            self._api_client = await _load_api_client(self._kubeconfig)
         self._v1 = k8s_client.CoreV1Api(self._api_client)
 
         await self._ensure_namespace()
@@ -206,8 +242,8 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         )
 
     async def _teardown_backend(self) -> None:
-        """Delete the Pod (and optionally the PVC), release the API
-        client. Errors are swallowed so teardown is always safe.
+        """Delete the Pod (and optionally the PVC), release an owned
+        API client. Errors are swallowed so teardown is always safe.
         """
         if self._v1 is not None and self._pod_name:
             try:
@@ -244,13 +280,13 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                         e,
                     )
 
-        if self._api_client is not None:
+        if self._api_client is not None and self._external_api_client is None:
             try:
                 await self._api_client.close()
             except Exception:
                 pass
-            self._api_client = None
-            self._v1 = None
+        self._api_client = None
+        self._v1 = None
 
     # ── instructions ────────────────────────────────────────────
 
