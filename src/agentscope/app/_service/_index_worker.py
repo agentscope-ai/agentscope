@@ -45,6 +45,11 @@ _READ_CHUNK = 1 << 20  # 1 MiB
 # What a multipart client sends when it has no opinion about the type.
 _GENERIC_MEDIA_TYPE = "application/octet-stream"
 
+# Windows associates ``.csv`` with the legacy Excel type, both in
+# browsers' multipart uploads and in ``mimetypes.guess_type``.
+_LEGACY_EXCEL_MEDIA_TYPE = "application/vnd.ms-excel"
+_CSV_MEDIA_TYPE = "text/csv"
+
 
 def _filename_extension(filename: str) -> str:
     """Return the lower-cased extension of ``filename``, ``""`` if none."""
@@ -397,11 +402,15 @@ class IndexWorker:
         media_type = data.content_type or None
         if media_type:
             media_type = media_type.split(";", 1)[0].strip().lower() or None
+        media_type = self._csv_media_type(media_type, data.filename)
         parser = (
             self._parsers_by_media_type.get(media_type) if media_type else None
         )
         if parser is None and media_type in (None, _GENERIC_MEDIA_TYPE):
-            guessed_type = mimetypes.guess_type(data.filename)[0]
+            guessed_type = self._csv_media_type(
+                mimetypes.guess_type(data.filename)[0],
+                data.filename,
+            )
             parser = (
                 self._parsers_by_media_type.get(guessed_type)
                 if guessed_type
@@ -501,6 +510,25 @@ class IndexWorker:
             "ready",
             chunk_count=len(chunks),
         )
+
+    def _csv_media_type(
+        self,
+        media_type: str | None,
+        filename: str,
+    ) -> str | None:
+        """Route a ``.csv`` file labelled as legacy Excel to ``text/csv``.
+
+        A plain-text CSV sent or guessed as ``application/vnd.ms-excel``
+        would otherwise reach the binary workbook parser and fail.  Real
+        ``.xls`` workbooks and other media types are returned unchanged.
+        """
+        if (
+            media_type == _LEGACY_EXCEL_MEDIA_TYPE
+            and _filename_extension(filename) == ".csv"
+            and _CSV_MEDIA_TYPE in self._parsers_by_media_type
+        ):
+            return _CSV_MEDIA_TYPE
+        return media_type
 
     async def _parse(
         self,
