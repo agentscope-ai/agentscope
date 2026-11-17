@@ -890,7 +890,28 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         """A downlink pump that dies from a provider stream error must be
         replaced: after the crash the next audio reconnects, and the new
         session's events must be pumped instead of silently dropped."""
-        model = CrashingSessionModel([[], REPLY_R2])
+        reply_done = asyncio.Event()
+
+        class CompletionAwareModel(CrashingSessionModel):
+            """Signal after the response completion has been handled."""
+
+            async def events(self) -> AsyncIterator[me.ModelEvent]:
+                """Play events and signal when the consumer finishes."""
+                async for event in super().events():
+                    yield event
+                    # The consumer has handled the event before resuming.
+                    if isinstance(event, me.ResponseDoneEvent):
+                        reply_done.set()
+
+        class CompletionAwareTransport(FakeTransport):
+            """Keep input open until the model reply has completed."""
+
+            async def incoming(self) -> AsyncIterator[AudioFrame]:
+                """Trigger reconnection and wait for reply completion."""
+                yield AudioFrame(pcm=b"\x00" * 3200)
+                await asyncio.wait_for(reply_done.wait(), timeout=5.0)
+
+        model = CompletionAwareModel([[], REPLY_R2])
         agent = RealtimeAgent("Friday", "be brief", model)
 
         async with agent:
@@ -908,7 +929,10 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
                 agent._downlink is None or agent._downlink.done(),
             )  # pylint: disable=W0212
 
-            summary = await self._collect(agent, FakeTransport(frames=2))
+            summary = await self._collect(
+                agent,
+                CompletionAwareTransport(frames=1),
+            )
 
             # The pump must be live again: not the finished, crashed task.
             self.assertIsNotNone(agent._downlink)  # pylint: disable=W0212
