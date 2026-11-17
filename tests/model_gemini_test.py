@@ -1824,6 +1824,32 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_sanitize_converts_oneof_from_discriminated_union(self) -> None:
+        """A discriminated union's `oneOf` becomes `anyOf` for Gemini."""
+        from typing import Union
+
+        from google.genai.types import FunctionDeclaration
+
+        class Cat(BaseModel):
+            kind: Literal["cat"]
+            meow: str
+
+        class Dog(BaseModel):
+            kind: Literal["dog"]
+            bark: str
+
+        class Pet(BaseModel):
+            pet: Annotated[Union[Cat, Dog], Field(discriminator="kind")]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Pet.model_json_schema()),
+        )
+        pet = result["properties"]["pet"]
+        self.assertNotIn("oneOf", pet)
+        self.assertNotIn("discriminator", pet)
+        self.assertIn("anyOf", pet)
+        FunctionDeclaration(name="pet", parameters=result)
+
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
         self.assertEqual(
