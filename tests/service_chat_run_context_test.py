@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
+from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._service import ChatService
 from agentscope.app._bus_ops import enqueue_chat_input
@@ -77,6 +78,8 @@ class _Storage:
 
 class _WorkspaceManager:
     """Return a minimal workspace handle."""
+
+    acquire_workspace = WorkspaceManagerBase.acquire_workspace
 
     async def get_workspace(self, *_: object, **__: object) -> object:
         """Return an inert workspace."""
