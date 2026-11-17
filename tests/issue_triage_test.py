@@ -291,7 +291,25 @@ fn(github, context, core)
 
 @skipUnless(shutil.which("node"), "node is required to test workflow scripts")
 class QuotaWorkflowTest(IsolatedAsyncioTestCase):
-    """The issue quota check must not close earlier issues during a burst."""
+    """Test the workflow's issue quota."""
+
+    def setUp(self) -> None:
+        """Expected calls for an issue below quota."""
+        self.expected = {
+            "listForRepo": [
+                {
+                    "owner": "agentscope-ai",
+                    "repo": "agentscope",
+                    "creator": "reporter",
+                    "state": "open",
+                    "per_page": 100,
+                },
+            ],
+            "createComment": [],
+            "update": [],
+            "outputs": {},
+            "notices": [],
+        }
 
     @staticmethod
     def _load_quota_step() -> tuple[dict[str, str], str]:
@@ -342,65 +360,82 @@ class QuotaWorkflowTest(IsolatedAsyncioTestCase):
         )
         return json.loads(proc.stdout)
 
+    def _assert_closed(self, res: dict[str, Any], issue_number: int) -> None:
+        target = {
+            "owner": "agentscope-ai",
+            "repo": "agentscope",
+            "issue_number": issue_number,
+        }
+        self.assertEqual(
+            res,
+            {
+                **self.expected,
+                "createComment": [
+                    {
+                        **target,
+                        "body": (
+                            "Thanks for the report, @reporter. To keep the "
+                            "tracker focused, each account can have at most "
+                            "5 open issues at a time, so this one is closed "
+                            "for now. Once your open issues are resolved, "
+                            "feel free to reopen it."
+                        ),
+                    },
+                ],
+                "update": [
+                    {
+                        **target,
+                        "state": "closed",
+                        "state_reason": "not_planned",
+                    },
+                ],
+                "outputs": {"closed": "true"},
+                "notices": ["Closed: reporter already has 5 open."],
+            },
+        )
+
     async def test_concurrent_opened_burst_preserves_first_five(self) -> None:
-        """A delayed opened job for the 5th issue ignores later #6 in burst."""
+        """The fifth issue ignores newer issues."""
         open_items = [{"number": n} for n in (10, 11, 12, 13, 14, 15)]
         res = self._run_quota(
             action="opened",
             issue_number=14,
             open_items=open_items,
         )
-        self.assertEqual(res["createComment"], [])
-        self.assertEqual(res["update"], [])
-        self.assertEqual(res["outputs"], {})
+        self.assertEqual(res, self.expected)
 
     async def test_concurrent_opened_burst_closes_sixth(self) -> None:
-        """The 6th opened issue sees 5 older open issues and is closed."""
+        """The sixth issue exceeds quota."""
         open_items = [{"number": n} for n in (10, 11, 12, 13, 14, 15)]
         res = self._run_quota(
             action="opened",
             issue_number=15,
             open_items=open_items,
         )
-        self.assertEqual(len(res["createComment"]), 1)
-        self.assertEqual(len(res["update"]), 1)
-        self.assertEqual(res["update"][0]["state"], "closed")
-        self.assertEqual(res["update"][0]["state_reason"], "not_planned")
-        self.assertEqual(res["outputs"].get("closed"), "true")
-        self.assertEqual(
-            res["notices"],
-            ["Closed: reporter already has 5 open."],
-        )
+        self._assert_closed(res, issue_number=15)
 
     async def test_reopened_counts_all_other_open_issues(self) -> None:
-        """Reopening an older issue still counts newer open issues."""
+        """Reopening counts newer issues too."""
         open_items = [{"number": n} for n in (5, 20, 21, 22, 23, 24)]
         res = self._run_quota(
             action="reopened",
             issue_number=5,
             open_items=open_items,
         )
-        self.assertEqual(len(res["update"]), 1)
-        self.assertEqual(res["outputs"].get("closed"), "true")
-        self.assertEqual(
-            res["notices"],
-            ["Closed: reporter already has 5 open."],
-        )
+        self._assert_closed(res, issue_number=5)
 
     async def test_reopened_under_limit_stays_open(self) -> None:
-        """Reopening an issue when fewer than 5 others are open passes."""
+        """Reopening below quota is allowed."""
         open_items = [{"number": n} for n in (5, 20, 21, 22, 23)]
         res = self._run_quota(
             action="reopened",
             issue_number=5,
             open_items=open_items,
         )
-        self.assertEqual(res["createComment"], [])
-        self.assertEqual(res["update"], [])
-        self.assertEqual(res["outputs"], {})
+        self.assertEqual(res, self.expected)
 
     async def test_pull_requests_excluded_from_issue_quota(self) -> None:
-        """Open PRs returned by listForRepo do not count toward the limit."""
+        """Pull requests do not count toward quota."""
         open_items: list[dict[str, Any]] = [
             {"number": n} for n in (10, 11, 12, 13, 14)
         ] + [{"number": n, "pull_request": {}} for n in (1, 2, 3)]
@@ -409,18 +444,21 @@ class QuotaWorkflowTest(IsolatedAsyncioTestCase):
             issue_number=14,
             open_items=open_items,
         )
-        self.assertEqual(res["createComment"], [])
-        self.assertEqual(res["update"], [])
+        self.assertEqual(res, self.expected)
 
     async def test_maintainer_exempt_from_quota(self) -> None:
-        """A maintainer's issues and maintainer-triggered reopens skip cap."""
+        """Maintainer authors and actors bypass quota."""
         open_items = [{"number": n} for n in range(1, 10)]
-        res = self._run_quota(
-            action="reopened",
-            issue_number=1,
-            open_items=open_items,
-            author="reporter",
-            actor="DavdGao",
-        )
-        self.assertEqual(res["createComment"], [])
-        self.assertEqual(res["update"], [])
+        for action, issue_number, author, actor in (
+            ("opened", 9, "DavdGao", "reporter"),
+            ("reopened", 1, "reporter", "DavdGao"),
+        ):
+            with self.subTest(action=action, author=author, actor=actor):
+                res = self._run_quota(
+                    action=action,
+                    issue_number=issue_number,
+                    open_items=open_items,
+                    author=author,
+                    actor=actor,
+                )
+                self.assertEqual(res, {**self.expected, "listForRepo": []})

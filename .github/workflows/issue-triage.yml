@@ -53,9 +53,8 @@ jobs:
             const others = open.filter(
               (i) => !i.pull_request && i.number !== issue_number,
             );
-            // Concurrent issues.opened jobs see each other's issues before any
-            // of them closes; count only older open issues on opened so burst
-            // reports only close past the cap, while reopened counts all others.
+            // Count older issues on opened to preserve the first five in a burst.
+            // Reopened issues must count all other open issues.
             const counted =
               context.payload.action === 'opened'
                 ? others.filter((i) => i.number < issue_number)
