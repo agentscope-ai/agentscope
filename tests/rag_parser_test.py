@@ -796,6 +796,30 @@ class PDFParserTest(IsolatedAsyncioTestCase):
                 )
         self.assertIs(context.exception.__cause__, error)
 
+    async def test_text_extraction_pypdf_error_raises_value_error(
+        self,
+    ) -> None:
+        """Other pypdf parsing failures honor the ValueError contract."""
+        from unittest.mock import patch
+        from pypdf import PageObject, PdfWriter
+        from pypdf.errors import LimitReachedError
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        error = LimitReachedError("content stream too large")
+        with patch.object(PageObject, "extract_text", side_effect=error):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"Failed to parse 'broken-stream\.pdf' as PDF:",
+            ) as context:
+                await PDFParser().parse(
+                    buffer.getvalue(),
+                    "broken-stream.pdf",
+                )
+        self.assertIs(context.exception.__cause__, error)
+
     async def test_supported_extensions(self) -> None:
         """``.pdf`` is the only extension exposed to the file picker."""
         self.assertEqual(PDFParser.supported_extensions(), [".pdf"])
