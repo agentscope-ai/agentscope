@@ -4,14 +4,16 @@ import tempfile
 from datetime import date
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import mock_open, patch
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from agentscope.app._router._schema._tts_model import ListTTSModelsResponse
 from agentscope.credential import OpenAICredential
 from agentscope.model import (
     AnthropicChatModel,
+    ModelCard,
     OpenAIChatModel,
     OpenAIResponseModel,
     XAIChatModel,
@@ -25,6 +27,57 @@ class _Parameters(BaseModel):
 
 class ModelCardTest(TestCase):
     """Verify model card loading, serialization, and parameter filtering."""
+
+    def test_hidden_parameters_update_required(self) -> None:
+        """Filter required fields without mutating the source schema."""
+
+        class Parameters(BaseModel):
+            """Required and optional model parameters."""
+
+            temperature: float = Field(ge=0, le=2)
+            top_p: float = 0.9
+
+        for hidden, remaining, required in (
+            ([], ["temperature", "top_p"], ["temperature"]),
+            (["temperature"], ["top_p"], []),
+            (["temperature", "top_p"], [], []),
+        ):
+            with self.subTest(hidden=hidden):
+                original = Parameters.model_json_schema()
+                config = {
+                    "name": "m",
+                    "label": "M",
+                    "context_size": 1000,
+                    "output_size": 100,
+                    "parameter_overrides": {
+                        name: {"hidden": True} for name in hidden
+                    },
+                }
+                with (
+                    patch(
+                        "builtins.open",
+                        mock_open(read_data=yaml.safe_dump(config)),
+                    ),
+                    patch.object(
+                        Parameters,
+                        "model_json_schema",
+                        return_value=original,
+                    ),
+                ):
+                    card = ModelCard.from_yaml("model.yaml", Parameters)
+
+                self.assertEqual(
+                    card.parameter_schema,
+                    {
+                        "type": "object",
+                        "properties": {
+                            name: original["properties"][name]
+                            for name in remaining
+                        },
+                        "required": required,
+                    },
+                )
+                self.assertEqual(original, Parameters.model_json_schema())
 
     def test_release_date_loading_and_serialization(self) -> None:
         """Load optional YAML dates and serialize them as ISO date strings."""
