@@ -228,7 +228,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         )
 
     async def test_parent_directory_segment_from_symlink(self) -> None:
-        """Resolve symlinks before traversing to the parent directory."""
+        """Follow native path semantics for symlinks and parent segments."""
         nested = os.path.join(self.temp_dir, "subdir", "nested")
         os.makedirs(nested)
         link = os.path.join(self.temp_dir, "alias")
@@ -237,15 +237,31 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         except (OSError, NotImplementedError) as error:
             self.skipTest(f"Directory symlinks are unavailable: {error}")
 
+        expected = (
+            [
+                os.path.join(self.temp_dir, name)
+                for name in ("test1.py", "test2.py")
+            ]
+            if os.name == "nt"
+            else [os.path.join(self.temp_dir, "subdir", "test3.py")]
+        )
         for path in (link, os.path.join(link, "..", "nested")):
             with self.subTest(path=path):
                 chunk = await self.glob_tool(pattern="../*.py", path=path)
+                # Windows collapses alias/.. before following the symlink.
+                if os.name == "nt" and path != link:
+                    self.assertEqual(
+                        (chunk.state, chunk.content[0].text),
+                        ("error", f"Directory not found: {path}"),
+                    )
+                    continue
+                self.assertEqual(chunk.state, "running")
                 self.assertListEqual(
                     sorted(
                         os.path.realpath(name)
                         for name in chunk.content[0].text.splitlines()
                     ),
-                    [os.path.realpath(os.path.join(nested, "..", "test3.py"))],
+                    [os.path.realpath(name) for name in expected],
                 )
 
     async def test_parent_directory_segment_at_root(self) -> None:
