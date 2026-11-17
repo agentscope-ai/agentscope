@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for duplicate index tasks and explicit retries."""
+"""Regression tests for duplicate index tasks, retries, and error views."""
 from types import SimpleNamespace
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, create_autospec, patch
 
+from agentscope.app._router._schema._knowledge_base import (
+    KnowledgeDocumentView,
+)
 from agentscope.app._service._index_worker import IndexWorker
 from agentscope.app.storage import (
     KnowledgeDocumentData,
@@ -176,7 +179,10 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
         """A failed document can be indexed on a later delivery."""
         self.embedding.side_effect = RuntimeError("embedding unavailable")
         await self.worker.process("owner", "kb-1", "doc-1")
-        self.assertEqual(self.storage.record.status, "error")
+        self.assertEqual(
+            (self.storage.record.status, self.storage.record.data.error),
+            ("error", "RuntimeError: embedding unavailable"),
+        )
         self.embedding.side_effect = None
 
         await self.worker.process("owner", "kb-1", "doc-1")
@@ -184,12 +190,13 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             (
                 self.storage.record.status,
+                self.storage.record.data.error,
                 self.storage.record.data.chunk_count,
                 self.embedding.await_count,
                 self.vectors.delete.await_count,
                 self.vectors.insert.await_count,
             ),
-            ("ready", 1, 2, 2, 1),
+            ("ready", "", 1, 2, 2, 1),
         )
 
     async def test_ready_document_is_reindexed_after_status_reset(
@@ -217,3 +224,50 @@ class IndexWorkerDuplicateTaskTest(IsolatedAsyncioTestCase):
             ),
             ("ready", 1, 2, 2, 2),
         )
+
+
+class KnowledgeDocumentViewTest(TestCase):
+    """Only failed documents expose stored error text."""
+
+    def test_error_projection(self) -> None:
+        """Hide stale errors and the empty retry sentinel in API views."""
+        error = "RuntimeError: embedding unavailable"
+        cases: list[tuple[KnowledgeDocumentStatus, str, str | None]] = [
+            ("pending", error, None),
+            ("parsing", error, None),
+            ("chunking", error, None),
+            ("indexing", error, None),
+            ("ready", error, None),
+            ("ready", "", None),
+            ("error", error, error),
+        ]
+        for status, stored_error, expected_error in cases:
+            with self.subTest(status=status, error=stored_error):
+                record = KnowledgeDocumentRecord(
+                    id="doc-1",
+                    user_id="owner",
+                    knowledge_base_id="kb-1",
+                    status=status,
+                    data=KnowledgeDocumentData(
+                        filename="source.txt",
+                        blob_uri="local://kb/kb-1/doc-1",
+                        size=13,
+                        content_type="text/plain",
+                        error=stored_error,
+                    ),
+                )
+
+                self.assertEqual(
+                    KnowledgeDocumentView.from_record(record).model_dump(),
+                    {
+                        "id": "doc-1",
+                        "filename": "source.txt",
+                        "size": 13,
+                        "content_type": "text/plain",
+                        "status": status,
+                        "error": expected_error,
+                        "chunk_count": 0,
+                        "created_at": record.created_at,
+                        "updated_at": record.updated_at,
+                    },
+                )
