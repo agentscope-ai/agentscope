@@ -177,6 +177,26 @@ class _FakeTransport(TransportBase):
         return PlayoutPosition(item_id=self.audio[-1][1] if self.audio else "")
 
 
+class _BlockingTransport(_FakeTransport):
+    """Reject the item that the last clear marked as stale."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocked_item_id = ""
+
+    async def send_audio(self, pcm: bytes, item_id: str) -> None:
+        """Ignore audio for the item blocked by ``clear_audio``."""
+        if item_id == self.blocked_item_id:
+            return
+        await super().send_audio(pcm, item_id)
+
+    async def clear_audio(self) -> PlayoutPosition:
+        """Block the item that was playing when playback was cleared."""
+        position = await super().clear_audio()
+        self.blocked_item_id = position.item_id
+        return position
+
+
 class _FakeDelegationAgent:
     """Return one deterministic task result without a provider call."""
 
@@ -945,6 +965,39 @@ class RealtimeAgentLiveTest(unittest.IsolatedAsyncioTestCase):
         assert timeout is not None
         self.assertFalse(timeout.done())
         model.send_delegation_result.assert_not_awaited()
+
+    async def test_live_audio_uses_new_playout_after_interrupt(self) -> None:
+        """Speech after a barge-in must not reuse the cleared item id."""
+        model = _model()
+        agent = RealtimeAgent("Friday", "Be brief.", model)
+        self.addAsyncCleanup(agent.close)
+        transport = _BlockingTransport()
+        agent._transport = transport
+
+        await agent._on_model_event(
+            SessionStartedEvent(session_id="live_1"),
+        )
+        await agent._on_model_event(
+            TimelineAudioDeltaEvent(
+                pcm=b"\x01\x00",
+                sample_rate=24000,
+            ),
+        )
+        first_item_id = transport.audio[-1][1]
+
+        await agent._interrupt_live_speech()
+        self.assertEqual(transport.blocked_item_id, first_item_id)
+
+        await agent._on_model_event(
+            TimelineAudioDeltaEvent(
+                pcm=b"\x02\x00",
+                sample_rate=24000,
+            ),
+        )
+
+        self.assertEqual(len(transport.audio), 2)
+        self.assertEqual(transport.audio[-1][0], b"\x02\x00")
+        self.assertNotEqual(transport.audio[-1][1], first_item_id)
 
     async def test_overlapping_timeline_does_not_barge_in(self) -> None:
         """User transcript growth does not clear assistant playback."""
