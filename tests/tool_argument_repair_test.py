@@ -189,7 +189,7 @@ class JsonLoadsWithRepairTest(unittest.TestCase):
 
     def test_keep_arguments_when_repair_truncates_arrays(self) -> None:
         """Preserve arguments when repair drops array elements."""
-        cases = [
+        cases: list[tuple[str, dict[str, Any], dict[str, Any]]] = [
             (
                 "truncated",
                 {"items": [1, 2, 3], "name": "x"},
