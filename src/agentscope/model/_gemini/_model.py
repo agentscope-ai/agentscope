@@ -2,6 +2,7 @@
 """The Google Gemini chat model implementation."""
 import base64
 import json
+import os
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
@@ -230,7 +231,7 @@ class GeminiChatModel(ChatModelBase):
             title="Thinking",
             description="Whether to enable thinking output."
             " When no thinking settings are supplied, the model's"
-            " default behavior applies. For Gemini 4 Argon and Carbon,"
+            " default behavior applies. For Gemini 4 models,"
             " this controls summaries only, not reasoning itself.",
         )
 
@@ -241,11 +242,14 @@ class GeminiChatModel(ChatModelBase):
             gt=0,
         )
 
-        thinking_level: Literal["low", "medium", "high"] | None = Field(
+        thinking_level: (
+            Literal["low", "medium", "high", "xhigh"] | None
+        ) = Field(
             default=None,
             title="Thinking Level",
-            description="The reasoning effort for Gemini 4 Argon and Carbon."
-            " When unset, the model defaults to medium.",
+            description="The reasoning effort for supported Gemini 4 models."
+            " Hydrogen defaults to high and also supports xhigh;"
+            " Argon and Carbon default to medium and cap at high.",
         )
 
         temperature: float | None = Field(
@@ -307,6 +311,8 @@ class GeminiChatModel(ChatModelBase):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
                 ``credentials``, ``http_options``).
+                Developer API requests default to ``v1beta`` unless an API
+                version is set in the request, client, or environment.
             raise_on_content_filter (`bool`, defaults to `False`):
                 Raise ``ContentBlockedError`` for supported filter signals.
                 Disabled by default. See ``ChatModelBase.__init__`` for
@@ -360,10 +366,14 @@ class GeminiChatModel(ChatModelBase):
         return model_name.rsplit("/", 1)[-1] in (
             "gemini-4-argon",
             "gemini-4-carbon",
+            "gemini-4-hydrogen",
         )
 
     @staticmethod
-    def _prepare_gemini_4_config(config: dict[str, Any]) -> None:
+    def _prepare_gemini_4_config(
+        config: dict[str, Any],
+        model_name: str,
+    ) -> None:
         """Validate the final config and omit ignored sampling settings."""
         from google.genai.types import ThinkingConfig
 
@@ -375,16 +385,19 @@ class GeminiChatModel(ChatModelBase):
             )
             if thinking.get("thinking_budget") is not None:
                 raise ValueError(
-                    "Gemini 4 Argon and Carbon require thinking_level "
+                    "Gemini 4 models require thinking_level "
                     "instead of thinking_budget.",
                 )
             level = thinking.get("thinking_level")
             if level is not None:
                 level = level.upper()
-                if level not in ("LOW", "MEDIUM", "HIGH"):
+                levels = ("low", "medium", "high")
+                if model_name.rsplit("/", 1)[-1] == "gemini-4-hydrogen":
+                    levels += ("xhigh",)
+                if level not in tuple(item.upper() for item in levels):
                     raise ValueError(
-                        "Gemini 4 Argon and Carbon thinking_level must be "
-                        "low, medium, or high.",
+                        f"{model_name} thinking_level must be one of "
+                        f"{', '.join(levels)}.",
                     )
                 thinking["thinking_level"] = level
             config["thinking_config"] = thinking
@@ -392,14 +405,14 @@ class GeminiChatModel(ChatModelBase):
         max_tokens = config.get("max_output_tokens")
         if max_tokens is not None and max_tokens > 65_536:
             raise ValueError(
-                "Gemini 4 Argon and Carbon max_output_tokens must not "
+                "Gemini 4 max_output_tokens must not "
                 "exceed 65536; long decode is not supported by this "
                 "adapter yet.",
             )
         for key in ("temperature", "top_p", "top_k"):
             if config.pop(key, None) is not None:
                 logger.warning(
-                    "Gemini 4 Argon and Carbon ignore %s; "
+                    "Gemini 4 models ignore %s; "
                     "the parameter will not be sent.",
                     key,
                 )
@@ -432,6 +445,8 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
+        from google.genai.types import HttpOptions
+
         config: dict[str, Any] = {}
 
         if self.parameters.max_tokens is not None:
@@ -457,7 +472,7 @@ class GeminiChatModel(ChatModelBase):
         elif self.parameters.thinking_level is not None:
             raise ValueError(
                 "The thinking_level parameter is currently supported only "
-                "for Gemini 4 Argon and Carbon in this adapter.",
+                "for Gemini 4 Argon, Carbon, and Hydrogen in this adapter.",
             )
         elif self.parameters.thinking_enable is not None:
             if self.parameters.thinking_enable:
@@ -489,7 +504,28 @@ class GeminiChatModel(ChatModelBase):
         # Per-call config takes precedence over model-level defaults.
         config.update(config_kwargs)
         if is_gemini_4:
-            self._prepare_gemini_4_config(config)
+            self._prepare_gemini_4_config(config, model_name)
+
+        # Preserve the pre-3.0 Developer API route without changing Vertex.
+        if not self.client.vertexai and not os.getenv(
+            "GOOGLE_GENAI_API_VERSION",
+        ):
+            client_options = HttpOptions.model_validate(
+                self.client_kwargs.get("http_options") or {},
+            )
+            if not client_options.api_version:
+                options_key = (
+                    "httpOptions"
+                    if "httpOptions" in config
+                    else "http_options"
+                )
+                options = HttpOptions.model_validate(
+                    config.get(options_key) or {},
+                )
+                if not options.api_version:
+                    config[options_key] = options.model_copy(
+                        update={"api_version": "v1beta"},
+                    )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

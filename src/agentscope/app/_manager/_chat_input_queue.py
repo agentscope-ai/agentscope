@@ -710,6 +710,11 @@ class ChatInputQueue:
                     await cleanup_session(self._bus, session_id)
                     return None
                 payload = pending[0][1]
+                if payload.get("state", "queued") == _MESSAGE_FAILED:
+                    # A failed steering item is waiting for the user to
+                    # edit, delete, or steer it again. Never promote it to
+                    # an ordinary turn behind their back.
+                    return None
                 claim = {"state": _MESSAGE_CLAIMED, "payload": payload}
             payload = claim["payload"]
             if payload.get("retry_at", 0) > time.time():

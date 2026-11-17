@@ -1,6 +1,8 @@
 name: claude-sonnet-4-5
 label: Claude Sonnet 4.5
 status: deprecated
+# Release date source: https://platform.claude.com/docs/en/release-notes/overview
+release_date: 2025-09-29
 deprecated_at: "2026-11-30T00:00:00"
 
 input_types:

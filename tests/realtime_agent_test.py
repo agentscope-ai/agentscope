@@ -869,7 +869,7 @@ class RealtimeAgentTest(IsolatedAsyncioTestCase):
         async with agent:
             # No transport, no audio: the provider times the session out
             # and nothing reconnects.
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(model.played.wait(), timeout=5)
             self.assertFalse(agent._connected)  # pylint: disable=W0212
             self.assertEqual(model.sessions, 1)
 

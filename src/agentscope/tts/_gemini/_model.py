@@ -2,6 +2,7 @@
 """Gemini TTS model implementation using the ``generateContent`` API."""
 import base64
 import io
+import os
 import wave
 from contextlib import aclosing, asynccontextmanager
 from datetime import datetime
@@ -139,7 +140,8 @@ class GeminiTTSModel(TTSModelBase):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
                 ``credentials``, ``http_options``). Developer API requests
-                default to ``v1beta`` unless an API version is supplied.
+                default to ``v1beta`` unless an API version is set in the
+                request, client, or environment.
         """
         super().__init__(
             credential=credential,
@@ -217,7 +219,11 @@ class GeminiTTSModel(TTSModelBase):
                         if isinstance(http_options, dict)
                         else http_options.api_version
                     )
-                    if not client.vertexai and not api_version:
+                    if (
+                        not client.vertexai
+                        and not api_version
+                        and not os.getenv("GOOGLE_GENAI_API_VERSION")
+                    ):
                         options = config.get("http_options") or {}
                         if isinstance(options, dict):
                             config["http_options"] = {

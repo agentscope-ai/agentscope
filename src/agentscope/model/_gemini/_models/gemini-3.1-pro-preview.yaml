@@ -1,6 +1,8 @@
 name: gemini-3.1-pro-preview
 label: Gemini 3.1 Pro Preview
 status: active
+# Release date source: https://aistudio.google.com/docs/changelog
+release_date: 2026-02-19
 
 input_types:
   - text/plain
