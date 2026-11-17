@@ -1013,6 +1013,61 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     ),
                 )
 
+    async def test_stream_usage_from_message_delta_without_start_usage(
+        self,
+    ) -> None:
+        """Use message_delta usage when message_start carries none."""
+        message = MagicMock()
+        message.id = "msg-no-usage"
+        message.usage = None
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "Hi"
+
+        delta_usage = MagicMock()
+        delta_usage.input_tokens = 10
+        delta_usage.output_tokens = 5
+        delta_usage.cache_creation_input_tokens = 0
+        delta_usage.cache_read_input_tokens = 0
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
+            _make_event("content_block_delta", index=0, delta=text_delta),
+            _make_event("message_delta", usage=delta_usage),
+        ]
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        start = datetime(2026, 10, 1, 10, 0, 0)
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+        ) as mock_datetime:
+            mock_datetime.now.side_effect = [
+                start,
+                start + timedelta(seconds=1),
+            ]
+            responses = [r async for r in await self.model([])]
+
+        self.assertEqual(
+            responses[-1].usage,
+            ChatUsage(
+                input_tokens=10,
+                output_tokens=5,
+                time=1.0,
+                cache_creation_input_tokens=0,
+                cache_input_tokens=0,
+            ),
+        )
+
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()

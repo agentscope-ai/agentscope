@@ -660,7 +660,43 @@ class AnthropicChatModel(ChatModelBase):
                             request_id=response_id,
                             partial_output=has_output,
                         )
-                    if event.usage and usage:
+                    if event.usage and usage is None:
+                        # Some providers omit usage from ``message_start``
+                        # and send it only here. Build the usage from the
+                        # delta and yield an empty carrier so the base
+                        # stream wrapper can attach it to its accumulator.
+                        u = event.usage
+                        uncached_input_tokens = (
+                            getattr(
+                                u,
+                                "input_tokens",
+                                0,
+                            )
+                            or 0
+                        )
+                        usage = ChatUsage(
+                            input_tokens=_total_input_tokens(u),
+                            output_tokens=getattr(u, "output_tokens", 0) or 0,
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_creation_input_tokens=getattr(
+                                u,
+                                "cache_creation_input_tokens",
+                                0,
+                            )
+                            or 0,
+                            cache_input_tokens=getattr(
+                                u,
+                                "cache_read_input_tokens",
+                                0,
+                            )
+                            or 0,
+                        )
+                        delta_res.usage = usage
+                        yield delta_res
+
+                    elif event.usage:
                         usage.output_tokens = event.usage.output_tokens or 0
                         # Update cumulative counts before adding cache tokens.
                         value = getattr(event.usage, "input_tokens", None)
