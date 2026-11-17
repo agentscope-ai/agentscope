@@ -2,6 +2,7 @@
 """The formatter module."""
 import base64
 import mimetypes
+import os
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
@@ -23,12 +24,9 @@ from ..message import (
 def file_url_to_path(url: str) -> str:
     """Resolve a ``file://`` URL to a local filesystem path.
 
-    The URL is parsed with :func:`urllib.parse.urlsplit` so the URL
-    *authority* is preserved: per RFC 8089, ``file://host/share/x.png`` is
-    a network path and must resolve to the UNC share
-    ``//host/share/x.png``, while ``file:///x.png`` addresses the local
-    filesystem. An authority of ``localhost`` is dropped, as RFC 8089
-    requires it to be equivalent to the empty authority.
+    Local URLs and ``localhost`` authorities resolve on every platform.
+    Other authorities resolve to UNC paths on Windows and are rejected on
+    other platforms to avoid reading an unrelated local file.
 
     Args:
         url (`str`):
@@ -39,13 +37,21 @@ def file_url_to_path(url: str) -> str:
         `str`:
             The platform filesystem path for the URL, suitable for
             ``open()``.
+
+    Raises:
+        ValueError:
+            If a remote authority is used on a non-Windows platform.
     """
     parsed = urlsplit(url)
     path = parsed.path
-    if parsed.netloc and parsed.netloc != "localhost":
+    if parsed.netloc and parsed.netloc.lower() != "localhost":
+        if os.name != "nt":
+            raise ValueError(
+                "Remote file URLs are not supported on this platform. "
+                "Mount the share and use a local file URL instead.",
+            )
         path = "//" + parsed.netloc + path
     return url2pathname(path)
-
 
 
 class FormatterBase(BaseModel):
