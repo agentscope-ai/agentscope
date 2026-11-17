@@ -100,6 +100,13 @@ def _resolve_type_hints(tool_func: Callable) -> dict[str, Any]:
         partial_funcs.append(annotated_func)
         annotated_func = annotated_func.func
 
+    if not (
+        inspect.isroutine(annotated_func) or inspect.isclass(annotated_func)
+    ):
+        # A callable instance keeps its annotations and module globals on
+        # its ``__call__`` method, not on the instance itself.
+        annotated_func = getattr(annotated_func, "__call__", annotated_func)
+
     globalns = getattr(annotated_func, "__globals__", None)
 
     try:

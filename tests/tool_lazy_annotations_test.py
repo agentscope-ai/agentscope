@@ -9,7 +9,7 @@ resolved back to real types before being handed to pydantic.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 from unittest import TestCase
 
 from pydantic import BaseModel, Field
@@ -31,6 +31,28 @@ class SearchQuery(BaseModel):
     """A structured catalog-search query."""
 
     text: str = Field(description="The query text")
+
+
+class CallableTool:
+    """A callable instance with lazy annotations."""
+
+    def __call__(
+        self,
+        mode: Literal["fast", "full"],
+        limit: int = 5,
+    ) -> str:
+        return mode
+
+
+class StateInjectedCallableTool:
+    """A callable with an annotation unavailable at runtime."""
+
+    def __call__(
+        self,
+        mode: Literal["fast", "full"],
+        _agent_state: AgentState | None = None,
+    ) -> str:
+        return mode
 
 
 def annotated_tool(
@@ -94,6 +116,50 @@ def state_injected_tool(
 
 class LazyAnnotationsTest(TestCase):
     """Schema extraction must work with stringized annotations."""
+
+    def test_callable_instance_resolves_lazy_annotations(self) -> None:
+        """Callable instances use their bound call method's hints."""
+        schema = FunctionTool(CallableTool()).input_schema
+
+        self.assertEqual(
+            schema["properties"]["mode"]["enum"],
+            ["fast", "full"],
+        )
+        self.assertEqual(schema["required"], ["mode"])
+        self.assertNotIn("self", schema["properties"])
+
+    def test_partial_callable_instance_resolves_lazy_annotations(self) -> None:
+        """Partials retain defaults and resolve overrides in method globals."""
+        tool_func = partial(CallableTool(), limit=3)
+        tool_func.__annotations__ = {"limit": "Annotated[int, Field(gt=0)]"}
+        schema = FunctionTool(tool_func).input_schema
+
+        self.assertEqual(
+            schema["properties"]["mode"]["enum"],
+            ["fast", "full"],
+        )
+        self.assertEqual(schema["properties"]["limit"]["default"], 3)
+        self.assertEqual(schema["properties"]["limit"]["exclusiveMinimum"], 0)
+        self.assertEqual(schema["required"], ["mode"])
+        self.assertNotIn("self", schema["properties"])
+
+    def test_callable_instance_keeps_resolvable_hints(self) -> None:
+        """An unavailable state hint does not discard the method's hints."""
+        tool = FunctionTool(
+            StateInjectedCallableTool(),
+            is_state_injected=True,
+        )
+
+        self.assertDictEqual(
+            tool.input_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["fast", "full"]},
+                },
+                "required": ["mode"],
+            },
+        )
 
     def test_annotated_field_parameter(self) -> None:
         """`Annotated[str, Field(...)]` params must be resolved."""
