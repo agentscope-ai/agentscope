@@ -507,6 +507,18 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
         ):
             for completed in (False, True):
                 with self.subTest(namespace=namespace, completed=completed):
+                    registration_timeout = asyncio.timeout(None)
+
+                    def controlled_timeout(
+                        delay: float | None,
+                    ) -> asyncio.Timeout:
+                        """Defer the deadline until the write stalls."""
+                        # Each subtest finishes registration before advancing.
+                        # pylint: disable=cell-var-from-loop
+                        if asyncio.current_task() is registration:
+                            return registration_timeout
+                        return asyncio.timeout(delay)
+
                     started = asyncio.Event()
                     cancelled = asyncio.Event()
                     gate = asyncio.Event()
@@ -551,7 +563,11 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                             "registry_set",
                             side_effect=stall_initial_write,
                         ),
-                        patch(f"{_MANAGER_MODULE}._IO_TIMEOUT_SECS", 0.1),
+                        patch(
+                            f"{_MANAGER_MODULE}.asyncio",
+                            wraps=asyncio,
+                            timeout=controlled_timeout,
+                        ),
                     ):
                         registration = asyncio.create_task(
                             self.owner.register_task(
@@ -570,6 +586,10 @@ class TestBackgroundTaskRecords(  # pylint: disable=too-many-public-methods
                             if completed:
                                 gate.set()
                                 await task
+                            # Time out the stalled write, not Redis setup.
+                            registration_timeout.reschedule(
+                                asyncio.get_running_loop().time(),
+                            )
                             done, _ = await asyncio.wait(
                                 {registration},
                                 timeout=0.5,
