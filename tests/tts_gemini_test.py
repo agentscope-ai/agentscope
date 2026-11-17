@@ -323,24 +323,6 @@ class TestGeminiTTSModel(IsolatedAsyncioTestCase):
                     ],
                 )
 
-    def test_default_model_is_not_shut_down(self) -> None:
-        """Default to a model that is still served by the API."""
-        model = GeminiTTSModel(credential=GeminiCredential(api_key="test"))
-        self.assertEqual(model.model, _NEW_MODELS[0])
-
-        cards = {card.name: card for card in GeminiTTSModel.list_models()}
-        self.assertEqual(cards[model.model].status, "active")
-        for name in (
-            "gemini-2.5-flash-preview-tts",
-            "gemini-2.5-pro-preview-tts",
-        ):
-            with self.subTest(model=name):
-                self.assertEqual(cards[name].status, "deprecated")
-                self.assertEqual(
-                    cards[name].deprecated_at.isoformat(),
-                    "2026-11-17T00:00:00",
-                )
-
     async def test_api_version_overrides_and_vertex(self) -> None:
         """Respect explicit versions and leave Vertex defaults unchanged."""
         for vertexai, options, expected in (

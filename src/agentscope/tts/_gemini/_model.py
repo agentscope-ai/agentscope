@@ -126,7 +126,7 @@ class GeminiTTSModel(TTSModelBase):
                 ``gemini-3.8-flash-tts``, ``gemini-3.8-flash-lite-tts``,
                 ``gemini-2.5-flash-preview-tts``, and
                 ``gemini-2.5-pro-preview-tts``. The two ``2.5`` preview
-                models are shut down on 2026-11-17.
+                models are scheduled for shutdown no earlier than 2026-12-18.
             parameters (`GeminiTTSModel.Parameters | None`, defaults to \
             `None`):
                 The TTS parameters (voice, etc.). When ``None``, the default
