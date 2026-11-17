@@ -126,6 +126,15 @@ class RealtimeModelCard(BaseModel):
             elif param in properties:
                 properties[param] = {**properties[param], **override}
 
+        # ``None`` is a deletion marker, not a stored override. Keeping it
+        # would fail validation of the ``dict[str, dict]`` field and make
+        # ``list_from_directory`` skip the entire card.
+        overrides = {
+            name: override
+            for name, override in overrides.items()
+            if override is not None
+        }
+
         return cls(
             **config,
             parameter_schema={"type": "object", "properties": properties},
