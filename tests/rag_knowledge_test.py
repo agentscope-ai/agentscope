@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for metadata isolation during document insertion."""
+"""Tests for knowledge base insertion and search."""
 import asyncio
 from contextlib import AsyncExitStack
 from importlib.util import find_spec
 from unittest import skipUnless
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
 from agentscope.message import TextBlock
@@ -163,4 +163,104 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             [chunk.model_dump() for chunk in self.chunks],
             before,
+        )
+
+
+@skipUnless(find_spec("qdrant_client"), "qdrant-client is not installed")
+class SearchEmbeddingAlignmentTest(IsolatedAsyncioTestCase):
+    """Validate one embedding per search query."""
+
+    async def asyncSetUp(self) -> None:
+        """Create an in-memory store and a mock embedding model."""
+        exit_stack = AsyncExitStack()
+        self.addAsyncCleanup(exit_stack.aclose)
+        self.store = await exit_stack.enter_async_context(
+            QdrantStore(location=":memory:"),
+        )
+        await self.store.create_collection("documents", dimensions=3)
+        self.embedding = AsyncMock(spec=EmbeddingModelBase)
+        self.embedding.dimensions = 3
+        self.embedding.supports_multimodal = False
+        self.search = AsyncMock(wraps=self.store.search)
+        self.store.search = self.search
+
+    def _knowledge(self) -> KnowledgeBase:
+        """Bind a knowledge base to the test collection."""
+        return KnowledgeBase(
+            name="documents",
+            description="Test documents",
+            embedding_model=self.embedding,
+            vector_store=self.store,
+            collection="documents",
+        )
+
+    async def test_short_embedding_response_is_rejected(self) -> None:
+        """Reject missing embeddings before searching."""
+        self.embedding.return_value = EmbeddingResponse(
+            embeddings=[[1.0, 0.0, 0.0]],
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            await self._knowledge().search(
+                [
+                    TextBlock(text="first question"),
+                    TextBlock(text="second question"),
+                ],
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "Embedding model returned 1 vectors for 2 queries.",
+        )
+        self.search.assert_not_called()
+
+    async def test_extra_embedding_response_is_rejected(self) -> None:
+        """Reject extra embeddings before searching."""
+        self.embedding.return_value = EmbeddingResponse(
+            embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            await self._knowledge().search(
+                [TextBlock(text="only question")],
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "Embedding model returned 2 vectors for 1 queries.",
+        )
+        self.search.assert_not_called()
+
+    async def test_aligned_embedding_response_searches_every_query(
+        self,
+    ) -> None:
+        """Search once per query when embedding counts match."""
+        self.embedding.return_value = EmbeddingResponse(
+            embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        )
+        queries = [
+            TextBlock(text="first question"),
+            TextBlock(text="second question"),
+        ]
+
+        results = await self._knowledge().search(queries)
+
+        self.assertEqual(results, [])
+        self.assertEqual(self.embedding.await_args_list, [call(queries)])
+        self.assertEqual(
+            self.search.await_args_list,
+            [
+                call(
+                    collection="documents",
+                    query_vector=[1.0, 0.0, 0.0],
+                    top_k=5,
+                    metadata_filter=None,
+                ),
+                call(
+                    collection="documents",
+                    query_vector=[0.0, 1.0, 0.0],
+                    top_k=5,
+                    metadata_filter=None,
+                ),
+            ],
         )
