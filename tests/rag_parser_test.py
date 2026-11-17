@@ -2924,6 +2924,57 @@ class WordParserInlineSeparatorTest(IsolatedAsyncioTestCase):
     """Regression coverage for inline character elements such as tabs and
     breaks in Word paragraphs and table cells."""
 
+    async def test_table_cell_preserves_run_tab(self) -> None:
+        """Keep ordinary and inserted tabs, excluding deleted tabs/settings."""
+        from docx import Document
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+        from docx.shared import Inches
+
+        doc = Document()
+        table = doc.add_table(rows=3, cols=1)
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.paragraph_format.tab_stops.add_tab_stop(Inches(1))
+        paragraph.add_run("Trial\tVoltage")
+        for row, revision in enumerate(("ins", "del"), start=1):
+            paragraph = table.cell(row, 0).paragraphs[0]
+            paragraph.add_run("micro")
+            paragraph._element.append(  # pylint: disable=protected-access
+                parse_xml(
+                    f'<w:{revision} {nsdecls("w")} '
+                    'w:id="1" w:author="test">'
+                    f"<w:r><w:tab/></w:r></w:{revision}>",
+                ),
+            )
+            paragraph.add_run("scope")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+
+        expected = {
+            "json": (
+                "<system-info>A table loaded as a JSON array:</system-info>\n"
+                + json.dumps(
+                    [["Trial\tVoltage"], ["micro\tscope"], ["microscope"]],
+                )
+            ),
+            "markdown": (
+                "| Trial\tVoltage |\n| --- |\n"
+                "| micro\tscope |\n| microscope |\n"
+            ),
+        }
+        for table_format, text in expected.items():
+            with self.subTest(table_format=table_format):
+                sections = await WordParser(
+                    include_image=False,
+                    separate_table=True,
+                    table_format=table_format,
+                ).parse(buffer.getvalue(), "demo.docx")
+
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    _expected_word_sections(text),
+                )
+
     async def test_inline_tabs_and_soft_breaks_are_preserved(self) -> None:
         """Tabs and consecutive soft breaks remain inside a paragraph."""
         from docx import Document as DocxDocument
