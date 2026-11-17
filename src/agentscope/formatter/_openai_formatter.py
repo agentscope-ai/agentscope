@@ -5,7 +5,6 @@ import re
 from abc import ABC
 from fnmatch import fnmatch
 from typing import Any
-from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -13,6 +12,7 @@ from ._formatter_base import (
     FormatterBase,
     _download_as_base64,
     _read_local_file_as_base64,
+    file_url_to_path,
 )
 from .._logging import logger
 from ..message import (
@@ -153,7 +153,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 # Local file — read and encode as base64 data URI
                 encoded = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                 )
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
@@ -224,7 +224,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                 # Local file
                 data = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                 )
             else:
                 # Remote URL — download and encode
@@ -272,7 +272,7 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             if url_str.startswith("file://"):
                 data = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                 )
             else:
                 data = await asyncio.to_thread(_download_as_base64, url_str)

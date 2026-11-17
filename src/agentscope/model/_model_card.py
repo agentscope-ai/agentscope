@@ -152,11 +152,16 @@ class ModelCard(BaseModel):
                         **override,
                     }
 
-        # Build final parameter schema
+        # Keep required fields consistent with the filtered properties.
+        required = [
+            name
+            for name in base_schema.get("required", [])
+            if name in properties
+        ]
         final_schema = {
             "type": "object",
             "properties": properties,
-            "required": base_schema.get("required", []),
+            "required": required,
         }
         if "$defs" in base_schema:
             final_schema["$defs"] = copy.deepcopy(base_schema["$defs"])

@@ -5,7 +5,6 @@ import base64
 import fnmatch
 from abc import ABC
 from typing import Any
-from urllib.request import url2pathname
 
 from pydantic import Field
 
@@ -13,6 +12,7 @@ from ._formatter_base import (
     FormatterBase,
     _download_as_base64,
     _read_local_file_as_base64,
+    file_url_to_path,
 )
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
@@ -95,7 +95,7 @@ class _GeminiFormatterBase(FormatterBase, ABC):
                 # Local file - read and convert to base64
                 data = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url.removeprefix("file://")),
+                    file_url_to_path(url),
                 )
             else:
                 # Remote URL - download and convert to base64

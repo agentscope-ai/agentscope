@@ -444,6 +444,8 @@ class IndexWorker:
             knowledge_base_id,
             document_id,
             "parsing",
+            # Clear stale errors; None leaves the stored value unchanged.
+            error="" if getattr(data, "error", None) else None,
         )
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)

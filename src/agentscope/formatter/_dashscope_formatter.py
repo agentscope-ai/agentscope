@@ -5,11 +5,14 @@ import asyncio
 from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
-from urllib.request import url2pathname
 
 from pydantic import Field
 
-from ._formatter_base import FormatterBase, _read_local_file_as_base64
+from ._formatter_base import (
+    FormatterBase,
+    _read_local_file_as_base64,
+    file_url_to_path,
+)
 from .._logging import logger
 from ..message import (
     Msg,
@@ -155,7 +158,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
             if url_str.startswith("file://"):
                 encoded = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                 )
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
@@ -202,7 +205,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
             if url_str.startswith("file://"):
                 encoded = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                 )
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
@@ -253,7 +256,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
             if url_str.startswith("file://"):
                 encoded = await asyncio.to_thread(
                     _read_local_file_as_base64,
-                    url2pathname(url_str.removeprefix("file://")),
+                    file_url_to_path(url_str),
                 )
                 data = f"data:;base64,{encoded}"
             else:

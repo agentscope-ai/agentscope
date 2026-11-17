@@ -4,11 +4,14 @@
 import asyncio
 from fnmatch import fnmatch
 from typing import Any
-from urllib.request import url2pathname
 
 from pydantic import Field
 
-from ._formatter_base import _download_as_base64, _read_local_file_as_base64
+from ._formatter_base import (
+    _download_as_base64,
+    _read_local_file_as_base64,
+    file_url_to_path,
+)
 from ._openai_formatter import _OpenAIFormatterBase
 from .._logging import logger
 from ..message import (
@@ -57,7 +60,7 @@ async def _moonshot_format_media_source(
         if url_str.startswith("file://"):
             encoded = await asyncio.to_thread(
                 _read_local_file_as_base64,
-                url2pathname(url_str.removeprefix("file://")),
+                file_url_to_path(url_str),
             )
         else:
             encoded = await asyncio.to_thread(_download_as_base64, url_str)

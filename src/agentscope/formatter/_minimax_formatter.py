@@ -33,7 +33,11 @@ class MiniMaxChatFormatter(AnthropicChatFormatter):
             fnmatch.fnmatch(media_type, _)
             for _ in self.supported_input_media_types
         ):
-            return await self._format_source(block.source, "video")
+            return await self._format_source(
+                block.source,
+                "video",
+                block.model_extra,
+            )
         return await super()._format_anthropic_data_block(block)
 
 
@@ -76,5 +80,9 @@ class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
             fnmatch.fnmatch(media_type, _)
             for _ in self.supported_input_media_types
         ):
-            return await self._format_source(block.source, "video")
+            return await self._format_source(
+                block.source,
+                "video",
+                block.model_extra,
+            )
         return await super()._format_anthropic_data_block(block)
