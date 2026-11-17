@@ -1000,6 +1000,27 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_usage_uses_candidate_counts_without_total(self) -> None:
+        """Candidate and thought counts suffice when total is missing."""
+        resp = _mock_completion([_make_part(text="hello")])
+        resp.usage_metadata = SimpleNamespace(
+            prompt_token_count=10,
+            candidates_token_count=5,
+            tool_use_prompt_token_count=0,
+            thoughts_token_count=2,
+            total_token_count=None,
+            cached_content_token_count=0,
+        )
+        self.mock_client.aio.models.generate_content = AsyncMock(
+            return_value=resp,
+        )
+
+        result = await self.model([])
+
+        self.assertIsNotNone(result.usage)
+        self.assertEqual(result.usage.input_tokens, 10)
+        self.assertEqual(result.usage.output_tokens, 7)
+
     async def test_usage_fallback_excludes_tool_use_tokens(self) -> None:
         """Usage fallback excludes tool-use tokens from output."""
         resp = _mock_completion([_make_part(text="hello")])
