@@ -213,6 +213,7 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
 
     text_tag = qn("w:t")
     no_break_hyphen_tag = qn("w:noBreakHyphen")
+    deleted_tag = qn("w:del")
     break_tags = {qn("w:br"), qn("w:cr")}
     table_data: list[list[str]] = []
     for tr in table._element.findall(qn("w:tr")):
@@ -229,7 +230,11 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
                     if element.tag == text_tag and element.text:
                         text_parts.append(element.text)
                     elif element.tag == no_break_hyphen_tag:
-                        text_parts.append("-")
+                        if not any(
+                            ancestor.tag == deleted_tag
+                            for ancestor in element.iterancestors()
+                        ):
+                            text_parts.append("-")
                     elif element.tag in break_tags:
                         text_parts.append("\n")
                 para_text = "".join(text_parts)
