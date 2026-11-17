@@ -2,6 +2,7 @@
 """Glob tool test case."""
 import os
 import tempfile
+from pathlib import Path
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
@@ -196,9 +197,14 @@ class GlobToolTest(IsolatedAsyncioTestCase):
                     path=self.temp_dir,
                 )
                 self.assertListEqual(
-                    sorted(chunk.content[0].text.splitlines()),
+                    sorted(
+                        os.path.realpath(name)
+                        for name in chunk.content[0].text.splitlines()
+                    ),
                     [
-                        os.path.join(self.temp_dir, *name.split("/"))
+                        os.path.realpath(
+                            os.path.join(self.temp_dir, *name.split("/")),
+                        )
                         for name in expected
                     ],
                 )
@@ -211,10 +217,55 @@ class GlobToolTest(IsolatedAsyncioTestCase):
             path=os.path.join(self.temp_dir, "subdir"),
         )
         self.assertListEqual(
-            sorted(chunk.content[0].text.splitlines()),
+            sorted(
+                os.path.realpath(name)
+                for name in chunk.content[0].text.splitlines()
+            ),
             [
-                os.path.join(self.temp_dir, "test1.py"),
-                os.path.join(self.temp_dir, "test2.py"),
+                os.path.realpath(os.path.join(self.temp_dir, name))
+                for name in ("test1.py", "test2.py")
+            ],
+        )
+
+    async def test_parent_directory_segment_from_symlink(self) -> None:
+        """Resolve symlinks before traversing to the parent directory."""
+        nested = os.path.join(self.temp_dir, "subdir", "nested")
+        os.makedirs(nested)
+        link = os.path.join(self.temp_dir, "alias")
+        try:
+            os.symlink(nested, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"Directory symlinks are unavailable: {error}")
+
+        for path in (link, os.path.join(link, "..", "nested")):
+            with self.subTest(path=path):
+                chunk = await self.glob_tool(pattern="../*.py", path=path)
+                self.assertListEqual(
+                    sorted(
+                        os.path.realpath(name)
+                        for name in chunk.content[0].text.splitlines()
+                    ),
+                    [os.path.realpath(os.path.join(nested, "..", "test3.py"))],
+                )
+
+    async def test_parent_directory_segment_at_root(self) -> None:
+        """Continue matching after a parent segment at the filesystem root."""
+        directory = Path(self.temp_dir).resolve()
+        root = directory.anchor
+        pattern = os.path.join(
+            "..",
+            os.path.relpath(directory, root),
+            "*.py",
+        )
+        chunk = await self.glob_tool(pattern=pattern, path=root)
+        self.assertListEqual(
+            sorted(
+                os.path.realpath(name)
+                for name in chunk.content[0].text.splitlines()
+            ),
+            [
+                os.path.realpath(os.path.join(self.temp_dir, name))
+                for name in ("test1.py", "test2.py")
             ],
         )
 

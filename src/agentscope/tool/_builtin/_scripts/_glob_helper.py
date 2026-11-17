@@ -121,13 +121,9 @@ def _match_parts(
             except (PermissionError, OSError):
                 pass
     elif part == "..":
-        # ``..`` names the parent directory of the current level, which
-        # ``os.scandir`` never yields as an entry, so it must be resolved
-        # explicitly instead of being matched against directory entries
-        # (where it would silently match nothing).
-        parent = os.path.dirname(os.path.normpath(current_dir))
-        if parent and parent != current_dir:
-            _match_parts(parts, part_index + 1, parent, results)
+        # Let the filesystem resolve symlinks before '..', including at root.
+        parent = os.path.join(current_dir, os.pardir)
+        _match_parts(parts, part_index + 1, parent, results)
     else:
         regex = _glob_part_to_regex(part)
         try:
