@@ -110,6 +110,10 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         self._connected = False
         self._cold_start_buffer: str = ""
         self._cold_start_done: bool = False
+        # Set by ``synthesize()``: it completes the SDK synthesizer, which
+        # cannot be started again, so the next utterance has to create a new
+        # one first.
+        self._needs_reconnect = False
         self._accumulated_text: str = ""
 
     @classmethod
@@ -224,6 +228,7 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             callback=True,
         )
         self._connected = True
+        self._needs_reconnect = False
 
     async def close(self) -> None:
         """Close the realtime SpeechSynthesizer."""
@@ -265,6 +270,9 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         if not text:
             return TTSResponse(content=None)
+
+        if self._needs_reconnect:
+            await self._reconnect()
 
         previous_text = self._accumulated_text
         self._accumulated_text += text
@@ -338,8 +346,15 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                     return _empty_gen()
                 return TTSResponse(content=None)
 
+            if self._needs_reconnect:
+                await self._reconnect()
+
             for attempt in range(self.max_retries):
                 try:
+                    # The synthesizer cannot be reused after
+                    # ``streaming_complete()``, nor after a failed attempt.
+                    self._needs_reconnect = True
+
                     if unsent:
                         self._synthesizer.streaming_call(unsent)
 

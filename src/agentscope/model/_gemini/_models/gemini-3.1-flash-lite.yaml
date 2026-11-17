@@ -1,6 +1,8 @@
 name: gemini-3.1-flash-lite
 label: Gemini 3.1 Flash-Lite
 status: active
+# Release date source: https://aistudio.google.com/docs/changelog
+release_date: 2026-05-07
 
 input_types:
   - text/plain

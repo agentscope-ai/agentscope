@@ -434,64 +434,101 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     async def test_background_task_result_injected_into_context(
         self,
     ) -> None:
-        """After the background tool finishes, the result is pushed to the
-        session inbox on the message bus as a serialised HintBlock."""
+        """Deliver the full result with the announced id or the fallback id."""
+        register_task = self.bg_manager.register_task
+        for error in (None, RuntimeError, asyncio.CancelledError):
+            with self.subTest(error=error):
+                agent, middleware = self._make_agent(
+                    Toolkit(tools=[SlowTool()]),
+                    timeout_secs=0.01,
+                )
+                delivered = asyncio.Event()
+                mock_bus = middleware._message_bus
+                mock_bus.publish.side_effect = (
+                    lambda *_args, event=delivered, **_kwargs: event.set()
+                )
+                tool_call = ToolCallBlock(
+                    id="call_bg",
+                    name="slow_tool",
+                    input=json.dumps({"delay": 0.05}),
+                )
 
-        toolkit = Toolkit(tools=[SlowTool()])
-        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+                async def register_after_completion(
+                    *,
+                    failure: type[BaseException] | None = error,
+                    **kwargs: Any,
+                ) -> str:
+                    """Finish the tool before registration settles."""
+                    await asyncio.wait_for(kwargs["asyncio_task"], timeout=1)
+                    if failure is not None:
+                        raise failure("registration interrupted")
+                    return await register_task(**kwargs)
 
-        tool_call = ToolCallBlock(
-            id="call_bg",
-            name="slow_tool",
-            input=json.dumps({"delay": 0.2}),
-        )
+                notification_id = tool_call.id
+                with patch.object(
+                    self.bg_manager,
+                    "register_task",
+                    side_effect=register_after_completion,
+                ):
+                    if error is None:
+                        results = [
+                            item async for item in agent._acting(tool_call)
+                        ]
+                        response = results[-1]
+                        notification_id = response.metadata[
+                            "background_task_id"
+                        ]
+                        self.assertIn(
+                            f"(id={notification_id})",
+                            response.content[0].text,
+                        )
+                    else:
+                        with self.assertRaisesRegex(
+                            error,
+                            "registration interrupted",
+                        ):
+                            async for _ in agent._acting(tool_call):
+                                self.fail("Unexpected placeholder")
 
-        # Trigger offload
-        # pylint: disable=protected-access
-        async for _ in agent._acting(tool_call):
-            pass
-
-        # Wait long enough for the background tool (0.2s) to finish
-        await asyncio.sleep(0.4)
-
-        # The completed result should now have been pushed to the message bus
-        # inbox as a model-dumped HintBlock.
-        mock_bus = middleware._message_bus
-        # The middleware uses queue_push(inbox_key, payload) rather
-        # than the deprecated inbox_push(session_id, payload).
-        inbox_calls = [
-            c
-            for c in mock_bus.queue_push.call_args_list
-            if c.args[0] == MessageBusKeys.inbox(agent.state.session_id)
-        ]
-        self.assertEqual(len(inbox_calls), 1)
-        _, hint_dict = inbox_calls[0].args
-        session_id_called = agent.state.session_id
-        self.assertEqual(session_id_called, agent.state.session_id)
-        self.maxDiff = None
-        self.assertDictEqual(
-            hint_dict,
-            {
-                "type": "hint",
-                "id": AnyString(),
-                "created_at": AnyString(),
-                "finished_at": AnyString(),
-                "source": '{"label": "tool_output", "sublabel": "slow_tool · '
-                'call_bg"}',
-                "hint": [
-                    {
-                        "type": "text",
-                        "text": AnyString(),
-                        "id": AnyString(),
-                        "created_at": AnyString(),
-                        "finished_at": None,
-                    },
-                ],
-            },
-        )
-        hint_text = hint_dict["hint"][0]["text"]
-        self.assertIn("SlowTool finished", hint_text)
-        self.assertIn("<system-notification>", hint_text)
+                await asyncio.wait_for(delivered.wait(), timeout=1)
+                inbox = [
+                    call.args[1]
+                    for call in mock_bus.queue_push.call_args_list
+                    if call.args[0]
+                    == MessageBusKeys.inbox(agent.state.session_id)
+                ]
+                self.assertEqual(
+                    inbox,
+                    [
+                        {
+                            "type": "hint",
+                            "id": AnyString(),
+                            "created_at": AnyString(),
+                            "finished_at": AnyString(),
+                            "source": json.dumps(
+                                {
+                                    "label": "tool_output",
+                                    "sublabel": "slow_tool · call_bg",
+                                },
+                                ensure_ascii=False,
+                            ),
+                            "hint": [
+                                {
+                                    "type": "text",
+                                    "text": "<system-notification>Tool "
+                                    "'slow_tool' running in background "
+                                    f"(id={notification_id}) has completed."
+                                    "\n\nResult:\n\n"
+                                    "SlowTool finished after 0.05s"
+                                    "</system-notification>",
+                                    "id": AnyString(),
+                                    "created_at": AnyString(),
+                                    "finished_at": None,
+                                },
+                            ],
+                        },
+                    ],
+                )
 
     async def test_background_task_triggers_wakeup_on_completion(
         self,
@@ -640,7 +677,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
                 prefix = (
                     "<system-notification>Tool 'slow_tool' running in "
-                    "background (id=call_interrupted) has been cancelled"
+                    f"background (id={bg.id}) has been cancelled"
                 )
                 expected_hint: str | list[dict]
                 if output:
