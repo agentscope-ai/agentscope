@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import httpx2
-from google.genai.types import HttpOptions, ThinkingConfig
+from google.genai.types import FunctionDeclaration, HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
 
 from utils import AnyString
@@ -37,7 +37,7 @@ from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
-from agentscope.tool import ToolChoice
+from agentscope.tool import FunctionTool, ToolChoice
 
 A = AnyString()
 
@@ -1654,6 +1654,7 @@ class TestGeminiFormatTools(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+# pylint: disable-next=too-many-public-methods
 class TestGeminiSchemaUtils(unittest.TestCase):
     """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
 
@@ -1853,6 +1854,52 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_sanitize_removes_keywords_rejected_by_gemini_schema(
+        self,
+    ) -> None:
+        """Validation keywords that Gemini's Schema model does not declare
+        are removed, so the SDK accepts the function declaration."""
+
+        def search(
+            query: Annotated[str, Field(examples=["agentscope"])],
+            labels: set[str],
+            top_k: Annotated[int, Field(gt=0, lt=100, multiple_of=5)] = 5,
+        ) -> str:
+            """Search documents.
+
+            Args:
+                query: The search query.
+                labels: Only return documents with these labels.
+                top_k: How many results to return.
+            """
+            return f"{query} {sorted(labels)} {top_k}"
+
+        parameters = _sanitize_schema_for_gemini(
+            FunctionTool(search).input_schema,
+        )
+
+        self.assertEqual(
+            parameters["properties"],
+            {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only return documents with these labels.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "How many results to return.",
+                },
+            },
+        )
+        # The SDK forbids unknown schema keys, so this raises if any is left.
+        FunctionDeclaration(name="search", parameters=parameters)
+
     def test_flatten_resolves_ref_and_removes_defs(self) -> None:
         """$ref inlined with extra keys merged; $defs removed."""
         self.assertEqual(
@@ -1873,6 +1920,60 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 },
             },
         )
+
+    def test_flatten_boolean_schema_definition(self) -> None:
+        """True preserves sibling keywords; false remains rejecting."""
+        for keyword in ("$defs", "definitions"):
+            for definition in (True, False):
+                with self.subTest(keyword=keyword, definition=definition):
+                    constraints = {
+                        "type": "integer",
+                        "minimum": 1,
+                        "enum": [1, 2],
+                    }
+                    schema = {
+                        keyword: {
+                            "Anything": definition,
+                            "Count": constraints,
+                        },
+                        "properties": {
+                            "plain": {"$ref": f"#/{keyword}/Anything"},
+                            "value": {
+                                "$ref": f"#/{keyword}/Anything",
+                                "description": "Any value",
+                            },
+                            "count": {
+                                "$ref": f"#/{keyword}/Anything",
+                                **constraints,
+                            },
+                            "items": {
+                                "$ref": f"#/{keyword}/Anything",
+                                "type": "array",
+                                "items": {"$ref": f"#/{keyword}/Count"},
+                            },
+                        },
+                    }
+                    original = copy.deepcopy(schema)
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {
+                            "properties": {
+                                "plain": {} if definition else False,
+                                "value": (
+                                    {"description": "Any value"}
+                                    if definition
+                                    else False
+                                ),
+                                "count": constraints if definition else False,
+                                "items": (
+                                    {"type": "array", "items": constraints}
+                                    if definition
+                                    else False
+                                ),
+                            },
+                        },
+                    )
+                    self.assertEqual(schema, original)
 
     def test_flatten_escaped_definition_names(self) -> None:
         """JSON Pointer escapes are decoded once and in the correct order."""
