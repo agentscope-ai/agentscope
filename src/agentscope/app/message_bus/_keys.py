@@ -531,6 +531,14 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         reconcile its schedule jobs against storage."""
         return cls._SCHEDULE_LIFECYCLE
 
+    _SCHEDULE_LOCK = "agentscope:schedule:lock:{sid}"
+
+    @classmethod
+    def schedule_lock(cls, schedule_id: str) -> str:
+        """Per-schedule lock, held while an update re-reads and writes
+        the record so concurrent updates do not overwrite each other."""
+        return cls._SCHEDULE_LOCK.format(sid=schedule_id)
+
     # ------------------------------------------------------------------
     # Channels. A reply never travels through the bus: delivery is plain
     # REST, so the node running the agent sends it directly. What does
@@ -557,6 +565,14 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     _CHANNEL_LIVENESS = "agentscope:channel:liveness:{cid}"
     _CHANNEL_MEDIA = "agentscope:channel:media:{cid}:{chat}:{uid}"
     _CHANNEL_SEEN_CHATS = "agentscope:channel:seen_chats:{cid}"
+
+    _CHANNEL_LOCK = "agentscope:channel:lock:{cid}"
+
+    @classmethod
+    def channel_lock(cls, channel_id: str) -> str:
+        """Per-channel lock, held while an update re-reads and writes
+        the record so concurrent updates do not overwrite each other."""
+        return cls._CHANNEL_LOCK.format(cid=channel_id)
 
     @classmethod
     def channel_lifecycle(cls) -> str:
