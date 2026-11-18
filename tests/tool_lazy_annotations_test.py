@@ -59,6 +59,7 @@ class CallableWrapper:
     """Preserve a wrapped callable's more specific annotations."""
 
     def __init__(self, func: Callable[..., str]) -> None:
+        self.__annotations__: dict[str, Any] = {}
         update_wrapper(self, func)
         self.func = func
 
