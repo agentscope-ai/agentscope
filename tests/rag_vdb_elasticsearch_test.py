@@ -181,6 +181,42 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
                     refresh=True,
                 )
 
+    async def test_none_metadata_filter_value_is_rejected(self) -> None:
+        """None cannot be expressed as an Elasticsearch term query."""
+        unreachable = AssertionError("the filter must fail before any request")
+        self.client.search.side_effect = unreachable
+        self.client.open_point_in_time.side_effect = unreachable
+        self.client.delete_by_query.side_effect = unreachable
+        scope = {"reviewer": None}
+        calls = {
+            "search": lambda: self.store.search(
+                "shared",
+                [1.0, 0.0],
+                metadata_filter=scope,
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "shared",
+                metadata_filter=scope,
+            ),
+            "list_chunks": lambda: self.store.list_chunks(
+                "shared",
+                "doc",
+                metadata_filter=scope,
+            ),
+            "delete": lambda: self.store.delete(
+                "shared",
+                "doc",
+                metadata_filter=scope,
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name):
+                with self.assertRaisesRegex(ValueError, "'reviewer'"):
+                    await call_store()
+        self.client.search.assert_not_awaited()
+        self.client.open_point_in_time.assert_not_awaited()
+        self.client.delete_by_query.assert_not_awaited()
+
     async def test_delete_by_document_id(self) -> None:
         await self.store.delete("kb-1", "doc-1")
 
