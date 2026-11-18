@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 import json
+from typing import assert_type
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from pydantic import ValidationError
 from utils import AnyString
 
 from agentscope.message import (
+    ContentBlock,
     UserMsg,
     TextBlock,
     DataBlock,
@@ -212,7 +214,10 @@ class MessageTest(IsolatedAsyncioTestCase):
             "first | last",
         )
         self.assertEqual(
-            list(message.get_content_blocks(["hint", "text"])),
+            assert_type(
+                message.get_content_blocks(["hint", "text"]),
+                list[ContentBlock],
+            ),
             [message.content[0], message.content[2], message.content[3]],
         )
         self.assertEqual(message.get_content_blocks("data"), [])
