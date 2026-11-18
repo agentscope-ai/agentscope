@@ -1875,23 +1875,58 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         )
 
     def test_flatten_boolean_schema_definition(self) -> None:
-        """A boolean definition is inlined as-is, dropping its siblings."""
+        """True preserves sibling keywords; false remains rejecting."""
         for keyword in ("$defs", "definitions"):
             for definition in (True, False):
                 with self.subTest(keyword=keyword, definition=definition):
+                    constraints = {
+                        "type": "integer",
+                        "minimum": 1,
+                        "enum": [1, 2],
+                    }
                     schema = {
-                        keyword: {"Anything": definition},
+                        keyword: {
+                            "Anything": definition,
+                            "Count": constraints,
+                        },
                         "properties": {
+                            "plain": {"$ref": f"#/{keyword}/Anything"},
                             "value": {
                                 "$ref": f"#/{keyword}/Anything",
                                 "description": "Any value",
                             },
+                            "count": {
+                                "$ref": f"#/{keyword}/Anything",
+                                **constraints,
+                            },
+                            "items": {
+                                "$ref": f"#/{keyword}/Anything",
+                                "type": "array",
+                                "items": {"$ref": f"#/{keyword}/Count"},
+                            },
                         },
                     }
-                    self.assertIs(
-                        _flatten_json_schema(schema)["properties"]["value"],
-                        definition,
+                    original = copy.deepcopy(schema)
+                    self.assertEqual(
+                        _flatten_json_schema(schema),
+                        {
+                            "properties": {
+                                "plain": {} if definition else False,
+                                "value": (
+                                    {"description": "Any value"}
+                                    if definition
+                                    else False
+                                ),
+                                "count": constraints if definition else False,
+                                "items": (
+                                    {"type": "array", "items": constraints}
+                                    if definition
+                                    else False
+                                ),
+                            },
+                        },
                     )
+                    self.assertEqual(schema, original)
 
     def test_flatten_escaped_definition_names(self) -> None:
         """JSON Pointer escapes are decoded once and in the correct order."""
