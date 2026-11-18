@@ -107,8 +107,11 @@ class TTSModelCard(BaseModel):
                 "enum": voices,
             }
 
-        # Apply parameter_overrides
-        overrides = config.get("parameter_overrides", {})
+        # Apply parameter_overrides.  ``parameter_overrides:`` with no
+        # value parses to ``None``, which a bare ``.get(key, {})``
+        # default would not cover; treat it as an empty mapping, as the
+        # realtime loader already does.
+        overrides = config.get("parameter_overrides", {}) or {}
         for param_name, override in overrides.items():
             if override is None:
                 properties.pop(param_name, None)
@@ -147,5 +150,5 @@ class TTSModelCard(BaseModel):
             realtime=config.get("realtime", False),
             voice_cloning=config.get("voice_cloning", False),
             parameter_schema=final_schema,
-            parameters_overrides=config.get("parameter_overrides", {}),
+            parameters_overrides=overrides,
         )
