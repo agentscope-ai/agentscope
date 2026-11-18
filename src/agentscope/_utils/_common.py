@@ -101,6 +101,10 @@ def _has_dropped_keys(original: Any, repaired: Any) -> bool:
             if key in original
         )
     if isinstance(original, list) and isinstance(repaired, list):
+        # ``zip`` below stops at the shorter list, so a truncated repair
+        # would otherwise hide the trailing elements it dropped.
+        if len(repaired) < len(original):
+            return True
         return any(
             _has_dropped_keys(item, fixed)
             for item, fixed in zip(original, repaired)
@@ -419,6 +423,11 @@ def _flatten_json_schema(schema: dict) -> dict:
 
             visited = visited | {def_name}
             resolved = _resolve_ref(defs[def_name], visited)
+            if resolved is True:
+                # True adds no constraints; preserve the reference's siblings.
+                resolved = {}
+            elif not isinstance(resolved, dict):
+                return resolved
 
         for key, value in obj.items():
             if key in ("$ref", "$defs", "definitions"):

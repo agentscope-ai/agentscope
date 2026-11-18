@@ -12,7 +12,7 @@ from ._formatter_base import (
     _read_local_file_as_base64,
     file_url_to_path,
 )
-from ._openai_formatter import _OpenAIFormatterBase
+from ._openai_formatter import _OpenAIFormatterBase, _format_message_name
 from .._logging import logger
 from ..message import (
     Msg,
@@ -182,7 +182,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls or reasoning_parts:
                         msg_moonshot = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if msg.role == "assistant":
@@ -243,7 +243,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     if content_blocks or tool_calls or reasoning_parts:
                         msg_flush = {
                             "role": msg.role,
-                            "name": msg.name,
+                            **_format_message_name(msg.name),
                             "content": content_blocks or None,
                         }
                         if msg.role == "assistant":
@@ -307,7 +307,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
 
             msg_moonshot = {
                 "role": msg.role,
-                "name": msg.name,
+                **_format_message_name(msg.name),
                 "content": content_blocks or None,
             }
 

@@ -1110,3 +1110,79 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_sanitizes_message_name(self) -> None:
+        """Free-text names must be made valid for the Chat Completions API."""
+        msgs = [
+            UserMsg(name="John Doe", content="Hi"),
+            AssistantMsg(
+                name="Research Assistant",
+                content=[
+                    TextBlock(text="Let me check."),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="search",
+                        input="{}",
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="search",
+                        output="result",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Done."),
+                ],
+            ),
+            AssistantMsg(name="a<b|c\\d/e>f", content="ok"),
+            AssistantMsg(name="", content="anonymous"),
+        ]
+        res = await MoonshotChatFormatter().format(msgs)
+        self.assertListEqual(
+            res,
+            [
+                {
+                    "role": "user",
+                    "name": "John_Doe",
+                    "content": [{"type": "text", "text": "Hi"}],
+                },
+                {
+                    "role": "assistant",
+                    "name": "Research_Assistant",
+                    "reasoning_content": "",
+                    "content": [{"type": "text", "text": "Let me check."}],
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": "{}",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": "result",
+                    "name": "search",
+                },
+                {
+                    "role": "assistant",
+                    "name": "Research_Assistant",
+                    "reasoning_content": "",
+                    "content": [{"type": "text", "text": "Done."}],
+                },
+                {
+                    "role": "assistant",
+                    "name": "a_b_c_d_e_f",
+                    "reasoning_content": "",
+                    "content": [{"type": "text", "text": "ok"}],
+                },
+                {
+                    "role": "assistant",
+                    "reasoning_content": "",
+                    "content": [{"type": "text", "text": "anonymous"}],
+                },
+            ],
+        )
