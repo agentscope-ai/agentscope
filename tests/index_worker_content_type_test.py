@@ -7,8 +7,15 @@ from unittest.mock import patch
 from utils import AnyString
 
 from agentscope.app._service._index_worker import IndexWorker
-from agentscope.rag import Chunk, ExcelParser, Section, TextParser
-from agentscope.message import TextBlock
+from agentscope.rag import (
+    Chunk,
+    ExcelParser,
+    ImageParser,
+    PPTParser,
+    Section,
+    TextParser,
+)
+from agentscope.message import DataBlock, TextBlock
 
 
 class _Parser:
@@ -594,3 +601,56 @@ class IndexWorkerCsvLegacyExcelTypeTest(IsolatedAsyncioTestCase):
         ):
             await worker.run_pipeline()
         self.assertEqual(manager.knowledge.inserted_metadata, {})
+
+
+class IndexWorkerPPTImageTest(IsolatedAsyncioTestCase):
+    """Index a deck according to the selected embedding model."""
+
+    async def test_mixed_deck_respects_embedding_capability(self) -> None:
+        """Retain dense text chunks and keep images for multimodal models."""
+        from rag_parser_test import _make_pptx_rich
+
+        for supports_multimodal in (False, True):
+            with self.subTest(supports_multimodal=supports_multimodal):
+                storage = _Storage(
+                    PPTParser.supported_media_types[0],
+                    filename="lesson.pptx",
+                )
+                worker, manager = _worker(storage, [PPTParser()])
+                worker.blob_content = _make_pptx_rich()
+                manager.knowledge.embedding_model = SimpleNamespace(
+                    supports_multimodal=supports_multimodal,
+                )
+
+                await worker.run_pipeline()
+
+                chunks = manager.knowledge.inserted_chunks
+                self.assertTrue(chunks)
+                self.assertEqual(storage.statuses[-1], "ready")
+                self.assertEqual(
+                    any(isinstance(chunk.content, DataBlock) for chunk in chunks),
+                    supports_multimodal,
+                )
+                self.assertEqual(
+                    [chunk.chunk_index for chunk in chunks],
+                    list(range(len(chunks))),
+                )
+                self.assertTrue(
+                    all(chunk.total_chunks == len(chunks) for chunk in chunks),
+                )
+
+    async def test_text_model_reports_image_only_input(self) -> None:
+        """Give image-only uploads a clear configuration error."""
+        from rag_parser_test import _PNG_PIXEL
+
+        storage = _Storage("image/png", filename="diagram.png")
+        worker, manager = _worker(storage, [ImageParser()])
+        worker.blob_content = _PNG_PIXEL
+        manager.knowledge.embedding_model = SimpleNamespace(
+            supports_multimodal=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires a multimodal"):
+            await worker.run_pipeline()
+
+        self.assertEqual(manager.knowledge.inserted_chunks, [])

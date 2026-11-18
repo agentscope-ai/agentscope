@@ -30,6 +30,7 @@ from typing import Any, TYPE_CHECKING
 from pydantic import ValidationError
 
 from ..._logging import logger
+from ...message import DataBlock
 from ...rag import ApproxTokenChunker
 
 if TYPE_CHECKING:
@@ -479,6 +480,28 @@ class IndexWorker:
             user_id,
             knowledge_base_id,
         )
+        if (
+            any(isinstance(chunk.content, DataBlock) for chunk in chunks)
+            and not knowledge.embedding_model.supports_multimodal
+        ):
+            text_chunks = [
+                chunk for chunk in chunks
+                if not isinstance(chunk.content, DataBlock)
+            ]
+            if not text_chunks:
+                raise ValueError(
+                    "This document requires a multimodal embedding model "
+                    "because it has no indexable text.",
+                )
+            chunks = [
+                chunk.model_copy(
+                    update={
+                        "chunk_index": index,
+                        "total_chunks": len(text_chunks),
+                    },
+                )
+                for index, chunk in enumerate(text_chunks)
+            ]
         # A retry re-runs the whole pipeline. Records are keyed by
         # (document_id, chunk_index), so re-inserting overwrites in
         # place — but a re-parse that yields fewer chunks would leave
