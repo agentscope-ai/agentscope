@@ -600,13 +600,23 @@ async def update_session(
             detail=exc.errors(),
         ) from exc
 
-    return await storage.upsert_session(
-        user_id=user_id,
-        agent_id=agent_id,
-        config=updated_config,
-        state=updated_state,
-        session_id=session_id,
-    )
+    try:
+        return await storage.upsert_session(
+            user_id=user_id,
+            agent_id=agent_id,
+            config=updated_config,
+            state=updated_state,
+            session_id=session_id,
+            create_if_missing=False,
+        )
+    except KeyError as exc:
+        # Deleted between the read above and this write: the DELETE
+        # already won, so report the session as gone rather than
+        # recreating it.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        ) from exc
 
 
 # ----------------------------------------------------------------------

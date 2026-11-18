@@ -116,6 +116,7 @@ class _Storage:
         self,
         record: ChannelRecord,
         platform_bot_id: str,  # pylint: disable=unused-argument
+        create_if_missing: bool = True,  # pylint: disable=unused-argument
     ) -> str:
         """Round-trip the record through the storage serialization format."""
         self.record = ChannelRecord.model_validate_json(
@@ -342,7 +343,11 @@ class ChannelUpdateTest(IsolatedAsyncioTestCase):
                 self.assertEqual(updated.model_dump(), expected)
                 stored = await self.storage.get_channel(self.record.id)
                 self.assertEqual(stored.model_dump(), expected)
-                self.write.assert_awaited_with(updated, "bot-1")
+                self.write.assert_awaited_with(
+                    updated,
+                    "bot-1",
+                    create_if_missing=False,
+                )
                 self.publish.assert_awaited_with(
                     MessageBusKeys.channel_lifecycle(),
                     {"channel_id": self.record.id},

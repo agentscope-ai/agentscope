@@ -380,6 +380,7 @@ class StorageBase(ABC):
         source_chat_id: str | None = None,
         source_chat_name: str | None = None,
         source_channel_id: str | None = None,
+        create_if_missing: bool = True,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -402,6 +403,10 @@ class StorageBase(ABC):
                 the flat shape ``origin`` replaced. Passing any of them
                 still builds the matching origin, so callers written
                 against the old signature keep working.
+            create_if_missing (`bool`, optional): When ``False`` and
+                *session_id* is given, the call is a strict update — a
+                session deleted since it was read is not recreated, and
+                `KeyError` is raised.
 
         Returns:
             `SessionRecord`: The created or updated record.
@@ -543,12 +548,16 @@ class StorageBase(ABC):
         self,
         user_id: str,
         record: ScheduleRecord,
+        create_if_missing: bool = True,
     ) -> str:
         """Persist a cron task record and register it in the user's index.
 
         Args:
             user_id (`str`): The owner user id.
             record (`ScheduleRecord`): The fully-populated record to store.
+            create_if_missing (`bool`, optional): When ``False`` the call
+                is a strict update — a schedule deleted since it was
+                read is not recreated, and `KeyError` is raised.
 
         Returns:
             `str`: The id of the stored record.
@@ -625,6 +634,7 @@ class StorageBase(ABC):
         self,
         record: ChannelRecord,
         platform_bot_id: str,
+        create_if_missing: bool = True,
     ) -> str:
         """Persist a channel record and refresh its indexes.
 
@@ -637,6 +647,9 @@ class StorageBase(ABC):
             record (`ChannelRecord`): The channel record to store.
             platform_bot_id (`str`): The platform-side bot identifier,
                 used to maintain the dedup index.
+            create_if_missing (`bool`, optional): When ``False`` the call
+                is a strict update — a channel deleted since it was read
+                is not recreated, and `KeyError` is raised.
 
         Returns:
             `str`: The id of the stored record.

@@ -131,7 +131,20 @@ class ChannelService:
             updated.channel_type,
             updated.credentials,
         )
-        await self._storage.upsert_channel(updated, bot_id)
+        try:
+            await self._storage.upsert_channel(
+                updated,
+                bot_id,
+                create_if_missing=False,
+            )
+        except KeyError as exc:
+            # Deleted between ``_require`` above and this write: the
+            # DELETE already won, so report the channel as gone rather
+            # than restoring it.
+            raise ChannelError(
+                f"Channel '{channel_id}' not found.",
+                404,
+            ) from exc
         await self._notify(channel_id)
         return updated
 
