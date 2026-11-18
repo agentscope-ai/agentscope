@@ -82,6 +82,7 @@ from ...event import (
     ReplyStartEvent,
     ReplyEndEvent,
     ReplyFinishedReason,
+    EventType,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
     UserInterruptEvent,
@@ -93,6 +94,7 @@ from ...permission import AdditionalWorkingDirectory
 
 if TYPE_CHECKING:
     from ..channel import ChannelClients
+    from ..channel._stream import _ReplyStream
 
 
 _CHECKPOINT_LOCK_TTL_SECS = (
@@ -711,7 +713,7 @@ class ChatService:
         error: Exception,
         team_ctx: "_TeamContext | None" = None,
         worker_name: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Tell the client about a failure that reached no reply.
 
         The caller is responsible for holding the session lock: these
@@ -745,7 +747,11 @@ class ChatService:
             worker_name (`str | None`, optional):
                 Display name used in that notification. Defaults to
                 ``agent_id`` when the agent record never loaded.
+
+        Returns:
+            `bool`: Whether the failure's terminal event was published.
         """
+        terminal_published = False
         try:
             reply_id = _generate_id()
             start_event = ReplyStartEvent(
@@ -773,6 +779,7 @@ class ChatService:
                     session_id,
                     event.model_dump(mode="json"),
                 )
+            terminal_published = True
             async with self._message_bus.acquire_lock(
                 MessageBusKeys.session_event_checkpoint_lock(session_id),
                 ttl_secs=_CHECKPOINT_LOCK_TTL_SECS,
@@ -801,6 +808,7 @@ class ChatService:
             ReplyFinishedReason.ERROR,
             _classify_setup_error(error).message,
         )
+        return terminal_published
 
     async def interrupt(
         self,
@@ -1359,26 +1367,13 @@ class ChatService:
             # ----------------------------------------------------------------
             # 7. Run the agent (still under the session lock)
             # -----------------------------------------------------------------
-            # Channel-bound run: start streaming the reply back to the
-            # platform chat. Delivery is plain REST, so this node does it
-            # rather than handing the run to whichever one holds the
-            # channel's connection. Covers scheduled / background wakes,
-            # not just inbound channel messages.
-            if (
-                isinstance(session_record.origin, ChannelOrigin)
-                and self._channel_clients is not None
-            ):
-                await self._channel_clients.deliver(
-                    session_id=session_id,
-                    channel_id=session_record.origin.channel_id,
-                    chat_id=session_record.origin.chat_id,
-                    agent_id=agent_id,
-                )
             reply_msg: Msg | None = None
             active_reply_id: str | None = None
             reply_msgs: list[Msg] = []
             checkpoint_cursor: str | None = None
             released = False
+            delivery: _ReplyStream | None = None
+            delivery_terminal = False
 
             # Text of the user turn that opened this run, captured
             # before the loop reassigns ``input_msg``; auto-naming
@@ -1394,6 +1389,23 @@ class ChatService:
             await register_inbox_consumer(self._message_bus, session_id)
             try:
                 while True:
+                    delivery = None
+                    delivery_terminal = False
+                    # Subscribe for this turn before generating events. The
+                    # local cursor excludes earlier turns without advancing
+                    # the persisted state/checkpoint. Platform sends stay in
+                    # the channel runtime's ordered background tasks.
+                    if (
+                        isinstance(session_record.origin, ChannelOrigin)
+                        and self._channel_clients is not None
+                    ):
+                        delivery = await self._channel_clients.deliver(
+                            session_id=session_id,
+                            channel_id=session_record.origin.channel_id,
+                            chat_id=session_record.origin.chat_id,
+                            agent_id=agent_id,
+                            after=checkpoint_cursor,
+                        )
                     reply_msg = None
                     try:
                         if input_msg is None or isinstance(
@@ -1457,6 +1469,11 @@ class ChatService:
                                             session_id,
                                             event.model_dump(mode="json"),
                                         )
+                                    )
+                                    delivery_terminal = event.type in (
+                                        EventType.REPLY_END,
+                                        EventType.REQUIRE_USER_CONFIRM,
+                                        EventType.REQUIRE_EXTERNAL_EXECUTION,
                                     )
                                     await self._project_event(
                                         user_id,
@@ -1578,6 +1595,11 @@ class ChatService:
                                             event.model_dump(mode="json"),
                                         )
                                     )
+                                    delivery_terminal = event.type in (
+                                        EventType.REPLY_END,
+                                        EventType.REQUIRE_USER_CONFIRM,
+                                        EventType.REQUIRE_EXTERNAL_EXECUTION,
+                                    )
                                     await self._project_event(
                                         user_id,
                                         session_record,
@@ -1599,7 +1621,7 @@ class ChatService:
                         if reply_msg is None:
                             # Failed before REPLY_START: nothing to close, so a
                             # fresh reply carries the failure instead.
-                            await self._report_failure(
+                            delivery_terminal = await self._report_failure(
                                 user_id,
                                 session_id,
                                 agent_id,
@@ -1615,6 +1637,7 @@ class ChatService:
                             )
                             if failure_cursor is not None:
                                 checkpoint_cursor = failure_cursor
+                                delivery_terminal = True
 
                         # A failed turn stops the run; whatever is still
                         # queued is handed to a fresh one by the
@@ -1645,6 +1668,9 @@ class ChatService:
                     input_msg = None
 
             finally:
+                if delivery is not None and not delivery_terminal:
+                    delivery.abort()
+
                 # An interrupt unwinds past the loop's own exit check, so
                 # the run may still be registered as the inbox consumer.
                 # Hand the registration back and wake the session when

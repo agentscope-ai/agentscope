@@ -33,7 +33,6 @@ delivers, and that node may well have no dispatcher — this is what it
 has instead.
 """
 import asyncio
-from contextlib import aclosing
 from types import TracebackType
 
 from ..._logging import logger
@@ -41,7 +40,7 @@ from ..message_bus import MessageBus
 from ..storage import StorageBase
 from ._base import ChannelBase, ChannelEvent
 from ._registry import ChannelTypeRegistry
-from ._stream import open_reply_stream
+from ._stream import _ReplyStream, open_reply_stream
 
 
 class ChannelClients:
@@ -68,6 +67,8 @@ class ChannelClients:
         self._cache: dict[str, tuple[str, ChannelBase]] = {}
         self._retired: list[ChannelBase] = []
         self._deliveries: set[asyncio.Task] = set()
+        self._streams: dict[asyncio.Task, _ReplyStream] = {}
+        self._send_tails: dict[str, asyncio.Task] = {}
 
     async def __aenter__(self) -> "ChannelClients":
         """Enter the factory's lifecycle; nothing is built up front."""
@@ -84,9 +85,13 @@ class ChannelClients:
         Deliveries go first: they are what borrows the instances, so
         nothing is using one by the time it is closed.
         """
-        for task in list(self._deliveries):
-            task.cancel()
-        await asyncio.gather(*self._deliveries, return_exceptions=True)
+        streams = list(self._streams.values())
+        tasks = list(self._deliveries)
+        for task in tasks:
+            if not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*(stream.aclose() for stream in streams))
         for channel_id in list(self._cache):
             self._retire(channel_id)
         for channel in self._retired:
@@ -161,8 +166,9 @@ class ChannelClients:
         channel_id: str,
         chat_id: str,
         agent_id: str,
-    ) -> None:
-        """Start streaming a run's reply back to its platform chat.
+        after: str | None = None,
+    ) -> _ReplyStream | None:
+        """Start streaming one reply segment back to its platform chat.
 
         Returns as soon as the delivery is under way — the caller is
         mid-run and must not wait on the platform. The task is held here
@@ -175,6 +181,12 @@ class ChannelClients:
             chat_id (`str`): The platform chat to deliver into.
             agent_id (`str`): The agent that owns the session; pinned on
                 a confirmation card so a click resumes this exact run.
+            after (`str | None`): Exclusive turn-local replay cursor; defaults
+                to the persisted session checkpoint.
+
+        Returns:
+            `_ReplyStream | None`: The prepared reader, or ``None`` if setup
+            failed. The producer can abort it if no terminal is published.
         """
         channel = await self.get(channel_id)
         if channel is None:
@@ -184,7 +196,7 @@ class ChannelClients:
                 channel_id,
                 session_id,
             )
-            return
+            return None
 
         # Synthetic send target — a background run has no inbound
         # message. Carries the run's identity so a confirmation card can
@@ -200,20 +212,28 @@ class ChannelClients:
         # agent, and this lets the stream distinguish the retained prior
         # run from events that belong to the new reply.
         try:
-            events = await open_reply_stream(self._bus, session_id)
+            events = await open_reply_stream(
+                self._bus,
+                session_id,
+                after=after,
+            )
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "channel '%s' could not read the reply for session '%s'",
                 channel_id,
                 session_id,
             )
-            return
+            return None
+
+        predecessor = self._send_tails.get(session_id)
 
         async def _run() -> None:
-            """Feed the run's event stream to the channel."""
+            """Feed this reply segment's event stream to the channel."""
             try:
-                async with aclosing(events):
-                    await channel.send_response(target, events)
+                if predecessor is not None:
+                    # Cancelling a queued send must not cancel its predecessor.
+                    await asyncio.shield(predecessor)
+                await channel.send_response(target, events)
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
                     "channel '%s' failed to deliver the reply for "
@@ -222,9 +242,37 @@ class ChannelClients:
                     session_id,
                 )
 
+            finally:
+                await events.aclose()
+
         task = asyncio.create_task(
             _run(),
             name=f"channel-deliver:{session_id}",
         )
         self._deliveries.add(task)
-        task.add_done_callback(self._deliveries.discard)
+        self._streams[task] = events
+        self._send_tails[session_id] = task
+
+        def finished(done: asyncio.Task) -> None:
+            """Release a completed send and retain unfinished cleanup.
+
+            Args:
+                done (`asyncio.Task`): The completed delivery task.
+            """
+            # A task cancelled before its first execution never runs finally.
+            events.cancel()
+            if events.subscription.done():
+                self._streams.pop(done, None)
+            else:
+                events.subscription.add_done_callback(
+                    lambda _: self._streams.pop(done, None),
+                )
+            self._deliveries.discard(done)
+            if self._send_tails.get(session_id) is done:
+                if predecessor is not None and not predecessor.done():
+                    self._send_tails[session_id] = predecessor
+                else:
+                    self._send_tails.pop(session_id, None)
+
+        task.add_done_callback(finished)
+        return events
