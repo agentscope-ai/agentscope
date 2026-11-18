@@ -117,6 +117,9 @@ const MAX_PANELS_PER_COLUMN = 2;
 /** localStorage key holding the dock layout across page navigations. */
 const PANEL_LAYOUT_KEY = 'chat_panel_layout';
 
+/** localStorage key holding the preferred voice mode. */
+const VOICE_MODE_KEY = 'chat_voice_mode';
+
 // Typed as a full Record so adding a PanelKey without listing it here
 // is a compile error rather than a silently unrestorable panel.
 const KNOWN_PANELS: Record<PanelKey, true> = {
@@ -320,7 +323,20 @@ export function ChatViewport({ agentId, sessionId, onSessionsChanged }: ChatView
 
 	const realtimeVoice = useRealtimeVoice(agentId, sessionId);
 	const realtimeBusy = realtimeVoice.state === 'active' || realtimeVoice.state === 'connecting';
-	const [voiceMode, setVoiceMode] = useState<'realtime' | 'pipeline'>('realtime');
+	const [voiceMode, setVoiceMode] = useState<'realtime' | 'pipeline'>(() => {
+		try {
+			return localStorage.getItem(VOICE_MODE_KEY) === 'pipeline' ? 'pipeline' : 'realtime';
+		} catch {
+			return 'realtime';
+		}
+	});
+	useEffect(() => {
+		try {
+			localStorage.setItem(VOICE_MODE_KEY, voiceMode);
+		} catch {
+			// Keep mode switching available when browser storage is unavailable.
+		}
+	}, [voiceMode]);
 	const pipelineEventsRef = useRef<(event: AgentEvent) => boolean>(() => false);
 	const pipelineStopRef = useRef<() => void>(() => undefined);
 	const {
