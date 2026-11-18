@@ -142,6 +142,9 @@ class ChannelClients:
                 credentials=record.credentials,
                 config=record.platform_config,
             )
+            channel._bind_storage(  # pylint: disable=protected-access
+                self._storage,
+            )
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "channel client '%s' could not be built",
