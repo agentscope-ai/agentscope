@@ -571,17 +571,14 @@ async def chat(
             request.session_id,
         )
         try:
-            voice_options = {}
+            chat_config = None
+            tts_config = None
             if request.mode == "pipeline_voice":
                 chat_config, tts_config = await chat_service.pipeline_snapshot(
                     user_id,
                     request.session_id,
                     request.agent_id,
                 )
-                voice_options = {
-                    "pipeline_chat_config": chat_config,
-                    "pipeline_tts_config": tts_config,
-                }
             item = await enqueue_chat_input(
                 message_bus,
                 user_id=user_id,
@@ -595,7 +592,8 @@ async def chat(
                     if request.submission_id is not None
                     else None
                 ),
-                **voice_options,
+                pipeline_chat_config=chat_config,
+                pipeline_tts_config=tts_config,
             )
         except (ChatSubmissionConflictError, LookupError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
