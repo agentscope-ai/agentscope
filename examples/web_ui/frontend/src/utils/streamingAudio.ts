@@ -68,7 +68,7 @@ interface WavHeader {
  * Parse a minimal RIFF/WAVE header. Returns ``null`` if the buffer doesn't
  * yet contain enough bytes to locate the ``fmt `` and ``data`` chunks.
  */
-function parseWavHeader(bytes: Bytes): WavHeader | null {
+export function parseWavHeader(bytes: Bytes): WavHeader | null {
 	if (bytes.length < 44) return null;
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	// "RIFF"...."WAVE"
@@ -107,7 +107,11 @@ function parseWavHeader(bytes: Bytes): WavHeader | null {
  * Convert raw little-endian PCM into a Float32 AudioBuffer.
  * Supports 16-bit and 8-bit; falls back to silence for other depths.
  */
-function pcmToAudioBuffer(ctx: AudioContext, pcm: Bytes, header: WavHeader): AudioBuffer | null {
+export function pcmToAudioBuffer(
+	ctx: AudioContext,
+	pcm: Bytes,
+	header: WavHeader,
+): AudioBuffer | null {
 	const { channels, bitsPerSample, sampleRate } = header;
 	const bytesPerSample = bitsPerSample / 8;
 	const frameSize = bytesPerSample * channels;
@@ -227,6 +231,7 @@ interface Session {
 	livePlayer: WavStreamPlayer | null;
 	/** True if a live player was created at start — survives dispose. */
 	hadLivePlayer: boolean;
+	autoplayElement: HTMLAudioElement | null;
 	state: StreamingAudioState;
 }
 
@@ -270,6 +275,7 @@ export class StreamingAudioManager {
 			totalBytes: 0,
 			livePlayer,
 			hadLivePlayer: livePlayer !== null,
+			autoplayElement: null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
 		});
 		this.emit(blockId);
@@ -331,6 +337,7 @@ export class StreamingAudioManager {
 			// browsers gate this behind a user gesture; if blocked, the user
 			// can still hit play on the <audio controls> element.
 			const el = new Audio(url);
+			session.autoplayElement = el;
 			void el.play().catch(() => undefined);
 		}
 	}
@@ -358,6 +365,8 @@ export class StreamingAudioManager {
 	 */
 	stopAllPlayback(): void {
 		for (const [blockId, session] of this.sessions) {
+			session.autoplayElement?.pause();
+			session.autoplayElement = null;
 			if (session.livePlayer) {
 				session.livePlayer.dispose();
 				session.livePlayer = null;
@@ -374,6 +383,7 @@ export class StreamingAudioManager {
 	dispose(blockId: string): void {
 		const session = this.sessions.get(blockId);
 		if (!session) return;
+		session.autoplayElement?.pause();
 		session.livePlayer?.dispose();
 		if (session.state.url) URL.revokeObjectURL(session.state.url);
 		this.sessions.delete(blockId);

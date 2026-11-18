@@ -563,6 +563,36 @@
 		"clear": "清除选择",
 		"noFallback": "无兜底模型"
 	},
+	"pipelineVoice": {
+		"selectASR": "选择识别模型",
+		"selectTTS": "选择语音模型",
+		"modelSettings": "模型设置",
+		"followChat": "跟随聊天模型",
+		"followingModel": "当前跟随：{{model}}。修改 LLM 参数后将使用独立语音配置。",
+		"llm": "组合语音 LLM",
+		"parameters": "组合语音参数",
+		"models": "组合语音模型",
+		"mode": "语音模式",
+		"realtime": "原生实时语音",
+		"pipeline": "组合语音",
+		"unsupportedPCM": "组合语音暂不支持裸 PCM，请在模型设置中将 TTS 输出格式改为 WAV 或 MP3。",
+		"configure": "请在“模型设置”中配置 ASR、LLM 和 TTS。LLM 可跟随聊天模型。",
+		"description": "说完后自动发送，播报结束后继续聆听。可随时手动结束语音。",
+		"busy": "请等待当前回复和队列结束，并完成待确认操作。",
+		"failed": "组合语音已停止",
+		"disconnected": "会话连接已断开，组合语音已停止。",
+		"states": {
+			"idle": "ASR + Chat + TTS",
+			"connecting": "正在准备麦克风和语音识别…",
+			"listening": "正在聆听",
+			"transcribing": "正在识别…",
+			"thinking": "正在思考…",
+			"speaking": "正在播报",
+			"awaiting_confirmation": "请在下方完成确认操作",
+			"stopping": "正在结束语音，等待本轮结束确认…",
+			"error": "语音已停止，可重试"
+		}
+	},
 	"realtime": {
 		"selectModel": "语音模型",
 		"parameters": "实时语音参数",

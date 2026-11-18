@@ -563,6 +563,36 @@
 		"clear": "Clear selection",
 		"noFallback": "No fallback"
 	},
+	"pipelineVoice": {
+		"selectASR": "Select ASR model",
+		"selectTTS": "Select TTS model",
+		"modelSettings": "Model settings",
+		"followChat": "Follow chat model",
+		"followingModel": "Following: {{model}}. Editing LLM parameters creates a separate voice configuration.",
+		"llm": "Pipeline voice LLM",
+		"parameters": "Pipeline voice parameters",
+		"models": "Pipeline voice models",
+		"mode": "Voice mode",
+		"realtime": "Native realtime voice",
+		"pipeline": "Pipeline voice",
+		"unsupportedPCM": "Pipeline voice does not support raw PCM. Change the TTS output format to WAV or MP3 in model settings.",
+		"configure": "Configure ASR, LLM and TTS in Model settings. LLM can follow the chat model.",
+		"description": "Speech is sent automatically. Listening resumes after playback. End voice at any time to interrupt.",
+		"busy": "Wait for replies and queued turns to finish, and complete pending confirmations.",
+		"failed": "Pipeline voice stopped",
+		"disconnected": "The session disconnected. Pipeline voice has stopped.",
+		"states": {
+			"idle": "ASR + Chat + TTS",
+			"connecting": "Preparing microphone and recognition…",
+			"listening": "Listening",
+			"transcribing": "Transcribing…",
+			"thinking": "Thinking…",
+			"speaking": "Speaking",
+			"awaiting_confirmation": "Complete the confirmation below",
+			"stopping": "Ending voice, waiting for turn completion…",
+			"error": "Voice stopped. You can retry."
+		}
+	},
 	"realtime": {
 		"selectModel": "Voice model",
 		"parameters": "Realtime voice parameters",

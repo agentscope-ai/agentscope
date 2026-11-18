@@ -73,7 +73,7 @@ export class BrowserRealtimeASRTransport {
 			}
 		};
 
-		return ready;
+		return this.withTimeout(ready, 20_000);
 	}
 
 	sendAudio(audio: ArrayBuffer): void {
@@ -90,7 +90,7 @@ export class BrowserRealtimeASRTransport {
 			this.finalReject = reject;
 		});
 		this.socket.send(JSON.stringify({ type: 'stop' }));
-		return final;
+		return this.withTimeout(final, 35_000);
 	}
 
 	close(): void {
@@ -147,5 +147,17 @@ export class BrowserRealtimeASRTransport {
 		this.readyReject = null;
 		this.finalResolve = null;
 		this.finalReject = null;
+	}
+
+	private async withTimeout(pending: Promise<void>, timeoutMs: number): Promise<void> {
+		const timer = window.setTimeout(
+			() => this.fail(new Error('Speech recognition timed out.')),
+			timeoutMs,
+		);
+		try {
+			await pending;
+		} finally {
+			window.clearTimeout(timer);
+		}
 	}
 }

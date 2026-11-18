@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from time import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncGenerator, TYPE_CHECKING, Literal
@@ -32,10 +33,18 @@ from ..event import CustomEvent
 from ..middleware import SteeringAcknowledgementUncertainError
 from .message_bus._keys import MessageBusKeys
 from ._chat_input_store import (
+    get_submission,
+    is_input_cancelled,
     cleanup_session,
     discard_input,
     decode_input,
     queue_entry,
+)
+from ._chat_receipts import (
+    cancellation_receipt,
+    receipt_capacity,
+    receipt_count,
+    track_receipts,
 )
 
 if TYPE_CHECKING:
@@ -44,6 +53,7 @@ if TYPE_CHECKING:
         ClientExternalToolDefinition,
     )
     from .message_bus._base import MessageBus
+    from .storage import ChatModelSnapshot, TTSModelConfig
 
     from agentscope.event import (
         ExternalExecutionResultEvent,
@@ -58,6 +68,10 @@ if TYPE_CHECKING:
 
 class ChatQueueFullError(RuntimeError):
     """Raised when a session has reached its pending-turn limit."""
+
+
+class ChatSubmissionConflictError(RuntimeError):
+    """Raised when a submission identity was already used or cancelled."""
 
 
 class ChatQueueBusyError(RuntimeError):
@@ -327,6 +341,38 @@ async def nudge_chat_inputs(
         logger.exception("Failed to nudge queued inputs for %s.", session_id)
 
 
+async def create_chat_submission(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+) -> dict:
+    """Issue a single-use lease before the client can send its chat POST."""
+    async with _chat_input_user_quota(bus, user_id):
+        async with chat_input_mutation(bus, session_id):
+            if not await receipt_capacity(bus, user_id, session_id, slots=2):
+                if await receipt_count(bus, session_id):
+                    await track_receipts(bus, user_id, session_id, agent_id)
+                raise ChatQueueFullError("Voice receipt quota is full.")
+            await track_receipts(bus, user_id, session_id, agent_id)
+            submission_id = str(uuid.uuid4())
+            expires_at = time() + MessageBusKeys.CHAT_SUBMISSION_LEASE_SECS
+            await bus.registry_set(
+                MessageBusKeys.chat_submissions(session_id),
+                submission_id,
+                json.dumps(
+                    {
+                        "user_id": user_id,
+                        "agent_id": agent_id,
+                        "state": "reserved",
+                        "queue_item_id": None,
+                        "expires_at": expires_at,
+                    },
+                ),
+            )
+            return {"submission_id": submission_id, "expires_at": expires_at}
+
+
 async def enqueue_chat_input(
     bus: "MessageBus",
     user_id: str,
@@ -336,6 +382,9 @@ async def enqueue_chat_input(
     *,
     client_external_tools: list[ClientExternalToolDefinition] | None = None,
     client_builtin_tools: list[ClientBuiltinToolName] | None = None,
+    pipeline_tts_config: TTSModelConfig | None = None,
+    pipeline_chat_config: ChatModelSnapshot | None = None,
+    submission_id: str | None = None,
 ) -> dict:
     """Append an ordinary user turn to a session FIFO and wake its pump.
 
@@ -361,6 +410,12 @@ async def enqueue_chat_input(
             Client tool definitions scoped to this queued turn.
         client_builtin_tools:
             Native external tool names supported by this turn's client.
+        pipeline_tts_config:
+            Server-resolved speech configuration for a pipeline voice turn.
+        pipeline_chat_config:
+            Server-resolved language models for the same turn.
+        submission_id:
+            Optional client identity that fences delayed voice submissions.
 
     Returns:
         `dict`:
@@ -392,8 +447,18 @@ async def enqueue_chat_input(
         item["client_external_tools"] = [
             tool.model_dump(mode="json") for tool in client_external_tools
         ]
+    if submission_id is not None:
+        item["submission_id"] = submission_id
     if client_builtin_tools:
         item["client_builtin_tools"] = client_builtin_tools
+    if pipeline_tts_config is not None:
+        item["pipeline_tts_config"] = pipeline_tts_config.model_dump(
+            mode="json",
+        )
+    if pipeline_chat_config is not None:
+        item["pipeline_chat_config"] = pipeline_chat_config.model_dump(
+            mode="json",
+        )
     async with _chat_input_user_quota(bus, user_id):
         if (
             await _count_user_chat_inputs(bus, user_id)
@@ -404,6 +469,32 @@ async def enqueue_chat_input(
                 "to finish or remove one before sending another.",
             )
         async with chat_input_mutation(bus, session_id):
+            submission = None
+            if submission_id is not None:
+                submission = await get_submission(
+                    bus,
+                    session_id,
+                    submission_id,
+                    user_id,
+                    agent_id,
+                )
+                if (
+                    submission is None
+                    or submission["state"] != "reserved"
+                    or submission["expires_at"] <= time()
+                ):
+                    raise ChatSubmissionConflictError(
+                        "Submission is unknown, expired, used or cancelled.",
+                    )
+            if submission is None and not await receipt_capacity(
+                bus,
+                user_id,
+                session_id,
+            ):
+                if await receipt_count(bus, session_id):
+                    await track_receipts(bus, user_id, session_id, agent_id)
+                raise ChatQueueFullError("Chat receipt quota is full.")
+            await track_receipts(bus, user_id, session_id, agent_id)
             existing = await bus.queue_read(
                 MessageBusKeys.chat_inputs(session_id),
                 max_count=MessageBusKeys.CHAT_INPUT_MAX_LEN,
@@ -417,21 +508,26 @@ async def enqueue_chat_input(
             # operations recovery sees a harmless stale marker and removes it;
             # the inverse order could leave an unindexed queue permanently
             # stranded after a lost trigger.
-            await bus.registry_set(
-                MessageBusKeys.chat_input_pending_registry(),
-                session_id,
-                json.dumps(
+            if submission_id is not None and submission is not None:
+                submission.update(
                     {
-                        "user_id": user_id,
-                        "agent_id": agent_id,
+                        "queue_item_id": item["id"],
+                        "state": "queued",
+                        "message_ids": [
+                            m["id"]
+                            for m in (
+                                serialized
+                                if isinstance(serialized, list)
+                                else [serialized]
+                            )
+                        ],
                     },
-                ),
-            )
-            await bus.registry_set(
-                MessageBusKeys.chat_input_user_sessions(user_id),
-                session_id,
-                agent_id,
-            )
+                )
+                await bus.registry_set(
+                    MessageBusKeys.chat_submissions(session_id),
+                    submission_id,
+                    json.dumps(submission),
+                )
             item["input_ref"] = item["id"]
             await bus.registry_set(
                 MessageBusKeys.chat_input_payloads(session_id),
@@ -463,6 +559,81 @@ async def enqueue_chat_input(
             item["id"],
         )
     return _public_chat_input(item)
+
+
+async def cancel_chat_submission(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    submission_id: str,
+) -> dict:
+    """Fence delayed submissions and cancel initialization of claimed ones.
+
+    The fence and queue cancellation receipt precede acknowledgement.
+    A durable claim or retained claimed marker forbids claiming success
+    from an empty queue, even after execution has left that queue.
+    Claimed inputs record cancellation intent before a targeted broadcast;
+    only the worker's terminal receipt confirms initialization has stopped.
+    """
+    async with chat_input_mutation(bus, session_id):
+        record = await get_submission(
+            bus,
+            session_id,
+            submission_id,
+            user_id,
+            agent_id,
+        )
+        if record is None:
+            # Only issued leases may submit, including after collection.
+            return {"state": "cancelled", "queue_item_id": None}
+        await track_receipts(bus, user_id, session_id, agent_id)
+        item_id = record["queue_item_id"]
+        if record["state"] == "finished":
+            return {"state": "cancelled", "queue_item_id": item_id}
+        raw_claim = await bus.registry_get(
+            MessageBusKeys.chat_input_claim(session_id),
+            "claim",
+        )
+        claimed = raw_claim is not None and (
+            json.loads(raw_claim)["payload"]["id"] == item_id
+        )
+        started = record["state"] == "claimed" or claimed
+        if started:
+            record["cancel_requested"] = True
+        elif item_id is not None and not await is_input_cancelled(
+            bus,
+            session_id,
+            item_id,
+            user_id,
+            agent_id,
+        ):
+            # The consumer honors this receipt if deletion fails midway.
+            await bus.registry_set(
+                MessageBusKeys.chat_input_cancellations(session_id),
+                item_id,
+                cancellation_receipt(user_id, agent_id),
+            )
+        if not started:
+            record["state"] = "cancelled"
+            record.setdefault(
+                "retire_at",
+                time() + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS,
+            )
+        await bus.registry_set(
+            MessageBusKeys.chat_submissions(session_id),
+            submission_id,
+            json.dumps(record),
+        )
+    if started:
+        await bus.publish(
+            MessageBusKeys.session_interrupt_channel(),
+            {"session_id": session_id, "queue_item_id": item_id},
+        )
+        return {"state": "started", "queue_item_id": item_id}
+    if item_id is not None:
+        await delete_chat_input(bus, user_id, session_id, agent_id, item_id)
+    return {"state": "cancelled", "queue_item_id": item_id}
 
 
 async def list_chat_inputs(
@@ -576,6 +747,18 @@ async def steer_chat_input(
             item_id,
         )
         item_state = item.get("state", "queued")
+        if await is_input_cancelled(
+            bus,
+            session_id,
+            item_id,
+            user_id,
+            agent_id,
+        ):
+            raise LookupError(f"Queued message '{item_id}' was cancelled.")
+        if item.get("pipeline_tts_config") is not None:
+            raise ChatSteeringUnavailableError(
+                "Pipeline voice inputs must execute as separate turns.",
+            )
         target_reply_id = item.get("target_reply_id")
         if item_state == "steering":
             if target_reply_id != reply_id:
@@ -882,6 +1065,31 @@ async def update_chat_input(
                 f"Queued message '{item_id}' is currently steering.",
             )
         previous = dict(item)
+        if (
+            item.get("submission_id")
+            or item.get("pipeline_tts_config") is not None
+        ):
+            old_input = item["input"]
+            old_messages = (
+                old_input if isinstance(old_input, list) else [old_input]
+            )
+            new_messages = (
+                serialized if isinstance(serialized, list) else [serialized]
+            )
+            if [msg["id"] for msg in old_messages] != [
+                msg["id"] for msg in new_messages
+            ]:
+                raise LookupError(
+                    "Voice queue edits must preserve message identities.",
+                )
+        if await is_input_cancelled(
+            bus,
+            session_id,
+            item_id,
+            user_id,
+            agent_id,
+        ):
+            raise LookupError(f"Queued message '{item_id}' was cancelled.")
         item["input"] = serialized
         item["state"] = "queued"
         item.pop("target_reply_id", None)
@@ -910,7 +1118,11 @@ async def delete_chat_input(
     agent_id: str,
     item_id: str,
 ) -> list[dict]:
-    """Delete one still-pending turn and return the updated queue.
+    """Cancel a pending turn, or acknowledge its recorded cancellation.
+
+    Write the receipt under the claim mutex before removing the input.
+    The queue consumer honors it if a crash leaves the item in the FIFO.
+    Repeated deletion succeeds only for this owner's exact queue identity.
 
     Args:
         bus (`MessageBus`):
@@ -936,23 +1148,43 @@ async def delete_chat_input(
     """
     async with chat_input_mutation(bus, session_id):
         payloads = await _read_chat_input_payloads(bus, session_id)
-        item = _owned_chat_input(
-            payloads,
-            user_id,
+        if await is_input_cancelled(
+            bus,
             session_id,
-            agent_id,
             item_id,
-        )
-        if item.get("state", "queued") == "steering":
-            raise LookupError(
-                f"Queued message '{item_id}' is currently steering.",
+            user_id,
+            agent_id,
+        ):
+            await track_receipts(bus, user_id, session_id, agent_id)
+            item = next(
+                (item for item in payloads if item["id"] == item_id),
+                None,
             )
-        payloads.remove(item)
-        await bus.queue_replace(
-            MessageBusKeys.chat_inputs(session_id),
-            [queue_entry(payload) for payload in payloads],
-        )
-        await discard_input(bus, item)
+        else:
+            item = _owned_chat_input(
+                payloads,
+                user_id,
+                session_id,
+                agent_id,
+                item_id,
+            )
+            if item.get("state", "queued") == "steering":
+                raise LookupError(
+                    f"Queued message '{item_id}' is currently steering.",
+                )
+            await track_receipts(bus, user_id, session_id, agent_id)
+            await bus.registry_set(
+                MessageBusKeys.chat_input_cancellations(session_id),
+                item_id,
+                cancellation_receipt(user_id, agent_id),
+            )
+        if item is not None:
+            payloads.remove(item)
+            await bus.queue_replace(
+                MessageBusKeys.chat_inputs(session_id),
+                [queue_entry(payload) for payload in payloads],
+            )
+            await discard_input(bus, item)
         items = await _notify_chat_queue_changed(bus, session_id, payloads)
 
     if items:

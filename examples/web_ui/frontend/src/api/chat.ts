@@ -1,6 +1,6 @@
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
-import { client } from './client';
+import { client, type ApiRequestOptions } from './client';
 import type { ChatRequest } from './types';
 import {
 	getEnabledClientBuiltinTools,
@@ -33,6 +33,25 @@ export interface ChatQueueResponse {
  * response body of this POST.
  */
 export const chatApi = {
+	createSubmission: (agentId: string, sessionId: string, options?: ApiRequestOptions) =>
+		client.post<{ submission_id: string; expires_at: number }>(
+			'/chat/submissions',
+			null,
+			{ agent_id: agentId, session_id: sessionId },
+			options,
+		),
+	cancelSubmission: (
+		submissionId: string,
+		agentId: string,
+		sessionId: string,
+		options?: ApiRequestOptions,
+	) =>
+		client.post<{ state: 'cancelled' | 'started'; queue_item_id: string | null }>(
+			`/chat/submissions/${encodeURIComponent(submissionId)}/cancel`,
+			null,
+			{ agent_id: agentId, session_id: sessionId },
+			options,
+		),
 	/**
 	 * Trigger a chat run for the specified session.
 	 *
@@ -44,20 +63,25 @@ export const chatApi = {
 	 * @param body - The chat request payload.
 	 * @returns Acceptance status (``queued`` for ordinary user turns).
 	 */
-	trigger: (body: ChatRequest) =>
+	trigger: (body: ChatRequest, options?: ApiRequestOptions) =>
 		client.post<{
 			status: 'started' | 'queued';
 			session_id: string;
 			queue_item_id: string | null;
-		}>('/chat/', {
-			...body,
-			client_builtin_tools:
-				body.client_builtin_tools ??
-				getEnabledClientBuiltinTools(body.agent_id, body.session_id),
-			client_external_tools:
-				body.client_external_tools ??
-				getEnabledClientExternalToolDefinitions(body.agent_id, body.session_id),
-		}),
+		}>(
+			'/chat/',
+			{
+				...body,
+				client_builtin_tools:
+					body.client_builtin_tools ??
+					getEnabledClientBuiltinTools(body.agent_id, body.session_id),
+				client_external_tools:
+					body.client_external_tools ??
+					getEnabledClientExternalToolDefinitions(body.agent_id, body.session_id),
+			},
+			undefined,
+			options,
+		),
 
 	/**
 	 * Read the complete editable pending queue.
@@ -67,14 +91,14 @@ export const chatApi = {
 	 * @param silent - Suppress global error notifications for repair polling.
 	 * @returns Current pending items in FIFO order.
 	 */
-	queue: (agentId: string, sessionId: string, silent = false) =>
+	queue: (agentId: string, sessionId: string, silent = false, options?: ApiRequestOptions) =>
 		client.get<ChatQueueResponse>(
 			'/chat/queue',
 			{
 				agent_id: agentId,
 				session_id: sessionId,
 			},
-			{ silent },
+			{ silent, ...options },
 		),
 
 	/**
@@ -97,11 +121,17 @@ export const chatApi = {
 	 * @param sessionId - Session whose item should be deleted.
 	 * @returns Complete queue snapshot after deletion.
 	 */
-	deleteQueued: (itemId: string, agentId: string, sessionId: string) =>
-		client.delete<ChatQueueResponse>(`/chat/queue/${encodeURIComponent(itemId)}`, {
-			agent_id: agentId,
-			session_id: sessionId,
-		}),
+	deleteQueued: (
+		itemId: string,
+		agentId: string,
+		sessionId: string,
+		options?: ApiRequestOptions,
+	) =>
+		client.delete<ChatQueueResponse>(
+			`/chat/queue/${encodeURIComponent(itemId)}`,
+			{ agent_id: agentId, session_id: sessionId },
+			options,
+		),
 
 	/**
 	 * Reserve one pending item for the reply that is currently active.

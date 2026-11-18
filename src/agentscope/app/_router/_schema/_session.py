@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from ....permission import PermissionMode
 from ...storage import (
     ASRModelConfig,
+    PipelineVoiceConfig,
     ChatModelConfig,
     RealtimeModelConfig,
     SessionKnowledgeConfig,
@@ -59,6 +60,7 @@ class CreateSessionRequest(BaseModel):
     """Request body for creating a new session."""
 
     agent_id: str = Field(description="Agent this session belongs to.")
+    pipeline_voice_config: PipelineVoiceConfig | None = None
     workspace_id: str | None = Field(
         default=None,
         description=(
@@ -120,6 +122,11 @@ class UpdateSessionRequest(BaseModel):
     Omit any field to keep its current value.
     """
 
+    pipeline_voice_config: PipelineVoiceConfig | None = Field(
+        default=None,
+        description="Independent pipeline speech settings. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
     name: str | None = Field(
         default=None,
         description="New display name.",

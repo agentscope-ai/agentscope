@@ -675,6 +675,12 @@ class SessionService:
             MessageBusKeys.chat_input_inflight_registry(),
             session_id,
         )
+        await self._bus.registry_drop(
+            MessageBusKeys.chat_input_cancellations(session_id),
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.chat_submissions(session_id),
+        )
         await cleanup_session(self._bus, session_id)
         await self._bus.registry_drop(
             MessageBusKeys.inbox_consumer(session_id),

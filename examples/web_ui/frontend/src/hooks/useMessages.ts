@@ -108,6 +108,9 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
+		/** Observe events; return true when this consumer owns audio playback. */
+		onVoiceEvent?: (event: AgentEvent) => boolean;
+		onStreamClosed?: () => void;
 		/**
 		 * Called when a ``CUSTOM`` event with ``name="team_updated"``
 		 * arrives — the team membership has changed (TeamCreate /
@@ -173,6 +176,7 @@ export function useMessages(
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	const [streamConnected, setStreamConnected] = useState(false);
 	// Only a running reply accepts steering. Parked replies retain their
 	// streaming phase and currentReplyRef for confirmation and Stop.
 	const [activeReplyId, setActiveReplyId] = useState<string | null>(null);
@@ -230,6 +234,7 @@ export function useMessages(
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
+			const voiceOwnsAudio = optionsRef.current?.onVoiceEvent?.(event) ?? false;
 			// Custom events are service-layer notifications, not agent
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
@@ -415,7 +420,7 @@ export function useMessages(
 			// flow through `appendEvent` above (which builds up `source.data`
 			// in the Msg), but MessageBubble reads playback state from the
 			// manager so it can show progress and autoplay on completion.
-			if (audioManager) {
+			if (audioManager && !voiceOwnsAudio) {
 				if (event.type === EventType.DATA_BLOCK_START) {
 					const e = event as DataBlockStartEvent;
 					if (e.media_type.startsWith('audio/')) {
@@ -452,6 +457,7 @@ export function useMessages(
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
 		setLoadedKey(null);
+		setStreamConnected(false);
 		msgsRef.current = [];
 		currentReplyRef.current = null;
 		setMsgs([]);
@@ -533,12 +539,21 @@ export function useMessages(
 					agentId,
 					controller.signal,
 					eventCursor,
+					() => {
+						if (!cancelled) setStreamConnected(true);
+					},
 				)) {
 					if (cancelled) break;
 					processEvent(event);
 				}
+				if (!cancelled) {
+					setStreamConnected(false);
+					optionsRef.current?.onStreamClosed?.();
+				}
 			} catch (e) {
 				if ((e as Error).name !== 'AbortError' && !cancelled) {
+					setStreamConnected(false);
+					optionsRef.current?.onStreamClosed?.();
 					setError(e as Error);
 				}
 			}
@@ -560,10 +575,22 @@ export function useMessages(
 	 * @param content - The message content blocks.
 	 */
 	const send = useCallback(
-		async (content: ContentBlock[]) => {
+		async (
+			content: ContentBlock[],
+			observer?: {
+				submissionId?: string;
+				signal?: AbortSignal;
+				isCurrent?: () => boolean;
+				hasExecutionEvidence?: () => boolean;
+				submitted: (id: string) => void;
+				accepted: (id: string | null) => void;
+			},
+			mode: 'chat' | 'pipeline_voice' = 'chat',
+		) => {
 			if (!agentId || !sessionId || activeSessionRef.current !== session) return;
 
 			const userMsg = UserMsg({ name: 'user', content });
+			observer?.submitted(userMsg.id);
 			const showInConversationImmediately = phase === 'idle' && pendingQueueCount === 0;
 			if (showInConversationImmediately) {
 				msgsRef.current = [...msgsRef.current, userMsg];
@@ -571,15 +598,33 @@ export function useMessages(
 			}
 			const optimisticId = addOptimistic(userMsg, showInConversationImmediately);
 			try {
-				const response = await chatApi.trigger({
-					agent_id: agentId,
-					session_id: sessionId,
-					input: userMsg,
-				});
+				const response = await chatApi.trigger(
+					{
+						agent_id: agentId,
+						session_id: sessionId,
+						input: userMsg,
+						mode,
+						submission_id: observer?.submissionId,
+					},
+					{ signal: observer?.signal, silent: !!observer },
+				);
+				if (observer?.signal?.aborted || (observer?.isCurrent && !observer.isCurrent()))
+					return;
+				observer?.accepted(response.queue_item_id);
 				if (activeSessionRef.current !== session) return;
 				acceptOptimistic(optimisticId, response.queue_item_id);
 			} catch (e) {
-				if (activeSessionRef.current !== session) return;
+				// SSE may already have committed this input and its reply.
+				if (
+					observer?.hasExecutionEvidence?.() ||
+					(observer?.isCurrent && !observer.isCurrent())
+				)
+					throw e;
+				if (activeSessionRef.current !== session) {
+					// Voice cancellation outlives the viewport and still needs the outcome.
+					if (observer) throw e;
+					return;
+				}
 				// The server never accepted this input. Remove the
 				// optimistic queue row and restore the caller's draft.
 				rollbackOptimistic(optimisticId, userMsg.id);
@@ -863,6 +908,7 @@ export function useMessages(
 	return {
 		msgs: ownsConversation ? msgs : [],
 		loading,
+		streamConnected: ownsConversation && streamConnected,
 		queuedItems: ownsConversation ? queuedItems : [],
 		queuedCount: ownsConversation ? queuedCount : 0,
 		queueReorderDisabled: !ownsConversation || queueReorderDisabled,

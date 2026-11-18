@@ -44,6 +44,7 @@ from .._service import (
 )
 from ..storage import (
     ASRModelConfig,
+    PipelineVoiceConfig,
     ChatModelConfig,
     RealtimeModelConfig,
     SessionKnowledgeConfig,
@@ -59,6 +60,32 @@ from ...state import ToolContext
 from ..storage._utils import _ensure_team_members, _resolve_team_leader
 from ...event import CustomEvent
 from ..workspace_manager import WorkspaceManagerBase
+
+
+async def _validate_pipeline_voice(
+    config: PipelineVoiceConfig | None,
+    user_id: str,
+    access: ResourceAccessService,
+    storage: StorageBase,
+) -> None:
+    """Validate independent voice credentials without enabling chat TTS."""
+    if config is not None:
+        await _ensure_credential_exists(
+            access,
+            user_id,
+            config.chat_model_config,
+        )
+        await _ensure_credential_exists(
+            access,
+            user_id,
+            config.asr_model_config,
+        )
+        await validate_tts_model_config(
+            user_id,
+            config.tts_model_config,
+            access,
+            storage,
+        )
 
 
 async def _build_team_detail(
@@ -347,6 +374,12 @@ async def create_session(
         storage,
     )
     await _ensure_credential_exists(access, user_id, body.asr_model_config)
+    await _validate_pipeline_voice(
+        body.pipeline_voice_config,
+        user_id,
+        access,
+        storage,
+    )
     await _ensure_credential_exists(
         access,
         user_id,
@@ -378,6 +411,7 @@ async def create_session(
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
+            pipeline_voice_config=body.pipeline_voice_config,
             asr_model_config=body.asr_model_config,
             realtime_model_config=body.realtime_model_config,
             knowledge_config=body.knowledge_config,
@@ -432,6 +466,29 @@ async def delete_session(
         )
 
 
+@session_router.get("/{session_id}/inputs/{message_id}/result")
+async def get_input_result(
+    session_id: str,
+    message_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> dict:
+    """Resolve a submitted input using durable execution receipts."""
+    try:
+        return await chat_service.input_result(
+            user_id,
+            session_id,
+            agent_id,
+            message_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "session_not_found", "message": str(exc)},
+        ) from exc
+
+
 @session_router.post(
     "/{session_id}/interrupt",
     status_code=status.HTTP_202_ACCEPTED,
@@ -443,6 +500,12 @@ async def delete_session(
 async def interrupt_session(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
+    reply_id: str
+    | None = Query(
+        None,
+        min_length=1,
+        description="Only interrupt this reply; ignore a stale target.",
+    ),
     user_id: str = Depends(get_current_user_id),
     chat_service: ChatService = Depends(get_chat_service),
 ) -> InterruptSessionResponse:
@@ -455,6 +518,7 @@ async def interrupt_session(
     Args:
         session_id: The session whose reply should be interrupted.
         agent_id: The agent that owns the session.
+        reply_id: Optional target reply; later replies must remain untouched.
         user_id: Injected authenticated user id.
         chat_service: Injected chat service.
 
@@ -466,7 +530,12 @@ async def interrupt_session(
         HTTPException: 404 if the session does not exist.
     """
     try:
-        await chat_service.interrupt(user_id, session_id, agent_id)
+        await chat_service.interrupt(
+            user_id,
+            session_id,
+            agent_id,
+            reply_id=reply_id,
+        )
     except LookupError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -544,6 +613,12 @@ async def update_session(
         storage,
     )
     await _ensure_credential_exists(access, user_id, body.asr_model_config)
+    await _validate_pipeline_voice(
+        body.pipeline_voice_config,
+        user_id,
+        access,
+        storage,
+    )
     await _ensure_credential_exists(
         access,
         user_id,

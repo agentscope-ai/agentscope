@@ -944,6 +944,36 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         self.assertListEqual(events, [])
         self.assertListEqual(agent.state.context, [])
 
+    async def test_stale_interrupt_leaves_parked_reply_unchanged(self) -> None:
+        """An interrupt for A must not resolve B's pending confirmation."""
+        agent, model = self._make_agent([_UserConfirmConcurrentTool()])
+        await self._park_with(
+            agent,
+            model,
+            [
+                ToolCallBlock(
+                    id="tc-current",
+                    name="user_confirm_concurrent",
+                    input="{}",
+                ),
+            ],
+        )
+        before = agent.state.model_dump(mode="json")
+        for _ in range(2):
+            events = [
+                event
+                async for event in agent.reply_stream(
+                    UserInterruptEvent(reply_id="older-reply"),
+                )
+            ]
+            self.assertEqual(
+                {
+                    "events": events,
+                    "state": agent.state.model_dump(mode="json"),
+                },
+                {"events": [], "state": before},
+            )
+
     async def test_interrupt_event_after_user_confirm(self) -> None:
         """Parked in ASKING state: ``UserInterruptEvent`` patches the
         tool call to FINISHED and appends an INTERRUPTED result (``str``

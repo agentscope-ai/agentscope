@@ -107,6 +107,18 @@ class _FakeStorage:
         """Return the agent name used by canonical HITL detection."""
         return SimpleNamespace(data=SimpleNamespace(name="agent"))
 
+    async def get_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> object | None:
+        """Read the latest detached message written by an upsert."""
+        for owner, sid, msg in reversed(self.persisted_messages):
+            if (owner, sid, msg.id) == (user_id, session_id, message_id):
+                return msg.model_copy(deep=True)
+        return None
+
     async def upsert_message(
         self,
         user_id: str,

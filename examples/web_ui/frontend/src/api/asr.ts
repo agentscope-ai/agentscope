@@ -6,6 +6,7 @@ interface TranscriptionRequest {
 	credentialId: string;
 	model: string;
 	parameters: Record<string, unknown>;
+	signal?: AbortSignal;
 }
 
 export const asrApi = {
@@ -14,9 +15,9 @@ export const asrApi = {
 			'/asr/realtime/token',
 			{ credential_id: credentialId, model },
 			undefined,
-			{ silent: true },
+			{ silent: true, timeoutMs: 15_000 },
 		),
-	transcribe: ({ file, credentialId, model, parameters }: TranscriptionRequest) => {
+	transcribe: ({ file, credentialId, model, parameters, signal }: TranscriptionRequest) => {
 		const body = new FormData();
 		body.append('file', file);
 		body.append('credential_id', credentialId);
@@ -24,6 +25,8 @@ export const asrApi = {
 		body.append('parameters', JSON.stringify(parameters));
 		return client.post<TranscriptionResponse>('/asr/transcriptions', body, undefined, {
 			silent: true,
+			signal,
+			timeoutMs: 60_000,
 		});
 	},
 };

@@ -298,13 +298,29 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
         return f"agentscope:chat:payloads:{session_id}"
 
     @classmethod
+    def chat_input_cancellations(cls, session_id: str) -> str:
+        """Return cancellation receipts retained through safe collection."""
+        return f"agentscope:chat:cancellations:{session_id}"
+
+    @classmethod
+    def chat_submissions(cls, session_id: str) -> str:
+        """Return submission leases and retained execution receipts."""
+        return f"agentscope:chat:submissions:{session_id}"
+
+    CHAT_SUBMISSION_LEASE_SECS: Final = 600
+    CHAT_RECEIPT_RETENTION_SECS: Final = 3600
+    CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS: Final = 1.0
+    CHAT_RECEIPT_SESSION_MAX_LEN: Final = 1024
+    CHAT_RECEIPT_USER_MAX_LEN: Final = 8192
+
+    @classmethod
     def chat_input_claim(cls, session_id: str) -> str:
         """Return the session-local durable claim registry."""
         return f"agentscope:chat:claim:{session_id}"
 
     @classmethod
     def chat_input_user_sessions(cls, user_id: str) -> str:
-        """Return one user's lightweight pending-session index."""
+        """Return one user's indexed queue and receipt sessions."""
         return f"agentscope:chat:user_sessions:{user_id}"
 
     @classmethod
@@ -351,7 +367,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
 
     @classmethod
     def chat_input_pending_registry(cls) -> str:
-        """Return the registry key for sessions with pending input.
+        """Return the index for pending inputs and retained receipts.
 
         Returns:
             `str`:

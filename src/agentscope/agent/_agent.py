@@ -1098,7 +1098,10 @@ class Agent:
             # ``finally`` reuses the CancelledError cleanup path when
             # ``end_event`` is set — no reasoning-acting loop either way.
             if isinstance(inputs, UserInterruptEvent):
-                if self.state.has_awaiting_tool_calls(self.name):
+                if (
+                    inputs.reply_id == self.state.reply_id
+                    and self.state.has_awaiting_tool_calls(self.name)
+                ):
                     end_event = ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,

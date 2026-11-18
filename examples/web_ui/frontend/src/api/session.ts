@@ -1,4 +1,4 @@
-import { client } from './client';
+import { client, type ApiRequestOptions, type ApiScope } from './client';
 import type {
 	AgentEvent,
 	CreateSessionRequest,
@@ -15,6 +15,11 @@ export interface MessagesResponse {
 	event_cursor: string | null;
 	is_running: boolean;
 	has_more: boolean;
+}
+
+export interface InputResult {
+	state: 'unknown' | 'reply' | 'finished';
+	reply_id: string | null;
 }
 
 /**
@@ -42,6 +47,17 @@ export function takeFreshlyCreated(sessionId: string): boolean {
 }
 
 export const sessionApi = {
+	inputResult: (
+		sessionId: string,
+		agentId: string,
+		messageId: string,
+		options?: ApiRequestOptions,
+	) =>
+		client.get<InputResult>(
+			`/sessions/${sessionId}/inputs/${messageId}/result`,
+			{ agent_id: agentId },
+			options,
+		),
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
 
 	create: async (body: CreateSessionRequest) => {
@@ -71,6 +87,7 @@ export const sessionApi = {
 
 	/**
 	 * Request interruption of an in-progress reply (running or parked).
+	 * When replyId is provided, later replies are never interrupted by this request.
 	 *
 	 * Backend contract:
 	 * - 202 Accepted → returns `InterruptSessionResponse`; the cancel
@@ -79,10 +96,18 @@ export const sessionApi = {
 	 *   no-op at the agent layer.
 	 * - 404 Not Found → the session does not exist.
 	 */
-	interrupt: (sessionId: string, agentId: string) =>
-		client.post<InterruptSessionResponse>(`/sessions/${sessionId}/interrupt`, null, {
-			agent_id: agentId,
-		}),
+	interrupt: (
+		sessionId: string,
+		agentId: string,
+		replyId?: string,
+		options?: ApiRequestOptions,
+	) =>
+		client.post<InterruptSessionResponse>(
+			`/sessions/${sessionId}/interrupt`,
+			null,
+			{ agent_id: agentId, ...(replyId !== undefined && { reply_id: replyId }) },
+			options,
+		),
 
 	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
@@ -113,6 +138,8 @@ export const sessionApi = {
 		agentId: string,
 		signal?: AbortSignal,
 		after?: string | null,
+		onConnected?: () => void,
+		scope?: ApiScope,
 	): AsyncGenerator<AgentEvent> {
 		const res = await client.stream(`/sessions/${sessionId}/stream`, {
 			method: 'GET',
@@ -121,9 +148,11 @@ export const sessionApi = {
 				...(after != null && { after }),
 			},
 			signal,
+			...scope,
 		});
 
 		const reader = res.body!.getReader();
+		onConnected?.();
 		const decoder = new TextDecoder();
 		let buffer = '';
 
