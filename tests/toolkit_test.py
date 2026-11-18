@@ -146,8 +146,7 @@ class Tool2(ToolBase):
 
 
 class NamedMCPTool(ToolBase):
-    """A stand-in for a tool listed by an MCP server, whose name is given on
-    construction."""
+    """A mock MCP tool with a configurable name."""
 
     description: str = "A tool listed by an MCP server."
     input_schema: dict = {
@@ -184,7 +183,7 @@ class NamedMCPTool(ToolBase):
 
 
 def _tool_names(schemas: list[dict]) -> list[str]:
-    """Extract the tool names from the given tool JSON schemas, in order."""
+    """Extract tool names in schema order."""
     return [schema["function"]["name"] for schema in schemas]
 
 
@@ -1914,9 +1913,7 @@ The tool instructions are a collection of suggestions, rules and notifications a
         self.assertEqual(await toolkit.get_tool_schemas(), [])
 
     async def test_mcp_tool_order_is_deterministic(self) -> None:
-        """The tool schemas keep the same order even if the MCP server lists
-        its tools in a different order on each call, so that the head of the
-        prompt prefix stays byte-identical across model calls."""
+        """Reordered MCP listings produce identical tool schemas."""
         listings = iter(
             [
                 ["gamma", "alpha", "beta"],
@@ -1945,16 +1942,17 @@ The tool instructions are a collection of suggestions, rules and notifications a
             autospec=True,
             side_effect=_list_tools,
         ):
-            first = _tool_names(await toolkit.get_tool_schemas())
-            second = _tool_names(await toolkit.get_tool_schemas())
+            first = await toolkit.get_tool_schemas()
+            second = await toolkit.get_tool_schemas()
 
-        self.assertListEqual(first, ["tool_1", "alpha", "beta", "gamma"])
-        self.assertListEqual(second, first)
+        self.assertEqual(second, first)
+        self.assertListEqual(
+            _tool_names(first),
+            ["tool_1", "alpha", "beta", "gamma"],
+        )
 
     async def test_mcp_tool_sorting_preserves_client_order(self) -> None:
-        """The tools are sorted within each MCP client only, so the order of
-        the MCP clients, and of the Python tools ahead of them, is kept as
-        configured."""
+        """Sorting preserves MCP client and Python tool order."""
         listings = {
             "server_b": ["zeta", "eta"],
             "server_a": ["delta", "beta"],
