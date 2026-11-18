@@ -218,9 +218,15 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
     continuation cells (``w:vMerge`` without ``val="restart"``) are kept
     as-is — their XML content is typically empty, which is the desired
     behaviour for downstream renderers.
+
+    A cell paragraph that anchors a text box is read the way a body
+    paragraph is: its own text first, then each text box once, on its own
+    line.
     """
     from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
 
+    text_box_tag = qn("w:txbxContent")
     text_tag = qn("w:t")
     tab_tag = qn("w:tab")
     run_tag = qn("w:r")
@@ -245,6 +251,15 @@ def _extract_table_data(table: DocxTable) -> list[list[str]]:
             # Include paragraphs of tables nested in this cell and those
             # wrapped in content controls, but not text-box paragraphs.
             for p_elem in tc.xpath(".//w:p[not(ancestor::w:p)]"):
+                if p_elem.find(".//" + text_box_tag) is not None:
+                    # Reading every w:t here would splice the text box
+                    # into the sentence and read its mc:Fallback copy too.
+                    para_text = _extract_text_from_paragraph(
+                        Paragraph(p_elem, table),
+                    )
+                    if para_text:
+                        paragraphs.append(para_text)
+                    continue
                 text_parts: list[str] = []
                 for element in p_elem.iter():
                     if any(

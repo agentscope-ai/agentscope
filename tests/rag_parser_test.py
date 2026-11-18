@@ -523,6 +523,39 @@ def _make_docx_with_text_box(
     return buffer.getvalue()
 
 
+def _make_docx_with_table_text_box(
+    template: str,
+    more_text: str = "",
+) -> bytes:
+    """Build a DOCX table whose second cell anchors a text box.
+
+    *template* is one of the text-box paragraphs above; the box reads
+    "Callout". With *more_text*, a plain paragraph follows in the cell.
+    """
+    import docx
+    from lxml import etree
+
+    document = docx.Document()
+    box_paragraph = template.format(
+        ns=_DOCX_TEXT_BOX_NS,
+        before="Cell text",
+        inside="Callout",
+    ).strip()
+    more = f"<w:p><w:r><w:t>{more_text}</w:t></w:r></w:p>" if more_text else ""
+    table = etree.fromstring(
+        f"<w:tbl {_DOCX_TEXT_BOX_NS}><w:tblGrid><w:gridCol/><w:gridCol/>"
+        "</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:tc>"
+        f"<w:tc>{box_paragraph}{more}</w:tc></w:tr></w:tbl>",
+    )
+    body = document.element.body
+    body.insert(len(body) - 1, table)
+    document.add_paragraph("After")
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def _expected_word_sections(text: str) -> list[dict]:
     """Return the complete expected output for a single Word text section."""
     return [
@@ -4377,6 +4410,53 @@ class WordTrackedMovesTest(IsolatedAsyncioTestCase):
 
                 self.assertEqual(len(sections), 1)
                 self.assertEqual(sections[0].content.text, text)
+
+
+class WordParserTableTextBoxTest(IsolatedAsyncioTestCase):
+    """Regression coverage for text boxes anchored in table cells."""
+
+    async def test_text_box_in_table_cell_is_read_once(self) -> None:
+        """A cell reads a text box once, on its own line, like a body
+        paragraph, with or without the VML copy in ``mc:Fallback``."""
+        for name, template in (
+            ("drawing only", _DOCX_MODERN_TEXT_BOX),
+            ("with VML fallback", _DOCX_TEXT_BOX_WITH_VML_FALLBACK),
+        ):
+            with self.subTest(name):
+                sections = await WordParser(separate_table=True).parse(
+                    _make_docx_with_table_text_box(template),
+                    "demo.docx",
+                )
+                self.assertEqual(
+                    [section.model_dump() for section in sections],
+                    [
+                        *_expected_word_sections(
+                            "| Note | Cell text<br>Callout |\n"
+                            "| --- | --- |\n",
+                        ),
+                        *_expected_word_sections("After"),
+                    ],
+                )
+
+    async def test_table_cell_text_box_keeps_other_paragraphs(
+        self,
+    ) -> None:
+        """The cell's other paragraphs keep their place after the box."""
+        sections = await WordParser(
+            separate_table=True,
+            table_format="json",
+        ).parse(
+            _make_docx_with_table_text_box(
+                _DOCX_TEXT_BOX_WITH_VML_FALLBACK,
+                more_text="More text",
+            ),
+            "demo.docx",
+        )
+        self.assertEqual(
+            json.loads(sections[0].content.text.split("\n", 1)[1]),
+            [["Note", "Cell text\nCallout\nMore text"]],
+        )
+        self.assertEqual(sections[1].content.text, "After")
 
 
 class WordParserContentControlTest(IsolatedAsyncioTestCase):
