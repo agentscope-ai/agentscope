@@ -49,22 +49,24 @@ class ShellMtimeOutputTest(unittest.IsolatedAsyncioTestCase):
     """Cover both stat dialects even when only one is installed."""
 
     async def test_gnu_and_bsd_timestamps(self) -> None:
-        """GNU/BusyBox and BSD expose floor seconds plus positive nanos."""
+        """GNU/BusyBox/uutils use %y; BSD exposes seconds plus nanos."""
         cases = (
             (
-                b"gnu 1790000000 2026-09-21 14:13:20.123456789 +0000\n",
+                b"gnu 2026-09-21 14:13:20.123456789 +0000\n",
                 1790000000.123456789,
             ),
             (
-                b"gnu 1790000000 2026-09-21 19:43:20.123456789 +0530\n",
+                b"gnu 2026-09-21 19:43:20.123456789 +0530\n",
                 1790000000.123456789,
             ),
             (b"bsd 1790000000.123456789 Regular File\n", 1790000000.123456789),
-            (b"gnu -1 1969-12-31 23:59:59.900000000 +0000\n", -0.1),
+            (b"gnu 1969-12-31 23:59:59.900000000 +0000\n", -0.1),
             (b"bsd -1.900000000 Regular File\n", -0.1),
-            (b"gnu -2 1969-12-31 23:59:58.900000000 +0000\n", -1.1),
+            (b"gnu 1969-12-31 23:59:58.900000000 +0000\n", -1.1),
             (b"bsd -2.900000000 Regular File\n", -1.1),
-            (b"gnu 0 1970-01-01 00:00:00.000000000 +0000\n", 0.0),
+            (b"gnu 1969-12-31 23:59:58.100000000 +0000\n", -1.9),
+            (b"gnu 1969-12-31 23:59:59.000000000 +0000\n", -1.0),
+            (b"gnu 1970-01-01 00:00:00.000000000 +0000\n", 0.0),
             (b"bsd 0.000000000 Directory\n", 0.0),
         )
         backend = _ShellBackend()
@@ -82,14 +84,15 @@ class ShellMtimeOutputTest(unittest.IsolatedAsyncioTestCase):
         cases = (
             ExecResult(
                 1,
-                b"gnu 0 1970-01-01 00:00:00.000000000 +0000\n",
+                b"gnu 1970-01-01 00:00:00.000000000 +0000\n",
                 b"denied",
             ),
             ExecResult(0, b"", b""),
             ExecResult(0, b"unknown 1790000000.123456789\n", b""),
             ExecResult(0, b"gnu not-a-timestamp\n", b""),
-            ExecResult(0, b"gnu 0 1970-01-01 00:00:00 +0000\n", b""),
-            ExecResult(0, b"gnu 0 1970-01-01 00:00:00.bad +0000\n", b""),
+            ExecResult(0, b"gnu 1970-01-01 00:00:00 +0000\n", b""),
+            ExecResult(0, b"gnu 1970-01-01 00:00:00.bad +0000\n", b""),
+            ExecResult(0, b"gnu 1970-02-30 00:00:00.000000000 +0000\n", b""),
             ExecResult(0, b"bsd bad Regular File\n", b""),
             ExecResult(0, b"bsd 1.bad Regular File\n", b""),
             ExecResult(0, b"bsd 1.000000000\n", b""),
@@ -166,7 +169,7 @@ class ShellMtimeFilesystemTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(set(mtimes)), 4)
 
     async def test_zero_and_negative_epoch(self) -> None:
-        """BSD's separate positive nanoseconds also apply before 1970."""
+        """Preserve timestamps on either side of the epoch across dialects."""
         for nanos in (-1_100_000_000, -100_000_000, 0, 100_000_000):
             with self.subTest(nanos=nanos):
                 self._put_file("content", nanos)

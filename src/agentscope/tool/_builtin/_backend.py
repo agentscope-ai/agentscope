@@ -41,6 +41,7 @@ import shlex
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from types import ModuleType
 from typing import Any, AsyncIterator
 
@@ -671,7 +672,7 @@ class BackendBase(ABC):
 
         Preserve fractional seconds so file caches notice changes within
         the same second, and follow symlinks like :func:`os.stat`.
-        Tries GNU/BusyBox ``stat`` first, then BSD/macOS ``stat``.
+        Tries GNU-compatible ``stat`` first, then BSD/macOS ``stat``.
         Both attempts share one ``sh -c`` call; backends without a POSIX
         shell (e.g. :class:`LocalBackend`) override it.
 
@@ -686,7 +687,7 @@ class BackendBase(ABC):
         """
         quoted = shlex.quote(path)
         script = (
-            f"LC_ALL=C stat -L -c 'gnu %Y %y' -- {quoted} 2>/dev/null || "
+            f"LC_ALL=C TZ=UTC0 stat -L -c 'gnu %y' -- {quoted} 2>/dev/null || "
             f"LC_ALL=C stat -L -f 'bsd %.9Fm %HT' -- {quoted} 2>/dev/null"
         )
         result = await self.exec_shell(["sh", "-c", script])
@@ -698,11 +699,15 @@ class BackendBase(ABC):
                 errors="replace",
             ).split(maxsplit=1)
             if dialect == "gnu":
-                # BusyBox ignores the precision in %.9Y, but both GNU
-                # and BusyBox include nanoseconds in the human time %y.
-                # Use only that fraction, avoiding timezone conversion.
-                seconds, _, clock, _ = value.split()
-                _, nanoseconds = clock.rsplit(".", 1)
+                # %y works across GNU, BusyBox and uutils, whose %Y
+                # precision and negative-epoch formatting differ.
+                date, clock, offset = value.split()
+                whole_clock, nanoseconds = clock.split(".")
+                # datetime only retains microseconds. Parse whole seconds
+                # separately so sub-microsecond changes remain visible.
+                epoch_seconds = datetime.fromisoformat(
+                    f"{date}T{whole_clock}{offset}",
+                ).timestamp()
             elif dialect == "bsd":
                 timestamp, file_type = value.strip().split(maxsplit=1)
                 # BSD -L falls back to lstat for an unresolvable link.
@@ -710,11 +715,12 @@ class BackendBase(ABC):
                 if file_type == "Symbolic Link":
                     return None
                 seconds, nanoseconds = timestamp.split(".")
+                epoch_seconds = int(seconds)
             else:
                 return None
-            # Both expose floor seconds and positive nanoseconds, even
+            # BSD exposes floor seconds and positive nanoseconds, even
             # before the epoch: BSD -1.900000000 represents -0.1, not -1.9.
-            return int(seconds) + int(nanoseconds) / 1_000_000_000
+            return epoch_seconds + int(nanoseconds) / 1_000_000_000
         except ValueError:
             return None
 
