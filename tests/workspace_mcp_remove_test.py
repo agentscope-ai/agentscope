@@ -102,7 +102,30 @@ class TestSandboxedMCPRemoval(IsolatedAsyncioTestCase):
             },
             "last_used": dict(self.workspace._mcp_last_used),
             "persisted": self.mcp_file.read_bytes(),
+            "registered": set(self.registered),
         }
+
+    def _assert_removed(
+        self,
+        client: MCPClient,
+        before: dict[str, Any],
+    ) -> None:
+        """Assert removal of this scope while preserving all other state."""
+        key = (self.scope["agent_id"], self.scope["session_id"])
+        expected = {
+            **before,
+            "instances": {**before["instances"], key: {}},
+            "specs": {**before["specs"], key: []},
+            "connected": dict(before["connected"]),
+            "registered": before["registered"] - {(*key, client.name)},
+            "persisted": json.loads(before["persisted"]),
+        }
+        expected["connected"].pop((*key, client.name))
+        expected["persisted"]["mcps"][key[0]][key[1]] = []
+        actual = self._snapshot()
+        actual["persisted"] = json.loads(actual["persisted"])
+        self.assertFalse(client.is_connected)
+        self.assertEqual(actual, expected)
 
     async def test_failed_remove_preserves_state_and_can_retry(self) -> None:
         """HTTP and transport failures preserve both modes and scopes."""
@@ -128,7 +151,6 @@ class TestSandboxedMCPRemoval(IsolatedAsyncioTestCase):
                     spec = self._spec(stateful)
                     client = await self.workspace.add_mcp(spec, **self.scope)
                     before = self._snapshot()
-                    remote_before = set(self.registered)
                     self.delete_failure = failure
                     expected_error = (
                         OSError
@@ -140,7 +162,6 @@ class TestSandboxedMCPRemoval(IsolatedAsyncioTestCase):
                         await self.workspace.remove_mcp("demo", **self.scope)
 
                     self.assertEqual(self._snapshot(), before)
-                    self.assertEqual(self.registered, remote_before)
                     self.assertIs(
                         self.workspace._mcp_instances[("agent", "session")][
                             "demo"
@@ -149,130 +170,56 @@ class TestSandboxedMCPRemoval(IsolatedAsyncioTestCase):
                     )
                     self.delete_failure = None
                     await self.workspace.remove_mcp("demo", **self.scope)
-                    self.assertFalse(client.is_connected)
-                    self.assertEqual(
-                        self.workspace._mcp_instances[("agent", "session")],
-                        {},
-                    )
-                    expected_specs = dict(before["specs"])
-                    expected_specs[("agent", "session")] = []
-                    self.assertEqual(
-                        self.workspace._mcp_specs,
-                        expected_specs,
-                    )
-                    persisted = json.loads(before["persisted"])
-                    persisted["mcps"]["agent"]["session"] = []
-                    self.assertEqual(
-                        json.loads(self.mcp_file.read_bytes()),
-                        persisted,
-                    )
-                    self.assertEqual(
-                        self.registered,
-                        remote_before - {("agent", "session", "demo")},
-                    )
+                    self._assert_removed(client, before)
                     replacement = await self.workspace.add_mcp(
                         spec,
                         **self.scope,
                     )
                     self.assertIsNot(replacement, client)
-                    self.assertEqual(self.registered, remote_before)
+                    self.assertEqual(self.registered, before["registered"])
                     await self.workspace.remove_mcp("demo", **self.scope)
 
     async def test_lost_delete_response_can_retry_after_remote_removal(
         self,
     ) -> None:
-        """A scoped missing-registration 404 completes a retried delete."""
+        """Scoped 404s permit retry, with or without response metadata."""
         with TestClient(_build_app(_State())) as http:
             missing = http.delete("/mcps/demo", params=self.scope)
         self.assertEqual(missing.status_code, 404)
+        extras: list[dict[str, str]] = [{}, {"request_id": "test-request"}]
         for stateful in (True, False):
-            with self.subTest(stateful=stateful):
-                client = await self.workspace.add_mcp(
-                    self._spec(stateful),
-                    **self.scope,
-                )
-                before = self._snapshot()
-                self.registered.clear()
-                self.delete_failure = OSError("response lost")
-                with self.assertRaises(OSError):
+            for extra in extras:
+                with self.subTest(stateful=stateful, extra=extra):
+                    client = await self.workspace.add_mcp(
+                        self._spec(stateful),
+                        **self.scope,
+                    )
+                    self.registered.clear()
+                    before = self._snapshot()
+                    self.delete_failure = OSError("response lost")
+                    with self.assertRaises(OSError):
+                        await self.workspace.remove_mcp("demo", **self.scope)
+                    self.assertEqual(self._snapshot(), before)
+
+                    payload = {**missing.json(), **extra}
+                    self.delete_failure = (
+                        missing.status_code,
+                        json.dumps(payload).encode("utf-8"),
+                    )
                     await self.workspace.remove_mcp("demo", **self.scope)
-                self.assertEqual(self._snapshot(), before)
-
-                self.delete_failure = (missing.status_code, missing.content)
-                await self.workspace.remove_mcp("demo", **self.scope)
-
-                self.assertFalse(client.is_connected)
-                self.assertEqual(self.registered, set())
-                self.assertEqual(
-                    self.workspace._mcp_instances,
-                    {("agent", "session"): {}},
-                )
-                self.assertEqual(
-                    self.workspace._mcp_specs,
-                    {("agent", "session"): []},
-                )
-                self.assertEqual(
-                    json.loads(self.mcp_file.read_bytes()),
-                    {"version": 2, "mcps": {"agent": {"session": []}}},
-                )
-
-    async def test_missing_registration_allows_extra_response_fields(
-        self,
-    ) -> None:
-        """Gateway metadata does not prevent an idempotent removal."""
-        with TestClient(_build_app(_State())) as http:
-            missing = http.delete("/mcps/demo", params=self.scope)
-        self.assertEqual(missing.status_code, 404)
-        payload = {**missing.json(), "request_id": "test-request"}
-        for stateful in (True, False):
-            with self.subTest(stateful=stateful):
-                client = await self.workspace.add_mcp(
-                    self._spec(stateful),
-                    **self.scope,
-                )
-                self.registered.clear()
-                self.delete_failure = (
-                    missing.status_code,
-                    json.dumps(payload).encode("utf-8"),
-                )
-
-                await self.workspace.remove_mcp("demo", **self.scope)
-
-                self.assertFalse(client.is_connected)
-                self.assertEqual(
-                    self.workspace._mcp_instances,
-                    {("agent", "session"): {}},
-                )
-                self.assertEqual(
-                    self.workspace._mcp_specs,
-                    {("agent", "session"): []},
-                )
-                self.assertEqual(
-                    json.loads(self.mcp_file.read_bytes()),
-                    {"version": 2, "mcps": {"agent": {"session": []}}},
-                )
+                    self._assert_removed(client, before)
 
     async def test_manually_closed_client_can_be_removed(self) -> None:
         """The existing strict-close workaround remains compatible."""
         client = await self.workspace.add_mcp(self._spec(False), **self.scope)
         await client.close(ignore_errors=False)
+        before = self._snapshot()
         self.request.reset_mock()
 
         await self.workspace.remove_mcp("demo", **self.scope)
 
         self.request.assert_not_awaited()
-        self.assertEqual(
-            self.workspace._mcp_specs,
-            {("agent", "session"): []},
-        )
-        self.assertEqual(
-            self.workspace._mcp_instances,
-            {("agent", "session"): {}},
-        )
-        self.assertEqual(
-            json.loads(self.mcp_file.read_bytes()),
-            {"version": 2, "mcps": {"agent": {"session": []}}},
-        )
+        self._assert_removed(client, before)
 
     async def test_bulk_close_remains_best_effort(self) -> None:
         """Bulk cleanup keeps declarations and tolerates DELETE failures."""
