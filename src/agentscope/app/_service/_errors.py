@@ -95,8 +95,7 @@ def _extract_status(e: BaseException) -> int | None:
             getattr(exc, "status", None),
             getattr(getattr(exc, "response", None), "status_code", None),
         ):
-            # ``bool`` is an ``int`` subclass: a boolean success flag
-            # named ``status``/``status_code`` is not an HTTP status.
+            # Ignore boolean flags: bool is an int subclass.
             if isinstance(src, int) and not isinstance(src, bool):
                 return src
     return None
