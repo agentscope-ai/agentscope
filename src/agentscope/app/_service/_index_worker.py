@@ -467,6 +467,11 @@ class IndexWorker:
             "chunking",
         )
         chunks = await chunker.chunk(sections)
+        if not chunks and media_type == "application/pdf":
+            raise ValueError(
+                "This PDF has no indexable text. If it is a scan, "
+                "apply OCR before uploading it."
+            )
 
         # ---- indexing ----
         await self._storage.update_knowledge_document_status(
