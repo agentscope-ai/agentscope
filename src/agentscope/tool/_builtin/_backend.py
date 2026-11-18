@@ -669,11 +669,11 @@ class BackendBase(ABC):
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of ``path``, or ``None``.
 
-        Tries GNU ``stat -c %Y`` first and falls back to BSD
-        ``stat -f %m`` so the same call works across coreutils and
-        BSD/macOS userlands.  The two attempts are combined with ``||``,
-        so this default wraps a ``sh -c`` script; backends without a
-        POSIX shell (e.g. :class:`LocalBackend`) override it.
+        Preserve fractional seconds so file caches notice changes within
+        the same second, and follow symlinks like :func:`os.stat`.
+        Tries GNU/BusyBox ``stat`` first, then BSD/macOS ``stat``.
+        Both attempts share one ``sh -c`` call; backends without a POSIX
+        shell (e.g. :class:`LocalBackend`) override it.
 
         Args:
             path (`str`):
@@ -686,16 +686,35 @@ class BackendBase(ABC):
         """
         quoted = shlex.quote(path)
         script = (
-            f"stat -c %Y {quoted} 2>/dev/null || "
-            f"stat -f %m {quoted} 2>/dev/null"
+            f"LC_ALL=C stat -L -c 'gnu %Y %y' -- {quoted} 2>/dev/null || "
+            f"LC_ALL=C stat -L -f 'bsd %.9Fm %HT' -- {quoted} 2>/dev/null"
         )
         result = await self.exec_shell(["sh", "-c", script])
         if not result.ok():
             return None
         try:
-            return float(
-                result.stdout.decode("utf-8", errors="replace").strip(),
-            )
+            dialect, value = result.stdout.decode(
+                "utf-8",
+                errors="replace",
+            ).split(maxsplit=1)
+            if dialect == "gnu":
+                # BusyBox ignores the precision in %.9Y, but both GNU
+                # and BusyBox include nanoseconds in the human time %y.
+                # Use only that fraction, avoiding timezone conversion.
+                seconds, _, clock, _ = value.split()
+                _, nanoseconds = clock.rsplit(".", 1)
+            elif dialect == "bsd":
+                timestamp, file_type = value.strip().split(maxsplit=1)
+                # BSD -L falls back to lstat for an unresolvable link.
+                # Its own mtime must not validate the target's cache.
+                if file_type == "Symbolic Link":
+                    return None
+                seconds, nanoseconds = timestamp.split(".")
+            else:
+                return None
+            # Both expose floor seconds and positive nanoseconds, even
+            # before the epoch: BSD -1.900000000 represents -0.1, not -1.9.
+            return int(seconds) + int(nanoseconds) / 1_000_000_000
         except ValueError:
             return None
 
