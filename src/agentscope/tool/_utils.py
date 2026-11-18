@@ -38,6 +38,24 @@ def _get_callable_docstring(tool_func: Callable) -> str:
 
         documented_func = documented_func.func
 
+    if not (
+        inspect.isroutine(documented_func) or inspect.isclass(documented_func)
+    ):
+        # Callable objects: the `__call__` docstring mirrors what a plain
+        # function's docstring would provide, while the docstring inherited
+        # from the class describes the class instead. An explicit docstring
+        # set on the object itself — e.g. copied there by
+        # functools.update_wrapper — still takes precedence.
+        own_attrs = getattr(documented_func, "__dict__", None) or {}
+        if own_attrs.get("__doc__") is None:
+            call_doc = getattr(
+                type(documented_func).__call__,
+                "__doc__",
+                None,
+            )
+            if call_doc:
+                return call_doc
+
     return documented_func.__doc__ or ""
 
 

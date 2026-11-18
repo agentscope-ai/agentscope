@@ -8,7 +8,7 @@ resolved back to real types before being handed to pydantic.
 """
 from __future__ import annotations
 
-from functools import partial, update_wrapper
+from functools import lru_cache, partial, update_wrapper
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Literal
 from unittest import TestCase
 
@@ -65,6 +65,39 @@ class CallableWrapper:
 
     def __call__(self, mode: Any, limit: int = 5) -> str:
         return self.func(mode, limit)
+
+
+class DocumentedCallableTool:
+    """A generic description of the class, not of the tool call."""
+
+    def __call__(self, mode: Literal["fast", "full"]) -> str:
+        """Search with a mode switch.
+
+        Args:
+            mode: The search mode to use.
+        """
+        return mode
+
+
+def wrapped_tool(catalog: str, query: str) -> str:
+    """Search the selected catalog.
+
+    Args:
+        catalog: The catalog identifier.
+        query: The query to run.
+    """
+    return f"{catalog}:{query}"
+
+
+@lru_cache(maxsize=8)
+def cached_tool(catalog: str, query: str) -> str:
+    """Search the cached catalog.
+
+    Args:
+        catalog: The catalog identifier.
+        query: The query to run.
+    """
+    return f"{catalog}:{query}"
 
 
 def annotated_tool(
@@ -558,4 +591,45 @@ class LazyAnnotationsTest(TestCase):
                 },
                 "required": ["query"],
             },
+        )
+
+    def test_callable_object_uses_call_docstring(self) -> None:
+        """A callable instance describes its call via `__call__`'s
+        docstring, matching what a plain function would provide."""
+        tool = FunctionTool(DocumentedCallableTool())
+
+        self.assertEqual(tool.description, "Search with a mode switch.")
+        self.assertEqual(
+            tool.input_schema["properties"]["mode"]["description"],
+            "The search mode to use.",
+        )
+
+    def test_explicit_instance_docstring_takes_precedence(self) -> None:
+        """A docstring set on the instance itself wins over `__call__`'s."""
+        tool_fn = DocumentedCallableTool()
+        tool_fn.__doc__ = "Explicit tool doc."
+        tool = FunctionTool(tool_fn)
+
+        self.assertEqual(tool.description, "Explicit tool doc.")
+
+    def test_update_wrapper_docstring_preserved(self) -> None:
+        """A docstring copied onto the instance by update_wrapper is
+        used for the tool description and parameter docs."""
+        tool = FunctionTool(CallableWrapper(wrapped_tool))
+
+        self.assertEqual(tool.description, "Search the selected catalog.")
+        self.assertEqual(
+            tool.input_schema["properties"]["catalog"]["description"],
+            "The catalog identifier.",
+        )
+
+    def test_lru_cache_docstring_preserved(self) -> None:
+        """An lru_cache-wrapped tool keeps its docstring-derived
+        descriptions."""
+        tool = FunctionTool(cached_tool)
+
+        self.assertEqual(tool.description, "Search the cached catalog.")
+        self.assertEqual(
+            tool.input_schema["properties"]["query"]["description"],
+            "The query to run.",
         )
