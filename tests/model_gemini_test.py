@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import httpx2
-from google.genai.types import HttpOptions, ThinkingConfig
+from google.genai.types import FunctionDeclaration, HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
 
 from utils import AnyString
@@ -1747,7 +1747,7 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
-    def test_sanitize_rejects_ambiguous_type_array_with_anyof(
+    def test_sanitize_rejects_conjunctive_anyof_constraints(
         self,
     ) -> None:
         """Existing anyOf constraints are not overwritten silently."""
@@ -1765,6 +1765,32 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                     ],
                 },
             )
+
+        constraints: list[dict[str, Any]] = [
+            {"anyOf": [{"type": "string", "enum": ["auto"]}]},
+            {"type": ["string", "integer", "null"]},
+        ]
+        for constraint in constraints:
+            with self.subTest(constraint=constraint):
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "oneOf": [
+                                {"type": "string", "enum": ["auto"]},
+                                {"type": "string", "enum": ["manual"]},
+                            ],
+                            **constraint,
+                        },
+                    },
+                }
+                original = copy.deepcopy(schema)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "both oneOf and anyOf",
+                ):
+                    _sanitize_schema_for_gemini(schema)
+                self.assertEqual(schema, original)
 
     def test_sanitize_inlines_annotated_null_anyof(self) -> None:
         """Annotated null schemas in anyOf are treated as null branches."""
@@ -1826,20 +1852,23 @@ class TestGeminiSchemaUtils(unittest.TestCase):
 
     def test_sanitize_converts_oneof_from_discriminated_union(self) -> None:
         """A discriminated union's `oneOf` becomes `anyOf` for Gemini."""
-        from typing import Union
-
-        from google.genai.types import FunctionDeclaration
 
         class Cat(BaseModel):
+            """Cat variant of the discriminated union."""
+
             kind: Literal["cat"]
             meow: str
 
         class Dog(BaseModel):
+            """Dog variant of the discriminated union."""
+
             kind: Literal["dog"]
             bark: str
 
         class Pet(BaseModel):
-            pet: Annotated[Union[Cat, Dog], Field(discriminator="kind")]
+            """Tool parameters containing a discriminated union."""
+
+            pet: Annotated[Cat | Dog, Field(discriminator="kind")]
 
         result = _sanitize_schema_for_gemini(
             _flatten_json_schema(Pet.model_json_schema()),
@@ -1849,33 +1878,6 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         self.assertNotIn("discriminator", pet)
         self.assertIn("anyOf", pet)
         FunctionDeclaration(name="pet", parameters=result)
-
-    def test_sanitize_rejects_oneof_with_anyof(self) -> None:
-        """Reject conjunctive constraints instead of joining alternatives."""
-        for constraint in (
-            {"anyOf": [{"type": "string", "enum": ["auto"]}]},
-            {"type": ["string", "integer", "null"]},
-        ):
-            with self.subTest(constraint=constraint):
-                schema = {
-                    "type": "object",
-                    "properties": {
-                        "mode": {
-                            "oneOf": [
-                                {"type": "string", "enum": ["auto"]},
-                                {"type": "string", "enum": ["manual"]},
-                            ],
-                            **constraint,
-                        },
-                    },
-                }
-                original = copy.deepcopy(schema)
-                with self.assertRaisesRegex(
-                    ValueError,
-                    "both oneOf and anyOf",
-                ):
-                    _sanitize_schema_for_gemini(schema)
-                self.assertEqual(schema, original)
 
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
