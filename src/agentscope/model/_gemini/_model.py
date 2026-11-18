@@ -113,6 +113,9 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``additionalProperties``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``oneOf``: converted to ``anyOf`` for discriminated unions.
+      An existing ``anyOf`` raises ``ValueError`` rather than dropping
+      conjunctive constraints.
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
@@ -175,19 +178,16 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
         const_value = schema.pop("const")
         schema.setdefault("enum", [const_value])
 
-    # Gemini's Schema model has no `oneOf`, and Pydantic emits `oneOf` for
-    # discriminated unions. `_flatten_json_schema` inlines the `$defs` and
-    # drops the `discriminator`, but the applicator itself stays. The
-    # branches are mutually exclusive through their `const` discriminator
-    # (now a single-value `enum`), so `anyOf` accepts the same arguments.
+    # Gemini lacks `oneOf`; discriminated unions can use `anyOf` because
+    # their branches are mutually exclusive.
     schema.pop("discriminator", None)
     if "oneOf" in schema:
-        one_of = schema.pop("oneOf")
-        existing_any_of = schema.get("anyOf")
-        if isinstance(one_of, list) and isinstance(existing_any_of, list):
-            schema["anyOf"] = [*one_of, *existing_any_of]
-        else:
-            schema["anyOf"] = one_of
+        if "anyOf" in schema:
+            raise ValueError(
+                "Cannot safely sanitize Gemini schema with both oneOf "
+                "and anyOf.",
+            )
+        schema["anyOf"] = schema.pop("oneOf")
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):

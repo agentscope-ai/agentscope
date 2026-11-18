@@ -1850,6 +1850,33 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         self.assertIn("anyOf", pet)
         FunctionDeclaration(name="pet", parameters=result)
 
+    def test_sanitize_rejects_oneof_with_anyof(self) -> None:
+        """Reject conjunctive constraints instead of joining alternatives."""
+        for constraint in (
+            {"anyOf": [{"type": "string", "enum": ["auto"]}]},
+            {"type": ["string", "integer", "null"]},
+        ):
+            with self.subTest(constraint=constraint):
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "oneOf": [
+                                {"type": "string", "enum": ["auto"]},
+                                {"type": "string", "enum": ["manual"]},
+                            ],
+                            **constraint,
+                        },
+                    },
+                }
+                original = copy.deepcopy(schema)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "both oneOf and anyOf",
+                ):
+                    _sanitize_schema_for_gemini(schema)
+                self.assertEqual(schema, original)
+
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
         self.assertEqual(
