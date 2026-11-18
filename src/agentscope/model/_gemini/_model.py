@@ -111,6 +111,8 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     - ``$schema``: removed entirely.
     - ``additionalProperties``: removed entirely.
+    - ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``,
+      ``uniqueItems`` and ``examples``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
     - ``type`` arrays containing ``"null"``: simplified to the single
@@ -168,6 +170,19 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
+
+    # Remove validation keywords that Gemini's Schema model does not declare;
+    # the SDK rejects the whole request on any of them. Pydantic emits them
+    # for e.g. `Field(gt=0)` and `set[str]`. The agent still validates tool
+    # arguments against the original schema.
+    for keyword in (
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "uniqueItems",
+        "examples",
+    ):
+        schema.pop(keyword, None)
 
     # Convert `const` into an equivalent single-value `enum` — Gemini's
     # Schema model does not support the `const` keyword.
