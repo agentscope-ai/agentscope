@@ -518,6 +518,7 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
         """None would also match records that lack the key, so it raises."""
         unreachable = AssertionError("the filter must fail before any query")
         collection = SimpleNamespace(
+            list_search_indexes=AsyncMock(side_effect=unreachable),
             aggregate=AsyncMock(side_effect=unreachable),
             delete_many=AsyncMock(side_effect=unreachable),
             find=Mock(side_effect=unreachable),
@@ -548,15 +549,12 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             self.store,
             "_col",
             return_value=collection,
-        ), patch.object(
-            self.store,
-            "_ensure_index_ready",
-            AsyncMock(),
         ):
             for name, call_store in calls.items():
                 with self.subTest(method=name):
                     with self.assertRaisesRegex(ValueError, "'reviewer'"):
                         await call_store()
+        collection.list_search_indexes.assert_not_awaited()
         collection.aggregate.assert_not_awaited()
         collection.delete_many.assert_not_awaited()
         collection.find.assert_not_called()

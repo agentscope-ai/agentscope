@@ -726,6 +726,35 @@ class MilvusReadLoadsCollectionTest(IsolatedAsyncioTestCase):
         self.store = MilvusLiteStore()
         self.client = Mock()
 
+    async def test_none_filter_is_rejected_before_connecting(self) -> None:
+        """Invalid filters fail before creating or loading a client."""
+        calls = {
+            "search": lambda: self.store.search(
+                "kb_1",
+                [1.0, 0.0],
+                metadata_filter={"reviewer": None},
+            ),
+            "list_documents": lambda: self.store.list_documents(
+                "kb_1",
+                metadata_filter={"reviewer": None},
+            ),
+        }
+        for name, call_store in calls.items():
+            with self.subTest(method=name), patch.object(
+                self.store,
+                "get_client",
+                side_effect=AssertionError("must not connect to Milvus"),
+            ) as get_client:
+                with self.assertRaises(ValueError) as error:
+                    await call_store()
+                self.assertEqual(
+                    str(error.exception),
+                    "MilvusLiteStore does not support None values in "
+                    "metadata_filter (keys: 'reviewer'): the backend cannot "
+                    "tell an explicitly null field from a missing key.",
+                )
+                get_client.assert_not_called()
+
     async def test_search_loads_collection_first(self) -> None:
         """search() loads the collection before issuing the search."""
         self.client.search.return_value = [[]]

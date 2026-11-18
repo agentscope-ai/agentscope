@@ -355,6 +355,7 @@ class MongoDBStore(VectorStoreBase):
         """
         if top_k > 10_000:
             raise ValueError("top_k cannot exceed MongoDB's 10000 ANN limit")
+        filter_expr = self._build_metadata_filter(metadata_filter)
         await self._ensure_index_ready(collection)
         col = self._col(collection)
 
@@ -365,7 +366,6 @@ class MongoDBStore(VectorStoreBase):
             "numCandidates": min(10_000, max(100, top_k * 20)),
             "limit": top_k,
         }
-        filter_expr = self._build_metadata_filter(metadata_filter)
         if filter_expr is not None:
             vector_search["filter"] = filter_expr
 

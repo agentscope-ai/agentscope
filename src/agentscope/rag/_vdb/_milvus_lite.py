@@ -347,6 +347,7 @@ class MilvusLiteStore(VectorStoreBase):
                 cosine / inner product metrics, or ascending distance
                 semantics for L2 as exposed by Milvus.
         """
+        filter_expr = self._build_metadata_filter(metadata_filter)
         client = self.get_client()
         await self._ensure_loaded(client, collection)
 
@@ -356,7 +357,7 @@ class MilvusLiteStore(VectorStoreBase):
             data=[query_vector],
             anns_field="vector",
             limit=top_k,
-            filter=self._build_metadata_filter(metadata_filter),
+            filter=filter_expr,
             output_fields=["document_id", "chunk"],
             search_params={"metric_type": self._metric_type},
         )
@@ -398,6 +399,7 @@ class MilvusLiteStore(VectorStoreBase):
             `list[DocumentSummary]`:
                 One summary per distinct ``document_id``.
         """
+        _reject_none_metadata_values("MilvusLiteStore", metadata_filter)
         client = self.get_client()
         await self._ensure_loaded(client, collection)
         rows = await asyncio.to_thread(
