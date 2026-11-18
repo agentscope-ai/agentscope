@@ -210,7 +210,7 @@ class WorkspaceManagerBase(ABC):
         error keeps propagating.
 
         Providers whose ``close`` only pauses — OpenSandbox and Daytona —
-        override this to delete the remote instance outright.
+        override this to delete newly created remote instances outright.
 
         Args:
             workspace (`WorkspaceBase`):

@@ -51,6 +51,7 @@ class _FakeWorkspace:
         self.closed = False
         self.close_calls = 0
         self._sandbox: _FakeSandbox | None = _FakeSandbox()
+        self._sandbox_created = True
         self._sandbox.kill_error = _FakeWorkspace.sandbox_kill_error
         # Stable handle: disposal clears ``_sandbox`` on success.
         self.sandbox = self._sandbox

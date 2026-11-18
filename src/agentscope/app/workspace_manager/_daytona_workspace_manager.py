@@ -174,8 +174,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         try:
             await ws.initialize()
         except BaseException:
-            # ``close`` only stops the sandbox; a stopped sandbox still
-            # bills, and this one never entered the cache.
+            # Delete newly created sandboxes, but preserve restored data.
             await self._dispose_uninitialized(ws)
             raise
         return ws
@@ -184,18 +183,20 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self,
         workspace: WorkspaceBase,
     ) -> None:
-        """Delete, rather than stop, an unclaimed sandbox.
+        """Delete a new sandbox, or stop an existing one for a later retry.
 
-        Daytona's ``close`` stops the sandbox and keeps it around so a
-        later ``initialize`` can reattach. A workspace that failed to
-        initialize was never cached, so nothing will ever reattach and
-        the stopped sandbox would keep billing. Delete it through the
-        per-workspace client before closing that client.
+        A failed reattachment must preserve the sandbox's persistent data.
+        Only sandboxes created by this initialization attempt are deleted
+        through the per-workspace client before closing that client.
         """
         ws = cast(DaytonaWorkspace, workspace)
         sandbox = ws._sandbox  # pylint: disable=protected-access
         client = ws._daytona  # pylint: disable=protected-access
-        if sandbox is not None and client is not None:
+        if (
+            sandbox is not None
+            and client is not None
+            and ws._sandbox_created  # pylint: disable=protected-access
+        ):
             try:
                 await client.delete(sandbox)
                 # pylint: disable-next=protected-access

@@ -60,6 +60,7 @@ class _FakeWorkspace:
         self.closed = False
         self.close_calls = 0
         self._sandbox: _FakeSandbox | None = _FakeSandbox()
+        self._sandbox_created = True
         self._daytona: _FakeDaytona | None = _FakeDaytona()
         self._daytona.delete_error = _FakeWorkspace.daytona_delete_error
         # Stable handles: disposal clears ``_sandbox`` on success.

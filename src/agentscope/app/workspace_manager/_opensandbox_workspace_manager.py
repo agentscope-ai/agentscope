@@ -196,8 +196,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         try:
             await ws.initialize()
         except BaseException:
-            # ``close`` only pauses the sandbox; a paused sandbox still
-            # bills, and this one never entered the cache.
+            # Delete newly created sandboxes, but preserve restored data.
             await self._dispose_uninitialized(ws)
             raise
         return ws
@@ -206,17 +205,18 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self,
         workspace: WorkspaceBase,
     ) -> None:
-        """Kill, rather than pause, an unclaimed sandbox.
+        """Kill a new sandbox, or pause an existing one for a later retry.
 
-        OpenSandbox's ``close`` pauses the remote sandbox so a later
-        ``initialize`` can reattach to it by metadata. A workspace that
-        failed to initialize was never cached, so nothing will ever
-        reattach; the sandbox would keep billing. ``kill`` terminates
-        it, then ``close`` releases the local resources.
+        A failed reattachment must preserve the sandbox's persistent data.
+        Only sandboxes created by this initialization attempt are killed;
+        ``close`` then releases the local resources.
         """
         ws = cast(OpenSandboxWorkspace, workspace)
         sandbox = ws._sandbox  # pylint: disable=protected-access
-        if sandbox is not None:
+        if (
+            sandbox is not None
+            and ws._sandbox_created  # pylint: disable=protected-access
+        ):
             try:
                 await sandbox.kill()
                 await sandbox.close()
