@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import httpx2
-from google.genai.types import HttpOptions, ThinkingConfig
+from google.genai.types import FunctionDeclaration, HttpOptions, ThinkingConfig
 from pydantic import BaseModel, Field
 
 from utils import AnyString
@@ -37,7 +37,7 @@ from agentscope.model import GeminiChatModel
 from agentscope.model._gemini._model import _sanitize_schema_for_gemini
 from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
-from agentscope.tool import ToolChoice
+from agentscope.tool import FunctionTool, ToolChoice
 
 A = AnyString()
 
@@ -1852,6 +1852,52 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 "required": ["query"],
             },
         )
+
+    def test_sanitize_removes_keywords_rejected_by_gemini_schema(
+        self,
+    ) -> None:
+        """Validation keywords that Gemini's Schema model does not declare
+        are removed, so the SDK accepts the function declaration."""
+
+        def search(
+            query: Annotated[str, Field(examples=["agentscope"])],
+            labels: set[str],
+            top_k: Annotated[int, Field(gt=0, lt=100, multiple_of=5)] = 5,
+        ) -> str:
+            """Search documents.
+
+            Args:
+                query: The search query.
+                labels: Only return documents with these labels.
+                top_k: How many results to return.
+            """
+            return f"{query} {sorted(labels)} {top_k}"
+
+        parameters = _sanitize_schema_for_gemini(
+            FunctionTool(search).input_schema,
+        )
+
+        self.assertEqual(
+            parameters["properties"],
+            {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Only return documents with these labels.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "How many results to return.",
+                },
+            },
+        )
+        # The SDK forbids unknown schema keys, so this raises if any is left.
+        FunctionDeclaration(name="search", parameters=parameters)
 
     def test_flatten_resolves_ref_and_removes_defs(self) -> None:
         """$ref inlined with extra keys merged; $defs removed."""

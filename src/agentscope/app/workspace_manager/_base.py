@@ -8,6 +8,7 @@ from collections import defaultdict
 from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
+from ..._logging import logger
 from ..._utils._common import _generate_id
 from ...workspace import WorkspaceBase
 
@@ -195,6 +196,33 @@ class WorkspaceManagerBase(ABC):
         imply the manager itself is being torn down. Use ``async with`` (or
         :meth:`__aexit__` directly) for full manager shutdown.
         """
+
+    async def _dispose_uninitialized(
+        self,
+        workspace: WorkspaceBase,
+    ) -> None:
+        """Dispose of a workspace whose ``initialize`` never finished.
+
+        Such a workspace never entered the cache, so neither :meth:`close`
+        nor :meth:`close_all` nor a TTL sweeper will ever see it. Called
+        from ``except BaseException`` right before re-raising: cleanup
+        failures are logged and swallowed so the original initialization
+        error keeps propagating.
+
+        Providers whose ``close`` only pauses — OpenSandbox and Daytona —
+        override this to delete newly created remote instances outright.
+
+        Args:
+            workspace (`WorkspaceBase`):
+                The half-started workspace to dispose of.
+        """
+        try:
+            await workspace.close()
+        except Exception:
+            logger.exception(
+                "Failed to dispose uninitialized workspace %s",
+                workspace.workspace_id,
+            )
 
     async def __aenter__(self) -> Self:
         """Enter the manager's lifetime. Default is a no-op."""
