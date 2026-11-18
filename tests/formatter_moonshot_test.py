@@ -581,6 +581,35 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
                     },
                 )
 
+    async def test_unsupported_audio_subtype_is_skipped(self) -> None:
+        """The default types must not claim audio the API cannot carry.
+
+        Only WAV and MP3 can be encoded, so with the default config an
+        OGG block is filtered out like any other unsupported media type
+        instead of raising on every ``format()`` call.
+        """
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data="ZmFrZSBhdWRpbyBkYXRh",
+                        media_type="audio/ogg",
+                    ),
+                ),
+            ],
+        )
+        for formatter_type in (
+            MoonshotChatFormatter,
+            MoonshotMultiAgentFormatter,
+        ):
+            with self.subTest(formatter=formatter_type.__name__):
+                self.assertEqual(await formatter_type().format([msg]), [])
+                with self.assertRaisesRegex(TypeError, "audio/ogg"):
+                    await formatter_type(input_types=["audio/*"]).format(
+                        [msg],
+                    )
+
     async def test_chat_formatter_url_image_in_tool_result(
         self,
     ) -> None:

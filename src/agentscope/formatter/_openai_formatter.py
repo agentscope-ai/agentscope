@@ -29,6 +29,12 @@ from ..message import (
 # Expected a string that matches the pattern '^[^\s<|\\/>]+$'".
 _INVALID_MESSAGE_NAME_CHARS = re.compile(r"[\s<|\\/>]+")
 
+# The only audio formats ``input_audio`` can carry. The default
+# ``input_types`` lists these rather than ``audio/*`` so a block the
+# formatter cannot encode is skipped with a warning, like any other
+# unsupported media type, instead of raising on every ``format()`` call.
+_OPENAI_AUDIO_FORMATS = ["audio/wav", "audio/mp3", "audio/mpeg"]
+
 
 def _format_message_name(name: str | None) -> dict[str, str]:
     """Build the ``name`` field of an OpenAI chat message.
@@ -291,12 +297,15 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "application/pdf",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "application/pdf"]``. Only WAV and MP3 audio '
+            "can be encoded; list ``audio/*`` explicitly to reject any "
+            "other audio subtype instead of skipping it."
         ),
     )
 
@@ -497,12 +506,15 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         default_factory=lambda: [
             "text/plain",
             "image/*",
-            "audio/*",
+            *_OPENAI_AUDIO_FORMATS,
             "application/pdf",
         ],
         description=(
             "The supported input types. Defaults to "
-            '``["text/plain", "image/*", "audio/*", "application/pdf"]``.'
+            '``["text/plain", "image/*", "audio/wav", "audio/mp3", '
+            '"audio/mpeg", "application/pdf"]``. Only WAV and MP3 audio '
+            "can be encoded; list ``audio/*`` explicitly to reject any "
+            "other audio subtype instead of skipping it."
         ),
     )
 

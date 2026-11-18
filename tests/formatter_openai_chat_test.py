@@ -142,7 +142,9 @@ class TestFileUrlToPath(IsolatedAsyncioTestCase):
             opened.assert_not_called()
 
 
-class TestOpenAIFormatter(IsolatedAsyncioTestCase):
+class TestOpenAIFormatter(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Comprehensive tests for OpenAI Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
@@ -475,6 +477,36 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_unsupported_audio_subtype_is_skipped(self) -> None:
+        """The default types must not claim audio the API cannot carry.
+
+        Only WAV and MP3 can be encoded, so with the default config an
+        AAC block is filtered out like any other unsupported media type
+        instead of raising on every ``format()`` call.
+        """
+        msg = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data="ZmFrZSBhdWRpbyBkYXRh",
+                        media_type="audio/aac",
+                    ),
+                ),
+            ],
+        )
+        for formatter_class in (
+            OpenAIChatFormatter,
+            OpenAIMultiAgentFormatter,
+        ):
+            with self.subTest(formatter=formatter_class.__name__):
+                formatter = formatter_class()
+                self.assertEqual(await formatter.format([msg]), [])
+                with self.assertRaisesRegex(TypeError, "audio/aac"):
+                    await formatter_class(input_types=["audio/*"]).format(
+                        [msg],
+                    )
 
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
