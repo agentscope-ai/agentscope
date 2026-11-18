@@ -1018,8 +1018,18 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         result = await self.model([])
 
         self.assertIsNotNone(result.usage)
-        self.assertEqual(result.usage.input_tokens, 10)
-        self.assertEqual(result.usage.output_tokens, 7)
+        self.assertEqual(
+            dict(result.usage),
+            {
+                "input_tokens": 10,
+                "output_tokens": 7,
+                "time": result.usage.time,
+                "cache_creation_input_tokens": 0,
+                "cache_input_tokens": 0,
+                "type": "chat",
+                "metadata": None,
+            },
+        )
 
     async def test_usage_fallback_excludes_tool_use_tokens(self) -> None:
         """Usage fallback excludes tool-use tokens from output."""
