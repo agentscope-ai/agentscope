@@ -1118,6 +1118,157 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_stream_length_reason_reaches_final_response(self) -> None:
+        """A length stop on message_delta survives stream accumulation."""
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 10
+        msg_usage.output_tokens = 0
+        msg_usage.cache_creation_input_tokens = 0
+        msg_usage.cache_read_input_tokens = 0
+
+        message = MagicMock()
+        message.id = "msg-length"
+        message.usage = msg_usage
+
+        text_start = MagicMock()
+        text_start.type = "text"
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "partial"
+
+        msg_delta = MagicMock()
+        msg_delta.stop_reason = "max_tokens"
+        msg_delta_usage = MagicMock()
+        msg_delta_usage.output_tokens = 5
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
+            _make_event("content_block_delta", index=0, delta=text_delta),
+            _make_event(
+                "message_delta",
+                delta=msg_delta,
+                usage=msg_delta_usage,
+            ),
+        ]
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+
+        responses = [r async for r in await self.model([])]
+
+        self.assertEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="partial",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="partial",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.LENGTH,
+        )
+        self.assertEqual(
+            responses[-1].metadata,
+            {"raw_finish_reason": "max_tokens"},
+        )
+
+    async def test_stream_length_reason_with_late_usage(self) -> None:
+        """Late usage and a length stop share one carrier chunk."""
+        message = MagicMock()
+        message.id = "msg-late-length"
+        message.usage = None
+
+        text_start = MagicMock()
+        text_start.type = "text"
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "Hi"
+
+        msg_delta = MagicMock()
+        msg_delta.stop_reason = "max_tokens"
+        delta_usage = MagicMock()
+        delta_usage.input_tokens = 10
+        delta_usage.output_tokens = 5
+        delta_usage.cache_creation_input_tokens = 20
+        delta_usage.cache_read_input_tokens = 30
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
+            _make_event("content_block_delta", index=0, delta=text_delta),
+            _make_event(
+                "message_delta",
+                delta=msg_delta,
+                usage=delta_usage,
+            ),
+        ]
+        self.mock_client.messages.create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        start = datetime(2026, 10, 1, 10, 0, 0)
+        with patch(
+            "agentscope.model._anthropic._model.datetime",
+        ) as mock_datetime:
+            mock_datetime.now.side_effect = [
+                start,
+                start + timedelta(seconds=1),
+            ]
+            responses = [r async for r in await self.model([])]
+
+        self.assertEqual(
+            [
+                (r.is_last, [block.text for block in r.content])
+                for r in responses
+            ],
+            [(False, ["Hi"]), (True, ["Hi"])],
+        )
+        self.assertIsNone(responses[0].usage)
+        self.assertEqual(
+            responses[-1].usage,
+            ChatUsage(
+                input_tokens=60,
+                output_tokens=5,
+                time=1.0,
+                cache_creation_input_tokens=20,
+                cache_input_tokens=30,
+            ),
+        )
+        self.assertEqual(
+            responses[-1].finished_reason,
+            FinishedReason.LENGTH,
+        )
+        self.assertEqual(
+            responses[-1].metadata,
+            {"raw_finish_reason": "max_tokens"},
+        )
+
     async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()
