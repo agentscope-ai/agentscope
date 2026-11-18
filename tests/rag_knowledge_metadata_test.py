@@ -164,3 +164,19 @@ class KnowledgeMetadataTest(IsolatedAsyncioTestCase):
             [chunk.model_dump() for chunk in self.chunks],
             before,
         )
+
+    async def test_search_rejects_a_short_embedding_response(self) -> None:
+        """A model returning fewer vectors than queries must not pass.
+
+        ``search`` walks ``response.embeddings``, so a fused batch would
+        silently drop the trailing queries — the same mismatch
+        ``insert_document`` already rejects.
+        """
+        knowledge = self._knowledge()
+        await knowledge.insert_document(self.chunks, document_id="doc-1")
+        self.embedding.return_value = EmbeddingResponse(
+            embeddings=[[1.0, 0.0, 0.0]],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "1 vectors for 2 queries"):
+            await knowledge.search(["first query", "second query"])
