@@ -505,10 +505,14 @@ class ChatService:
                 background wakeup), in which case naming is skipped and
                 left for a later turn.
         """
-        if not session_record.config.naming.auto or not trigger_text:
+        if not session_record.config.naming.auto or not trigger_text.strip():
             return
 
-        name = trigger_text[:_NAMING_NAME_LIMIT]
+        # The name is shown on one line in the session list, so collapse
+        # the opening message's whitespace just as the model's title is
+        # stripped. A multi-line or whitespace-only turn must not put
+        # newlines or a blank string into the UI.
+        name = " ".join(trigger_text.split())[:_NAMING_NAME_LIMIT]
         try:
             res = await model.generate_structured_output(
                 messages=[

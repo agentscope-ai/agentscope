@@ -73,6 +73,7 @@ class GatewayMCPTool(ToolBase):
         gateway: "GatewayClient",
         agent_id: str = "",
         session_id: str = "",
+        trust_annotations: bool = True,
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -87,7 +88,7 @@ class GatewayMCPTool(ToolBase):
                 Raw upstream tool descriptor as returned by the gateway.
                 ``input_schema`` is forwarded verbatim;
                 ``annotations.read_only_hint`` drives the permission
-                policy.
+                policy when ``trust_annotations`` is `True`.
             gateway (`GatewayClient`):
                 Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
@@ -95,6 +96,11 @@ class GatewayMCPTool(ToolBase):
                 The agent whose gateway-side session to run against.
             session_id (`str`, defaults to ``""``):
                 The session whose gateway-side session to run against.
+            trust_annotations (`bool`, defaults to `True`):
+                Whether to trust the tool annotations reported by the
+                upstream MCP server. If `False`, the ``readOnlyHint``
+                annotation is ignored and the tool is never treated as
+                read-only.
         """
         self.mcp_name = mcp_name
         self._agent_id = agent_id
@@ -111,9 +117,19 @@ class GatewayMCPTool(ToolBase):
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
+        # Only honor the self-reported read-only hint for trusted servers,
+        # mirroring :class:`agentscope.tool.MCPTool`.
         self.is_read_only = False
-        if tool.annotations:
-            self.is_read_only = tool.annotations.read_only_hint or False
+        if tool.annotations and tool.annotations.read_only_hint:
+            if trust_annotations:
+                self.is_read_only = True
+            else:
+                logger.debug(
+                    "Ignored the read-only hint of MCP tool '%s' as the "
+                    "annotations of MCP '%s' are not trusted.",
+                    tool.name,
+                    mcp_name,
+                )
 
         self._tool = tool
         self._gateway = gateway
@@ -468,6 +484,7 @@ class GatewayMCPClient(MCPClient):
             gateway=self._gateway,
             agent_id=self._agent_id,
             session_id=self._session_id,
+            trust_annotations=self.trust_annotations,
         )
 
 

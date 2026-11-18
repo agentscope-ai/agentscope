@@ -115,6 +115,9 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
       ``uniqueItems`` and ``examples``: removed entirely.
     - ``const``: converted to an equivalent single-value ``enum``,
       since Gemini's ``Schema`` model does not support ``const``.
+    - ``oneOf``: converted to ``anyOf`` for discriminated unions.
+      An existing ``anyOf`` raises ``ValueError`` rather than dropping
+      conjunctive constraints.
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
@@ -189,6 +192,17 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     if "const" in schema:
         const_value = schema.pop("const")
         schema.setdefault("enum", [const_value])
+
+    # Gemini lacks `oneOf`; discriminated unions can use `anyOf` because
+    # their branches are mutually exclusive.
+    schema.pop("discriminator", None)
+    if "oneOf" in schema:
+        if "anyOf" in schema:
+            raise ValueError(
+                "Cannot safely sanitize Gemini schema with both oneOf "
+                "and anyOf.",
+            )
+        schema["anyOf"] = schema.pop("oneOf")
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):
@@ -753,7 +767,7 @@ class GeminiChatModel(ChatModelBase):
             return None
         prompt_tokens = usage_metadata.prompt_token_count
         total_tokens = usage_metadata.total_token_count
-        if prompt_tokens is not None and total_tokens is not None:
+        if prompt_tokens is not None:
             tool_use_tokens = (
                 getattr(
                     usage_metadata,
@@ -772,9 +786,12 @@ class GeminiChatModel(ChatModelBase):
                 output_tokens = candidates_tokens + (
                     getattr(usage_metadata, "thoughts_token_count", 0) or 0
                 )
-            else:
+            elif total_tokens is not None:
                 # Fallback for SDK versions without the candidate count.
                 output_tokens = total_tokens - input_tokens
+            else:
+                # Neither count can describe the generated tokens.
+                return None
             return ChatUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
