@@ -366,6 +366,7 @@ async def create_chat_submission(
                         "agent_id": agent_id,
                         "state": "reserved",
                         "queue_item_id": None,
+                        "reply_id": None,
                         "expires_at": expires_at,
                     },
                 ),
@@ -559,6 +560,35 @@ async def enqueue_chat_input(
             item["id"],
         )
     return _public_chat_input(item)
+
+
+async def bind_chat_submission(
+    bus: "MessageBus",
+    user_id: str,
+    session_id: str,
+    agent_id: str,
+    submission_id: str,
+    reply_id: str,
+) -> None:
+    """Bind a claimed submission once, independently of reusable Msg IDs."""
+    async with chat_input_mutation(bus, session_id):
+        record = await get_submission(
+            bus,
+            session_id,
+            submission_id,
+            user_id,
+            agent_id,
+        )
+        if record is None or record["state"] != "claimed":
+            raise ValueError("Submission is not claimed.")
+        if record.get("reply_id") not in (None, reply_id):
+            raise ValueError("Submission is already bound to another reply.")
+        record["reply_id"] = reply_id
+        await bus.registry_set(
+            MessageBusKeys.chat_submissions(session_id),
+            submission_id,
+            json.dumps(record),
+        )
 
 
 async def cancel_chat_submission(

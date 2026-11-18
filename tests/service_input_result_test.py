@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Durable input reconciliation must survive missing replay events."""
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock
@@ -11,6 +12,10 @@ from httpx import ASGITransport, AsyncClient
 from agentscope.app._chat_input_store import (
     INPUT_EXECUTION,
     finish_unbound_inputs,
+)
+from agentscope.app._bus_ops import (
+    bind_chat_submission,
+    cancel_chat_submission,
 )
 from agentscope.app._router._session import session_router
 from agentscope.app._service import ChatService
@@ -52,6 +57,105 @@ class InputResultTest(IsolatedAsyncioTestCase):
             self.bus,
             Mock(),
         )
+
+    async def test_submission_result_survives_reused_message_id(self) -> None:
+        """A delayed cancellation resolves A while the same Msg ID runs B."""
+        namespace = MessageBusKeys.chat_submissions("s")
+        for submission, reply in (("first", "A"), ("later", "B")):
+            await self.bus.registry_set(
+                namespace,
+                submission,
+                json.dumps(
+                    {
+                        "user_id": "owner",
+                        "agent_id": "a",
+                        "queue_item_id": submission,
+                        "state": "claimed",
+                        "message_ids": ["shared"],
+                        "reply_id": None,
+                    },
+                ),
+            )
+            await bind_chat_submission(
+                self.bus,
+                "owner",
+                "s",
+                "a",
+                submission,
+                reply,
+            )
+        self.messages["shared"] = UserMsg(
+            "u",
+            "later",
+            id="shared",
+            metadata={
+                INPUT_EXECUTION: {"reply_id": "B", "finished": False},
+            },
+        )
+        self.messages["A"] = AssistantMsg(
+            name="a",
+            id="A",
+            content=[],
+            finished_reason="completed",
+        )
+        self.messages["B"] = AssistantMsg(name="a", id="B", content=[])
+        app = FastAPI()
+        app.include_router(session_router)
+        app.dependency_overrides[get_chat_service] = lambda: self.service
+        async with self.bus.acquire_lock(
+            MessageBusKeys.session_lock("s"),
+        ), AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            self.assertEqual(
+                await cancel_chat_submission(
+                    self.bus,
+                    "owner",
+                    "s",
+                    "a",
+                    "first",
+                ),
+                {"state": "started", "queue_item_id": "first"},
+            )
+            for submission, expected in (
+                ("first", {"state": "finished", "reply_id": "A"}),
+                ("later", {"state": "reply", "reply_id": "B"}),
+            ):
+                response = await client.get(
+                    "/sessions/s/inputs/shared/result",
+                    params={"agent_id": "a", "submission_id": submission},
+                    headers={"X-User-ID": "owner"},
+                )
+                self.assertEqual(
+                    (response.status_code, response.json()),
+                    (200, expected),
+                )
+            with self.assertRaises(ValueError):
+                await bind_chat_submission(
+                    self.bus,
+                    "owner",
+                    "s",
+                    "a",
+                    "first",
+                    "B",
+                )
+            # Missing bindings must not fall back to shared message metadata.
+            record = json.loads(
+                await self.bus.registry_get(namespace, "first"),
+            )
+            record["reply_id"] = None
+            await self.bus.registry_set(namespace, "first", json.dumps(record))
+            self.assertEqual(
+                await self.service.input_result(
+                    "owner",
+                    "s",
+                    "a",
+                    "shared",
+                    submission_id="first",
+                ),
+                {"state": "unknown", "reply_id": None},
+            )
 
     async def test_http_result_does_not_guess_from_empty_queue(self) -> None:
         """Unknown inputs stay unknown; only the exact receipt can finish."""

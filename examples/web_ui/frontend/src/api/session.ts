@@ -51,11 +51,12 @@ export const sessionApi = {
 		sessionId: string,
 		agentId: string,
 		messageId: string,
+		submissionId: string,
 		options?: ApiRequestOptions,
 	) =>
 		client.get<InputResult>(
 			`/sessions/${sessionId}/inputs/${messageId}/result`,
-			{ agent_id: agentId },
+			{ agent_id: agentId, submission_id: submissionId },
 			options,
 		),
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),

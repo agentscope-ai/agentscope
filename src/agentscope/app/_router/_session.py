@@ -471,6 +471,7 @@ async def get_input_result(
     session_id: str,
     message_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
+    submission_id: str | None = Query(None, min_length=1),
     user_id: str = Depends(get_current_user_id),
     chat_service: ChatService = Depends(get_chat_service),
 ) -> dict:
@@ -481,6 +482,7 @@ async def get_input_result(
             session_id,
             agent_id,
             message_id,
+            submission_id=submission_id,
         )
     except LookupError as exc:
         raise HTTPException(

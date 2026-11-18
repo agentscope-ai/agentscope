@@ -52,7 +52,11 @@ export interface PipelineVoiceOptions {
 	interrupt: (replyId: string, signal: AbortSignal) => Promise<void>;
 	deleteQueued: (id: string, signal: AbortSignal) => Promise<void>;
 	findQueued: (messageId: string, signal: AbortSignal) => Promise<string | null>;
-	inputResult: (messageId: string, signal: AbortSignal) => Promise<InputResult>;
+	inputResult: (
+		messageId: string,
+		submissionId: string,
+		signal: AbortSignal,
+	) => Promise<InputResult>;
 	onState: (state: PipelineVoiceState, transcript: string) => void;
 	onError: (error: unknown) => void;
 	canListen: () => boolean;
@@ -223,19 +227,14 @@ export class PipelineVoiceSession {
 		};
 	}
 
-	/** A new replay stream must find this input before binding an unknown reply. */
+	/** Reconcile unknown replies through the submission, never replayed Msg IDs. */
 	cancellationEventHandler(): (event: AgentEvent) => void {
-		let matchedInput = false;
 		return (event) => {
 			if (event.type === EventType.CUSTOM) {
-				const value = (event.value ?? {}) as { message_ids?: string[] };
-				if (!this.userMessageId || !value.message_ids?.includes(this.userMessageId)) return;
-				if (event.name === 'chat_input_started') matchedInput = true;
+				const value = (event.value ?? {}) as { queue_item_id?: string };
+				if (!this.queueId || value.queue_item_id !== this.queueId) return;
 				this.onEvent(event);
-			} else if (
-				event.reply_id === this.replyId ||
-				(matchedInput && event.type === EventType.REPLY_START)
-			) {
+			} else if (event.reply_id === this.replyId) {
 				this.onEvent(event);
 			}
 		};
@@ -258,7 +257,13 @@ export class PipelineVoiceSession {
 			('reply_id' in event && this.options.suppressedReplies.has(event.reply_id));
 		if (event.type === EventType.CUSTOM) {
 			const custom = event as CustomEvent;
-			const value = (custom.value ?? {}) as { message_ids?: string[]; reply_id?: string };
+			const value = (custom.value ?? {}) as {
+				message_ids?: string[];
+				reply_id?: string;
+				queue_item_id?: string;
+			};
+			if (this.stopped && (!this.queueId || value.queue_item_id !== this.queueId))
+				return handled;
 			if (
 				custom.name === 'chat_input_started' &&
 				this.userMessageId &&
@@ -290,7 +295,7 @@ export class PipelineVoiceSession {
 			event.type === EventType.REPLY_START &&
 			(event as ReplyStartEvent).role === 'assistant'
 		) {
-			if (this.inputStarted && !this.inputFinished && !this.replyId) {
+			if (!this.stopped && this.inputStarted && !this.inputFinished && !this.replyId) {
 				this.replyId = event.reply_id;
 				this.options.suppressedReplies.add(event.reply_id);
 				if (this.cancellationPending) this.continueCancellation();
@@ -418,18 +423,29 @@ export class PipelineVoiceSession {
 				if (result.state === 'cancelled') {
 					// A retired receipt can belong to an already completed reply.
 					if (this.userMessageId) {
-						const input = await this.options.inputResult(this.userMessageId, signal);
+						const input = await this.options.inputResult(
+							this.userMessageId,
+							this.submissionId,
+							signal,
+						);
 						signal.throwIfAborted();
-						if (input.reply_id) this.options.suppressedReplies.add(input.reply_id);
+						if (input.reply_id && (!this.replyId || input.reply_id === this.replyId))
+							this.options.suppressedReplies.add(input.reply_id);
 					}
 					this.finishCancellation();
 					return;
 				}
 				if (!this.queueId) this.queueId = result.queue_item_id;
 			}
-			if (this.userMessageId) {
-				const result = await this.options.inputResult(this.userMessageId, signal);
+			if (this.userMessageId && this.submissionId) {
+				const result = await this.options.inputResult(
+					this.userMessageId,
+					this.submissionId,
+					signal,
+				);
 				signal.throwIfAborted();
+				if (this.replyId && result.reply_id && result.reply_id !== this.replyId)
+					throw new Error('Voice submission returned a different reply.');
 				if (result.reply_id) this.options.suppressedReplies.add(result.reply_id);
 				if (!this.cancellationPending) return;
 				if (result.state === 'finished') {
@@ -439,7 +455,7 @@ export class PipelineVoiceSession {
 				if (
 					result.state === 'reply' &&
 					result.reply_id &&
-					result.reply_id !== this.replyId
+					!this.replyId
 				) {
 					this.replyId = result.reply_id;
 					this.inputStarted = true;

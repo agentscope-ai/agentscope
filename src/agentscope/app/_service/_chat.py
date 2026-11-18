@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .._bus_ops import (
     abandon_inbox_consumer,
+    bind_chat_submission,
     deliver_to_inbox,
     enqueue_run_trigger,
     finish_active_chat_reply,
@@ -31,7 +32,7 @@ from .._bus_ops import (
     register_inbox_consumer,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from .._chat_input_store import INPUT_EXECUTION
+from .._chat_input_store import INPUT_EXECUTION, get_submission
 from ._session import SessionService, SessionStatus
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..channel import ChatKind
@@ -331,6 +332,7 @@ class ChatService:
         input_persisted: bool = False,
         pipeline_tts_config: TTSModelConfig | None = None,
         pipeline_chat_config: ChatModelSnapshot | None = None,
+        submission_id: str | None = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -379,6 +381,8 @@ class ChatService:
                 this turn, which gives it a submit tool.
             queue_item_id (`str | None`, optional):
                 Queue identity for terminal failure reporting.
+            submission_id (`str | None`, optional):
+                Submission whose first reply must be durably bound.
             pipeline_tts_config (`TTSModelConfig | None`, optional):
                 Speech snapshot reserved for the initial pipeline input.
             pipeline_chat_config (`ChatModelSnapshot | None`, optional):
@@ -398,6 +402,7 @@ class ChatService:
                 input_persisted=input_persisted,
                 pipeline_tts_config=pipeline_tts_config,
                 pipeline_chat_config=pipeline_chat_config,
+                submission_id=submission_id,
             )
         except Exception as e:
             logger.exception(
@@ -891,12 +896,14 @@ class ChatService:
         session_id: str,
         agent_id: str,
         message_id: str,
+        submission_id: str | None = None,
     ) -> dict:
         """Resolve an input independently of the trimmed event replay log.
 
         Read under the persistence checkpoint lock so a terminal reply
         cannot be observed before its session state has been saved.
-        Missing receipts are unknown, never evidence of completion.
+        Missing message receipts are unknown. Collected submission leases
+        are terminal and cannot admit a delayed POST.
         """
         async with self._message_bus.acquire_lock(
             MessageBusKeys.session_event_checkpoint_lock(session_id),
@@ -909,13 +916,33 @@ class ChatService:
             )
             if session is None:
                 raise LookupError(f"Session {session_id!r} not found.")
-            msg = await self._storage.get_message(
-                user_id,
-                session_id,
-                message_id,
-            )
-            receipt = msg.metadata.get(INPUT_EXECUTION) if msg else None
             unknown = {"state": "unknown", "reply_id": None}
+            if submission_id is not None:
+                receipt = await get_submission(
+                    self._message_bus,
+                    session_id,
+                    submission_id,
+                    user_id,
+                    agent_id,
+                )
+                # Only terminal submissions may be collected. Missing leases
+                # cannot admit a delayed POST or identify a different reply.
+                if receipt is None:
+                    return {"state": "finished", "reply_id": None}
+                if message_id not in receipt.get("message_ids", []):
+                    return unknown
+                if receipt["state"] in ("cancelled", "finished"):
+                    return {
+                        "state": "finished",
+                        "reply_id": receipt.get("reply_id"),
+                    }
+            else:
+                msg = await self._storage.get_message(
+                    user_id,
+                    session_id,
+                    message_id,
+                )
+                receipt = msg.metadata.get(INPUT_EXECUTION) if msg else None
             if not isinstance(receipt, dict):
                 return unknown
             reply_id = receipt.get("reply_id")
@@ -1087,6 +1114,7 @@ class ChatService:
         input_persisted: bool = False,
         pipeline_tts_config: TTSModelConfig | None = None,
         pipeline_chat_config: ChatModelSnapshot | None = None,
+        submission_id: str | None = None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
         swallowing. Separated so the try/except doesn't bury the
@@ -1713,6 +1741,16 @@ class ChatService:
                                     )
                                 try:
                                     if isinstance(event, ReplyStartEvent):
+                                        if submission_id is not None:
+                                            await bind_chat_submission(
+                                                self._message_bus,
+                                                user_id,
+                                                session_id,
+                                                agent_id,
+                                                submission_id,
+                                                event.reply_id,
+                                            )
+                                            submission_id = None
                                         for msg in bound_inputs:
                                             await self._storage.upsert_message(
                                                 user_id,

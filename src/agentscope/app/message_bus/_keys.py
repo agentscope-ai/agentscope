@@ -310,6 +310,7 @@ class MessageBusKeys:  # pylint: disable=too-many-public-methods
     CHAT_SUBMISSION_LEASE_SECS: Final = 600
     CHAT_RECEIPT_RETENTION_SECS: Final = 3600
     CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS: Final = 1.0
+    CHAT_RECEIPT_QUERY_TIMEOUT_SECS: Final = 0.2
     CHAT_RECEIPT_SESSION_MAX_LEN: Final = 1024
     CHAT_RECEIPT_USER_MAX_LEN: Final = 8192
 

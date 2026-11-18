@@ -77,6 +77,7 @@ class ChatInputQueue:
         self._recovery_task: asyncio.Task | None = None
         self._recovery_owner = uuid.uuid4().hex
         self._retry_tasks: set[asyncio.Task] = set()
+        self._receipt_cursors: dict[str, str] = {}
         self._closed = False
 
     async def close(self, *, release_leadership: bool = True) -> None:
@@ -185,6 +186,7 @@ class ChatInputQueue:
         session_id: str,
         agent_id: str,
         message_id: str | None,
+        submission_id: str | None = None,
     ) -> dict:
         """Resolve a claimed receipt only when the collector needs it."""
         if message_id is None:
@@ -207,6 +209,11 @@ class ChatInputQueue:
             session_id,
             agent_id,
             message_id,
+            **(
+                {"submission_id": submission_id}
+                if submission_id is not None
+                else {}
+            ),
         )
 
     async def _release_recovery_leadership(self) -> None:
@@ -258,7 +265,13 @@ class ChatInputQueue:
         collection_timeout = (
             MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS
         )
-        for session_id in pending_sessions.keys() | inflight_sessions.keys():
+        sessions = pending_sessions.keys() | inflight_sessions.keys()
+        self._receipt_cursors = {
+            sid: key
+            for sid, key in self._receipt_cursors.items()
+            if sid in sessions
+        }
+        for session_id in sessions:
             try:
                 raw_routing = pending_sessions.get(session_id)
                 if raw_routing is not None:
@@ -294,6 +307,7 @@ class ChatInputQueue:
                             session_id,
                             agent_id,
                             self._receipt_input_result,
+                            self._receipt_cursors,
                         )
                         # Recheck before removing an empty queue's index.
                         pending = await self._bus.queue_read(
@@ -691,6 +705,11 @@ class ChatInputQueue:
                     client_external_tools=client_external_tools or None,
                     client_builtin_tools=client_builtin_tools or None,
                     **(
+                        {"submission_id": payload["submission_id"]}
+                        if payload.get("submission_id")
+                        else {}
+                    ),
+                    **(
                         {
                             "pipeline_chat_config": (
                                 ChatModelSnapshot.model_validate(
@@ -1013,9 +1032,7 @@ class ChatInputQueue:
                         claim_payload = {}
                 except (KeyError, TypeError, ValueError):
                     claim_payload = {}
-                if claim_payload.get("cancelled_before_reply") and (
-                    submission_id := claim_payload.get("submission_id")
-                ):
+                if submission_id := claim_payload.get("submission_id"):
                     submission = await get_submission(
                         self._bus,
                         session_id,
@@ -1023,7 +1040,13 @@ class ChatInputQueue:
                         claim_payload["user_id"],
                         claim_payload["agent_id"],
                     )
-                    if submission is not None:
+                    if submission is not None and (
+                        claim_payload.get("cancelled_before_reply")
+                        or (
+                            "reply_id" in submission
+                            and submission["reply_id"] is None
+                        )
+                    ):
                         submission["state"] = "finished"
                         await self._bus.registry_set(
                             MessageBusKeys.chat_submissions(session_id),

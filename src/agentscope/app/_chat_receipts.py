@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Bounded submission leases and cancellation receipt retention."""
+
+import asyncio
 import json
 from time import time
 from typing import Awaitable, Callable, TYPE_CHECKING
@@ -91,6 +93,7 @@ async def reap_receipts(
     session_id: str,
     agent_id: str,
     input_result: Callable[..., Awaitable[dict]],
+    cursors: dict[str, str],
 ) -> None:
     """Collect only proven terminal receipts under the mutation lock.
 
@@ -107,6 +110,7 @@ async def reap_receipts(
     )
     if raw:
         active.add(json.loads(raw)["payload"]["id"])
+    deferred = []
     for namespace in (
         MessageBusKeys.chat_submissions(session_id),
         MessageBusKeys.chat_input_cancellations(session_id),
@@ -125,14 +129,8 @@ async def reap_receipts(
                 if record.get("expires_at", 0) > now:
                     continue
             if state == "claimed" and "retire_at" not in record:
-                # Older receipts lack input identities; require idle state.
-                message_ids = record.get("message_ids") or [None]
-                results = [
-                    await input_result(user_id, session_id, agent_id, mid)
-                    for mid in message_ids
-                ]
-                if any(r["state"] != "finished" for r in results):
-                    continue
+                deferred.append((key, record))
+                continue
             if "retire_at" not in record:
                 record["retire_at"] = (
                     now + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS
@@ -140,3 +138,42 @@ async def reap_receipts(
                 await bus.registry_set(namespace, key, json.dumps(record))
             elif record["retire_at"] <= now:
                 await bus.registry_del(namespace, key)
+    # Delete cheap expired records in both registries before querying storage.
+    if not deferred:
+        cursors.pop(session_id, None)
+        return
+    cursor = cursors.get(session_id, "")
+    deferred.sort(key=lambda item: (item[0] <= cursor, item[0]))
+    for key, record in deferred:
+        # Advance before awaiting so even an outer timeout makes progress.
+        cursors[session_id] = key
+        try:
+            async with asyncio.timeout(
+                MessageBusKeys.CHAT_RECEIPT_QUERY_TIMEOUT_SECS,
+            ):
+                message_ids = record.get("message_ids") or [None]
+                results = [
+                    await input_result(
+                        user_id,
+                        session_id,
+                        agent_id,
+                        mid,
+                        **(
+                            {"submission_id": key}
+                            if "reply_id" in record
+                            else {}
+                        ),
+                    )
+                    for mid in message_ids
+                ]
+        except TimeoutError:
+            continue
+        if all(r["state"] == "finished" for r in results):
+            record["retire_at"] = (
+                now + MessageBusKeys.CHAT_RECEIPT_RETENTION_SECS
+            )
+            await bus.registry_set(
+                MessageBusKeys.chat_submissions(session_id),
+                key,
+                json.dumps(record),
+            )

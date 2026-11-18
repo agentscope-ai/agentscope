@@ -145,6 +145,7 @@ class PipelineInitializationCancelTest(IsolatedAsyncioTestCase):
                                 "user_id": "u",
                                 "agent_id": "a",
                                 "queue_item_id": item["id"],
+                                "reply_id": None,
                                 "state": "finished",
                                 "cancel_requested": True,
                                 "expires_at": 1600,

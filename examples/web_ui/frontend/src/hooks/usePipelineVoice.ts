@@ -152,8 +152,8 @@ export function usePipelineVoice(options: Options) {
 						silent: true,
 					});
 				},
-				inputResult: (messageId, signal) =>
-					sessionApi.inputResult(sessionId, agentId, messageId, {
+				inputResult: (messageId, submissionId, signal) =>
+					sessionApi.inputResult(sessionId, agentId, messageId, submissionId, {
 						...requestScope,
 						signal,
 						silent: true,

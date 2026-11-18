@@ -12,6 +12,7 @@ from service_message_bus_test import _make_bus
 from service_wakeup_dispatcher_test import _FakeChatService, _FakeStorage
 
 from agentscope.app._bus_ops import (
+    bind_chat_submission,
     ChatQueueFullError,
     ChatSubmissionConflictError,
     cancel_chat_submission,
@@ -263,6 +264,141 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                         json.loads(await bus.registry_get(key, "old")),
                         record,
                     )
+
+    async def test_slow_queries_do_not_starve_later_receipts(self) -> None:
+        """Cheap expiry and query rotation survive either timeout budget."""
+        for bus in self.backends:
+            for budget in ("query", "sweep"):
+                with self.subTest(backend=type(bus).__name__, budget=budget):
+                    self.now = 1000
+                    async with bus:
+                        queue = self.collector(bus)
+                        await create_chat_submission(bus, "u", "s", "a")
+                        namespace = MessageBusKeys.chat_submissions("s")
+                        await bus.registry_drop(namespace)
+                        slow = {
+                            "state": "claimed",
+                            "queue_item_id": "slow",
+                            "message_ids": ["slow"],
+                        }
+                        fast = {
+                            "state": "claimed",
+                            "queue_item_id": "fast",
+                            "message_ids": ["fast"],
+                        }
+                        for key, record in (
+                            ("a-slow", slow),
+                            ("b-fast", fast),
+                            (
+                                "expired",
+                                {"state": "reserved", "expires_at": 0},
+                            ),
+                        ):
+                            await bus.registry_set(
+                                namespace,
+                                key,
+                                json.dumps(record),
+                            )
+                        cancellations = (
+                            MessageBusKeys.chat_input_cancellations(
+                                "s",
+                            )
+                        )
+                        await bus.registry_set(
+                            cancellations,
+                            "expired",
+                            json.dumps({"retire_at": 0}),
+                        )
+                        deadlines = {}
+                        queried = []
+                        sweep_budget = (
+                            MessageBusKeys.CHAT_RECEIPT_COLLECTION_TIMEOUT_SECS
+                        )
+                        recover = queue._recover_pending_chat_inputs_locked
+
+                        def query_timeout(delay: float) -> asyncio.Timeout:
+                            self.assertEqual(
+                                delay,
+                                MessageBusKeys.CHAT_RECEIPT_QUERY_TIMEOUT_SECS,
+                            )
+                            deadlines["query"] = asyncio.timeout(None)
+                            return deadlines["query"]
+
+                        def sweep_timeout(delay: float) -> asyncio.Timeout:
+                            self.assertEqual(delay, sweep_budget)
+                            deadlines["sweep"] = asyncio.timeout(None)
+                            return deadlines["sweep"]
+
+                        async def lookup(*args: object) -> dict:
+                            self.assertIsNone(
+                                await bus.registry_get(namespace, "expired"),
+                            )
+                            self.assertEqual(
+                                await bus.registry_getall(cancellations),
+                                {},
+                            )
+                            queried.append(args[-1])
+                            if args[-1] == "slow":
+                                deadlines[budget].reschedule(
+                                    asyncio.get_running_loop().time(),
+                                )
+                                await asyncio.Event().wait()
+                            return {"state": "finished"}
+
+                        with patch.object(
+                            queue,
+                            "_receipt_input_result",
+                            side_effect=lookup,
+                        ), patch(
+                            "agentscope.app._chat_receipts.asyncio",
+                            wraps=asyncio,
+                        ) as query_runtime, patch(
+                            "agentscope.app._manager."
+                            "_chat_input_queue.asyncio",
+                            wraps=asyncio,
+                        ) as sweep_runtime:
+                            query_runtime.timeout.side_effect = query_timeout
+                            sweep_runtime.timeout.side_effect = sweep_timeout
+                            for _ in range(2):
+                                await recover()
+                            self.assertEqual(
+                                queried,
+                                ["slow", "fast", "slow"],
+                            )
+                            self.assertEqual(
+                                {
+                                    key: json.loads(value)
+                                    for key, value in (
+                                        await bus.registry_getall(namespace)
+                                    ).items()
+                                },
+                                {
+                                    "a-slow": slow,
+                                    "b-fast": {
+                                        **fast,
+                                        "retire_at": 4600,
+                                    },
+                                },
+                            )
+                            self.now = 4601
+                            await recover()
+                            self.assertEqual(
+                                await bus.registry_getall(namespace),
+                                {"a-slow": json.dumps(slow)},
+                            )
+                            self.assertEqual(await receipt_count(bus, "s"), 1)
+                            with patch.object(
+                                MessageBusKeys,
+                                "CHAT_RECEIPT_SESSION_MAX_LEN",
+                                3,
+                            ):
+                                await create_chat_submission(
+                                    bus,
+                                    "u",
+                                    "s",
+                                    "a",
+                                )
+                            self.assertEqual(await receipt_count(bus, "s"), 3)
 
     async def test_lease_reserves_complete_turn_capacity(self) -> None:
         """Issuance needs two slots; existing leases can submit at capacity."""
@@ -552,6 +688,20 @@ class ChatReceiptLifecycleTest(IsolatedAsyncioTestCase):
                     queue = self.collector(bus)
                     lease = await create_chat_submission(bus, "u", "s", "a")
                     sid = lease["submission_id"]
+
+                    async def bind_reply(**_: object) -> None:
+                        await bind_chat_submission(
+                            bus,
+                            "u",
+                            "s",
+                            "a",
+                            sid,
+                            "R",
+                        )
+
+                    queue._chat_service.run = AsyncMock(
+                        side_effect=bind_reply,
+                    )
                     await enqueue_chat_input(
                         bus,
                         "u",

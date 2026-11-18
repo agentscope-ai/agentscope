@@ -235,7 +235,7 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                             "a",
                             "later",
                         ),
-                        {"state": "started", "queue_item_id": later["id"]},
+                        {"state": "cancelled", "queue_item_id": later["id"]},
                     )
 
     async def test_partial_enqueue_can_be_cancelled(self) -> None:
@@ -545,6 +545,7 @@ class ChatSubmissionCancellationTest(IsolatedAsyncioTestCase):
                             "agent_id": "a",
                             "state": "cancelled",
                             "queue_item_id": None,
+                            "reply_id": None,
                             "expires_at": 1600,
                             "retire_at": 4600,
                         },

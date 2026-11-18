@@ -224,6 +224,76 @@ class PipelineVoiceConfigTest(IsolatedAsyncioTestCase):
             **kwargs,
         )
 
+    async def test_submission_binding_survives_message_reuse(self) -> None:
+        """The real queue/service binds each submission before reply events."""
+        queue = ChatInputQueue(self.bus, self.storage, self.service)
+        self.addAsyncCleanup(queue.close)
+        replies = ["A", "B"]
+
+        async def reply_stream(
+            agent: _ReplyAgent,
+            inputs: object,
+        ) -> AsyncGenerator:
+            self.assertIsInstance(inputs, Msg)
+            agent.state.reply_id = replies.pop(0)
+            yield ReplyStartEvent(
+                session_id="session-1",
+                reply_id=agent.state.reply_id,
+                name=agent.name,
+            )
+            # The service has persisted the binding before advancing here.
+            self.assertEqual(
+                await self.service.input_result(
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                    "shared",
+                    submission_id=agent.state.reply_id,
+                ),
+                {"state": "reply", "reply_id": agent.state.reply_id},
+            )
+            yield ReplyEndEvent(
+                session_id="session-1",
+                reply_id=agent.state.reply_id,
+                finished_reason="completed",
+            )
+
+        with patch.object(_ReplyAgent, "reply_stream", reply_stream):
+            for submission in ("A", "B"):
+                await _reserve(
+                    self.bus,
+                    submission,
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                )
+                await enqueue_chat_input(
+                    self.bus,
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                    UserMsg("user", "voice", id="shared"),
+                    submission_id=submission,
+                )
+                self.assertTrue(
+                    await queue.drain_chat_inputs(
+                        "user-1",
+                        "session-1",
+                        "agent-1",
+                    ),
+                )
+        for submission in ("A", "B"):
+            self.assertEqual(
+                await self.service.input_result(
+                    "user-1",
+                    "session-1",
+                    "agent-1",
+                    "shared",
+                    submission_id=submission,
+                ),
+                {"state": "finished", "reply_id": submission},
+            )
+
     async def test_cancel_during_service_initialization(self) -> None:
         """Real service assembly propagates cancellation before reply start."""
         # pylint: disable=cell-var-from-loop
