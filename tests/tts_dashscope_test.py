@@ -26,6 +26,7 @@ from unittest.mock import call as mock_call
 import dashscope
 import httpx
 from dashscope.audio.tts_v2 import AudioFormat
+from websocket import WebSocketConnectionClosedException
 
 from utils import AnyString, AnyValue
 
@@ -1055,6 +1056,165 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
                 with self.assertRaises(RuntimeError):
                     await model.synthesize(text="Hello")
 
+    # -- several utterances inside one ``async with`` --
+
+    def _use_session_bound_clients(
+        self,
+        closed_error: type[Exception],
+    ) -> list[Mock]:
+        """Make ``QwenTtsRealtime(...)`` return a new client on every call,
+        each standing for one provider session: ``finish()`` ends the session
+        and its connection, and sending afterwards fails.
+
+        Args:
+            closed_error (`type[Exception]`):
+                What sending on a closed connection raises.
+
+        Returns:
+            `list[Mock]`:
+                The list the created clients are collected in. Setting
+                ``closed`` on a client drops its connection early.
+        """
+        clients: list[Mock] = []
+
+        def make_client(callback: Any, **_: Any) -> Mock:
+            client = self._create_mock_tts_client()
+            client.closed = False
+
+            def send() -> None:
+                if client.closed:
+                    raise closed_error("the connection has been closed")
+
+            def emit_audio() -> None:
+                callback.on_event(
+                    {"type": "response.audio.delta", "delta": b"\x00\x00"},
+                )
+
+            def connect() -> None:
+                callback.on_event({"type": "session.created"})
+
+            def append_text(_text: str) -> None:
+                send()
+                emit_audio()
+
+            def finish() -> None:
+                send()
+                emit_audio()
+                callback.on_event({"type": "session.finished"})
+                client.closed = True
+
+            client.connect.side_effect = connect
+            client.append_text.side_effect = append_text
+            client.commit.side_effect = send
+            client.finish.side_effect = finish
+            clients.append(client)
+            return client
+
+        self.mock_modules[
+            "dashscope.audio.qwen_tts_realtime"
+        ].QwenTtsRealtime.side_effect = make_client
+        return clients
+
+    async def test_each_utterance_gets_its_own_session(self) -> None:
+        """A reply with several text blocks is several utterances inside one
+        ``async with``. ``session.finish`` ends the provider session, so
+        every utterance after the first one needs a new session."""
+        # What sending on a closed connection raises: ``ConnectionError``
+        # since dashscope 1.26.1, the websocket-client exception before.
+        for closed_error in (
+            ConnectionError,
+            WebSocketConnectionClosedException,
+        ):
+            with self.subTest(closed_error=closed_error.__name__):
+                clients = self._use_session_bound_clients(closed_error)
+
+                with patch.dict("sys.modules", self.mock_modules):
+                    async with self._make_model(stream=False) as model:
+                        for first, second in (
+                            ("First", " block"),
+                            ("Second", " block"),
+                        ):
+                            await model.push(first)
+                            await model.push(second)
+                            res = await model.synthesize()
+                            self.assertIsNotNone(res.content)
+
+                        # An utterance may also arrive without any push.
+                        res = await model.synthesize("Third block")
+                        self.assertIsNotNone(res.content)
+
+                self.assertEqual(
+                    [c.append_text.call_args_list for c in clients],
+                    [
+                        [mock_call("First"), mock_call(" block")],
+                        [mock_call("Second"), mock_call(" block")],
+                        [mock_call("Third block")],
+                    ],
+                )
+
+    async def test_pending_stream_survives_next_utterance(self) -> None:
+        """With ``stream=True`` the audio of an utterance may still be
+        unread when the next one starts. Opening the new session must not
+        lose it."""
+        clients = self._use_session_bound_clients(ConnectionError)
+
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(stream=True) as model:
+                first = await model.synthesize("First block")
+                await model.push("Second block")
+                second = await model.synthesize()
+
+                for gen in (first, second):
+                    chunks = [chunk async for chunk in gen]
+                    self.assertEqual(
+                        [chunk.is_last for chunk in chunks],
+                        [True],
+                    )
+                    self.assertIsNotNone(chunks[0].content)
+
+        self.assertEqual(len(clients), 2)
+
+    async def test_utterance_after_failed_synthesize(self) -> None:
+        """An utterance whose synthesis failed must not leave its dead
+        session to the next one."""
+        clients = self._use_session_bound_clients(ConnectionError)
+
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(stream=False) as model:
+                await model.push("First block")
+                clients[0].closed = True
+                with self.assertRaises(ConnectionError):
+                    await model.synthesize()
+
+                await model.push("Second block")
+                res = await model.synthesize()
+                self.assertIsNotNone(res.content)
+
+        self.assertEqual(
+            clients[1].append_text.call_args_list,
+            [mock_call("Second block")],
+        )
+
+    async def test_synthesize_retries_after_connection_error(self) -> None:
+        """A connection dropped in the middle of an utterance, which current
+        SDK versions report as ``ConnectionError``, is retried with the whole
+        text on a new session."""
+        clients = self._use_session_bound_clients(ConnectionError)
+
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(stream=False, max_retries=2) as model:
+                await model.push("Hello")
+                clients[0].closed = True
+                await model.push(" world")
+
+                res = await model.synthesize()
+                self.assertIsNotNone(res.content)
+
+        self.assertEqual(
+            clients[1].append_text.call_args_list,
+            [mock_call("Hello world")],
+        )
+
     # -- callback --
 
     async def test_get_audio_chunks_prepends_header_without_prior_push(
@@ -1623,6 +1783,69 @@ class TestDashScopeCosyVoiceRealtimeMode(
                     await model.synthesize(text="Hello")
 
                 self.assertIn("timed out", str(ctx.exception))
+
+    # -- several utterances inside one ``async with`` --
+
+    async def test_each_utterance_gets_its_own_synthesizer(self) -> None:
+        """A reply with several text blocks is several utterances inside one
+        ``async with``. The SDK synthesizer cannot be started again once
+        ``streaming_complete()`` has run, so every utterance after the first
+        one needs a new synthesizer."""
+        synthesizers: list[Mock] = []
+
+        def make_synthesizer(callback: Any, **_: Any) -> Mock:
+            synth = self._create_mock_synthesizer()
+            synth.completed = False
+
+            def check_usable() -> None:
+                if synth.completed:
+                    # The SDK raises its own ``InvalidTask`` here.
+                    raise ValueError(
+                        "speech synthesizer has not been started.",
+                    )
+
+            def streaming_call(_text: str) -> None:
+                check_usable()
+                callback.on_data(b"\x00\x00")
+
+            def streaming_complete() -> None:
+                check_usable()
+                synth.completed = True
+                callback.on_data(b"\x00\x00")
+                callback.on_complete()
+
+            synth.streaming_call.side_effect = streaming_call
+            synth.streaming_complete.side_effect = streaming_complete
+            synthesizers.append(synth)
+            return synth
+
+        self.mock_modules[
+            "dashscope.audio.tts_v2"
+        ].SpeechSynthesizer.side_effect = make_synthesizer
+
+        with patch.dict("sys.modules", self.mock_modules):
+            async with self._make_model(stream=False) as model:
+                for first, second in (
+                    ("First", " block"),
+                    ("Second", " block"),
+                ):
+                    await model.push(first)
+                    await model.push(second)
+                    res = await model.synthesize()
+                    self.assertIsNotNone(res.content)
+
+                # An utterance may also arrive without any push.
+                res = await model.synthesize("Third block")
+                self.assertIsNotNone(res.content)
+
+        self.assertEqual(
+            [s.streaming_call.call_args_list for s in synthesizers],
+            [
+                [mock_call("First"), mock_call(" block")],
+                [mock_call("Second"), mock_call(" block")],
+                [mock_call("Third block")],
+            ],
+        )
 
     # -- callback --
 

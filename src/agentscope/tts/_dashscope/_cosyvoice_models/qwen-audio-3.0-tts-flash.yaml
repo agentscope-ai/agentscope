@@ -3,6 +3,8 @@
 name: qwen-audio-3.0-tts-flash
 label: Qwen Audio 3.0 TTS Flash
 status: active
+# Release date source: https://help.aliyun.com/zh/model-studio/newly-released-models
+release_date: 2026-07-14
 voice_cloning: true
 
 input_types:

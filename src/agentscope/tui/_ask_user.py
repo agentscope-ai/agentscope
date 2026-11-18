@@ -478,7 +478,9 @@ class AskUserUI(Vertical):
             self._editing_other = True
             self._render_form()
             self.call_later(self.focus_action)
-        elif option_id == "continue" and answer.selected:
+        elif option_id == "continue" and (
+            answer.selected or answer.other is not None
+        ):
             self._complete_question()
 
     @on(OptionList.OptionHighlighted, ".as-ask-user-options")

@@ -202,6 +202,33 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
         raise NotImplementedError("This bus does not support editable queues.")
 
+    async def queue_remove_if(
+        self,
+        key: str,
+        matches: list[dict[str, str]],
+    ) -> bool:
+        """Atomically remove entries matching the supplied field values.
+
+        Each predicate must match exactly one distinct entry. Check all
+        predicates before deleting anything. Preserve other entries, their
+        transport IDs, order, and the queue's expiry. An empty list is a no-op.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+            matches (`list[dict[str, str]]`):
+                Required top-level string field values for each target.
+
+        Returns:
+            `bool`:
+                True when all targets matched and were removed; False when
+                this execution made no change because a predicate failed.
+                Transport failures can leave the outcome unknown.
+        """
+        raise NotImplementedError(
+            "This bus cannot conditionally remove inputs.",
+        )
+
     @abstractmethod
     async def queue_delete(self, key: str) -> None:
         """Delete the drain queue at ``key`` and all of its entries.

@@ -340,7 +340,6 @@ class DashScopeRealtimeASRModel(ASRModelBase):
         text = sentence.get("text")
         if not isinstance(text, str):
             return
-        text = text.strip()
         self._current_sentence = text
         transcript = self._complete_text()
         if transcript:
@@ -355,17 +354,8 @@ class DashScopeRealtimeASRModel(ASRModelBase):
             self._current_sentence = ""
 
     def _complete_text(self) -> str:
-        """Return committed sentences plus the active partial sentence."""
-        parts = [*self._committed_sentences]
-        if self._current_sentence:
-            parts.append(self._current_sentence)
-        result = ""
-        for part in parts:
-            if result and result[-1].isalnum() and part[0].isalnum():
-                result = f"{result} {part}"
-            else:
-                result = f"{result}{part}"
-        return result
+        """Concatenate committed and current text without normalization."""
+        return "".join([*self._committed_sentences, self._current_sentence])
 
     def _drain_latest_response(self) -> ASRResponse:
         """Return the newest queued partial response without blocking."""
