@@ -452,11 +452,7 @@ export class PipelineVoiceSession {
 					this.finishCancellation();
 					return;
 				}
-				if (
-					result.state === 'reply' &&
-					result.reply_id &&
-					!this.replyId
-				) {
+				if (result.state === 'reply' && result.reply_id && !this.replyId) {
 					this.replyId = result.reply_id;
 					this.inputStarted = true;
 				}
