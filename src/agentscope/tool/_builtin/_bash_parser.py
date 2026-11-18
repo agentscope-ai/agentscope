@@ -838,7 +838,15 @@ class BashCommandParser:
             if taken == 0:
                 # No digits: the shell keeps the marker literally.
                 return marker, index + 2
-            return chr(int(rest[1 : 1 + taken], 16)), index + 2 + taken
+            code = int(rest[1 : 1 + taken], 16)
+            if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                # ``\U`` reads up to eight hex digits, so it can name a value
+                # that is not a Unicode scalar: ``chr`` raises past U+10FFFF
+                # and a surrogate decodes to a lone surrogate. Keep the
+                # escape literal instead of raising, so the permission check
+                # returns a decision rather than aborting with a traceback.
+                return "\\" + rest[: 1 + taken], index + 2 + taken
+            return chr(code), index + 2 + taken
         if marker in "01234567":
             taken = 1
             while (

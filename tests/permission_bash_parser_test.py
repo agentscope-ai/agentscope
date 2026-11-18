@@ -1750,6 +1750,25 @@ class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
                 result = self.parser.check_dangerous_command(cmd)
                 self.assertIsNone(result, f"Expected '{cmd}' to be safe")
 
+    async def test_ansi_c_out_of_range_codepoint_is_total(self) -> None:
+        """An escape naming no Unicode scalar must still return a decision.
+
+        ``\\U`` accepts up to eight hex digits, so it can name a value that
+        is not a Unicode scalar. ``chr`` raises for those, and nothing in the
+        permission check catches it, so the whole decision used to abort with
+        a traceback instead of answering. Keeping the escape literal makes
+        the check total: no pattern is invented, and no exception escapes.
+        """
+        commands = [
+            r"echo $'\U00110000'",
+            r"kill $'\uD800' 1",
+            r"chmod $'\U00110000' 777 /tmp/x",
+        ]
+        for cmd in commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsInstance(result, (str, type(None)))
+
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.parser = None
