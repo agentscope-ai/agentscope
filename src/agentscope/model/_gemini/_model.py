@@ -118,6 +118,9 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
     - ``oneOf``: converted to ``anyOf`` for discriminated unions.
       An existing ``anyOf`` raises ``ValueError`` rather than dropping
       conjunctive constraints.
+    - ``prefixItems``: converted to an ``items`` schema that accepts any of
+      the positional element schemas, keeping the tuple's ``minItems`` and
+      ``maxItems`` bounds. Gemini has no ``prefixItems``.
     - ``type`` arrays containing ``"null"``: simplified to the single
       non-null type or converted to ``anyOf`` for multiple non-null
       types, matching nullable JSON Schema emitted by Pydantic and
@@ -203,6 +206,26 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
                 "and anyOf.",
             )
         schema["anyOf"] = schema.pop("oneOf")
+
+    # Gemini has no `prefixItems`; Pydantic emits it for fixed-length
+    # tuples together with `minItems`/`maxItems`. Keep the length bounds and
+    # accept any of the positional element schemas in `items`; Pydantic still
+    # validates the exact positions of the tool arguments.
+    prefix_items = schema.pop("prefixItems", None)
+    if isinstance(prefix_items, list) and prefix_items:
+        element_schemas = [
+            _sanitize_schema_for_gemini(item) for item in prefix_items
+        ]
+        existing_items = schema.pop("items", None)
+        if existing_items is not None:
+            element_schemas.append(
+                _sanitize_schema_for_gemini(existing_items),
+            )
+        schema["items"] = (
+            element_schemas[0]
+            if len(element_schemas) == 1
+            else {"anyOf": element_schemas}
+        )
 
     # Simplify anyOf that only differs by a null type, e.g. Optional[X]
     if "anyOf" in schema and isinstance(schema["anyOf"], list):

@@ -1911,6 +1911,26 @@ class TestGeminiSchemaUtils(unittest.TestCase):
         self.assertIn("anyOf", pet)
         FunctionDeclaration(name="pet", parameters=result)
 
+    def test_sanitize_converts_prefix_items_to_items(self) -> None:
+        """A fixed-length tuple's `prefixItems` becomes an `items` schema."""
+
+        class Args(BaseModel):
+            """Tool parameters containing a fixed-length tuple."""
+
+            pair: tuple[int, str]
+
+        result = _sanitize_schema_for_gemini(
+            _flatten_json_schema(Args.model_json_schema()),
+        )
+        pair = result["properties"]["pair"]
+        self.assertNotIn("prefixItems", pair)
+        self.assertEqual(
+            pair["items"],
+            {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+        )
+        self.assertEqual((pair["minItems"], pair["maxItems"]), (2, 2))
+        FunctionDeclaration(name="pair", parameters=result)
+
     def test_sanitize_converts_const_to_enum(self) -> None:
         """`const` is converted into a single-value `enum` for Gemini."""
         self.assertEqual(
